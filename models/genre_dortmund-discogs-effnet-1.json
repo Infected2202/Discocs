@@ -1,0 +1,76 @@
+{
+    "name": "genre Dortmund",
+    "type": "multi-class classifier",
+    "link": "https://essentia.upf.edu/models/classification-heads/genre_dortmund/genre_dortmund-discogs-effnet-1.pb",
+    "version": "2",
+    "description": "classification of music by genre",
+    "author": "Pablo Alonso",
+    "email": "pablo.alonso@upf.edu",
+    "release_date": "2022-08-25",
+    "framework": "tensorflow",
+    "framework_version": "2.4.0",
+    "classes": [
+        "alternative",
+        "blues",
+        "electronic",
+        "folkcountr",
+        "funksoulrnb",
+        "jazz",
+        "pop",
+        "raphiphop",
+        "rock"
+    ],
+    "model_types": [
+        "frozen_model"
+    ],
+    "dataset": {
+        "name": "Music Audio Benchmark Data Set by TU Dortmund University",
+        "citation": "@inproceedings{homburg2005benchmark,\n  title={A Benchmark Dataset for Audio Classification and Clustering.},\n  author={Homburg, Helge and Mierswa, Ingo and M{\\\"o}ller, B{\\\"u}lent and Morik, Katharina and Wurst, Michael},\n  booktitle={ISMIR},\n  volume={2005},\n  pages={528--31},\n  year={2005}\n}",
+        "size": "1820 track excerpts, 46-490 per genre",
+        "metrics": {
+            "5-fold_cross_validation_normalized_accuracy": 0.64
+        }
+    },
+    "schema": {
+        "inputs": [
+            {
+                "name": "model/Placeholder",
+                "type": "float",
+                "shape": [
+                    1280
+                ]
+            }
+        ],
+        "outputs": [
+            {
+                "name": "model/Softmax",
+                "type": "float",
+                "shape": [
+                    9
+                ],
+                "op": "Softmax",
+                "output_purpose": "predictions"
+            },
+            {
+                "name": "model/dense/BiasAdd",
+                "type": "float",
+                "shape": [
+                    100
+                ],
+                "op": "fully connected",
+                "description": "penultimate layer",
+                "output_purpose": ""
+            }
+        ]
+    },
+    "citation": "",
+    "inference": {
+        "sample_rate": 16000,
+        "algorithm": "TensorflowPredict2D",
+        "embedding_model": {
+            "algorithm": "TensorflowPredictEffnetDiscogs",
+            "model_name": "discogs-effnet-bs64-1",
+            "link": "https://essentia.upf.edu/models/music-style-classification/discogs-effnet/discogs-effnet-bs64-1.pb"
+        }
+    }
+}
