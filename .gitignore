@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+*.log
 .pytest_cache/
 .pt/
 .ruff_cache/
@@ -11,6 +12,10 @@ build/
 *.egg-info/
 
 data/
+*.db
+*.db-shm
+*.db-wal
 models/*.pb
 models/*.onnx
+models/*.json
 eval/results/

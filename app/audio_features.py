@@ -77,7 +77,7 @@ def extract_loudness_features(audio: np.ndarray) -> list[TrackFeature]:
         from essentia.standard import LoudnessEBUR128
     except ImportError as exc:
         raise RuntimeError("essentia-tensorflow is required for loudness extraction") from exc
-    result = LoudnessEBUR128(sampleRate=16000)(audio)
+    result = LoudnessEBUR128(sampleRate=16000)(mono_to_stereo(audio))
     values = list(result) if isinstance(result, tuple) else [result]
     features: list[TrackFeature] = []
     if len(values) >= 3:
@@ -99,6 +99,11 @@ def extract_loudness_features(audio: np.ndarray) -> list[TrackFeature]:
             )
         )
     return features
+
+
+def mono_to_stereo(audio: np.ndarray) -> np.ndarray:
+    mono = np.asarray(audio, dtype=np.float32).reshape(-1)
+    return np.column_stack((mono, mono)).astype(np.float32, copy=False)
 
 
 def extract_dynamic_features(audio: np.ndarray) -> list[TrackFeature]:

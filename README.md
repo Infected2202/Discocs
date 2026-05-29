@@ -10,8 +10,19 @@ music folder -> scan files -> decode audio -> Discogs-EffNet embedding
 -> REST API / browser UI similar tracks
 ```
 
-The default model target is `discogs_multi_embeddings-effnet-bs64-1.pb` through
-Essentia's `TensorflowPredictEffnetDiscogs`.
+The default recommendation model is `discogs_multi_embeddings-effnet-bs64-1.pb`
+through Essentia's `TensorflowPredictEffnetDiscogs`.
+
+The app also has optional analysis packs:
+
+- Discogs-EffNet classification heads for tags, genres, moods, instruments, and
+  related model outputs.
+- Audio features for BPM, key/scale, loudness, and dynamics.
+- Lost-file tracking for scanned tracks whose audio files disappeared.
+- Per-track analysis inspector in the web UI.
+
+See [docs/analysis-pipeline.md](docs/analysis-pipeline.md) and
+[docs/operations.md](docs/operations.md) for details.
 
 ## Quick Start
 
@@ -36,6 +47,13 @@ Download Discogs-EffNet model files from the Essentia model catalog:
 
 ```text
 https://essentia.upf.edu/models/feature-extractors/discogs-effnet/
+```
+
+For the Discogs-EffNet head pack, use the UI `Download head models` job or the
+fallback downloader:
+
+```bash
+python scripts/download_head_models.py --out-dir models
 ```
 
 Run the API/UI:
@@ -93,12 +111,22 @@ From the browser UI:
 4. Click `Build index`.
 5. Search a track and click `Seed` to show recommendations.
 
+Optional analysis:
+
+1. Click `Download head models`.
+2. Click `Analyze Discogs-EffNet heads`.
+3. Click `Analyze audio features`.
+4. Open a track card and click the tablet icon to inspect stored analysis data.
+
 The same operations are also available through the CLI:
 
 ```bash
 source .venv/bin/activate
 recs scan /path/to/music
 recs analyze --limit 500
+recs download-models --pack discogs-effnet-heads
+recs analyze-heads --limit 20
+recs analyze-audio-features --limit 20
 recs build-index
 recs similar --track-id 1 --k 30
 ```
@@ -106,6 +134,20 @@ recs similar --track-id 1 --k 30
 Note: the optimized multi-process `workers/tf_threads` path is currently used by
 the API/UI analyze job. The CLI analyze command is still the simple sequential
 path.
+
+## Web UI
+
+The browser UI includes:
+
+- Dashboard pipeline controls and counters.
+- Head model readiness table under the `Head models` details panel.
+- Library and Browse track lists.
+- Lost files page with check, selection, pagination, and remove actions.
+- Recommendations and evaluation workflow.
+- Track analysis modal opened from the tablet icon on a track card.
+
+Do not open a live SQLite database through a network share while the server is
+running. Create a snapshot first; see [docs/operations.md](docs/operations.md).
 
 ## Configuration
 
@@ -134,6 +176,16 @@ Supported model aliases:
 discogs_multi -> discogs_multi_embeddings-effnet-bs64-1.pb
 discogs_track -> discogs_track_embeddings-effnet-bs64-1.pb
 discogs_label -> discogs_label_embeddings-effnet-bs64-1.pb
+```
+
+Runtime artifacts are intentionally ignored by git:
+
+```text
+data/
+models/*.pb
+models/*.json
+models/*.onnx
+eval/results/
 ```
 
 ## Benchmarks
