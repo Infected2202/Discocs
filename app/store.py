@@ -3,8 +3,9 @@ from __future__ import annotations
 import logging
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import numpy as np
 
@@ -67,6 +68,59 @@ class TrackFeature:
     unit: str | None = None
     confidence: float | None = None
     extractor: str = ""
+
+
+@dataclass(frozen=True)
+class AnalysisJob:
+    id: str
+    kind: str
+    model_name: str
+    status: str
+    total: int
+    done: int
+    failed: int
+    queued: int
+    leased: int
+    final_failed: int
+    message: str
+    created_at: str
+    updated_at: str
+    finished_at: str | None = None
+
+
+@dataclass(frozen=True)
+class AnalysisTask:
+    id: str
+    job_id: str
+    track_id: int
+    model_name: str
+    status: str
+    attempts: int
+    max_attempts: int
+    lease_owner: str | None
+    lease_expires_at: str | None
+    path: str
+    file_size: int
+    mtime: int
+    error: str | None = None
+    error_type: str | None = None
+    stage: str | None = None
+
+
+@dataclass(frozen=True)
+class AnalysisWorker:
+    worker_id: str
+    models: str
+    status: str
+    last_seen_at: str
+    created_at: str
+    claimed_count: int = 0
+    completed_count: int = 0
+    failed_count: int = 0
+    released_count: int = 0
+    current_task_id: str | None = None
+    stage: str | None = None
+    message: str | None = None
 
 
 def utc_now() -> str:
@@ -168,12 +222,80 @@ class Store:
                     FOREIGN KEY (seed_track_id) REFERENCES tracks(id) ON DELETE CASCADE,
                     FOREIGN KEY (result_track_id) REFERENCES tracks(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS analysis_jobs (
+                    id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL DEFAULT 'analyze',
+                    model_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    total INTEGER NOT NULL DEFAULT 0,
+                    local_executor_enabled INTEGER NOT NULL DEFAULT 1,
+                    workers INTEGER NOT NULL DEFAULT 1,
+                    tf_threads INTEGER NOT NULL DEFAULT 1,
+                    max_attempts INTEGER NOT NULL DEFAULT 3,
+                    message TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    finished_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS analysis_tasks (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL,
+                    track_id INTEGER NOT NULL,
+                    model_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    max_attempts INTEGER NOT NULL DEFAULT 3,
+                    lease_owner TEXT,
+                    lease_expires_at TEXT,
+                    path TEXT NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    mtime INTEGER NOT NULL,
+                    error TEXT,
+                    error_type TEXT,
+                    stage TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    FOREIGN KEY (job_id) REFERENCES analysis_jobs(id) ON DELETE CASCADE,
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE,
+                    UNIQUE (job_id, track_id, model_name)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_analysis_tasks_claim
+                    ON analysis_tasks(status, model_name, lease_expires_at);
+                CREATE INDEX IF NOT EXISTS idx_analysis_tasks_job
+                    ON analysis_tasks(job_id, status);
+
+                CREATE TABLE IF NOT EXISTS analysis_workers (
+                    worker_id TEXT PRIMARY KEY,
+                    models TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    claimed_count INTEGER NOT NULL DEFAULT 0,
+                    completed_count INTEGER NOT NULL DEFAULT 0,
+                    failed_count INTEGER NOT NULL DEFAULT 0,
+                    released_count INTEGER NOT NULL DEFAULT 0,
+                    current_task_id TEXT,
+                    stage TEXT,
+                    message TEXT
+                );
                 """
             )
             self._ensure_column(conn, "tracks", "genre", "TEXT")
             self._ensure_column(conn, "tracks", "year", "INTEGER")
             self._ensure_column(conn, "tracks", "missing_at", "TEXT")
             self._ensure_column(conn, "tracks", "last_seen_at", "TEXT")
+            self._ensure_column(conn, "analysis_jobs", "kind", "TEXT NOT NULL DEFAULT 'analyze'")
+            self._ensure_column(conn, "analysis_workers", "claimed_count", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "analysis_workers", "completed_count", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "analysis_workers", "failed_count", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "analysis_workers", "released_count", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "analysis_workers", "current_task_id", "TEXT")
+            self._ensure_column(conn, "analysis_workers", "stage", "TEXT")
+            self._ensure_column(conn, "analysis_workers", "message", "TEXT")
 
     def _ensure_column(
         self,
@@ -572,6 +694,435 @@ class Store:
         with self.connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [row_to_track(row) for row in rows]
+
+    def create_analysis_job(
+        self,
+        model_name: str,
+        limit: int | None,
+        *,
+        kind: str = "analyze",
+        tracks: list[Track] | None = None,
+        local_executor_enabled: bool = True,
+        workers: int = 1,
+        tf_threads: int = 1,
+        max_attempts: int = 3,
+        job_id: str | None = None,
+    ) -> AnalysisJob:
+        now = utc_now()
+        job_id = job_id or str(uuid4())
+        tracks = tracks if tracks is not None else self.list_tracks_missing_embedding(model_name, limit=limit)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO analysis_jobs (
+                    id, kind, model_name, status, total, local_executor_enabled, workers,
+                    tf_threads, max_attempts, message, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job_id,
+                    kind,
+                    model_name,
+                    "running" if tracks else "completed",
+                    len(tracks),
+                    int(local_executor_enabled),
+                    int(workers),
+                    int(tf_threads),
+                    int(max_attempts),
+                    f"Queued {len(tracks)} tracks for {model_name}",
+                    now,
+                    now,
+                ),
+            )
+            conn.executemany(
+                """
+                INSERT INTO analysis_tasks (
+                    id, job_id, track_id, model_name, status, max_attempts, path,
+                    file_size, mtime, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        str(uuid4()),
+                        job_id,
+                        track.id,
+                        model_name,
+                        int(max_attempts),
+                        track.path,
+                        track.file_size,
+                        track.mtime,
+                        now,
+                        now,
+                    )
+                    for track in tracks
+                ],
+            )
+            if not tracks:
+                conn.execute(
+                    "UPDATE analysis_jobs SET finished_at = ?, message = ? WHERE id = ?",
+                    (now, f"Analyzed 0 tracks, failed 0", job_id),
+                )
+        return self.get_analysis_job(job_id)  # type: ignore[return-value]
+
+    def expire_analysis_leases(self, now: str | None = None) -> int:
+        now = now or utc_now()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE analysis_tasks
+                SET status = 'queued',
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    stage = 'lease_expired',
+                    updated_at = ?
+                WHERE status = 'leased'
+                  AND lease_expires_at IS NOT NULL
+                  AND lease_expires_at < ?
+                """,
+                (now, now),
+            )
+            return int(cursor.rowcount)
+
+    def register_analysis_worker(self, worker_id: str, models: list[str]) -> None:
+        now = utc_now()
+        models_text = ",".join(sorted(set(models)))
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO analysis_workers (worker_id, models, status, last_seen_at, created_at)
+                VALUES (?, ?, 'online', ?, ?)
+                ON CONFLICT(worker_id) DO UPDATE SET
+                    models = excluded.models,
+                    status = 'online',
+                    last_seen_at = excluded.last_seen_at,
+                    stage = COALESCE(analysis_workers.stage, 'heartbeat')
+                """,
+                (worker_id, models_text, now, now),
+            )
+
+    def update_analysis_worker(
+        self,
+        worker_id: str,
+        *,
+        status: str = "online",
+        stage: str | None = None,
+        message: str | None = None,
+        current_task_id: str | None = None,
+        claimed_delta: int = 0,
+        completed_delta: int = 0,
+        failed_delta: int = 0,
+        released_delta: int = 0,
+    ) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE analysis_workers
+                SET status = ?,
+                    last_seen_at = ?,
+                    stage = COALESCE(?, stage),
+                    message = COALESCE(?, message),
+                    current_task_id = ?,
+                    claimed_count = claimed_count + ?,
+                    completed_count = completed_count + ?,
+                    failed_count = failed_count + ?,
+                    released_count = released_count + ?
+                WHERE worker_id = ?
+                """,
+                (
+                    status,
+                    now,
+                    stage,
+                    message,
+                    current_task_id,
+                    int(claimed_delta),
+                    int(completed_delta),
+                    int(failed_delta),
+                    int(released_delta),
+                    worker_id,
+                ),
+            )
+
+    def list_analysis_workers(self) -> list[AnalysisWorker]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM analysis_workers ORDER BY last_seen_at DESC"
+            ).fetchall()
+        return [row_to_analysis_worker(row) for row in rows]
+
+    def claim_analysis_tasks(
+        self,
+        worker_id: str,
+        models: list[str],
+        *,
+        limit: int,
+        lease_seconds: int = 300,
+    ) -> list[AnalysisTask]:
+        if not models or limit <= 0:
+            return []
+        self.expire_analysis_leases()
+        now_dt = datetime.now(UTC)
+        now = now_dt.isoformat()
+        lease_expires_at = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
+        placeholders = ",".join("?" for _ in models)
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                f"""
+                SELECT * FROM analysis_tasks
+                WHERE status = 'queued'
+                  AND model_name IN ({placeholders})
+                ORDER BY created_at, track_id
+                LIMIT ?
+                """,
+                [*models, int(limit)],
+            ).fetchall()
+            task_ids = [str(row["id"]) for row in rows]
+            if task_ids:
+                id_placeholders = ",".join("?" for _ in task_ids)
+                conn.execute(
+                    f"""
+                    UPDATE analysis_tasks
+                    SET status = 'leased',
+                        attempts = attempts + 1,
+                        lease_owner = ?,
+                        lease_expires_at = ?,
+                        error = NULL,
+                        error_type = NULL,
+                        stage = 'claimed',
+                        updated_at = ?
+                    WHERE id IN ({id_placeholders})
+                    """,
+                    [worker_id, lease_expires_at, now, *task_ids],
+                )
+        if task_ids:
+            self.update_analysis_worker(
+                worker_id,
+                stage="claimed",
+                message=f"claimed {len(task_ids)} task(s)",
+                claimed_delta=len(task_ids),
+            )
+        return [
+            row_to_analysis_task(
+                {
+                    **dict(row),
+                    "status": "leased",
+                    "attempts": int(row["attempts"]) + 1,
+                    "lease_owner": worker_id,
+                    "lease_expires_at": lease_expires_at,
+                }
+            )
+            for row in rows
+        ]
+
+    def get_analysis_task(self, task_id: str) -> AnalysisTask | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM analysis_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        return row_to_analysis_task(row) if row else None
+
+    def complete_analysis_task(self, task_id: str, worker_id: str | None = None) -> None:
+        now = utc_now()
+        params: list[object] = [now, now, task_id]
+        owner_clause = ""
+        if worker_id is not None:
+            owner_clause = " AND lease_owner = ?"
+            params.append(worker_id)
+        with self.connect() as conn:
+            conn.execute(
+                f"""
+                UPDATE analysis_tasks
+                SET status = 'completed',
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    error = NULL,
+                    error_type = NULL,
+                    stage = 'completed',
+                    updated_at = ?,
+                    completed_at = ?
+                WHERE id = ?{owner_clause}
+                """,
+                params,
+            )
+        if worker_id is not None:
+            self.update_analysis_worker(
+                worker_id,
+                stage="completed",
+                completed_delta=1,
+                current_task_id=None,
+            )
+        task = self.get_analysis_task(task_id)
+        if task is not None:
+            self.refresh_analysis_job(task.job_id)
+
+    def fail_analysis_task(
+        self,
+        task_id: str,
+        *,
+        error: str,
+        error_type: str,
+        stage: str,
+        worker_id: str | None = None,
+        retryable: bool = True,
+    ) -> None:
+        now = utc_now()
+        task = self.get_analysis_task(task_id)
+        if task is None:
+            return
+        status = "queued" if retryable and task.attempts < task.max_attempts else "final_failed"
+        params: list[object] = [
+            status,
+            error,
+            error_type,
+            stage,
+            now,
+            task_id,
+        ]
+        owner_clause = ""
+        if worker_id is not None:
+            owner_clause = " AND lease_owner = ?"
+            params.append(worker_id)
+        with self.connect() as conn:
+            conn.execute(
+                f"""
+                UPDATE analysis_tasks
+                SET status = ?,
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    error = ?,
+                    error_type = ?,
+                    stage = ?,
+                    updated_at = ?
+                WHERE id = ?{owner_clause}
+                """,
+                params,
+            )
+        if worker_id is not None:
+            self.update_analysis_worker(
+                worker_id,
+                stage=stage,
+                message=error[:240],
+                failed_delta=1 if status == "final_failed" else 0,
+                current_task_id=None,
+            )
+        self.refresh_analysis_job(task.job_id)
+
+    def release_analysis_tasks(self, worker_id: str, task_ids: list[str] | None = None) -> int:
+        now = utc_now()
+        params: list[object] = [now, worker_id]
+        task_clause = ""
+        if task_ids:
+            placeholders = ",".join("?" for _ in task_ids)
+            task_clause = f" AND id IN ({placeholders})"
+            params.extend(task_ids)
+        with self.connect() as conn:
+            cursor = conn.execute(
+                f"""
+                UPDATE analysis_tasks
+                SET status = 'queued',
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    stage = 'released',
+                    updated_at = ?
+                WHERE status = 'leased'
+                  AND lease_owner = ?{task_clause}
+                """,
+                params,
+            )
+            released = int(cursor.rowcount)
+        if released:
+            self.update_analysis_worker(
+                worker_id,
+                stage="released",
+                message=f"released {released} task(s)",
+                released_delta=released,
+                current_task_id=None,
+            )
+        return released
+
+    def refresh_analysis_job(self, job_id: str) -> AnalysisJob | None:
+        now = utc_now()
+        with self.connect() as conn:
+            counts = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS done,
+                    SUM(CASE WHEN status = 'final_failed' THEN 1 ELSE 0 END) AS failed,
+                    SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued,
+                    SUM(CASE WHEN status = 'leased' THEN 1 ELSE 0 END) AS leased
+                FROM analysis_tasks
+                WHERE job_id = ?
+                """,
+                (job_id,),
+            ).fetchone()
+            if counts is None:
+                return None
+            total = int(counts["total"] or 0)
+            done = int(counts["done"] or 0)
+            failed = int(counts["failed"] or 0)
+            queued = int(counts["queued"] or 0)
+            leased = int(counts["leased"] or 0)
+            completed = done + failed >= total
+            status = "completed" if completed else "running"
+            message = f"Analyzed {done}/{total} tracks, failed {failed}"
+            finished_at = now if completed else None
+            conn.execute(
+                """
+                UPDATE analysis_jobs
+                SET status = ?, total = ?, message = ?, updated_at = ?,
+                    finished_at = COALESCE(?, finished_at)
+                WHERE id = ?
+                """,
+                (status, total, message, now, finished_at, job_id),
+            )
+        return self._get_analysis_job_no_refresh(job_id)
+
+    def get_analysis_job(self, job_id: str) -> AnalysisJob | None:
+        self.expire_analysis_leases()
+        self.refresh_analysis_job_counts_only(job_id)
+        return self._get_analysis_job_no_refresh(job_id)
+
+    def _get_analysis_job_no_refresh(self, job_id: str) -> AnalysisJob | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT j.*,
+                    SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) AS done,
+                    SUM(CASE WHEN t.status = 'final_failed' THEN 1 ELSE 0 END) AS failed,
+                    SUM(CASE WHEN t.status = 'queued' THEN 1 ELSE 0 END) AS queued,
+                    SUM(CASE WHEN t.status = 'leased' THEN 1 ELSE 0 END) AS leased,
+                    SUM(CASE WHEN t.status = 'final_failed' THEN 1 ELSE 0 END) AS final_failed
+                FROM analysis_jobs j
+                LEFT JOIN analysis_tasks t ON t.job_id = j.id
+                WHERE j.id = ?
+                GROUP BY j.id
+                """,
+                (job_id,),
+            ).fetchone()
+        return row_to_analysis_job(row) if row else None
+
+    def refresh_analysis_job_counts_only(self, job_id: str) -> None:
+        with self.connect() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM analysis_jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+        if exists is not None:
+            self.refresh_analysis_job(job_id)
+
+    def recent_analysis_jobs(self, limit: int = 20) -> list[AnalysisJob]:
+        self.expire_analysis_leases()
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT id FROM analysis_jobs ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [job for row in rows if (job := self.get_analysis_job(str(row["id"]))) is not None]
 
     def save_embedding(self, track_id: int, model_name: str, vector: np.ndarray) -> None:
         vector = np.asarray(vector, dtype=np.float32)
@@ -1082,6 +1633,62 @@ def row_to_track(row: sqlite3.Row) -> Track:
         file_size=int(row["file_size"]),
         mtime=int(row["mtime"]),
         missing_at=row["missing_at"] if "missing_at" in row.keys() else None,
+    )
+
+
+def row_to_analysis_task(row: sqlite3.Row | dict[str, object]) -> AnalysisTask:
+    return AnalysisTask(
+        id=str(row["id"]),
+        job_id=str(row["job_id"]),
+        track_id=int(row["track_id"]),
+        model_name=str(row["model_name"]),
+        status=str(row["status"]),
+        attempts=int(row["attempts"]),
+        max_attempts=int(row["max_attempts"]),
+        lease_owner=row["lease_owner"],
+        lease_expires_at=row["lease_expires_at"],
+        path=str(row["path"]),
+        file_size=int(row["file_size"]),
+        mtime=int(row["mtime"]),
+        error=row["error"],
+        error_type=row["error_type"],
+        stage=row["stage"],
+    )
+
+
+def row_to_analysis_job(row: sqlite3.Row) -> AnalysisJob:
+    return AnalysisJob(
+        id=str(row["id"]),
+        kind=str(row["kind"] or "analyze"),
+        model_name=str(row["model_name"]),
+        status=str(row["status"]),
+        total=int(row["total"] or 0),
+        done=int(row["done"] or 0),
+        failed=int(row["failed"] or 0),
+        queued=int(row["queued"] or 0),
+        leased=int(row["leased"] or 0),
+        final_failed=int(row["final_failed"] or 0),
+        message=str(row["message"]),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+        finished_at=row["finished_at"],
+    )
+
+
+def row_to_analysis_worker(row: sqlite3.Row) -> AnalysisWorker:
+    return AnalysisWorker(
+        worker_id=str(row["worker_id"]),
+        models=str(row["models"]),
+        status=str(row["status"]),
+        last_seen_at=str(row["last_seen_at"]),
+        created_at=str(row["created_at"]),
+        claimed_count=int(row["claimed_count"] or 0),
+        completed_count=int(row["completed_count"] or 0),
+        failed_count=int(row["failed_count"] or 0),
+        released_count=int(row["released_count"] or 0),
+        current_task_id=row["current_task_id"],
+        stage=row["stage"],
+        message=row["message"],
     )
 
 

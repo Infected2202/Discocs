@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, replace
 import logging
@@ -9,6 +11,7 @@ from pathlib import Path
 import socket
 from threading import Lock
 from time import perf_counter
+from datetime import datetime
 import traceback
 from uuid import uuid4
 
@@ -32,7 +35,16 @@ from app.head_pack import (
 from app.logging_config import configure_logging, get_analysis_logger
 from app.recommender import Recommender, build_index
 from app.scanner import scan_music_folder
-from app.store import Store, Track, similar_track_dict, track_dict, track_listing_dict
+from app.store import (
+    AnalysisTask,
+    Store,
+    Track,
+    TrackFeature,
+    TrackPrediction,
+    similar_track_dict,
+    track_dict,
+    track_listing_dict,
+)
 
 
 configure_logging()
@@ -81,14 +93,113 @@ class AnalyzeRequest(BaseModel):
         ge=1,
         le=MAX_ANALYZE_TF_THREADS,
     )
+    local_executor_enabled: bool = True
+    max_attempts: int = Field(default=3, ge=1, le=20)
+    execution_mode: str = Field(default="both", pattern="^(both|local|remote)$")
+
+
+class WorkerRegisterRequest(BaseModel):
+    worker_id: str
+    models: list[str] = Field(default_factory=list)
+
+
+class WorkerClaimRequest(BaseModel):
+    worker_id: str
+    models: list[str] = Field(default_factory=list)
+    limit: int = Field(default=16, ge=1, le=500)
+    lease_seconds: int = Field(default=300, ge=30, le=3600)
+
+
+class WorkerResultItem(BaseModel):
+    task_id: str
+    track_id: int
+    model_name: str
+    dim: int = Field(ge=1)
+    dtype: str = "float32"
+    vector_b64: str
+    file_size: int
+    mtime: int
+
+
+class WorkerFeatureItem(BaseModel):
+    name: str
+    value: float | None = None
+    text_value: str | None = None
+    unit: str | None = None
+    confidence: float | None = None
+    extractor: str = AUDIO_FEATURE_EXTRACTOR
+
+
+class WorkerFeatureResultItem(BaseModel):
+    task_id: str
+    track_id: int
+    model_name: str = AUDIO_FEATURE_EXTRACTOR
+    file_size: int
+    mtime: int
+    features: list[WorkerFeatureItem] = Field(default_factory=list)
+
+
+class WorkerPredictionItem(BaseModel):
+    label: str
+    score: float
+    rank: int
+
+
+class WorkerHeadOutputItem(BaseModel):
+    model_name: str
+    dim: int = Field(ge=1)
+    dtype: str = "float32"
+    aggregation: str
+    scores_b64: str
+    predictions: list[WorkerPredictionItem] = Field(default_factory=list)
+
+
+class WorkerHeadResultItem(BaseModel):
+    task_id: str
+    track_id: int
+    model_name: str = "discogs-effnet-heads"
+    file_size: int
+    mtime: int
+    outputs: list[WorkerHeadOutputItem] = Field(default_factory=list)
+
+
+class WorkerSubmitRequest(BaseModel):
+    worker_id: str
+    results: list[WorkerResultItem] = Field(default_factory=list)
+    feature_results: list[WorkerFeatureResultItem] = Field(default_factory=list)
+    head_results: list[WorkerHeadResultItem] = Field(default_factory=list)
+
+
+class WorkerFailureItem(BaseModel):
+    task_id: str
+    error: str
+    error_type: str = "WorkerError"
+    stage: str = "worker"
+    retryable: bool = True
+
+
+class WorkerFailuresRequest(BaseModel):
+    worker_id: str
+    failures: list[WorkerFailureItem] = Field(default_factory=list)
+
+
+class WorkerReleaseRequest(BaseModel):
+    worker_id: str
+    task_ids: list[str] | None = None
 
 
 class AnalyzeHeadsRequest(BaseModel):
     limit: int | None = Field(default=None, ge=1)
+    local_executor_enabled: bool = True
+    max_attempts: int = Field(default=3, ge=1, le=20)
+    execution_mode: str = Field(default="both", pattern="^(both|local|remote)$")
 
 
 class AnalyzeAudioFeaturesRequest(BaseModel):
     limit: int | None = Field(default=None, ge=1)
+    local_executor_enabled: bool = True
+    max_attempts: int = Field(default=3, ge=1, le=20)
+    execution_mode: str = Field(default="both", pattern="^(both|local|remote)$")
 
 
 class DeleteTracksRequest(BaseModel):
@@ -236,6 +347,133 @@ def feature_dict(feature) -> dict[str, object]:
         "confidence": feature.confidence,
         "extractor": feature.extractor,
     }
+
+
+def analysis_task_dict(task: AnalysisTask) -> dict[str, object]:
+    return {
+        "task_id": task.id,
+        "job_id": task.job_id,
+        "track_id": task.track_id,
+        "model_name": task.model_name,
+        "status": task.status,
+        "attempts": task.attempts,
+        "max_attempts": task.max_attempts,
+        "lease_expires_at": task.lease_expires_at,
+        "path": task.path,
+        "file_size": task.file_size,
+        "mtime": task.mtime,
+        "audio_url": f"/workers/tasks/{task.id}/audio",
+    }
+
+
+def timestamp_from_iso(value: str) -> float:
+    try:
+        return datetime.fromisoformat(value).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def analysis_job_status_dict(job) -> dict[str, object]:
+    completed = job.done + job.failed
+    return {
+        "id": job.id,
+        "kind": job.kind,
+        "status": job.status,
+        "message": job.message,
+        "total": job.total,
+        "done": job.done,
+        "failed": job.failed,
+        "current": None,
+        "elapsed_seconds": 0.0,
+        "tracks_per_min": None,
+        "eta_seconds": None,
+        "error_detail": None,
+        "started_at": timestamp_from_iso(job.created_at),
+        "finished_at": timestamp_from_iso(job.finished_at) if job.finished_at else None,
+        "model": job.model_name,
+        "queued": job.queued,
+        "leased": job.leased,
+        "final_failed": job.final_failed,
+        "completed": completed,
+    }
+
+
+def analysis_worker_dict(worker) -> dict[str, object]:
+    return {
+        "worker_id": worker.worker_id,
+        "models": [model for model in worker.models.split(",") if model],
+        "status": worker.status,
+        "stage": worker.stage,
+        "message": worker.message,
+        "current_task_id": worker.current_task_id,
+        "last_seen_at": worker.last_seen_at,
+        "created_at": worker.created_at,
+        "claimed_count": worker.claimed_count,
+        "completed_count": worker.completed_count,
+        "failed_count": worker.failed_count,
+        "released_count": worker.released_count,
+    }
+
+
+def decode_worker_vector(item: WorkerResultItem) -> np.ndarray:
+    if item.dtype != "float32":
+        raise ValueError("Only float32 worker vectors are supported")
+    try:
+        raw = base64.b64decode(item.vector_b64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("Invalid base64 vector") from exc
+    expected = item.dim * np.dtype(np.float32).itemsize
+    if len(raw) != expected:
+        raise ValueError(f"Vector byte length mismatch: expected {expected}, got {len(raw)}")
+    vector = np.frombuffer(raw, dtype=np.float32).copy()
+    if not np.all(np.isfinite(vector)):
+        raise ValueError("Vector contains NaN or Inf")
+    norm = float(np.linalg.norm(vector))
+    if norm <= 0.0:
+        raise ValueError("Vector has zero norm")
+    return vector
+
+
+def decode_worker_scores(item: WorkerHeadOutputItem) -> np.ndarray:
+    if item.dtype != "float32":
+        raise ValueError("Only float32 worker scores are supported")
+    try:
+        raw = base64.b64decode(item.scores_b64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("Invalid base64 scores") from exc
+    expected = item.dim * np.dtype(np.float32).itemsize
+    if len(raw) != expected:
+        raise ValueError(f"Scores byte length mismatch: expected {expected}, got {len(raw)}")
+    scores = np.frombuffer(raw, dtype=np.float32).copy()
+    if not np.all(np.isfinite(scores)):
+        raise ValueError("Scores contain NaN or Inf")
+    return scores
+
+
+def validate_worker_task_identity(
+    store: Store,
+    task_id: str,
+    worker_id: str,
+    track_id: int,
+    model_name: str,
+    file_size: int,
+    mtime: int,
+) -> AnalysisTask:
+    task = store.get_analysis_task(task_id)
+    if task is None:
+        raise ValueError("Task not found")
+    if task.lease_owner != worker_id:
+        raise ValueError("Task is not leased by this worker")
+    if task.track_id != track_id or task.model_name != model_name:
+        raise ValueError("Task result identity mismatch")
+    if task.file_size != file_size or task.mtime != mtime:
+        raise ValueError("Task result is stale")
+    track = store.get_track(task.track_id)
+    if track is None:
+        raise ValueError("Track not found")
+    if track.file_size != task.file_size or track.mtime != task.mtime:
+        raise ValueError("Track changed after task was created")
+    return task
 
 
 @app.get("/health")
@@ -503,6 +741,7 @@ def start_scan(request: ScanRequest, background_tasks: BackgroundTasks) -> dict[
 @app.post("/jobs/analyze")
 def start_analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks) -> dict[str, object]:
     job_id = create_job("analyze", f"Waiting to analyze {request.model}")
+    local_executor_enabled = request.execution_mode in {"both", "local"} and request.local_executor_enabled
     background_tasks.add_task(
         _analyze_job,
         job_id,
@@ -510,6 +749,8 @@ def start_analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks) ->
         request.limit,
         request.workers,
         request.tf_threads,
+        local_executor_enabled,
+        request.max_attempts,
     )
     return {
         "status": "accepted",
@@ -518,7 +759,239 @@ def start_analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks) ->
         "limit": request.limit,
         "workers": request.workers,
         "tf_threads": request.tf_threads,
+        "local_executor_enabled": local_executor_enabled,
+        "execution_mode": request.execution_mode,
     }
+
+
+@app.post("/workers/register")
+def register_worker(request: WorkerRegisterRequest) -> dict[str, object]:
+    store, _settings = context()
+    store.register_analysis_worker(request.worker_id, request.models)
+    return {"status": "ok", "worker_id": request.worker_id, "models": request.models}
+
+
+@app.post("/workers/heartbeat")
+def heartbeat_worker(request: WorkerRegisterRequest) -> dict[str, object]:
+    return register_worker(request)
+
+
+@app.get("/workers")
+def list_workers() -> dict[str, object]:
+    store, _settings = context()
+    return {"workers": [analysis_worker_dict(worker) for worker in store.list_analysis_workers()]}
+
+
+@app.post("/workers/claim")
+def claim_worker_tasks(request: WorkerClaimRequest) -> dict[str, object]:
+    store, _settings = context()
+    store.register_analysis_worker(request.worker_id, request.models)
+    tasks = store.claim_analysis_tasks(
+        request.worker_id,
+        request.models,
+        limit=request.limit,
+        lease_seconds=request.lease_seconds,
+    )
+    return {"tasks": [analysis_task_dict(task) for task in tasks]}
+
+
+@app.get("/workers/tasks/{task_id}/audio")
+def get_worker_task_audio(task_id: str) -> FileResponse:
+    store, _settings = context()
+    task = store.get_analysis_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    track = store.get_track(task.track_id)
+    if track is None:
+        store.fail_analysis_task(
+            task_id,
+            error="Track not found",
+            error_type="LookupError",
+            stage="audio",
+            retryable=False,
+        )
+        raise HTTPException(status_code=404, detail="Track not found")
+    if track.file_size != task.file_size or track.mtime != task.mtime:
+        store.fail_analysis_task(
+            task_id,
+            error="Track changed after task was created",
+            error_type="StaleTaskError",
+            stage="audio",
+            retryable=False,
+        )
+        raise HTTPException(status_code=409, detail="Task file identity is stale")
+    path = Path(track.path)
+    if not path.exists() or not path.is_file():
+        store.mark_track_missing(track.id)
+        store.fail_analysis_task(
+            task_id,
+            error=f"Audio file not found: {track.path}",
+            error_type="FileNotFoundError",
+            stage="audio",
+            retryable=False,
+        )
+        raise HTTPException(status_code=410, detail="Audio file not mounted or no longer exists")
+    return FileResponse(path)
+
+
+@app.post("/workers/results")
+def submit_worker_results(request: WorkerSubmitRequest) -> dict[str, object]:
+    store, _settings = context()
+    store.update_analysis_worker(
+        request.worker_id,
+        stage="submitting",
+        message=(
+            f"submitting {len(request.results)} embedding, "
+            f"{len(request.feature_results)} feature, {len(request.head_results)} head result(s)"
+        ),
+    )
+    accepted: list[str] = []
+    rejected: list[dict[str, str]] = []
+    for item in request.results:
+        try:
+            vector = decode_worker_vector(item)
+            task = validate_worker_task_identity(
+                store,
+                item.task_id,
+                request.worker_id,
+                item.track_id,
+                item.model_name,
+                item.file_size,
+                item.mtime,
+            )
+            store.save_embedding(task.track_id, task.model_name, vector)
+            store.mark_track_available(task.track_id)
+            store.complete_analysis_task(task.id, request.worker_id)
+            accepted.append(task.id)
+        except Exception as exc:
+            rejected.append({"task_id": item.task_id, "error": str(exc)})
+            try:
+                store.fail_analysis_task(
+                    item.task_id,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    stage="submit",
+                    worker_id=request.worker_id,
+                    retryable=False,
+                )
+            except Exception:
+                logger.exception("Failed to mark worker result rejected task_id=%s", item.task_id)
+    for item in request.feature_results:
+        try:
+            task = validate_worker_task_identity(
+                store,
+                item.task_id,
+                request.worker_id,
+                item.track_id,
+                item.model_name,
+                item.file_size,
+                item.mtime,
+            )
+            features = [
+                TrackFeature(
+                    name=feature.name,
+                    value=feature.value,
+                    text_value=feature.text_value,
+                    unit=feature.unit,
+                    confidence=feature.confidence,
+                    extractor=feature.extractor,
+                )
+                for feature in item.features
+            ]
+            store.save_features(task.track_id, features)
+            store.mark_track_available(task.track_id)
+            store.complete_analysis_task(task.id, request.worker_id)
+            accepted.append(task.id)
+        except Exception as exc:
+            rejected.append({"task_id": item.task_id, "error": str(exc)})
+            try:
+                store.fail_analysis_task(
+                    item.task_id,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    stage="submit",
+                    worker_id=request.worker_id,
+                    retryable=False,
+                )
+            except Exception:
+                logger.exception("Failed to mark worker feature result rejected task_id=%s", item.task_id)
+    for item in request.head_results:
+        try:
+            task = validate_worker_task_identity(
+                store,
+                item.task_id,
+                request.worker_id,
+                item.track_id,
+                item.model_name,
+                item.file_size,
+                item.mtime,
+            )
+            for output in item.outputs:
+                scores = decode_worker_scores(output)
+                store.save_model_output(
+                    task.track_id,
+                    output.model_name,
+                    scores,
+                    output.aggregation,
+                )
+                store.save_predictions(
+                    task.track_id,
+                    output.model_name,
+                    [
+                        TrackPrediction(
+                            label=prediction.label,
+                            score=prediction.score,
+                            rank=prediction.rank,
+                        )
+                        for prediction in output.predictions
+                    ],
+                )
+            store.mark_track_available(task.track_id)
+            store.complete_analysis_task(task.id, request.worker_id)
+            accepted.append(task.id)
+        except Exception as exc:
+            rejected.append({"task_id": item.task_id, "error": str(exc)})
+            try:
+                store.fail_analysis_task(
+                    item.task_id,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    stage="submit",
+                    worker_id=request.worker_id,
+                    retryable=False,
+                )
+            except Exception:
+                logger.exception("Failed to mark worker head result rejected task_id=%s", item.task_id)
+    return {"status": "ok", "accepted": accepted, "rejected": rejected}
+
+
+@app.post("/workers/failures")
+def submit_worker_failures(request: WorkerFailuresRequest) -> dict[str, object]:
+    store, _settings = context()
+    store.update_analysis_worker(
+        request.worker_id,
+        stage="reporting_failures",
+        message=f"reporting {len(request.failures)} failure(s)",
+    )
+    failed: list[str] = []
+    for item in request.failures:
+        store.fail_analysis_task(
+            item.task_id,
+            error=item.error,
+            error_type=item.error_type,
+            stage=item.stage,
+            worker_id=request.worker_id,
+            retryable=item.retryable,
+        )
+        failed.append(item.task_id)
+    return {"status": "ok", "failed": failed}
+
+
+@app.post("/workers/release")
+def release_worker_tasks(request: WorkerReleaseRequest) -> dict[str, object]:
+    store, _settings = context()
+    released = store.release_analysis_tasks(request.worker_id, request.task_ids)
+    return {"status": "ok", "released": released}
 
 
 @app.post("/models/download-head-pack")
@@ -546,11 +1019,20 @@ def start_analyze_heads(
     background_tasks: BackgroundTasks,
 ) -> dict[str, object]:
     job_id = create_job("analyze-heads", "Waiting to analyze Discogs-EffNet heads")
-    background_tasks.add_task(_analyze_heads_job, job_id, request.limit)
+    local_enabled = request.local_executor_enabled and request.execution_mode != "remote"
+    background_tasks.add_task(
+        _analyze_heads_job,
+        job_id,
+        request.limit,
+        local_enabled,
+        request.max_attempts,
+    )
     return {
         "status": "accepted",
         "job_id": job_id,
         "limit": request.limit,
+        "execution_mode": request.execution_mode,
+        "local_executor_enabled": local_enabled,
     }
 
 
@@ -560,8 +1042,21 @@ def start_analyze_audio_features(
     background_tasks: BackgroundTasks,
 ) -> dict[str, object]:
     job_id = create_job("analyze-audio-features", "Waiting to analyze audio features")
-    background_tasks.add_task(_analyze_audio_features_job, job_id, request.limit)
-    return {"status": "accepted", "job_id": job_id, "limit": request.limit}
+    local_enabled = request.local_executor_enabled and request.execution_mode != "remote"
+    background_tasks.add_task(
+        _analyze_audio_features_job,
+        job_id,
+        request.limit,
+        local_enabled,
+        request.max_attempts,
+    )
+    return {
+        "status": "accepted",
+        "job_id": job_id,
+        "limit": request.limit,
+        "execution_mode": request.execution_mode,
+        "local_executor_enabled": local_enabled,
+    }
 
 
 @app.post("/jobs/analyze-genres")
@@ -588,16 +1083,24 @@ def start_check_missing_files(background_tasks: BackgroundTasks) -> dict[str, ob
 
 @app.get("/jobs")
 def list_jobs() -> dict[str, object]:
+    store, _settings = context()
+    durable_jobs = {job.id: analysis_job_status_dict(job) for job in store.recent_analysis_jobs(limit=20)}
     with JOBS_LOCK:
         now = perf_counter()
         jobs = []
         for job in JOBS.values():
+            if job.id in durable_jobs:
+                continue
             data = asdict(job)
             if job.status in {"queued", "running"}:
                 data["elapsed_seconds"] = max(0.0, now - job.started_at)
             jobs.append(data)
+    jobs.extend(durable_jobs.values())
     jobs.sort(key=lambda job: job["started_at"], reverse=True)
-    return {"jobs": jobs[:20]}
+    return {
+        "jobs": jobs[:20],
+        "workers": [analysis_worker_dict(worker) for worker in store.list_analysis_workers()],
+    }
 
 
 @app.post("/index/rebuild")
@@ -702,6 +1205,7 @@ def _check_missing_files_job(job_id: str) -> None:
 
 @dataclass(frozen=True)
 class AnalyzeResult:
+    task_id: str | None
     track_id: int
     path: str
     status: str
@@ -773,14 +1277,15 @@ def _init_embedding_worker(settings: Settings, model: str, tf_threads: int) -> N
     analysis_logger.info("Initialized embedding worker model=%s tf_threads=%s", model, tf_threads)
 
 
-def _extract_embedding_worker(track_id: int, path: str) -> AnalyzeResult:
+def _extract_embedding_worker(task_id: str | None, track_id: int, path: str) -> AnalyzeResult:
     if _WORKER_EMBEDDER is None:
         raise RuntimeError("Embedding worker was not initialized")
     try:
         vector = _WORKER_EMBEDDER.extract_track_vector(Path(path))
-        return AnalyzeResult(track_id=track_id, path=path, status="ok", vector=vector)
+        return AnalyzeResult(task_id=task_id, track_id=track_id, path=path, status="ok", vector=vector)
     except Exception as exc:
         return AnalyzeResult(
+            task_id=task_id,
             track_id=track_id,
             path=path,
             status="failed",
@@ -791,9 +1296,10 @@ def _extract_embedding_worker(track_id: int, path: str) -> AnalyzeResult:
 def _extract_embedding_local(embedder: DiscogsEffnetEmbedder, track: Track) -> AnalyzeResult:
     try:
         vector = embedder.extract_track_vector(Path(track.path))
-        return AnalyzeResult(track_id=track.id, path=track.path, status="ok", vector=vector)
+        return AnalyzeResult(task_id=None, track_id=track.id, path=track.path, status="ok", vector=vector)
     except Exception as exc:
         return AnalyzeResult(
+            task_id=None,
             track_id=track.id,
             path=track.path,
             status="failed",
@@ -863,7 +1369,7 @@ def _iter_analyze_results(
     register_analyze_executor(executor)
     try:
         future_to_track = {
-            executor.submit(_extract_embedding_worker, track.id, track.path): track
+            executor.submit(_extract_embedding_worker, None, track.id, track.path): track
             for track in tracks
         }
         for future in as_completed(future_to_track):
@@ -874,8 +1380,78 @@ def _iter_analyze_results(
                 yield future.result()
             except Exception as exc:
                 yield AnalyzeResult(
+                    task_id=None,
                     track_id=track.id,
                     path=track.path,
+                    status="failed",
+                    **analyze_failure_fields(exc, "predict"),
+                )
+    finally:
+        unregister_analyze_executor(executor)
+        if SHUTDOWN_REQUESTED:
+            terminate_process_pool(executor)
+        else:
+            try:
+                executor.shutdown(wait=True, cancel_futures=False)
+            except Exception:
+                pass
+
+
+def task_to_track(task: AnalysisTask) -> Track:
+    return Track(
+        id=task.track_id,
+        path=task.path,
+        artist=None,
+        title=None,
+        album=None,
+        duration=None,
+        file_size=task.file_size,
+        mtime=task.mtime,
+    )
+
+
+def _iter_analyze_task_results(
+    tasks: list[AnalysisTask],
+    settings: Settings,
+    model: str,
+    workers: int,
+    tf_threads: int,
+):
+    if SHUTDOWN_REQUESTED:
+        return
+    configure_analyze_runtime(tf_threads)
+    if workers <= 1:
+        embedder = DiscogsEffnetEmbedder(settings, model)
+        for task in tasks:
+            if SHUTDOWN_REQUESTED:
+                return
+            result = _extract_embedding_local(embedder, task_to_track(task))
+            yield replace(result, task_id=task.id)
+        return
+
+    executor = ProcessPoolExecutor(
+        max_workers=workers,
+        initializer=_init_embedding_worker,
+        initargs=(settings, model, tf_threads),
+        mp_context=multiprocessing.get_context("spawn"),
+    )
+    register_analyze_executor(executor)
+    try:
+        future_to_task = {
+            executor.submit(_extract_embedding_worker, task.id, task.track_id, task.path): task
+            for task in tasks
+        }
+        for future in as_completed(future_to_task):
+            if SHUTDOWN_REQUESTED:
+                break
+            task = future_to_task[future]
+            try:
+                yield future.result()
+            except Exception as exc:
+                yield AnalyzeResult(
+                    task_id=task.id,
+                    track_id=task.track_id,
+                    path=task.path,
                     status="failed",
                     **analyze_failure_fields(exc, "predict"),
                 )
@@ -896,22 +1472,33 @@ def _analyze_job(
     limit: int | None,
     workers: int = DEFAULT_ANALYZE_WORKERS,
     tf_threads: int = DEFAULT_ANALYZE_TF_THREADS,
+    local_executor_enabled: bool = True,
+    max_attempts: int = 3,
 ) -> None:
     try:
         if SHUTDOWN_REQUESTED:
             finish_job(job_id, "failed", "Analyze cancelled during application shutdown")
             return
         store, settings = context()
-        tracks = store.list_tracks_missing_embedding(model, limit=limit)
-        total = len(tracks)
+        durable_job = store.create_analysis_job(
+            model,
+            limit,
+            local_executor_enabled=local_executor_enabled,
+            workers=workers,
+            tf_threads=tf_threads,
+            max_attempts=max_attempts,
+            job_id=job_id,
+        )
+        total = durable_job.total
         started_at = perf_counter()
         analysis_logger.info(
-            "Starting analyze job job_id=%s model=%s limit=%s workers=%s tf_threads=%s total=%s",
+            "Starting analyze job job_id=%s model=%s limit=%s workers=%s tf_threads=%s local_executor=%s total=%s",
             job_id,
             model,
             limit,
             workers,
             tf_threads,
+            local_executor_enabled,
             total,
         )
         update_job(
@@ -924,62 +1511,116 @@ def _analyze_job(
             ),
             **analyze_progress(started_at, total, 0, 0),
         )
+        if not local_executor_enabled or total == 0:
+            if total == 0:
+                finish_job(job_id, "completed", "Analyzed 0 tracks, failed 0")
+            else:
+                update_job(job_id, status="running", message=f"Queued {total} tracks for remote workers")
+            return
+
+        local_worker_id = f"local-{job_id}"
         done = 0
         failed = 0
-        for result in _iter_analyze_results(tracks, settings, model, workers, tf_threads):
+        while True:
             if SHUTDOWN_REQUESTED:
                 finish_job(job_id, "failed", "Analyze cancelled during application shutdown")
                 return
-            update_job(job_id, current=result.path, message=f"Analyzing {result.path}")
-            if result.status == "ok" and result.vector is not None:
-                try:
-                    store.save_embedding(result.track_id, model, result.vector)
-                    store.mark_track_available(result.track_id)
-                    done += 1
-                except Exception:
-                    failed += 1
-                    analysis_logger.exception(
-                        "Analyze save failed job_id=%s track_id=%s path=%s model=%s stage=save",
+            tasks = store.claim_analysis_tasks(
+                local_worker_id,
+                [model],
+                limit=max(workers, 1),
+                lease_seconds=3600,
+            )
+            if not tasks:
+                durable_job = store.get_analysis_job(job_id)
+                if durable_job is None or durable_job.status == "completed":
+                    break
+                update_job(
+                    job_id,
+                    done=durable_job.done,
+                    failed=durable_job.failed,
+                    message=durable_job.message,
+                    **analyze_progress(started_at, total, durable_job.done, durable_job.failed),
+                )
+                return
+            for result in _iter_analyze_task_results(tasks, settings, model, workers, tf_threads):
+                if SHUTDOWN_REQUESTED:
+                    finish_job(job_id, "failed", "Analyze cancelled during application shutdown")
+                    return
+                update_job(job_id, current=result.path, message=f"Analyzing {result.path}")
+                if result.task_id is None:
+                    continue
+                if result.status == "ok" and result.vector is not None:
+                    try:
+                        store.save_embedding(result.track_id, model, result.vector)
+                        store.mark_track_available(result.track_id)
+                        store.complete_analysis_task(result.task_id, local_worker_id)
+                    except Exception as exc:
+                        store.fail_analysis_task(
+                            result.task_id,
+                            error=str(exc),
+                            error_type=type(exc).__name__,
+                            stage="save",
+                            worker_id=local_worker_id,
+                            retryable=False,
+                        )
+                        analysis_logger.exception(
+                            "Analyze save failed job_id=%s track_id=%s path=%s model=%s stage=save",
+                            job_id,
+                            result.track_id,
+                            result.path,
+                            model,
+                        )
+                else:
+                    mark_missing_after_failure(store, result)
+                    store.fail_analysis_task(
+                        result.task_id,
+                        error=result.error or "Analyze failed",
+                        error_type=result.error_type or "AnalyzeError",
+                        stage=result.stage or "predict",
+                        worker_id=local_worker_id,
+                        retryable=result.error_type != "FileNotFoundError",
+                    )
+                    analysis_logger.error(
+                        "Analyze track failed job_id=%s track_id=%s path=%s model=%s stage=%s error_type=%s error=%s\n%s",
                         job_id,
                         result.track_id,
                         result.path,
                         model,
+                        result.stage,
+                        result.error_type,
+                        result.error,
+                        result.traceback or "",
                     )
-            else:
-                failed += 1
-                mark_missing_after_failure(store, result)
-                analysis_logger.error(
-                    "Analyze track failed job_id=%s track_id=%s path=%s model=%s stage=%s error_type=%s error=%s\n%s",
-                    job_id,
-                    result.track_id,
-                    result.path,
-                    model,
-                    result.stage,
-                    result.error_type,
-                    result.error,
-                    result.traceback or "",
-                )
-            update_job(
-                job_id,
-                done=done,
-                failed=failed,
-                current=result.path,
-                message=f"Analyzed {done}/{total} tracks, failed {failed}",
-                **analyze_progress(started_at, total, done, failed),
-            )
-            if (done + failed) % 25 == 0 or done + failed == total:
-                progress = analyze_progress(started_at, total, done, failed)
-                analysis_logger.info(
-                    "Analyze progress job_id=%s model=%s done=%s failed=%s total=%s elapsed=%.1f tracks_per_min=%s eta_seconds=%s",
-                    job_id,
-                    model,
-                    done,
-                    failed,
-                    total,
-                    progress["elapsed_seconds"],
-                    progress["tracks_per_min"],
-                    progress["eta_seconds"],
-                )
+                durable_job = store.get_analysis_job(job_id)
+                if durable_job is not None:
+                    done = durable_job.done
+                    failed = durable_job.failed
+                    update_job(
+                        job_id,
+                        done=done,
+                        failed=failed,
+                        current=result.path,
+                        message=durable_job.message,
+                        **analyze_progress(started_at, total, done, failed),
+                    )
+                    if (done + failed) % 25 == 0 or done + failed == total:
+                        progress = analyze_progress(started_at, total, done, failed)
+                        analysis_logger.info(
+                            "Analyze progress job_id=%s model=%s done=%s failed=%s total=%s elapsed=%.1f tracks_per_min=%s eta_seconds=%s",
+                            job_id,
+                            model,
+                            done,
+                            failed,
+                            total,
+                            progress["elapsed_seconds"],
+                            progress["tracks_per_min"],
+                            progress["eta_seconds"],
+                        )
+        durable_job = store.get_analysis_job(job_id)
+        if durable_job is not None:
+            done = durable_job.done
+            failed = durable_job.failed
         analysis_logger.info(
             "Finished analyze job job_id=%s model=%s done=%s failed=%s total=%s",
             job_id,
@@ -1018,6 +1659,8 @@ def _extract_heads_local(
 def _analyze_heads_job(
     job_id: str,
     limit: int | None,
+    local_executor_enabled: bool = True,
+    max_attempts: int = 3,
 ) -> None:
     try:
         if SHUTDOWN_REQUESTED:
@@ -1026,7 +1669,16 @@ def _analyze_heads_job(
         store, settings = context()
         head_model_names = [head.id for head in DISCOGS_EFFNET_HEADS]
         tracks = store.list_tracks_missing_head_pack(head_model_names, limit=limit)
-        total = len(tracks)
+        durable_job = store.create_analysis_job(
+            "discogs-effnet-heads",
+            limit,
+            kind="analyze-heads",
+            tracks=tracks,
+            local_executor_enabled=local_executor_enabled,
+            max_attempts=max_attempts,
+            job_id=job_id,
+        )
+        total = durable_job.total
         started_at = perf_counter()
         analysis_logger.info(
             "Starting analyze-heads job job_id=%s limit=%s total=%s heads=%s",
@@ -1044,14 +1696,48 @@ def _analyze_heads_job(
         )
         done = 0
         failed = 0
-        if total == 0:
-            finish_job(job_id, "completed", "Analyzed heads for 0 tracks, failed 0")
+        if not local_executor_enabled or total == 0:
+            if total == 0:
+                finish_job(job_id, "completed", "Analyzed heads for 0 tracks, failed 0")
+            else:
+                update_job(job_id, status="running", message=f"Queued {total} head analysis tasks for remote workers")
             return
         analyzer = DiscogsEffnetHeadPackAnalyzer(settings)
-        for track in tracks:
+        local_worker_id = f"local-{job_id}"
+        while True:
             if SHUTDOWN_REQUESTED:
                 finish_job(job_id, "failed", "Head analysis cancelled during application shutdown")
                 return
+            tasks = store.claim_analysis_tasks(
+                local_worker_id,
+                ["discogs-effnet-heads"],
+                limit=1,
+                lease_seconds=3600,
+            )
+            if not tasks:
+                durable_job = store.get_analysis_job(job_id)
+                if durable_job is None or durable_job.status == "completed":
+                    break
+                update_job(
+                    job_id,
+                    done=durable_job.done,
+                    failed=durable_job.failed,
+                    message=durable_job.message,
+                    **analyze_progress(started_at, total, durable_job.done, durable_job.failed),
+                )
+                return
+            task = tasks[0]
+            track = store.get_track(task.track_id)
+            if track is None:
+                store.fail_analysis_task(
+                    task.id,
+                    error="Track not found",
+                    error_type="ValueError",
+                    stage="load_track",
+                    worker_id=local_worker_id,
+                    retryable=False,
+                )
+                continue
             update_job(job_id, current=track.path, message=f"Analyzing heads for {track.path}")
             result = _extract_heads_local(analyzer, track)
             if result.status == "ok" and result.outputs is not None:
@@ -1069,9 +1755,16 @@ def _analyze_heads_job(
                             output.predictions,
                         )
                     store.mark_track_available(result.track_id)
-                    done += 1
-                except Exception:
-                    failed += 1
+                    store.complete_analysis_task(task.id, local_worker_id)
+                except Exception as exc:
+                    store.fail_analysis_task(
+                        task.id,
+                        error=str(exc),
+                        error_type=type(exc).__name__,
+                        stage="save",
+                        worker_id=local_worker_id,
+                        retryable=False,
+                    )
                     analysis_logger.exception(
                         "Head analysis save failed job_id=%s track_id=%s path=%s stage=save",
                         job_id,
@@ -1079,8 +1772,15 @@ def _analyze_heads_job(
                         result.path,
                     )
             else:
-                failed += 1
                 mark_missing_after_failure(store, result)
+                store.fail_analysis_task(
+                    task.id,
+                    error=result.error or "Head analysis failed",
+                    error_type=result.error_type or "HeadAnalyzeError",
+                    stage=result.stage or "predict",
+                    worker_id=local_worker_id,
+                    retryable=result.error_type != "FileNotFoundError",
+                )
                 analysis_logger.error(
                     "Head analysis track failed job_id=%s track_id=%s path=%s stage=%s error_type=%s error=%s\n%s",
                     job_id,
@@ -1091,12 +1791,17 @@ def _analyze_heads_job(
                     result.error,
                     result.traceback or "",
                 )
+            durable_job = store.get_analysis_job(job_id)
+            if durable_job is None:
+                continue
+            done = durable_job.done
+            failed = durable_job.failed
             update_job(
                 job_id,
                 done=done,
                 failed=failed,
                 current=result.path,
-                message=f"Analyzed heads for {done}/{total} tracks, failed {failed}",
+                message=durable_job.message,
                 **analyze_progress(started_at, total, done, failed),
             )
             if (done + failed) % 25 == 0 or done + failed == total:
@@ -1201,14 +1906,28 @@ def _extract_audio_features_local(
         )
 
 
-def _analyze_audio_features_job(job_id: str, limit: int | None) -> None:
+def _analyze_audio_features_job(
+    job_id: str,
+    limit: int | None,
+    local_executor_enabled: bool = True,
+    max_attempts: int = 3,
+) -> None:
     try:
         if SHUTDOWN_REQUESTED:
             finish_job(job_id, "failed", "Audio feature analysis cancelled during application shutdown")
             return
         store, _settings = context()
         tracks = store.list_tracks_missing_features(AUDIO_FEATURE_EXTRACTOR, limit=limit)
-        total = len(tracks)
+        durable_job = store.create_analysis_job(
+            AUDIO_FEATURE_EXTRACTOR,
+            limit,
+            kind="analyze-audio-features",
+            tracks=tracks,
+            local_executor_enabled=local_executor_enabled,
+            max_attempts=max_attempts,
+            job_id=job_id,
+        )
+        total = durable_job.total
         started_at = perf_counter()
         analysis_logger.info(
             "Starting analyze-audio-features job job_id=%s limit=%s total=%s extractor=%s",
@@ -1226,23 +1945,64 @@ def _analyze_audio_features_job(job_id: str, limit: int | None) -> None:
         )
         done = 0
         failed = 0
-        if total == 0:
-            finish_job(job_id, "completed", "Analyzed audio features for 0 tracks, failed 0")
+        if not local_executor_enabled or total == 0:
+            if total == 0:
+                finish_job(job_id, "completed", "Analyzed audio features for 0 tracks, failed 0")
+            else:
+                update_job(job_id, status="running", message=f"Queued {total} audio feature tasks for remote workers")
             return
         analyzer = AudioFeatureAnalyzer()
-        for track in tracks:
+        local_worker_id = f"local-{job_id}"
+        while True:
             if SHUTDOWN_REQUESTED:
                 finish_job(job_id, "failed", "Audio feature analysis cancelled during application shutdown")
                 return
+            tasks = store.claim_analysis_tasks(
+                local_worker_id,
+                [AUDIO_FEATURE_EXTRACTOR],
+                limit=1,
+                lease_seconds=3600,
+            )
+            if not tasks:
+                durable_job = store.get_analysis_job(job_id)
+                if durable_job is None or durable_job.status == "completed":
+                    break
+                update_job(
+                    job_id,
+                    done=durable_job.done,
+                    failed=durable_job.failed,
+                    message=durable_job.message,
+                    **analyze_progress(started_at, total, durable_job.done, durable_job.failed),
+                )
+                return
+            task = tasks[0]
+            track = store.get_track(task.track_id)
+            if track is None:
+                store.fail_analysis_task(
+                    task.id,
+                    error="Track not found",
+                    error_type="ValueError",
+                    stage="load_track",
+                    worker_id=local_worker_id,
+                    retryable=False,
+                )
+                continue
             update_job(job_id, current=track.path, message=f"Analyzing audio features for {track.path}")
             result = _extract_audio_features_local(analyzer, track)
             if result.status == "ok" and result.features is not None:
                 try:
                     store.save_features(result.track_id, result.features)
                     store.mark_track_available(result.track_id)
-                    done += 1
-                except Exception:
-                    failed += 1
+                    store.complete_analysis_task(task.id, local_worker_id)
+                except Exception as exc:
+                    store.fail_analysis_task(
+                        task.id,
+                        error=str(exc),
+                        error_type=type(exc).__name__,
+                        stage="save",
+                        worker_id=local_worker_id,
+                        retryable=False,
+                    )
                     analysis_logger.exception(
                         "Audio feature save failed job_id=%s track_id=%s path=%s extractor=%s stage=save",
                         job_id,
@@ -1251,8 +2011,15 @@ def _analyze_audio_features_job(job_id: str, limit: int | None) -> None:
                         AUDIO_FEATURE_EXTRACTOR,
                     )
             else:
-                failed += 1
                 mark_missing_after_failure(store, result)
+                store.fail_analysis_task(
+                    task.id,
+                    error=result.error or "Audio feature analysis failed",
+                    error_type=result.error_type or "AudioFeatureError",
+                    stage=result.stage or "extract",
+                    worker_id=local_worker_id,
+                    retryable=result.error_type != "FileNotFoundError",
+                )
                 analysis_logger.error(
                     "Audio feature track failed job_id=%s track_id=%s path=%s extractor=%s stage=%s error_type=%s error=%s\n%s",
                     job_id,
@@ -1264,12 +2031,17 @@ def _analyze_audio_features_job(job_id: str, limit: int | None) -> None:
                     result.error,
                     result.traceback or "",
                 )
+            durable_job = store.get_analysis_job(job_id)
+            if durable_job is None:
+                continue
+            done = durable_job.done
+            failed = durable_job.failed
             update_job(
                 job_id,
                 done=done,
                 failed=failed,
                 current=result.path,
-                message=f"Analyzed audio features for {done}/{total} tracks, failed {failed}",
+                message=durable_job.message,
                 **analyze_progress(started_at, total, done, failed),
             )
             if (done + failed) % 25 == 0 or done + failed == total:
@@ -1644,6 +2416,10 @@ UI_HTML = r"""
           <h2>Jobs</h2>
           <div id="jobs" class="jobs"></div>
         </div>
+        <div class="panel">
+          <h2>Workers</h2>
+          <div id="workers" class="jobs"></div>
+        </div>
       </section>
       <section id="settings" class="section">
         <div class="panel">
@@ -1661,11 +2437,43 @@ UI_HTML = r"""
         <label><span class="label-title">Analyze limit <span class="info" tabindex="0" data-tooltip="Maximum number of missing tracks to process in one job. Empty means all missing tracks. Smaller batches are easier to test.">(i)</span></span>
           <input id="limit" type="number" min="1" value="20">
         </label>
+        <label><span class="label-title">Analyze execution <span class="info" tabindex="0" data-tooltip="Choose where embedding analyze tasks are executed. Remote only queues tasks for HTTP pull workers; local only uses this server; local + remote lets both claim tasks.">(i)</span></span>
+          <select id="analyzeExecutionMode" onchange="refreshWorkerCommand()">
+            <option value="both">Local + remote</option>
+            <option value="remote">Remote only</option>
+            <option value="local">Local only</option>
+          </select>
+        </label>
         <label><span class="label-title">Analyze workers <span class="info" tabindex="0" data-tooltip="Number of analyzer processes. More workers can improve throughput but use more RAM and may slow each individual prediction. Current measured default: 4.">(i)</span></span>
           <input id="workers" type="number" min="1" value="4">
         </label>
         <label><span class="label-title">Analyze TF threads <span class="info" tabindex="0" data-tooltip="TensorFlow/OMP threads per analyzer process. Too high causes contention; benchmarked default is 4 with 4 workers.">(i)</span></span>
           <input id="tfThreads" type="number" min="1" value="4">
+        </label>
+        <h3>Remote worker</h3>
+        <label><span class="label-title">Server URL for worker <span class="info" tabindex="0" data-tooltip="Base URL that the remote machine can reach. Use the host/IP running this web app, not localhost unless the worker runs on the same machine.">(i)</span></span>
+          <input id="workerServerUrl" value="http://127.0.0.1:8711" oninput="refreshWorkerCommand()">
+        </label>
+        <label><span class="label-title">Worker ID <span class="info" tabindex="0" data-tooltip="Stable name shown in Jobs / Workers. Use a different ID for each remote machine.">(i)</span></span>
+          <input id="workerId" value="gpu-4090-1" oninput="refreshWorkerCommand()">
+        </label>
+        <label><span class="label-title">Claim batch size <span class="info" tabindex="0" data-tooltip="How many queued tasks the worker asks for in one claim. Higher values reduce API round trips.">(i)</span></span>
+          <input id="workerClaimBatchSize" type="number" min="1" value="32" oninput="refreshWorkerCommand()">
+        </label>
+        <label><span class="label-title">Max in-flight tasks <span class="info" tabindex="0" data-tooltip="Maximum leased tasks held by the worker while it downloads and processes audio. Keep this high enough to avoid GPU starvation.">(i)</span></span>
+          <input id="workerMaxInflightTasks" type="number" min="1" value="128" oninput="refreshWorkerCommand()">
+        </label>
+        <label><span class="label-title">Download concurrency <span class="info" tabindex="0" data-tooltip="How many source audio files the worker downloads at the same time. Useful on fast LAN storage.">(i)</span></span>
+          <input id="workerDownloadConcurrency" type="number" min="1" value="8" oninput="refreshWorkerCommand()">
+        </label>
+        <label><span class="label-title">Submit batch size <span class="info" tabindex="0" data-tooltip="How many results/failures the worker sends back in one request.">(i)</span></span>
+          <input id="workerSubmitBatchSize" type="number" min="1" value="32" oninput="refreshWorkerCommand()">
+        </label>
+        <label><span class="label-title">Lease seconds <span class="info" tabindex="0" data-tooltip="How long the server waits before returning an unfinished leased task to the queue. Increase for slow models or long tracks.">(i)</span></span>
+          <input id="workerLeaseSeconds" type="number" min="30" value="900" oninput="refreshWorkerCommand()">
+        </label>
+        <label><span class="label-title">Worker command</span>
+          <textarea id="workerCommand" rows="5" readonly></textarea>
         </label>
         <label><span class="label-title">Results <span class="info" tabindex="0" data-tooltip="Number of similar tracks requested for the current seed. Higher values return a wider list but may include weaker matches.">(i)</span></span>
           <input id="k" type="number" min="1" max="100" value="30">
@@ -1702,7 +2510,12 @@ UI_HTML = r"""
   </div>
   <script>
     const SETTINGS_KEY = "discocs.settings.v1";
-    const SETTINGS_FIELDS = ["musicDir", "model", "limit", "workers", "tfThreads", "k", "maxPerArtist", "excludeSameAlbum"];
+    const SETTINGS_FIELDS = [
+      "musicDir", "model", "limit", "analyzeExecutionMode", "workers", "tfThreads",
+      "workerServerUrl", "workerId", "workerClaimBatchSize", "workerMaxInflightTasks",
+      "workerDownloadConcurrency", "workerSubmitBatchSize", "workerLeaseSeconds",
+      "k", "maxPerArtist", "excludeSameAlbum"
+    ];
     let seedId = null;
     let seedTrack = null;
     let activeTrackId = null;
@@ -1767,6 +2580,33 @@ UI_HTML = r"""
         element.addEventListener("change", saveSettings);
         element.addEventListener("input", saveSettings);
       });
+    }
+    function workerSetting(id, fallback) {
+      const element = document.getElementById(id);
+      return element && element.value ? element.value : fallback;
+    }
+    function shellQuote(value) {
+      const textValue = String(value || "");
+      return textValue.includes(" ") ? `"${textValue.replace(/"/g, '\\"')}"` : textValue;
+    }
+    function refreshWorkerCommand() {
+      const server = workerSetting("workerServerUrl", "http://127.0.0.1:8711");
+      const workerId = workerSetting("workerId", "gpu-4090-1");
+      const command = [
+        "recs worker",
+        "--server", shellQuote(server),
+        "--worker-id", shellQuote(workerId),
+        "--models", shellQuote(model()),
+        "--models", "audio_features_v1",
+        "--models", "discogs-effnet-heads",
+        "--claim-batch-size", workerSetting("workerClaimBatchSize", "32"),
+        "--max-inflight-tasks", workerSetting("workerMaxInflightTasks", "128"),
+        "--download-concurrency", workerSetting("workerDownloadConcurrency", "8"),
+        "--submit-batch-size", workerSetting("workerSubmitBatchSize", "32"),
+        "--lease-seconds", workerSetting("workerLeaseSeconds", "900")
+      ].join(" ");
+      const target = document.getElementById("workerCommand");
+      if (target) target.value = command;
     }
     function showSection(id) {
       document.querySelectorAll(".section").forEach(section => section.classList.toggle("active", section.id === id));
@@ -2168,6 +3008,7 @@ UI_HTML = r"""
       const rawLimit = document.getElementById("limit").value;
       const rawWorkers = document.getElementById("workers").value;
       const rawTfThreads = document.getElementById("tfThreads").value;
+      const executionMode = document.getElementById("analyzeExecutionMode").value;
       const parsedLimit = rawLimit ? Number(rawLimit) : null;
       await json("/jobs/analyze", {
         method: "POST", headers: {"Content-Type": "application/json"},
@@ -2175,7 +3016,9 @@ UI_HTML = r"""
           model: model(),
           limit: parsedLimit && parsedLimit > 0 ? parsedLimit : null,
           workers: rawWorkers ? Number(rawWorkers) : 4,
-          tf_threads: rawTfThreads ? Number(rawTfThreads) : 4
+          tf_threads: rawTfThreads ? Number(rawTfThreads) : 4,
+          execution_mode: executionMode,
+          local_executor_enabled: executionMode !== "remote"
         })
       });
       await refreshJobs();
@@ -2186,22 +3029,28 @@ UI_HTML = r"""
     }
     async function startAnalyzeHeads() {
       const rawLimit = document.getElementById("limit").value;
+      const executionMode = document.getElementById("analyzeExecutionMode").value;
       const parsedLimit = rawLimit ? Number(rawLimit) : null;
       await json("/jobs/analyze-heads", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
-          limit: parsedLimit && parsedLimit > 0 ? parsedLimit : null
+          limit: parsedLimit && parsedLimit > 0 ? parsedLimit : null,
+          execution_mode: executionMode,
+          local_executor_enabled: executionMode !== "remote"
         })
       });
       await refreshJobs();
     }
     async function startAnalyzeAudioFeatures() {
       const rawLimit = document.getElementById("limit").value;
+      const executionMode = document.getElementById("analyzeExecutionMode").value;
       const parsedLimit = rawLimit ? Number(rawLimit) : null;
       await json("/jobs/analyze-audio-features", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
-          limit: parsedLimit && parsedLimit > 0 ? parsedLimit : null
+          limit: parsedLimit && parsedLimit > 0 ? parsedLimit : null,
+          execution_mode: executionMode,
+          local_executor_enabled: executionMode !== "remote"
         })
       });
       await refreshJobs();
@@ -2245,6 +3094,18 @@ UI_HTML = r"""
       }).join("");
       document.getElementById("jobs").innerHTML = html;
       document.getElementById("dashboardJobs").innerHTML = html || `<div class="meta">No jobs yet</div>`;
+      const workerHtml = (data.workers || []).map(worker => `
+        <div class="job status-${worker.status}">
+          <div class="row" style="justify-content:space-between">
+            <strong>${text(worker.worker_id)}</strong><span class="pill">${text(worker.status)}</span>
+          </div>
+          <div class="meta">${text((worker.models || []).join(", "))}</div>
+          <div class="meta">${text(worker.stage || "idle")}${worker.message ? ` - ${text(worker.message)}` : ""}</div>
+          <div class="meta">claimed ${worker.claimed_count || 0}, completed ${worker.completed_count || 0}, failed ${worker.failed_count || 0}, released ${worker.released_count || 0}</div>
+          ${worker.current_task_id ? `<div class="meta">current: ${text(worker.current_task_id)}</div>` : ""}
+          <div class="meta">last seen: ${text(worker.last_seen_at || "")}</div>
+        </div>`).join("");
+      document.getElementById("workers").innerHTML = workerHtml || `<div class="meta">No workers seen yet</div>`;
     }
     async function refreshAll() {
       await refreshStats();
@@ -2255,6 +3116,7 @@ UI_HTML = r"""
       renderSeedBasket();
     }
     document.getElementById("model").addEventListener("change", refreshAll);
+    document.getElementById("model").addEventListener("change", refreshWorkerCommand);
     document.getElementById("query").addEventListener("keydown", event => {
       if (event.key === "Enter") searchTracks();
     });
@@ -2269,6 +3131,7 @@ UI_HTML = r"""
     });
     loadSettings();
     bindSettingsAutosave();
+    refreshWorkerCommand();
     refreshAll();
     setInterval(() => { refreshStats(); refreshJobs(); }, 2500);
   </script>

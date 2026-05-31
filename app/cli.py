@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
 import logging
 from pathlib import Path
+import signal
+import tempfile
+import time
 from time import perf_counter
 from typing import Annotated
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+from urllib.parse import urljoin
 
 import typer
+import numpy as np
 
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR, AudioFeatureAnalyzer
 from app.config import Settings
@@ -154,6 +164,374 @@ def analyze(
         store.count_embeddings(model),
     )
     typer.echo(f"analyzed={done} failed={failed} embeddings={store.count_embeddings(model)}")
+
+
+def post_json(server: str, path: str, payload: dict[str, object]) -> dict[str, object]:
+    url = urljoin(server.rstrip("/") + "/", path.lstrip("/"))
+    data = json.dumps(payload).encode("utf-8")
+    request = Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=60) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def download_task_audio(server: str, audio_url: str, target: Path) -> None:
+    url = urljoin(server.rstrip("/") + "/", audio_url.lstrip("/"))
+    with urlopen(url, timeout=300) as response:
+        target.write_bytes(response.read())
+
+
+def submit_worker_buffers(
+    server: str,
+    worker_id: str,
+    results: list[dict[str, object]],
+    feature_results: list[dict[str, object]],
+    head_results: list[dict[str, object]],
+    failures: list[dict[str, object]],
+) -> None:
+    if results or feature_results or head_results:
+        post_json(
+            server,
+            "/workers/results",
+            {
+                "worker_id": worker_id,
+                "results": results,
+                "feature_results": feature_results,
+                "head_results": head_results,
+            },
+        )
+        results.clear()
+        feature_results.clear()
+        head_results.clear()
+    if failures:
+        post_json(server, "/workers/failures", {"worker_id": worker_id, "failures": failures})
+        failures.clear()
+
+
+@cli.command("worker")
+def worker(
+    server: Annotated[str, typer.Option("--server")] = "http://127.0.0.1:8711",
+    worker_id: Annotated[str, typer.Option("--worker-id")] = "discocs-worker",
+    models: Annotated[list[str], typer.Option("--models")] = [
+        "discogs_multi",
+        AUDIO_FEATURE_EXTRACTOR,
+        "discogs-effnet-heads",
+    ],
+    claim_batch_size: Annotated[int, typer.Option("--claim-batch-size")] = 16,
+    lease_seconds: Annotated[int, typer.Option("--lease-seconds")] = 900,
+    poll_seconds: Annotated[float, typer.Option("--poll-seconds")] = 5.0,
+    once: Annotated[bool, typer.Option("--once")] = False,
+    max_inflight_tasks: Annotated[int, typer.Option("--max-inflight-tasks")] = 64,
+    submit_batch_size: Annotated[int, typer.Option("--submit-batch-size")] = 16,
+    download_concurrency: Annotated[int, typer.Option("--download-concurrency")] = 1,
+    decode_workers: Annotated[int, typer.Option("--decode-workers")] = 1,
+    gpu_batch_size: Annotated[int, typer.Option("--gpu-batch-size")] = 1,
+    ready_batches: Annotated[int, typer.Option("--ready-batches")] = 1,
+) -> None:
+    """Run a trusted HTTP pull worker for analysis tasks."""
+    _store, settings = get_store_and_settings()
+    embedders = {
+        model: DiscogsEffnetEmbedder(settings, model)
+        for model in models
+        if model not in {AUDIO_FEATURE_EXTRACTOR, "discogs-effnet-heads"}
+    }
+    audio_feature_analyzer = AudioFeatureAnalyzer() if AUDIO_FEATURE_EXTRACTOR in models else None
+    head_pack_analyzer = DiscogsEffnetHeadPackAnalyzer(settings) if "discogs-effnet-heads" in models else None
+    typer.echo(
+        "worker starting "
+        f"server={server} worker_id={worker_id} models={','.join(models)} "
+        f"claim_batch_size={claim_batch_size} max_inflight_tasks={max_inflight_tasks} "
+        f"submit_batch_size={submit_batch_size} download_concurrency={download_concurrency} "
+        f"decode_workers={decode_workers} gpu_batch_size={gpu_batch_size} ready_batches={ready_batches}"
+    )
+    post_json(server, "/workers/register", {"worker_id": worker_id, "models": models})
+    draining = False
+
+    def request_drain(_signum, _frame) -> None:
+        nonlocal draining
+        draining = True
+        typer.echo("drain requested; finishing in-flight tasks and releasing the rest", err=True)
+
+    previous_sigint = signal.signal(signal.SIGINT, request_drain)
+    leased_task_ids: set[str] = set()
+    completed_task_ids: set[str] = set()
+    results: list[dict[str, object]] = []
+    feature_results: list[dict[str, object]] = []
+    head_results: list[dict[str, object]] = []
+    failures: list[dict[str, object]] = []
+    processed_any = False
+    try:
+        with tempfile.TemporaryDirectory(prefix="discocs-worker-") as temp_dir:
+            temp_path = Path(temp_dir)
+            with ThreadPoolExecutor(max_workers=max(download_concurrency, 1)) as downloader:
+                future_to_task: dict[object, tuple[dict[str, object], Path]] = {}
+
+                def claim_more() -> None:
+                    nonlocal processed_any
+                    if draining:
+                        return
+                    capacity = max(max_inflight_tasks, 1) - len(future_to_task)
+                    if capacity <= 0:
+                        return
+                    limit = min(max(claim_batch_size, 1), capacity)
+                    claimed = post_json(
+                        server,
+                        "/workers/claim",
+                        {
+                            "worker_id": worker_id,
+                            "models": models,
+                            "limit": limit,
+                            "lease_seconds": lease_seconds,
+                        },
+                    )
+                    tasks = claimed.get("tasks", [])
+                    if not isinstance(tasks, list) or not tasks:
+                        return
+                    for task in tasks:
+                        task_id = str(task["task_id"])
+                        leased_task_ids.add(task_id)
+                        audio_path = temp_path / f"{task_id}.audio"
+                        future = downloader.submit(
+                            download_task_audio,
+                            server,
+                            str(task["audio_url"]),
+                            audio_path,
+                        )
+                        future_to_task[future] = (task, audio_path)
+                    processed_any = True
+
+                while not draining:
+                    try:
+                        claim_more()
+                    except (HTTPError, URLError, TimeoutError) as exc:
+                        typer.echo(f"claim failed: {exc}", err=True)
+                        if once:
+                            raise typer.Exit(1) from exc
+
+                    if not future_to_task:
+                        if once:
+                            typer.echo("no tasks" if not processed_any else "done")
+                            return
+                        post_json(server, "/workers/heartbeat", {"worker_id": worker_id, "models": models})
+                        time.sleep(poll_seconds)
+                        continue
+
+                    for future in as_completed(list(future_to_task), timeout=None):
+                        task, audio_path = future_to_task.pop(future)
+                        task_id = str(task["task_id"])
+                        model_name = str(task["model_name"])
+                        try:
+                            future.result()
+                            if model_name == AUDIO_FEATURE_EXTRACTOR:
+                                if audio_feature_analyzer is None:
+                                    raise KeyError(model_name)
+                                features = audio_feature_analyzer.analyze_track(audio_path)
+                                feature_results.append(
+                                    {
+                                        "task_id": task_id,
+                                        "track_id": int(task["track_id"]),
+                                        "model_name": model_name,
+                                        "file_size": int(task["file_size"]),
+                                        "mtime": int(task["mtime"]),
+                                        "features": [
+                                            {
+                                                "name": feature.name,
+                                                "value": feature.value,
+                                                "text_value": feature.text_value,
+                                                "unit": feature.unit,
+                                                "confidence": feature.confidence,
+                                                "extractor": feature.extractor,
+                                            }
+                                            for feature in features
+                                        ],
+                                    }
+                                )
+                            elif model_name == "discogs-effnet-heads":
+                                if head_pack_analyzer is None:
+                                    raise KeyError(model_name)
+                                outputs = head_pack_analyzer.analyze_track(audio_path)
+                                head_results.append(
+                                    {
+                                        "task_id": task_id,
+                                        "track_id": int(task["track_id"]),
+                                        "model_name": model_name,
+                                        "file_size": int(task["file_size"]),
+                                        "mtime": int(task["mtime"]),
+                                        "outputs": [
+                                            {
+                                                "model_name": output.model_name,
+                                                "dim": int(output.scores.shape[0]),
+                                                "dtype": "float32",
+                                                "aggregation": output.aggregation,
+                                                "scores_b64": base64.b64encode(
+                                                    np.asarray(output.scores, dtype=np.float32).tobytes()
+                                                ).decode("ascii"),
+                                                "predictions": [
+                                                    {
+                                                        "label": prediction.label,
+                                                        "score": prediction.score,
+                                                        "rank": prediction.rank,
+                                                    }
+                                                    for prediction in output.predictions
+                                                ],
+                                            }
+                                            for output in outputs
+                                        ],
+                                    }
+                                )
+                            else:
+                                vector = np.asarray(
+                                    embedders[model_name].extract_track_vector(audio_path),
+                                    dtype=np.float32,
+                                )
+                                results.append(
+                                    {
+                                        "task_id": task_id,
+                                        "track_id": int(task["track_id"]),
+                                        "model_name": model_name,
+                                        "dim": int(vector.shape[0]),
+                                        "dtype": "float32",
+                                        "vector_b64": base64.b64encode(vector.tobytes()).decode("ascii"),
+                                        "file_size": int(task["file_size"]),
+                                        "mtime": int(task["mtime"]),
+                                    }
+                                )
+                            completed_task_ids.add(task_id)
+                            typer.echo(f"ok task_id={task_id} track_id={task['track_id']} model={model_name}")
+                        except Exception as exc:
+                            failures.append(
+                                {
+                                    "task_id": task_id,
+                                    "error": str(exc),
+                                    "error_type": type(exc).__name__,
+                                    "stage": "worker",
+                                    "retryable": not isinstance(exc, KeyError),
+                                }
+                            )
+                            completed_task_ids.add(task_id)
+                            typer.echo(f"failed task_id={task_id}: {exc}", err=True)
+
+                        if (
+                            len(results) + len(feature_results) + len(head_results) + len(failures)
+                            >= max(submit_batch_size, 1)
+                        ):
+                            submit_worker_buffers(server, worker_id, results, feature_results, head_results, failures)
+                        if not draining:
+                            try:
+                                claim_more()
+                            except (HTTPError, URLError, TimeoutError) as exc:
+                                typer.echo(f"claim failed: {exc}", err=True)
+                        break
+
+                for future in as_completed(list(future_to_task)):
+                    task, audio_path = future_to_task.pop(future)
+                    task_id = str(task["task_id"])
+                    model_name = str(task["model_name"])
+                    try:
+                        future.result()
+                        if model_name == AUDIO_FEATURE_EXTRACTOR:
+                            if audio_feature_analyzer is None:
+                                raise KeyError(model_name)
+                            features = audio_feature_analyzer.analyze_track(audio_path)
+                            feature_results.append(
+                                {
+                                    "task_id": task_id,
+                                    "track_id": int(task["track_id"]),
+                                    "model_name": model_name,
+                                    "file_size": int(task["file_size"]),
+                                    "mtime": int(task["mtime"]),
+                                    "features": [
+                                        {
+                                            "name": feature.name,
+                                            "value": feature.value,
+                                            "text_value": feature.text_value,
+                                            "unit": feature.unit,
+                                            "confidence": feature.confidence,
+                                            "extractor": feature.extractor,
+                                        }
+                                        for feature in features
+                                    ],
+                                }
+                            )
+                        elif model_name == "discogs-effnet-heads":
+                            if head_pack_analyzer is None:
+                                raise KeyError(model_name)
+                            outputs = head_pack_analyzer.analyze_track(audio_path)
+                            head_results.append(
+                                {
+                                    "task_id": task_id,
+                                    "track_id": int(task["track_id"]),
+                                    "model_name": model_name,
+                                    "file_size": int(task["file_size"]),
+                                    "mtime": int(task["mtime"]),
+                                    "outputs": [
+                                        {
+                                            "model_name": output.model_name,
+                                            "dim": int(output.scores.shape[0]),
+                                            "dtype": "float32",
+                                            "aggregation": output.aggregation,
+                                            "scores_b64": base64.b64encode(
+                                                np.asarray(output.scores, dtype=np.float32).tobytes()
+                                            ).decode("ascii"),
+                                            "predictions": [
+                                                {
+                                                    "label": prediction.label,
+                                                    "score": prediction.score,
+                                                    "rank": prediction.rank,
+                                                }
+                                                for prediction in output.predictions
+                                            ],
+                                        }
+                                        for output in outputs
+                                    ],
+                                }
+                            )
+                        else:
+                            vector = np.asarray(
+                                embedders[model_name].extract_track_vector(audio_path),
+                                dtype=np.float32,
+                            )
+                            results.append(
+                                {
+                                    "task_id": task_id,
+                                    "track_id": int(task["track_id"]),
+                                    "model_name": model_name,
+                                    "dim": int(vector.shape[0]),
+                                    "dtype": "float32",
+                                    "vector_b64": base64.b64encode(vector.tobytes()).decode("ascii"),
+                                    "file_size": int(task["file_size"]),
+                                    "mtime": int(task["mtime"]),
+                                }
+                            )
+                        completed_task_ids.add(task_id)
+                    except Exception as exc:
+                        failures.append(
+                            {
+                                "task_id": task_id,
+                                "error": str(exc),
+                                "error_type": type(exc).__name__,
+                                "stage": "worker",
+                                "retryable": True,
+                            }
+                        )
+                        completed_task_ids.add(task_id)
+        submit_worker_buffers(server, worker_id, results, feature_results, head_results, failures)
+    finally:
+        signal.signal(signal.SIGINT, previous_sigint)
+        unreleased = sorted(leased_task_ids - completed_task_ids)
+        if unreleased:
+            try:
+                post_json(
+                    server,
+                    "/workers/release",
+                    {"worker_id": worker_id, "task_ids": unreleased},
+                )
+            except Exception as exc:
+                typer.echo(f"release failed for {len(unreleased)} task(s): {exc}", err=True)
 
 
 @cli.command("download-models")

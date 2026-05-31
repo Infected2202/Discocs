@@ -1,4 +1,5 @@
 from pathlib import Path
+import base64
 import socket
 from urllib.error import URLError
 
@@ -105,6 +106,14 @@ def test_test_ui_loads():
     assert "data-tooltip=\"TensorFlow/OMP threads per analyzer process." in response.text
     assert "discocs.settings.v1" in response.text
     assert "bindSettingsAutosave" in response.text
+    assert "Analyze execution" in response.text
+    assert "Local + remote" in response.text
+    assert "Remote only" in response.text
+    assert "Local only" in response.text
+    assert "Remote worker" in response.text
+    assert "workerCommand" in response.text
+    assert "recs worker" in response.text
+    assert "execution_mode: executionMode" in response.text
     assert "parsedLimit && parsedLimit > 0 ? parsedLimit : null" in response.text
     assert "Add seed" in response.text
     assert "openAnalysis" in response.text
@@ -116,7 +125,8 @@ def test_test_ui_loads():
     assert "compactFolder" in response.text
 
 
-def test_stats_includes_pipeline_fields():
+def test_stats_includes_pipeline_fields(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
 
     response = client.get("/stats")
@@ -135,6 +145,221 @@ def test_stats_includes_pipeline_fields():
     assert "audio_features_complete_tracks" in data
     assert "audio_features_missing_tracks" in data
     assert "missing_files" in data
+
+
+def test_worker_claim_audio_and_submit_embedding(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    path = tmp_path / "track.flac"
+    path.write_bytes(b"fake-audio")
+    track_id = add_track(store, path)
+    job = store.create_analysis_job("discogs_multi", None, local_executor_enabled=False)
+    client = TestClient(app)
+
+    response = client.post(
+        "/workers/claim",
+        json={"worker_id": "gpu-1", "models": ["discogs_multi"], "limit": 4},
+    )
+
+    assert response.status_code == 200
+    tasks = response.json()["tasks"]
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task["track_id"] == track_id
+    assert task["job_id"] == job.id
+
+    audio = client.get(task["audio_url"])
+    assert audio.status_code == 200
+    assert audio.content == b"fake-audio"
+
+    vector = np.array([0.1, 0.2, 0.3], dtype=np.float32)
+    submit = client.post(
+        "/workers/results",
+        json={
+            "worker_id": "gpu-1",
+            "results": [
+                {
+                    "task_id": task["task_id"],
+                    "track_id": track_id,
+                    "model_name": "discogs_multi",
+                    "dim": 3,
+                    "dtype": "float32",
+                    "vector_b64": base64.b64encode(vector.tobytes()).decode("ascii"),
+                    "file_size": task["file_size"],
+                    "mtime": task["mtime"],
+                }
+            ],
+        },
+    )
+
+    assert submit.status_code == 200
+    assert submit.json()["accepted"] == [task["task_id"]]
+    assert np.allclose(store.load_embedding(track_id, "discogs_multi"), vector)
+    assert store.get_analysis_job(job.id).done == 1
+
+
+def test_worker_submit_audio_feature_result(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    path = tmp_path / "track.flac"
+    path.write_bytes(b"fake-audio")
+    track_id = add_track(store, path)
+    job = store.create_analysis_job(
+        AUDIO_FEATURE_EXTRACTOR,
+        None,
+        kind="analyze-audio-features",
+        tracks=store.list_tracks_missing_features(AUDIO_FEATURE_EXTRACTOR),
+        local_executor_enabled=False,
+    )
+    task = store.claim_analysis_tasks("gpu-1", [AUDIO_FEATURE_EXTRACTOR], limit=1)[0]
+    client = TestClient(app)
+
+    response = client.post(
+        "/workers/results",
+        json={
+            "worker_id": "gpu-1",
+            "feature_results": [
+                {
+                    "task_id": task.id,
+                    "track_id": track_id,
+                    "model_name": AUDIO_FEATURE_EXTRACTOR,
+                    "file_size": task.file_size,
+                    "mtime": task.mtime,
+                    "features": [
+                        {
+                            "name": "bpm",
+                            "value": 128.0,
+                            "unit": "bpm",
+                            "confidence": 0.9,
+                            "extractor": AUDIO_FEATURE_EXTRACTOR,
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] == [task.id]
+    features = store.load_features(track_id, AUDIO_FEATURE_EXTRACTOR)
+    assert len(features) == 1
+    assert features[0].name == "bpm"
+    assert features[0].value == 128.0
+    assert store.get_analysis_job(job.id).done == 1
+
+
+def test_worker_submit_head_result(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    path = tmp_path / "track.flac"
+    path.write_bytes(b"fake-audio")
+    track_id = add_track(store, path)
+    job = store.create_analysis_job(
+        "discogs-effnet-heads",
+        None,
+        kind="analyze-heads",
+        tracks=store.list_tracks_missing_head_pack(["genre_discogs400"]),
+        local_executor_enabled=False,
+    )
+    task = store.claim_analysis_tasks("gpu-1", ["discogs-effnet-heads"], limit=1)[0]
+    scores = np.array([0.8, 0.2], dtype=np.float32)
+    client = TestClient(app)
+
+    response = client.post(
+        "/workers/results",
+        json={
+            "worker_id": "gpu-1",
+            "head_results": [
+                {
+                    "task_id": task.id,
+                    "track_id": track_id,
+                    "model_name": "discogs-effnet-heads",
+                    "file_size": task.file_size,
+                    "mtime": task.mtime,
+                    "outputs": [
+                        {
+                            "model_name": "genre_discogs400",
+                            "dim": 2,
+                            "dtype": "float32",
+                            "aggregation": "mean_patches",
+                            "scores_b64": base64.b64encode(scores.tobytes()).decode("ascii"),
+                            "predictions": [
+                                {"label": "Electronic---Techno", "score": 0.8, "rank": 1}
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] == [task.id]
+    output = store.load_model_output(track_id, "genre_discogs400")
+    assert output is not None
+    assert np.allclose(output.scores, scores)
+    assert store.load_predictions(track_id, "genre_discogs400")[0].label == "Electronic---Techno"
+    assert store.get_analysis_job(job.id).done == 1
+
+
+def test_worker_submit_rejects_stale_result(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    path = tmp_path / "track.flac"
+    path.write_bytes(b"fake-audio")
+    track_id = add_track(store, path)
+    job = store.create_analysis_job("discogs_multi", None, local_executor_enabled=False)
+    task = store.claim_analysis_tasks("gpu-1", ["discogs_multi"], limit=1)[0]
+    vector = np.array([0.1, 0.2, 0.3], dtype=np.float32)
+    client = TestClient(app)
+
+    response = client.post(
+        "/workers/results",
+        json={
+            "worker_id": "gpu-1",
+            "results": [
+                {
+                    "task_id": task.id,
+                    "track_id": track_id,
+                    "model_name": "discogs_multi",
+                    "dim": 3,
+                    "dtype": "float32",
+                    "vector_b64": base64.b64encode(vector.tobytes()).decode("ascii"),
+                    "file_size": task.file_size + 1,
+                    "mtime": task.mtime,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] == []
+    assert response.json()["rejected"][0]["task_id"] == task.id
+    assert store.load_embedding(track_id, "discogs_multi") is None
+    assert store.get_analysis_job(job.id).failed == 1
+
+
+def test_workers_endpoint_and_jobs_include_worker_status(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    path = tmp_path / "track.flac"
+    path.write_bytes(b"fake-audio")
+    add_track(store, path)
+    store.create_analysis_job("discogs_multi", None, local_executor_enabled=False)
+    client = TestClient(app)
+
+    claim = client.post(
+        "/workers/claim",
+        json={"worker_id": "gpu-1", "models": ["discogs_multi"], "limit": 1},
+    )
+    assert claim.status_code == 200
+
+    workers = client.get("/workers")
+    assert workers.status_code == 200
+    worker = workers.json()["workers"][0]
+    assert worker["worker_id"] == "gpu-1"
+    assert worker["models"] == ["discogs_multi"]
+    assert worker["claimed_count"] == 1
+    assert worker["stage"] == "claimed"
+
+    jobs = client.get("/jobs")
+    assert jobs.status_code == 200
+    assert jobs.json()["workers"][0]["worker_id"] == "gpu-1"
 
 
 def test_head_pack_endpoint_returns_readiness_and_counts(tmp_path: Path, monkeypatch):
@@ -251,6 +476,76 @@ def test_analyze_job_accepts_tf_threads(tmp_path: Path, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["tf_threads"] == 4
+
+
+def test_analyze_job_remote_mode_disables_local_executor(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.post(
+        "/jobs/analyze",
+        json={"model": "discogs_multi", "limit": 1, "execution_mode": "remote"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["execution_mode"] == "remote"
+    assert response.json()["local_executor_enabled"] is False
+
+
+def test_analyze_audio_features_remote_mode_queues_worker_task(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    path = tmp_path / "track.flac"
+    path.write_bytes(b"fake-audio")
+    track_id = add_track(store, path)
+    client = TestClient(app)
+
+    response = client.post(
+        "/jobs/analyze-audio-features",
+        json={"execution_mode": "remote", "local_executor_enabled": False},
+    )
+
+    assert response.status_code == 200
+    job = store.get_analysis_job(response.json()["job_id"])
+    assert job is not None
+    assert job.kind == "analyze-audio-features"
+    assert job.model_name == AUDIO_FEATURE_EXTRACTOR
+    assert job.queued == 1
+    claim = client.post(
+        "/workers/claim",
+        json={"worker_id": "gpu-1", "models": [AUDIO_FEATURE_EXTRACTOR], "limit": 1},
+    )
+    assert claim.status_code == 200
+    tasks = claim.json()["tasks"]
+    assert len(tasks) == 1
+    assert tasks[0]["track_id"] == track_id
+
+
+def test_analyze_heads_remote_mode_queues_worker_task(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    path = tmp_path / "track.flac"
+    path.write_bytes(b"fake-audio")
+    track_id = add_track(store, path)
+    client = TestClient(app)
+
+    response = client.post(
+        "/jobs/analyze-heads",
+        json={"execution_mode": "remote", "local_executor_enabled": False},
+    )
+
+    assert response.status_code == 200
+    job = store.get_analysis_job(response.json()["job_id"])
+    assert job is not None
+    assert job.kind == "analyze-heads"
+    assert job.model_name == "discogs-effnet-heads"
+    assert job.queued == 1
+    claim = client.post(
+        "/workers/claim",
+        json={"worker_id": "gpu-1", "models": ["discogs-effnet-heads"], "limit": 1},
+    )
+    assert claim.status_code == 200
+    tasks = claim.json()["tasks"]
+    assert len(tasks) == 1
+    assert tasks[0]["track_id"] == track_id
 
 
 def test_analyze_heads_job_accepts_limit(tmp_path: Path, monkeypatch):

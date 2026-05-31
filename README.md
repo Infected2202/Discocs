@@ -98,7 +98,36 @@ posting JSON to `/jobs/analyze`:
 ```bash
 curl -X POST http://localhost:8711/jobs/analyze \
   -H "Content-Type: application/json" \
-  -d '{"model":"discogs_multi","limit":500,"workers":4,"tf_threads":4}'
+  -d '{"model":"discogs_multi","limit":500,"workers":4,"tf_threads":4,"execution_mode":"both"}'
+```
+
+Analyze execution modes:
+
+```text
+local   - only the server runs embedding inference
+remote  - server creates durable tasks; HTTP workers claim and process them
+both    - server and HTTP workers can claim tasks
+```
+
+Remote worker setup:
+
+1. Start the server with `./run_app.sh` and open `http://SERVER_IP:8711`.
+2. In Settings, set `Analyze execution` to `Remote only` or `Local + remote`.
+3. Fill `Server URL for worker` with the URL reachable from the GPU machine.
+4. Tune claim/in-flight/download/submit/lease values or keep the defaults.
+5. Copy the generated `Worker command`, or set the same values in `run_worker.bat`.
+6. On the worker machine, install the environment and run `run_worker.bat`.
+7. Start `Analyze missing` in the web UI and watch Jobs / Workers.
+
+Example Windows worker launch:
+
+```bat
+set DISCOCS_WORKER_SERVER=http://192.168.1.41:8711
+set DISCOCS_WORKER_ID=gpu-4090-1
+set DISCOCS_WORKER_CLAIM_BATCH_SIZE=32
+set DISCOCS_WORKER_MAX_INFLIGHT_TASKS=128
+set DISCOCS_WORKER_DOWNLOAD_CONCURRENCY=8
+run_worker.bat
 ```
 
 ## Basic Workflow

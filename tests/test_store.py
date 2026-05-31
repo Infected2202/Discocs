@@ -94,6 +94,121 @@ def test_metadata_rescan_without_file_change_keeps_embedding(tmp_path: Path):
     assert np.allclose(store.load_embedding(track_id, "discogs_multi"), vector)
 
 
+def test_analysis_tasks_claim_retry_and_complete(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_path = tmp_path / "track.flac"
+    track_path.write_bytes(b"fake")
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=track_path.resolve(),
+            artist="Artist",
+            title="Title",
+            album="Album",
+            duration=1.0,
+            file_size=4,
+            mtime=1,
+        )
+    )
+
+    job = store.create_analysis_job("discogs_multi", None, max_attempts=2)
+    assert job.total == 1
+
+    assert store.claim_analysis_tasks("worker-a", ["other"], limit=10) == []
+    tasks = store.claim_analysis_tasks("worker-a", ["discogs_multi"], limit=10, lease_seconds=60)
+    assert len(tasks) == 1
+    assert tasks[0].track_id == track_id
+    assert tasks[0].attempts == 1
+    assert store.claim_analysis_tasks("worker-b", ["discogs_multi"], limit=10) == []
+
+    store.fail_analysis_task(
+        tasks[0].id,
+        error="temporary",
+        error_type="RuntimeError",
+        stage="predict",
+        worker_id="worker-a",
+        retryable=True,
+    )
+    retried = store.claim_analysis_tasks("worker-b", ["discogs_multi"], limit=10)
+    assert len(retried) == 1
+    assert retried[0].attempts == 2
+
+    store.fail_analysis_task(
+        retried[0].id,
+        error="broken",
+        error_type="RuntimeError",
+        stage="predict",
+        worker_id="worker-b",
+        retryable=True,
+    )
+    finished = store.get_analysis_job(job.id)
+    assert finished is not None
+    assert finished.status == "completed"
+    assert finished.failed == 1
+    assert finished.final_failed == 1
+
+
+def test_expired_analysis_lease_returns_to_queue(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_path = tmp_path / "track.flac"
+    track_path.write_bytes(b"fake")
+    store.upsert_track(
+        ScannedTrack(
+            path=track_path.resolve(),
+            artist="Artist",
+            title="Title",
+            album="Album",
+            duration=1.0,
+            file_size=4,
+            mtime=1,
+        )
+    )
+    store.create_analysis_job("discogs_multi", None)
+    tasks = store.claim_analysis_tasks("worker-a", ["discogs_multi"], limit=1, lease_seconds=30)
+    assert len(tasks) == 1
+
+    assert store.expire_analysis_leases("2999-01-01T00:00:00+00:00") == 1
+    reclaimed = store.claim_analysis_tasks("worker-b", ["discogs_multi"], limit=1)
+    assert len(reclaimed) == 1
+    assert reclaimed[0].lease_owner == "worker-b"
+
+
+def test_analysis_worker_status_counters_and_release(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_path = tmp_path / "track.flac"
+    track_path.write_bytes(b"fake")
+    store.upsert_track(
+        ScannedTrack(
+            path=track_path.resolve(),
+            artist="Artist",
+            title="Title",
+            album="Album",
+            duration=1.0,
+            file_size=4,
+            mtime=1,
+        )
+    )
+    store.create_analysis_job("discogs_multi", None)
+    store.register_analysis_worker("gpu-1", ["discogs_multi"])
+
+    tasks = store.claim_analysis_tasks("gpu-1", ["discogs_multi"], limit=1)
+    assert len(tasks) == 1
+    workers = store.list_analysis_workers()
+    assert workers[0].worker_id == "gpu-1"
+    assert workers[0].claimed_count == 1
+    assert workers[0].stage == "claimed"
+
+    released = store.release_analysis_tasks("gpu-1", [tasks[0].id])
+
+    assert released == 1
+    worker = store.list_analysis_workers()[0]
+    assert worker.released_count == 1
+    assert worker.stage == "released"
+    assert store.claim_analysis_tasks("gpu-2", ["discogs_multi"], limit=1)[0].lease_owner == "gpu-2"
+
+
 def test_store_tracks_file_availability_and_delete_missing(tmp_path: Path):
     store = Store(tmp_path / "app.db")
     store.init()
