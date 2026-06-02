@@ -140,13 +140,42 @@ class DiscogsEffnetHeadPackAnalyzer:
     def analyze_track(self, path: Path) -> list[HeadOutput]:
         logger.info("Analyzing Discogs-EffNet heads path=%s heads=%s", path, len(self.heads))
         patch_embeddings = self.base_embedder.extract_patch_embeddings(path)
+        return self.analyze_patch_embeddings(patch_embeddings)
+
+    def extract_patch_embeddings(self, path: Path) -> np.ndarray:
+        return np.asarray(self.base_embedder.extract_patch_embeddings(path), dtype=np.float32)
+
+    def analyze_patch_embeddings(self, patch_embeddings: np.ndarray) -> list[HeadOutput]:
         return [self._run_head(head, patch_embeddings) for head in self.heads]
+
+    def analyze_patch_embedding_batch(self, patch_embeddings_by_track: list[np.ndarray]) -> list[list[HeadOutput]]:
+        if not patch_embeddings_by_track:
+            return []
+        patch_counts = [int(len(patches)) for patches in patch_embeddings_by_track]
+        if any(count <= 0 for count in patch_counts):
+            raise ValueError("No EffNet patches extracted")
+        combined = np.concatenate(
+            [np.asarray(patches, dtype=np.float32) for patches in patch_embeddings_by_track],
+            axis=0,
+        )
+        outputs_by_track: list[list[HeadOutput]] = [[] for _ in patch_embeddings_by_track]
+        for head in self.heads:
+            predictions = np.asarray(self._predictor(head)(combined), dtype=np.float32)
+            offset = 0
+            for index, patch_count in enumerate(patch_counts):
+                track_predictions = predictions[offset : offset + patch_count]
+                offset += patch_count
+                outputs_by_track[index].append(self._head_output(head, track_predictions))
+        return outputs_by_track
 
     def _run_head(self, head: HeadModel, patch_embeddings: np.ndarray) -> HeadOutput:
         predictions = np.asarray(
             self._predictor(head)(np.asarray(patch_embeddings, dtype=np.float32)),
             dtype=np.float32,
         )
+        return self._head_output(head, predictions)
+
+    def _head_output(self, head: HeadModel, predictions: np.ndarray) -> HeadOutput:
         scores = aggregate_scores(predictions)
         if head.output_kind == "regression":
             top = []

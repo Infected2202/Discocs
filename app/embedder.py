@@ -12,6 +12,7 @@ from app.config import MODEL_OUTPUTS, Settings
 
 FFMPEG_FIRST_EXTENSIONS = {".opus"}
 DEFAULT_AUDIO_LOADER = "ffmpeg"
+DEFAULT_EFFNET_BACKEND = "auto"
 logger = logging.getLogger(__name__)
 
 
@@ -20,12 +21,21 @@ class FfmpegDecodeError(RuntimeError):
 
 
 class DiscogsEffnetEmbedder:
-    def __init__(self, settings: Settings, model_name: str):
+    def __init__(
+        self,
+        settings: Settings,
+        model_name: str,
+        batch_size: int | None = None,
+        backend: str | None = None,
+    ):
         self.settings = settings
         self.model_name = model_name
         self.model_path = settings.model_path(model_name)
         self.output = MODEL_OUTPUTS.get(model_name, "PartitionedCall:1")
+        self.batch_size = batch_size
+        self.backend = (backend or os.getenv("DISCOCS_EFFNET_BACKEND", DEFAULT_EFFNET_BACKEND)).lower()
         self._model = None
+        self._direct_model: DirectTensorflowEffnet | None = None
 
     def extract_track_vector(self, path: Path) -> np.ndarray:
         logger.info(
@@ -40,6 +50,28 @@ class DiscogsEffnetEmbedder:
     def extract_patch_embeddings(self, path: Path) -> np.ndarray:
         audio = self._load_audio(path)
         return self._predict(audio)
+
+    def extract_direct_patches(self, path: Path) -> np.ndarray:
+        audio = self._load_audio(path)
+        return audio_to_effnet_patches(audio)
+
+    def predict_direct_patches(self, patches: np.ndarray) -> np.ndarray:
+        if self._direct_model is None:
+            self._direct_model = DirectTensorflowEffnet(
+                self.model_path,
+                self.output,
+                batch_size=self.resolved_batch_size(default=64),
+            )
+        return self._direct_model.predict_patches(patches)
+
+    def direct_model(self) -> "DirectTensorflowEffnet":
+        if self._direct_model is None:
+            self._direct_model = DirectTensorflowEffnet(
+                self.model_path,
+                self.output,
+                batch_size=self.resolved_batch_size(default=64),
+            )
+        return self._direct_model
 
     def _load_audio(self, path: Path) -> np.ndarray:
         configure_tensorflow_logging()
@@ -57,6 +89,24 @@ class DiscogsEffnetEmbedder:
         if not self.model_path.exists():
             logger.error("Model file not found model=%s path=%s", self.model_name, self.model_path)
             raise FileNotFoundError(f"Model file not found: {self.model_path}")
+        if self.backend not in {"auto", "essentia", "tensorflow"}:
+            raise ValueError("DISCOCS_EFFNET_BACKEND must be 'auto', 'essentia', or 'tensorflow'")
+        if self.backend in {"auto", "tensorflow"}:
+            try:
+                if self._direct_model is None:
+                    self._direct_model = DirectTensorflowEffnet(
+                        self.model_path,
+                        self.output,
+                        batch_size=self.resolved_batch_size(default=64),
+                    )
+                return self._direct_model.predict(audio)
+            except Exception:
+                if self.backend == "tensorflow":
+                    raise
+                logger.exception(
+                    "Direct TensorFlow EffNet backend failed, falling back to Essentia backend model=%s",
+                    self.model_name,
+                )
         if self._model is None:
             try:
                 from essentia.standard import TensorflowPredictEffnetDiscogs
@@ -66,11 +116,109 @@ class DiscogsEffnetEmbedder:
                     "essentia-tensorflow is required for Discogs-EffNet inference"
                 ) from exc
             logger.info("Loading embedding model model=%s path=%s", self.model_name, self.model_path)
-            self._model = TensorflowPredictEffnetDiscogs(
-                graphFilename=str(self.model_path),
-                output=self.output,
-            )
+            kwargs = {
+                "graphFilename": str(self.model_path),
+                "output": self.output,
+            }
+            batch_size = self.resolved_batch_size(default=None)
+            if batch_size is not None:
+                kwargs["batchSize"] = int(batch_size)
+            self._model = TensorflowPredictEffnetDiscogs(**kwargs)
         return np.asarray(self._model(audio), dtype=np.float32)
+
+    def resolved_batch_size(self, default: int | None) -> int | None:
+        if self.batch_size is not None:
+            return int(self.batch_size)
+        raw_batch_size = os.getenv("DISCOCS_EFFNET_BATCH_SIZE")
+        return int(raw_batch_size) if raw_batch_size else default
+
+
+class DirectTensorflowEffnet:
+    patch_size = 128
+    patch_hop_size = 62
+    mel_bands = 96
+
+    def __init__(self, model_path: Path, output: str, batch_size: int = 64):
+        self.model_path = model_path
+        self.output_name = output
+        self.batch_size = int(batch_size)
+        self._mel_input = None
+        self._session = None
+        self._input_tensor = None
+        self._output_tensor = None
+
+    def predict(self, audio: np.ndarray) -> np.ndarray:
+        patches = audio_to_effnet_patches(audio)
+        return self.predict_patches(patches)
+
+    def predict_patches(self, patches: np.ndarray) -> np.ndarray:
+        if patches.size == 0:
+            return np.empty((0, 1280), dtype=np.float32)
+        self._ensure_session()
+        outputs = []
+        batch_size = self.batch_size
+        for start in range(0, len(patches), batch_size):
+            batch = patches[start : start + batch_size]
+            actual = len(batch)
+            if actual < batch_size:
+                batch = np.pad(batch, ((0, batch_size - actual), (0, 0), (0, 0)), mode="constant")
+            output = self._session.run(self._output_tensor, feed_dict={self._input_tensor: batch})
+            outputs.append(np.asarray(output[:actual], dtype=np.float32))
+        return np.concatenate(outputs, axis=0)
+
+    def predict_patches_unpadded(self, patches: np.ndarray) -> np.ndarray:
+        if patches.shape[0] != self.batch_size:
+            raise ValueError(f"Expected exactly {self.batch_size} patches, got {patches.shape[0]}")
+        self._ensure_session()
+        return np.asarray(self._session.run(self._output_tensor, feed_dict={self._input_tensor: patches}), dtype=np.float32)
+
+    def _ensure_session(self) -> None:
+        if self._session is not None:
+            return
+        try:
+            import tensorflow as tf
+        except ImportError as exc:
+            raise RuntimeError("tensorflow is required for direct EffNet inference") from exc
+        graph_def = tf.compat.v1.GraphDef()
+        graph_def.ParseFromString(self.model_path.read_bytes())
+        graph = tf.Graph()
+        with graph.as_default():
+            tf.import_graph_def(graph_def, name="")
+        self._input_tensor = graph.get_tensor_by_name("serving_default_melspectrogram:0")
+        self._output_tensor = graph.get_tensor_by_name(self.output_name)
+        config = tf.compat.v1.ConfigProto(allow_soft_placement=True)
+        config.gpu_options.allow_growth = True
+        self._session = tf.compat.v1.Session(graph=graph, config=config)
+        logger.info(
+            "Loaded direct TensorFlow EffNet backend model=%s output=%s batch_size=%s",
+            self.model_path,
+            self.output_name,
+            self.batch_size,
+        )
+
+
+def audio_to_effnet_patches(audio: np.ndarray) -> np.ndarray:
+    try:
+        from essentia.standard import FrameGenerator, TensorflowInputMusiCNN
+    except ImportError as exc:
+        raise RuntimeError("essentia-tensorflow is required for EffNet mel preprocessing") from exc
+    mel_input = TensorflowInputMusiCNN()
+    frames = [
+        np.asarray(mel_input(frame), dtype=np.float32)
+        for frame in FrameGenerator(audio, frameSize=512, hopSize=256, startFromZero=True)
+    ]
+    if not frames:
+        return np.empty((0, DirectTensorflowEffnet.patch_size, DirectTensorflowEffnet.mel_bands), dtype=np.float32)
+    mels = np.asarray(frames, dtype=np.float32)
+    patches = [
+        mels[start : start + DirectTensorflowEffnet.patch_size]
+        for start in range(
+            0,
+            max(mels.shape[0] - DirectTensorflowEffnet.patch_size + 1, 0),
+            DirectTensorflowEffnet.patch_hop_size,
+        )
+    ]
+    return np.asarray(patches, dtype=np.float32)
 
 
 def load_audio_with_essentia(path: Path) -> np.ndarray:

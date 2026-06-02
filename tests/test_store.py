@@ -206,7 +206,75 @@ def test_analysis_worker_status_counters_and_release(tmp_path: Path):
     worker = store.list_analysis_workers()[0]
     assert worker.released_count == 1
     assert worker.stage == "released"
+    refreshed = store.get_analysis_job(tasks[0].job_id)
+    assert refreshed is not None
+    assert refreshed.status == "running"
+    assert refreshed.queued == 1
+    assert refreshed.leased == 0
     assert store.claim_analysis_tasks("gpu-2", ["discogs_multi"], limit=1)[0].lease_owner == "gpu-2"
+
+
+def test_cancel_analysis_job_stops_running_queue(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_path = tmp_path / "track.flac"
+    track_path.write_bytes(b"fake")
+    store.upsert_track(
+        ScannedTrack(
+            path=track_path.resolve(),
+            artist="Artist",
+            title="Title",
+            album="Album",
+            duration=1.0,
+            mtime=1,
+            file_size=4,
+        )
+    )
+    job = store.create_analysis_job("discogs_multi", None)
+    task = store.claim_analysis_tasks("gpu-1", ["discogs_multi"], limit=1)[0]
+
+    cancelled = store.cancel_analysis_job(job.id, "test cancel")
+
+    assert cancelled is not None
+    assert cancelled.status == "cancelled"
+    assert cancelled.failed == 1
+    assert store.claim_analysis_tasks("gpu-2", ["discogs_multi"], limit=1) == []
+    assert store.get_analysis_task(task.id).status == "final_failed"
+
+
+def test_analysis_job_task_summary_reports_leases_and_errors(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_path = tmp_path / "track.flac"
+    track_path.write_bytes(b"fake")
+    store.upsert_track(
+        ScannedTrack(
+            path=track_path.resolve(),
+            artist="Artist",
+            title="Title",
+            album="Album",
+            duration=1.0,
+            mtime=1,
+            file_size=4,
+        )
+    )
+    job = store.create_analysis_job("discogs_multi", None)
+    task = store.claim_analysis_tasks("gpu-1", ["discogs_multi"], limit=1)[0]
+    summary = store.analysis_job_task_summary(job.id)
+    assert summary["leased_workers"] == [{"worker_id": "gpu-1", "count": 1}]
+    assert summary["oldest_lease"]["worker_id"] == "gpu-1"
+    assert summary["status_breakdown"][0]["status"] == "leased"
+
+    store.fail_analysis_task(
+        task.id,
+        error="missing dependency",
+        error_type="RuntimeError",
+        stage="worker",
+        worker_id="gpu-1",
+        retryable=False,
+    )
+    summary = store.analysis_job_task_summary(job.id)
+    assert summary["recent_errors"][0]["error"] == "missing dependency"
 
 
 def test_store_tracks_file_availability_and_delete_missing(tmp_path: Path):

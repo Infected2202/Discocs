@@ -157,6 +157,51 @@ def test_head_pack_analyzer_reuses_one_patch_embedding_for_multiple_heads(tmp_pa
     assert outputs[1].predictions[0].label == "second_0"
 
 
+def test_head_pack_analyzer_batches_patch_embeddings_without_mixing_tracks(tmp_path: Path):
+    settings = Settings(
+        data_dir=tmp_path,
+        db_path=tmp_path / "app.db",
+        model_dir=tmp_path / "models",
+        index_dir=tmp_path,
+    )
+    settings.model_dir.mkdir()
+    head = HeadModel(
+        id="genre",
+        folder="fake",
+        filename="genre.pb",
+        metadata_filename=None,
+        output_kind="multilabel",
+        top_n=2,
+    )
+    seen_shapes = []
+
+    class FakeAnalyzer(DiscogsEffnetHeadPackAnalyzer):
+        def __init__(self):
+            super().__init__(settings, heads=(head,))
+
+        def _predictor(self, _head):
+            def predict(patches):
+                seen_shapes.append(patches.shape)
+                return np.stack(
+                    [
+                        np.array([float(row[0]), 1.0 - float(row[0])], dtype=np.float32)
+                        for row in patches
+                    ],
+                    axis=0,
+                )
+
+            return predict
+
+    first = np.array([[0.2, 0.0], [0.4, 0.0]], dtype=np.float32)
+    second = np.array([[0.8, 0.0]], dtype=np.float32)
+
+    outputs = FakeAnalyzer().analyze_patch_embedding_batch([first, second])
+
+    assert seen_shapes == [(3, 2)]
+    assert np.allclose(outputs[0][0].scores, np.array([0.3, 0.7], dtype=np.float32))
+    assert np.allclose(outputs[1][0].scores, np.array([0.8, 0.2], dtype=np.float32))
+
+
 def test_head_predictor_falls_back_to_legacy_tensor_names(tmp_path: Path, monkeypatch):
     settings = Settings(
         data_dir=tmp_path,

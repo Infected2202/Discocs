@@ -1,0 +1,138 @@
+@echo off
+setlocal
+
+set "ROOT_DIR=%~dp0"
+set "ROOT_DIR=%ROOT_DIR:~0,-1%"
+
+if "%DISCOCS_WORKER_IMAGE%"=="" set "DISCOCS_WORKER_IMAGE=discocs-worker:dev"
+if "%DISCOCS_WORKER_SERVER%"=="" set "DISCOCS_WORKER_SERVER=http://192.168.1.41:8711"
+if "%DISCOCS_WORKER_ID%"=="" set "DISCOCS_WORKER_ID=auto"
+if "%DISCOCS_WORKER_MODEL_DIR%"=="" set "DISCOCS_WORKER_MODEL_DIR=C:\Dockers\discocs\models"
+
+if "%DISCOCS_WORKER_EMBEDDING_MODEL%"=="" set "DISCOCS_WORKER_EMBEDDING_MODEL=discogs_multi"
+if "%DISCOCS_WORKER_AUDIO_FEATURE_MODEL%"=="" set "DISCOCS_WORKER_AUDIO_FEATURE_MODEL=audio_features_v1"
+if "%DISCOCS_WORKER_HEAD_MODEL%"=="" set "DISCOCS_WORKER_HEAD_MODEL=discogs-effnet-heads"
+
+if "%DISCOCS_WORKER_CLAIM_BATCH_SIZE%"=="" set "DISCOCS_WORKER_CLAIM_BATCH_SIZE=32"
+if "%DISCOCS_WORKER_MAX_INFLIGHT_TASKS%"=="" set "DISCOCS_WORKER_MAX_INFLIGHT_TASKS=128"
+if "%DISCOCS_WORKER_DOWNLOAD_CONCURRENCY%"=="" set "DISCOCS_WORKER_DOWNLOAD_CONCURRENCY=8"
+if "%DISCOCS_WORKER_SUBMIT_BATCH_SIZE%"=="" set "DISCOCS_WORKER_SUBMIT_BATCH_SIZE=1"
+if "%DISCOCS_WORKER_LEASE_SECONDS%"=="" set "DISCOCS_WORKER_LEASE_SECONDS=900"
+if "%DISCOCS_WORKER_POLL_SECONDS%"=="" set "DISCOCS_WORKER_POLL_SECONDS=5"
+if "%DISCOCS_WORKER_CPU_WORKERS%"=="" set "DISCOCS_WORKER_CPU_WORKERS=0"
+if "%DISCOCS_WORKER_GPU_BATCH_SIZE%"=="" set "DISCOCS_WORKER_GPU_BATCH_SIZE=64"
+if "%DISCOCS_WORKER_READY_BATCHES%"=="" set "DISCOCS_WORKER_READY_BATCHES=1"
+if "%DISCOCS_WORKER_MAX_TASKS_BEFORE_EXIT%"=="" set "DISCOCS_WORKER_MAX_TASKS_BEFORE_EXIT=0"
+if "%DISCOCS_WORKER_EMBEDDING_BACKEND%"=="" set "DISCOCS_WORKER_EMBEDDING_BACKEND=auto"
+if "%CUDA_VISIBLE_DEVICES%"=="" set "CUDA_VISIBLE_DEVICES=0"
+
+if "%DISCOCS_WORKER_USE_GPU%"=="" set "DISCOCS_WORKER_USE_GPU=1"
+if "%DISCOCS_WORKER_CONTAINER_NAME%"=="" set "DISCOCS_WORKER_CONTAINER_NAME=discocs-worker"
+if "%DISCOCS_WORKER_BUILD_IF_MISSING%"=="" set "DISCOCS_WORKER_BUILD_IF_MISSING=0"
+
+docker version >nul 2>nul
+if errorlevel 1 (
+  echo Docker is not available. Start Docker Desktop and try again.
+  exit /b 1
+)
+
+docker image inspect "%DISCOCS_WORKER_IMAGE%" >nul 2>nul
+if errorlevel 1 (
+  if "%DISCOCS_WORKER_BUILD_IF_MISSING%"=="1" (
+    echo Worker image %DISCOCS_WORKER_IMAGE% is missing. Building it first.
+    call "%ROOT_DIR%\build_worker_docker.bat"
+    if errorlevel 1 exit /b 1
+  ) else (
+    echo Worker image %DISCOCS_WORKER_IMAGE% is missing.
+    echo Build it once with:
+    echo   build_worker_docker.bat
+    echo.
+    echo Or allow this launcher to build missing images:
+    echo   set DISCOCS_WORKER_BUILD_IF_MISSING=1
+    echo   run_worker_docker.bat
+    exit /b 1
+  )
+)
+
+if not exist "%DISCOCS_WORKER_MODEL_DIR%" (
+  echo Model directory is missing: %DISCOCS_WORKER_MODEL_DIR%
+  echo Copy model files there or set DISCOCS_WORKER_MODEL_DIR before starting the worker.
+  exit /b 1
+)
+
+if not exist "%DISCOCS_WORKER_MODEL_DIR%\discogs_multi_embeddings-effnet-bs64-1.pb" (
+  echo Default embedding model is missing:
+  echo   %DISCOCS_WORKER_MODEL_DIR%\discogs_multi_embeddings-effnet-bs64-1.pb
+  echo Copy model files there or set DISCOCS_WORKER_MODEL_DIR before starting the worker.
+  exit /b 1
+)
+
+set "GPU_ARGS="
+if "%DISCOCS_WORKER_USE_GPU%"=="1" set "GPU_ARGS=--gpus all"
+
+echo Starting discocs Docker worker
+echo Image: %DISCOCS_WORKER_IMAGE%
+echo Server: %DISCOCS_WORKER_SERVER%
+echo Worker: %DISCOCS_WORKER_ID%
+echo Models: %DISCOCS_WORKER_EMBEDDING_MODEL%, %DISCOCS_WORKER_AUDIO_FEATURE_MODEL%, %DISCOCS_WORKER_HEAD_MODEL%
+echo Model dir: %DISCOCS_WORKER_MODEL_DIR%
+echo GPU: %DISCOCS_WORKER_USE_GPU%
+echo CPU workers: %DISCOCS_WORKER_CPU_WORKERS%
+echo GPU batch size: %DISCOCS_WORKER_GPU_BATCH_SIZE%
+echo Ready batches: %DISCOCS_WORKER_READY_BATCHES%
+echo Max tasks before exit: %DISCOCS_WORKER_MAX_TASKS_BEFORE_EXIT%
+echo Embedding backend: %DISCOCS_WORKER_EMBEDDING_BACKEND%
+echo Build if missing: %DISCOCS_WORKER_BUILD_IF_MISSING%
+
+docker run --rm -it ^
+  --name "%DISCOCS_WORKER_CONTAINER_NAME%" ^
+  %GPU_ARGS% ^
+  --entrypoint python ^
+  -e "DISCOCS_WORKER_SERVER=%DISCOCS_WORKER_SERVER%" ^
+  -e "DISCOCS_WORKER_ID=%DISCOCS_WORKER_ID%" ^
+  -e "DISCOCS_WORKER_EMBEDDING_MODEL=%DISCOCS_WORKER_EMBEDDING_MODEL%" ^
+  -e "DISCOCS_WORKER_AUDIO_FEATURE_MODEL=%DISCOCS_WORKER_AUDIO_FEATURE_MODEL%" ^
+  -e "DISCOCS_WORKER_HEAD_MODEL=%DISCOCS_WORKER_HEAD_MODEL%" ^
+  -e "DISCOCS_WORKER_CLAIM_BATCH_SIZE=%DISCOCS_WORKER_CLAIM_BATCH_SIZE%" ^
+  -e "DISCOCS_WORKER_MAX_INFLIGHT_TASKS=%DISCOCS_WORKER_MAX_INFLIGHT_TASKS%" ^
+  -e "DISCOCS_WORKER_DOWNLOAD_CONCURRENCY=%DISCOCS_WORKER_DOWNLOAD_CONCURRENCY%" ^
+  -e "DISCOCS_WORKER_SUBMIT_BATCH_SIZE=%DISCOCS_WORKER_SUBMIT_BATCH_SIZE%" ^
+  -e "DISCOCS_WORKER_LEASE_SECONDS=%DISCOCS_WORKER_LEASE_SECONDS%" ^
+  -e "DISCOCS_WORKER_POLL_SECONDS=%DISCOCS_WORKER_POLL_SECONDS%" ^
+  -e "DISCOCS_WORKER_CPU_WORKERS=%DISCOCS_WORKER_CPU_WORKERS%" ^
+  -e "DISCOCS_WORKER_GPU_BATCH_SIZE=%DISCOCS_WORKER_GPU_BATCH_SIZE%" ^
+  -e "DISCOCS_WORKER_READY_BATCHES=%DISCOCS_WORKER_READY_BATCHES%" ^
+  -e "DISCOCS_WORKER_MAX_TASKS_BEFORE_EXIT=%DISCOCS_WORKER_MAX_TASKS_BEFORE_EXIT%" ^
+  -e "DISCOCS_WORKER_EMBEDDING_BACKEND=%DISCOCS_WORKER_EMBEDDING_BACKEND%" ^
+  -e "DISCOCS_EFFNET_BACKEND=%DISCOCS_WORKER_EMBEDDING_BACKEND%" ^
+  -e DISCOCS_MODEL_DIR=/app/models ^
+  -e DISCOCS_DATA_DIR=/worker-data ^
+  -e DISCOCS_DB_PATH=/worker-data/worker-local.db ^
+  -e DISCOCS_INDEX_DIR=/worker-data ^
+  -e DISCOCS_AUDIO_LOADER=ffmpeg ^
+  -e "CUDA_VISIBLE_DEVICES=%CUDA_VISIBLE_DEVICES%" ^
+  -e NVIDIA_VISIBLE_DEVICES=all ^
+  -e NVIDIA_DRIVER_CAPABILITIES=compute,utility ^
+  -v "%DISCOCS_WORKER_MODEL_DIR%:/app/models" ^
+  -v discocs-worker-data:/worker-data ^
+  "%DISCOCS_WORKER_IMAGE%" ^
+  -m app.cli ^
+  worker ^
+  --server "%DISCOCS_WORKER_SERVER%" ^
+  --worker-id "%DISCOCS_WORKER_ID%" ^
+  --models "%DISCOCS_WORKER_EMBEDDING_MODEL%" ^
+  --models "%DISCOCS_WORKER_AUDIO_FEATURE_MODEL%" ^
+  --models "%DISCOCS_WORKER_HEAD_MODEL%" ^
+  --claim-batch-size "%DISCOCS_WORKER_CLAIM_BATCH_SIZE%" ^
+  --max-inflight-tasks "%DISCOCS_WORKER_MAX_INFLIGHT_TASKS%" ^
+  --download-concurrency "%DISCOCS_WORKER_DOWNLOAD_CONCURRENCY%" ^
+  --submit-batch-size "%DISCOCS_WORKER_SUBMIT_BATCH_SIZE%" ^
+  --lease-seconds "%DISCOCS_WORKER_LEASE_SECONDS%" ^
+  --poll-seconds "%DISCOCS_WORKER_POLL_SECONDS%" ^
+  --cpu-workers "%DISCOCS_WORKER_CPU_WORKERS%" ^
+  --gpu-batch-size "%DISCOCS_WORKER_GPU_BATCH_SIZE%" ^
+  --ready-batches "%DISCOCS_WORKER_READY_BATCHES%" ^
+  --max-tasks-before-exit "%DISCOCS_WORKER_MAX_TASKS_BEFORE_EXIT%" ^
+  --embedding-backend "%DISCOCS_WORKER_EMBEDDING_BACKEND%"
+
+endlocal

@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Lock
 from uuid import uuid4
 
 import numpy as np
@@ -13,6 +14,8 @@ from app.scanner import ScannedTrack
 
 
 logger = logging.getLogger(__name__)
+INIT_LOCK = Lock()
+INITIALIZED_DB_PATHS: set[Path] = set()
 
 
 @dataclass(frozen=True)
@@ -133,13 +136,26 @@ class Store:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 30000")
         return conn
 
     def init(self) -> None:
+        resolved_path = self.db_path.resolve()
+        with INIT_LOCK:
+            if resolved_path in INITIALIZED_DB_PATHS:
+                return
+            self._init_schema()
+            INITIALIZED_DB_PATHS.add(resolved_path)
+
+    def _init_schema(self) -> None:
         with self.connect() as conn:
+            try:
+                conn.execute("PRAGMA journal_mode = WAL")
+            except sqlite3.OperationalError:
+                logger.debug("Could not enable SQLite WAL mode for %s", self.db_path, exc_info=True)
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS tracks (
@@ -769,6 +785,16 @@ class Store:
     def expire_analysis_leases(self, now: str | None = None) -> int:
         now = now or utc_now()
         with self.connect() as conn:
+            job_rows = conn.execute(
+                """
+                SELECT DISTINCT job_id
+                FROM analysis_tasks
+                WHERE status = 'leased'
+                  AND lease_expires_at IS NOT NULL
+                  AND lease_expires_at < ?
+                """,
+                (now,),
+            ).fetchall()
             cursor = conn.execute(
                 """
                 UPDATE analysis_tasks
@@ -783,7 +809,10 @@ class Store:
                 """,
                 (now, now),
             )
-            return int(cursor.rowcount)
+            expired = int(cursor.rowcount)
+        for row in job_rows:
+            self.refresh_analysis_job(str(row["job_id"]))
+        return expired
 
     def register_analysis_worker(self, worker_id: str, models: list[str]) -> None:
         now = utc_now()
@@ -852,6 +881,130 @@ class Store:
             ).fetchall()
         return [row_to_analysis_worker(row) for row in rows]
 
+    def analysis_job_task_summary(self, job_id: str) -> dict[str, object]:
+        with self.connect() as conn:
+            status_rows = conn.execute(
+                """
+                SELECT status, stage, COUNT(*) AS count
+                FROM analysis_tasks
+                WHERE job_id = ?
+                GROUP BY status, stage
+                ORDER BY status, stage
+                """,
+                (job_id,),
+            ).fetchall()
+            leased_rows = conn.execute(
+                """
+                SELECT lease_owner, COUNT(*) AS count
+                FROM analysis_tasks
+                WHERE job_id = ?
+                  AND status = 'leased'
+                  AND lease_owner IS NOT NULL
+                GROUP BY lease_owner
+                ORDER BY count DESC, lease_owner
+                """,
+                (job_id,),
+            ).fetchall()
+            oldest_lease = conn.execute(
+                """
+                SELECT lease_owner, lease_expires_at, stage, updated_at, path
+                FROM analysis_tasks
+                WHERE job_id = ?
+                  AND status = 'leased'
+                ORDER BY lease_expires_at, updated_at
+                LIMIT 1
+                """,
+                (job_id,),
+            ).fetchone()
+            error_rows = conn.execute(
+                """
+                SELECT id, track_id, status, error, error_type, stage, updated_at, lease_owner, path
+                FROM analysis_tasks
+                WHERE job_id = ?
+                  AND error IS NOT NULL
+                ORDER BY updated_at DESC
+                LIMIT 5
+                """,
+                (job_id,),
+            ).fetchall()
+        return {
+            "status_breakdown": [
+                {
+                    "status": str(row["status"]),
+                    "stage": row["stage"],
+                    "count": int(row["count"] or 0),
+                }
+                for row in status_rows
+            ],
+            "leased_workers": [
+                {
+                    "worker_id": str(row["lease_owner"]),
+                    "count": int(row["count"] or 0),
+                }
+                for row in leased_rows
+            ],
+            "oldest_lease": (
+                {
+                    "worker_id": oldest_lease["lease_owner"],
+                    "lease_expires_at": oldest_lease["lease_expires_at"],
+                    "stage": oldest_lease["stage"],
+                    "updated_at": oldest_lease["updated_at"],
+                    "path": oldest_lease["path"],
+                }
+                if oldest_lease is not None
+                else None
+            ),
+            "recent_errors": [
+                {
+                    "task_id": str(row["id"]),
+                    "track_id": int(row["track_id"]),
+                    "status": str(row["status"]),
+                    "error": str(row["error"]),
+                    "error_type": row["error_type"],
+                    "stage": row["stage"],
+                    "updated_at": row["updated_at"],
+                    "worker_id": row["lease_owner"],
+                    "path": row["path"],
+                }
+                for row in error_rows
+            ],
+        }
+
+    def list_analysis_job_tasks(
+        self,
+        job_id: str,
+        *,
+        statuses: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[AnalysisTask]:
+        params: list[object] = [job_id]
+        status_clause = ""
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            status_clause = f" AND status IN ({placeholders})"
+            params.extend(statuses)
+        params.append(int(limit))
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM analysis_tasks
+                WHERE job_id = ?{status_clause}
+                ORDER BY
+                    CASE status
+                        WHEN 'leased' THEN 0
+                        WHEN 'queued' THEN 1
+                        WHEN 'failed_retryable' THEN 2
+                        WHEN 'final_failed' THEN 3
+                        ELSE 4
+                    END,
+                    updated_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [row_to_analysis_task(row) for row in rows]
+
     def claim_analysis_tasks(
         self,
         worker_id: str,
@@ -871,10 +1024,12 @@ class Store:
             conn.execute("BEGIN IMMEDIATE")
             rows = conn.execute(
                 f"""
-                SELECT * FROM analysis_tasks
-                WHERE status = 'queued'
-                  AND model_name IN ({placeholders})
-                ORDER BY created_at, track_id
+                SELECT t.* FROM analysis_tasks t
+                JOIN analysis_jobs j ON j.id = t.job_id
+                WHERE t.status = 'queued'
+                  AND j.status = 'running'
+                  AND t.model_name IN ({placeholders})
+                ORDER BY t.created_at, t.track_id
                 LIMIT ?
                 """,
                 [*models, int(limit)],
@@ -973,6 +1128,8 @@ class Store:
         task = self.get_analysis_task(task_id)
         if task is None:
             return
+        if task.status == "final_failed" and task.stage == "cancelled":
+            return
         status = "queued" if retryable and task.attempts < task.max_attempts else "final_failed"
         params: list[object] = [
             status,
@@ -1020,6 +1177,15 @@ class Store:
             task_clause = f" AND id IN ({placeholders})"
             params.extend(task_ids)
         with self.connect() as conn:
+            job_rows = conn.execute(
+                f"""
+                SELECT DISTINCT job_id
+                FROM analysis_tasks
+                WHERE status = 'leased'
+                  AND lease_owner = ?{task_clause}
+                """,
+                [worker_id, *(task_ids or [])],
+            ).fetchall()
             cursor = conn.execute(
                 f"""
                 UPDATE analysis_tasks
@@ -1042,11 +1208,73 @@ class Store:
                 released_delta=released,
                 current_task_id=None,
             )
+        for row in job_rows:
+            self.refresh_analysis_job(str(row["job_id"]))
         return released
+
+    def cancel_analysis_job(self, job_id: str, reason: str = "Cancelled by user") -> AnalysisJob | None:
+        now = utc_now()
+        with self.connect() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM analysis_jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+            if exists is None:
+                return None
+            conn.execute(
+                """
+                UPDATE analysis_tasks
+                SET status = 'final_failed',
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    error = ?,
+                    error_type = 'Cancelled',
+                    stage = 'cancelled',
+                    updated_at = ?
+                WHERE job_id = ?
+                  AND status IN ('queued', 'leased', 'failed_retryable')
+                """,
+                (reason, now, job_id),
+            )
+            counts = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS done,
+                    SUM(CASE WHEN status = 'final_failed' THEN 1 ELSE 0 END) AS failed
+                FROM analysis_tasks
+                WHERE job_id = ?
+                """,
+                (job_id,),
+            ).fetchone()
+            total = int(counts["total"] or 0)
+            done = int(counts["done"] or 0)
+            failed = int(counts["failed"] or 0)
+            conn.execute(
+                """
+                UPDATE analysis_jobs
+                SET status = 'cancelled',
+                    total = ?,
+                    message = ?,
+                    updated_at = ?,
+                    finished_at = ?
+                WHERE id = ?
+                """,
+                (total, f"Cancelled: done {done}/{total}, failed {failed}", now, now, job_id),
+            )
+        return self._get_analysis_job_no_refresh(job_id)
 
     def refresh_analysis_job(self, job_id: str) -> AnalysisJob | None:
         now = utc_now()
         with self.connect() as conn:
+            current = conn.execute(
+                "SELECT status FROM analysis_jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+            if current is None:
+                return None
+            if str(current["status"]) == "cancelled":
+                return self._get_analysis_job_no_refresh(job_id)
             counts = conn.execute(
                 """
                 SELECT

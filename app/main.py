@@ -9,7 +9,9 @@ import multiprocessing
 import os
 from pathlib import Path
 import socket
+import sqlite3
 from threading import Lock
+import time
 from time import perf_counter
 from datetime import datetime
 import traceback
@@ -188,6 +190,10 @@ class WorkerReleaseRequest(BaseModel):
     task_ids: list[str] | None = None
 
 
+class CancelJobRequest(BaseModel):
+    reason: str = "Cancelled by user"
+
+
 class AnalyzeHeadsRequest(BaseModel):
     limit: int | None = Field(default=None, ge=1)
     local_executor_enabled: bool = True
@@ -205,6 +211,11 @@ class AnalyzeAudioFeaturesRequest(BaseModel):
 class DeleteTracksRequest(BaseModel):
     track_ids: list[int] = Field(default_factory=list)
     all_missing: bool = False
+
+
+class DeleteAnalysisErrorsRequest(BaseModel):
+    task_ids: list[str] = Field(default_factory=list)
+    all_errors: bool = False
 
 
 class IndexRequest(BaseModel):
@@ -274,6 +285,23 @@ def exception_detail(exc: Exception) -> str:
 
 def exception_traceback(exc: Exception) -> str:
     return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).strip()
+
+
+def is_sqlite_locked(exc: Exception) -> bool:
+    return isinstance(exc, sqlite3.OperationalError) and "database is locked" in str(exc).lower()
+
+
+def sqlite_retry(operation, *, attempts: int = 8):
+    delay = 0.05
+    for attempt in range(attempts):
+        try:
+            return operation()
+        except sqlite3.OperationalError as exc:
+            if not is_sqlite_locked(exc) or attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 1.0)
+    raise RuntimeError("unreachable sqlite retry state")
 
 
 def download_failure_hint(exc: Exception) -> str | None:
@@ -358,10 +386,14 @@ def analysis_task_dict(task: AnalysisTask) -> dict[str, object]:
         "status": task.status,
         "attempts": task.attempts,
         "max_attempts": task.max_attempts,
+        "lease_owner": task.lease_owner,
         "lease_expires_at": task.lease_expires_at,
         "path": task.path,
         "file_size": task.file_size,
         "mtime": task.mtime,
+        "error": task.error,
+        "error_type": task.error_type,
+        "stage": task.stage,
         "audio_url": f"/workers/tasks/{task.id}/audio",
     }
 
@@ -373,8 +405,64 @@ def timestamp_from_iso(value: str) -> float:
         return 0.0
 
 
-def analysis_job_status_dict(job) -> dict[str, object]:
+def analysis_job_status_dict(job, store: Store | None = None) -> dict[str, object]:
     completed = job.done + job.failed
+    started_at = timestamp_from_iso(job.created_at)
+    finished_at = timestamp_from_iso(job.finished_at) if job.finished_at else None
+    terminal = job.status not in {"queued", "running"}
+    elapsed_until = finished_at or (timestamp_from_iso(job.updated_at) if terminal else datetime.now().timestamp())
+    elapsed_seconds = max(0.0, elapsed_until - started_at) if started_at else 0.0
+    tracks_per_min = (
+        (completed / elapsed_seconds) * 60
+        if job.status == "running" and elapsed_seconds > 0 and completed > 0
+        else None
+    )
+    eta_seconds = None
+    if tracks_per_min and job.total > completed and job.status == "running":
+        eta_seconds = ((job.total - completed) / tracks_per_min) * 60
+    task_summary = store.analysis_job_task_summary(job.id) if store is not None else {}
+    workers = store.list_analysis_workers() if store is not None else []
+    supporting_workers = [
+        worker.worker_id
+        for worker in workers
+        if job.model_name in {model for model in worker.models.split(",") if model}
+    ]
+    online_workers = [
+        {
+            "worker_id": worker.worker_id,
+            "models": [model for model in worker.models.split(",") if model],
+            "stage": worker.stage,
+            "message": worker.message,
+            "last_seen_at": worker.last_seen_at,
+        }
+        for worker in workers
+    ]
+    status_hint = ""
+    if job.status == "running":
+        leased_workers = task_summary.get("leased_workers", [])
+        if job.leased and leased_workers:
+            labels = ", ".join(
+                f"{item['worker_id']}({item['count']})" for item in leased_workers
+            )
+            status_hint = f"Processing on {labels}; queued {job.queued}, leased {job.leased}"
+        elif job.queued:
+            if supporting_workers:
+                status_hint = (
+                    f"Queued {job.queued}; waiting for claim by "
+                    f"{', '.join(supporting_workers)}"
+                )
+            else:
+                worker_labels = [
+                    f"{worker['worker_id']}[{', '.join(worker['models'])}]"
+                    for worker in online_workers
+                ]
+                suffix = f" Online workers: {', '.join(worker_labels)}" if worker_labels else " No workers online."
+                status_hint = f"Waiting for worker supporting {job.model_name}.{suffix}"
+    recent_errors = task_summary.get("recent_errors", [])
+    oldest_lease = task_summary.get("oldest_lease")
+    oldest_lease_age = None
+    if isinstance(oldest_lease, dict) and oldest_lease.get("updated_at"):
+        oldest_lease_age = max(0.0, datetime.now().timestamp() - timestamp_from_iso(str(oldest_lease["updated_at"])))
     return {
         "id": job.id,
         "kind": job.kind,
@@ -384,17 +472,29 @@ def analysis_job_status_dict(job) -> dict[str, object]:
         "done": job.done,
         "failed": job.failed,
         "current": None,
-        "elapsed_seconds": 0.0,
-        "tracks_per_min": None,
-        "eta_seconds": None,
+        "elapsed_seconds": elapsed_seconds,
+        "tracks_per_min": tracks_per_min,
+        "eta_seconds": eta_seconds,
         "error_detail": None,
-        "started_at": timestamp_from_iso(job.created_at),
-        "finished_at": timestamp_from_iso(job.finished_at) if job.finished_at else None,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+        "finished_at_iso": job.finished_at,
         "model": job.model_name,
         "queued": job.queued,
         "leased": job.leased,
         "final_failed": job.final_failed,
+        "status_breakdown": task_summary.get("status_breakdown", []),
+        "oldest_lease": oldest_lease,
+        "oldest_lease_age": oldest_lease_age,
         "completed": completed,
+        "status_hint": status_hint,
+        "supporting_workers": supporting_workers,
+        "online_workers": online_workers,
+        "leased_workers": task_summary.get("leased_workers", []),
+        "recent_errors": recent_errors,
+        "last_error": recent_errors[0] if recent_errors else None,
     }
 
 
@@ -459,9 +559,12 @@ def validate_worker_task_identity(
     file_size: int,
     mtime: int,
 ) -> AnalysisTask:
+    store.expire_analysis_leases()
     task = store.get_analysis_task(task_id)
     if task is None:
         raise ValueError("Task not found")
+    if task.status != "leased":
+        raise ValueError(f"Task is not active: {task.status}")
     if task.lease_owner != worker_id:
         raise ValueError("Task is not leased by this worker")
     if task.track_id != track_id or task.model_name != model_name:
@@ -474,6 +577,30 @@ def validate_worker_task_identity(
     if track.file_size != task.file_size or track.mtime != task.mtime:
         raise ValueError("Track changed after task was created")
     return task
+
+
+@app.get("/workers/tasks/{task_id}/state")
+def get_worker_task_state(task_id: str, worker_id: str) -> dict[str, object]:
+    store, _settings = context()
+    task = store.get_analysis_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    job = store.get_analysis_job(task.job_id)
+    active = (
+        task.status == "leased"
+        and task.lease_owner == worker_id
+        and job is not None
+        and job.status == "running"
+    )
+    return {
+        "task_id": task.id,
+        "job_id": task.job_id,
+        "status": task.status,
+        "stage": task.stage,
+        "lease_owner": task.lease_owner,
+        "job_status": job.status if job is not None else None,
+        "active": active,
+    }
 
 
 @app.get("/health")
@@ -595,6 +722,128 @@ def list_lost_files(
         "pages": max((count + page_size - 1) // page_size, 1),
         "results": [track_dict(track) for track in tracks],
     }
+
+
+@app.get("/analysis/errors")
+def list_analysis_errors(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+) -> dict[str, object]:
+    store, _settings = context()
+    offset = (page - 1) * page_size
+    where = """
+        t.error IS NOT NULL
+        AND COALESCE(t.error_type, '') != 'Cancelled'
+        AND COALESCE(t.stage, '') != 'cancelled'
+        AND t.error NOT LIKE 'Model file not found:%'
+    """
+    with store.connect() as conn:
+        count = conn.execute(
+            f"""
+            SELECT COUNT(*) FROM (
+                SELECT t.track_id, t.model_name
+                FROM analysis_tasks t
+                JOIN tracks tr ON tr.id = t.track_id
+                WHERE {where}
+                    GROUP BY t.track_id, t.model_name
+            )
+            """
+        ).fetchone()[0]
+        rows = conn.execute(
+            f"""
+            WITH latest AS (
+                SELECT t.track_id, t.model_name, MAX(t.updated_at) AS updated_at
+                FROM analysis_tasks t
+                JOIN tracks tr ON tr.id = t.track_id
+                WHERE {where}
+                GROUP BY t.track_id, t.model_name
+            )
+            SELECT
+                t.id AS task_id,
+                t.job_id,
+                j.kind AS job_kind,
+                t.track_id,
+                t.model_name,
+                t.status,
+                t.attempts,
+                t.max_attempts,
+                t.path,
+                t.file_size,
+                t.mtime,
+                t.error,
+                t.error_type,
+                t.stage,
+                t.updated_at,
+                t.completed_at,
+                tr.artist,
+                tr.title,
+                tr.album
+            FROM analysis_tasks t
+            JOIN latest l
+                ON l.track_id = t.track_id
+                AND l.model_name = t.model_name
+                AND l.updated_at = t.updated_at
+            JOIN analysis_jobs j ON j.id = t.job_id
+            JOIN tracks tr ON tr.id = t.track_id
+            WHERE {where}
+            ORDER BY t.updated_at DESC, t.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (page_size, offset),
+        ).fetchall()
+    return {
+        "count": count,
+        "page": page,
+        "page_size": page_size,
+        "pages": max((count + page_size - 1) // page_size, 1),
+        "results": [dict(row) for row in rows],
+    }
+
+
+@app.delete("/analysis/errors")
+def delete_analysis_errors(request: DeleteAnalysisErrorsRequest) -> dict[str, object]:
+    store, _settings = context()
+    where = """
+        error IS NOT NULL
+        AND COALESCE(error_type, '') != 'Cancelled'
+        AND COALESCE(stage, '') != 'cancelled'
+        AND error NOT LIKE 'Model file not found:%'
+    """
+    with store.connect() as conn:
+        if request.all_errors:
+            cursor = conn.execute(
+                f"""
+                UPDATE analysis_tasks
+                SET error = NULL,
+                    error_type = NULL,
+                    stage = NULL,
+                    updated_at = ?
+                WHERE id IN (
+                    SELECT t.id
+                    FROM analysis_tasks t
+                    JOIN tracks tr ON tr.id = t.track_id
+                    WHERE {where}
+                )
+                """,
+                (datetime.now().isoformat(),),
+            )
+            return {"status": "ok", "cleared": cursor.rowcount}
+        task_ids = [task_id for task_id in request.task_ids if task_id]
+        if not task_ids:
+            return {"status": "ok", "cleared": 0}
+        placeholders = ",".join("?" for _ in task_ids)
+        cursor = conn.execute(
+            f"""
+            UPDATE analysis_tasks
+            SET error = NULL,
+                error_type = NULL,
+                stage = NULL,
+                updated_at = ?
+            WHERE id IN ({placeholders})
+            """,
+            (datetime.now().isoformat(), *task_ids),
+        )
+    return {"status": "ok", "cleared": cursor.rowcount}
 
 
 @app.delete("/lost-files")
@@ -742,16 +991,39 @@ def start_scan(request: ScanRequest, background_tasks: BackgroundTasks) -> dict[
 def start_analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks) -> dict[str, object]:
     job_id = create_job("analyze", f"Waiting to analyze {request.model}")
     local_executor_enabled = request.execution_mode in {"both", "local"} and request.local_executor_enabled
-    background_tasks.add_task(
-        _analyze_job,
-        job_id,
+    store, _settings = context()
+    durable_job = store.create_analysis_job(
         request.model,
         request.limit,
-        request.workers,
-        request.tf_threads,
-        local_executor_enabled,
-        request.max_attempts,
+        kind="analyze",
+        local_executor_enabled=local_executor_enabled,
+        workers=request.workers,
+        tf_threads=request.tf_threads,
+        max_attempts=request.max_attempts,
+        job_id=job_id,
     )
+    update_job(
+        job_id,
+        status="running" if durable_job.total else "completed",
+        total=durable_job.total,
+        message=(
+            f"Queued {durable_job.total} tracks for {request.model}"
+            if durable_job.total
+            else "Analyzed 0 tracks, failed 0"
+        ),
+    )
+    if local_executor_enabled and durable_job.total:
+        background_tasks.add_task(
+            _analyze_job,
+            job_id,
+            request.model,
+            request.limit,
+            request.workers,
+            request.tf_threads,
+            True,
+            request.max_attempts,
+            False,
+        )
     return {
         "status": "accepted",
         "job_id": job_id,
@@ -767,6 +1039,7 @@ def start_analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks) ->
 @app.post("/workers/register")
 def register_worker(request: WorkerRegisterRequest) -> dict[str, object]:
     store, _settings = context()
+    store.expire_analysis_leases()
     store.register_analysis_worker(request.worker_id, request.models)
     return {"status": "ok", "worker_id": request.worker_id, "models": request.models}
 
@@ -779,12 +1052,14 @@ def heartbeat_worker(request: WorkerRegisterRequest) -> dict[str, object]:
 @app.get("/workers")
 def list_workers() -> dict[str, object]:
     store, _settings = context()
+    store.expire_analysis_leases()
     return {"workers": [analysis_worker_dict(worker) for worker in store.list_analysis_workers()]}
 
 
 @app.post("/workers/claim")
 def claim_worker_tasks(request: WorkerClaimRequest) -> dict[str, object]:
     store, _settings = context()
+    store.expire_analysis_leases()
     store.register_analysis_worker(request.worker_id, request.models)
     tasks = store.claim_analysis_tasks(
         request.worker_id,
@@ -801,6 +1076,11 @@ def get_worker_task_audio(task_id: str) -> FileResponse:
     task = store.get_analysis_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
+    if task.status != "leased":
+        raise HTTPException(status_code=409, detail=f"Task is not active: {task.status}")
+    job = store.get_analysis_job(task.job_id)
+    if job is None or job.status != "running":
+        raise HTTPException(status_code=409, detail="Task job is not running")
     track = store.get_track(task.track_id)
     if track is None:
         store.fail_analysis_task(
@@ -837,137 +1117,167 @@ def get_worker_task_audio(task_id: str) -> FileResponse:
 @app.post("/workers/results")
 def submit_worker_results(request: WorkerSubmitRequest) -> dict[str, object]:
     store, _settings = context()
-    store.update_analysis_worker(
-        request.worker_id,
-        stage="submitting",
-        message=(
-            f"submitting {len(request.results)} embedding, "
-            f"{len(request.feature_results)} feature, {len(request.head_results)} head result(s)"
-        ),
-    )
+    try:
+        sqlite_retry(store.expire_analysis_leases)
+        sqlite_retry(
+            lambda: store.update_analysis_worker(
+                request.worker_id,
+                stage="submitting",
+                message=(
+                    f"submitting {len(request.results)} embedding, "
+                    f"{len(request.feature_results)} feature, {len(request.head_results)} head result(s)"
+                ),
+            )
+        )
+    except sqlite3.OperationalError as exc:
+        if is_sqlite_locked(exc):
+            raise HTTPException(status_code=503, detail="SQLite is busy; retry submit") from exc
+        raise
+
+    def reject_task(task_id: str, exc: Exception, log_label: str) -> None:
+        if is_sqlite_locked(exc):
+            raise HTTPException(status_code=503, detail="SQLite is busy; retry submit") from exc
+        rejected.append({"task_id": task_id, "error": str(exc)})
+        try:
+            sqlite_retry(
+                lambda: store.fail_analysis_task(
+                    task_id,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    stage="submit",
+                    worker_id=request.worker_id,
+                    retryable=False,
+                )
+            )
+        except sqlite3.OperationalError as lock_exc:
+            if is_sqlite_locked(lock_exc):
+                raise HTTPException(status_code=503, detail="SQLite is busy; retry submit") from lock_exc
+            raise
+        except Exception:
+            logger.exception("Failed to mark worker %s rejected task_id=%s", log_label, task_id)
+
+    def accept_embedding(item: WorkerResultItem) -> str:
+        vector = decode_worker_vector(item)
+        task = validate_worker_task_identity(
+            store,
+            item.task_id,
+            request.worker_id,
+            item.track_id,
+            item.model_name,
+            item.file_size,
+            item.mtime,
+        )
+        store.save_embedding(task.track_id, task.model_name, vector)
+        store.mark_track_available(task.track_id)
+        store.complete_analysis_task(task.id, request.worker_id)
+        return task.id
+
+    def accept_features(item: WorkerFeatureResultItem) -> str:
+        task = validate_worker_task_identity(
+            store,
+            item.task_id,
+            request.worker_id,
+            item.track_id,
+            item.model_name,
+            item.file_size,
+            item.mtime,
+        )
+        features = [
+            TrackFeature(
+                name=feature.name,
+                value=feature.value,
+                text_value=feature.text_value,
+                unit=feature.unit,
+                confidence=feature.confidence,
+                extractor=feature.extractor,
+            )
+            for feature in item.features
+        ]
+        store.save_features(task.track_id, features)
+        store.mark_track_available(task.track_id)
+        store.complete_analysis_task(task.id, request.worker_id)
+        return task.id
+
+    def accept_heads(item: WorkerHeadResultItem) -> str:
+        task = validate_worker_task_identity(
+            store,
+            item.task_id,
+            request.worker_id,
+            item.track_id,
+            item.model_name,
+            item.file_size,
+            item.mtime,
+        )
+        for output in item.outputs:
+            scores = decode_worker_scores(output)
+            store.save_model_output(
+                task.track_id,
+                output.model_name,
+                scores,
+                output.aggregation,
+            )
+            store.save_predictions(
+                task.track_id,
+                output.model_name,
+                [
+                    TrackPrediction(
+                        label=prediction.label,
+                        score=prediction.score,
+                        rank=prediction.rank,
+                    )
+                    for prediction in output.predictions
+                ],
+            )
+        store.mark_track_available(task.track_id)
+        store.complete_analysis_task(task.id, request.worker_id)
+        return task.id
+
+    def accept_with_retry(operation):
+        try:
+            return sqlite_retry(operation)
+        except sqlite3.OperationalError as exc:
+            if is_sqlite_locked(exc):
+                raise HTTPException(status_code=503, detail="SQLite is busy; retry submit") from exc
+            raise
+
     accepted: list[str] = []
     rejected: list[dict[str, str]] = []
     for item in request.results:
         try:
-            vector = decode_worker_vector(item)
-            task = validate_worker_task_identity(
-                store,
-                item.task_id,
-                request.worker_id,
-                item.track_id,
-                item.model_name,
-                item.file_size,
-                item.mtime,
-            )
-            store.save_embedding(task.track_id, task.model_name, vector)
-            store.mark_track_available(task.track_id)
-            store.complete_analysis_task(task.id, request.worker_id)
-            accepted.append(task.id)
+            accepted.append(accept_with_retry(lambda item=item: accept_embedding(item)))
+        except HTTPException:
+            raise
         except Exception as exc:
-            rejected.append({"task_id": item.task_id, "error": str(exc)})
-            try:
-                store.fail_analysis_task(
-                    item.task_id,
-                    error=str(exc),
-                    error_type=type(exc).__name__,
-                    stage="submit",
-                    worker_id=request.worker_id,
-                    retryable=False,
-                )
-            except Exception:
-                logger.exception("Failed to mark worker result rejected task_id=%s", item.task_id)
+            reject_task(item.task_id, exc, "result")
     for item in request.feature_results:
         try:
-            task = validate_worker_task_identity(
-                store,
-                item.task_id,
-                request.worker_id,
-                item.track_id,
-                item.model_name,
-                item.file_size,
-                item.mtime,
-            )
-            features = [
-                TrackFeature(
-                    name=feature.name,
-                    value=feature.value,
-                    text_value=feature.text_value,
-                    unit=feature.unit,
-                    confidence=feature.confidence,
-                    extractor=feature.extractor,
-                )
-                for feature in item.features
-            ]
-            store.save_features(task.track_id, features)
-            store.mark_track_available(task.track_id)
-            store.complete_analysis_task(task.id, request.worker_id)
-            accepted.append(task.id)
+            accepted.append(accept_with_retry(lambda item=item: accept_features(item)))
+        except HTTPException:
+            raise
         except Exception as exc:
-            rejected.append({"task_id": item.task_id, "error": str(exc)})
-            try:
-                store.fail_analysis_task(
-                    item.task_id,
-                    error=str(exc),
-                    error_type=type(exc).__name__,
-                    stage="submit",
-                    worker_id=request.worker_id,
-                    retryable=False,
-                )
-            except Exception:
-                logger.exception("Failed to mark worker feature result rejected task_id=%s", item.task_id)
+            reject_task(item.task_id, exc, "feature result")
     for item in request.head_results:
         try:
-            task = validate_worker_task_identity(
-                store,
-                item.task_id,
-                request.worker_id,
-                item.track_id,
-                item.model_name,
-                item.file_size,
-                item.mtime,
-            )
-            for output in item.outputs:
-                scores = decode_worker_scores(output)
-                store.save_model_output(
-                    task.track_id,
-                    output.model_name,
-                    scores,
-                    output.aggregation,
-                )
-                store.save_predictions(
-                    task.track_id,
-                    output.model_name,
-                    [
-                        TrackPrediction(
-                            label=prediction.label,
-                            score=prediction.score,
-                            rank=prediction.rank,
-                        )
-                        for prediction in output.predictions
-                    ],
-                )
-            store.mark_track_available(task.track_id)
-            store.complete_analysis_task(task.id, request.worker_id)
-            accepted.append(task.id)
+            accepted.append(accept_with_retry(lambda item=item: accept_heads(item)))
+        except HTTPException:
+            raise
         except Exception as exc:
-            rejected.append({"task_id": item.task_id, "error": str(exc)})
-            try:
-                store.fail_analysis_task(
-                    item.task_id,
-                    error=str(exc),
-                    error_type=type(exc).__name__,
-                    stage="submit",
-                    worker_id=request.worker_id,
-                    retryable=False,
-                )
-            except Exception:
-                logger.exception("Failed to mark worker head result rejected task_id=%s", item.task_id)
+            reject_task(item.task_id, exc, "head result")
+    sqlite_retry(
+        lambda: store.update_analysis_worker(
+            request.worker_id,
+            stage="submitted",
+            message=f"accepted {len(accepted)}, rejected {len(rejected)} result(s)",
+            current_task_id=None,
+        )
+    )
     return {"status": "ok", "accepted": accepted, "rejected": rejected}
 
 
 @app.post("/workers/failures")
 def submit_worker_failures(request: WorkerFailuresRequest) -> dict[str, object]:
     store, _settings = context()
+    store.expire_analysis_leases()
     store.update_analysis_worker(
         request.worker_id,
         stage="reporting_failures",
@@ -984,12 +1294,19 @@ def submit_worker_failures(request: WorkerFailuresRequest) -> dict[str, object]:
             retryable=item.retryable,
         )
         failed.append(item.task_id)
+    store.update_analysis_worker(
+        request.worker_id,
+        stage="failures_submitted",
+        message=f"accepted {len(failed)} failure(s)",
+        current_task_id=None,
+    )
     return {"status": "ok", "failed": failed}
 
 
 @app.post("/workers/release")
 def release_worker_tasks(request: WorkerReleaseRequest) -> dict[str, object]:
     store, _settings = context()
+    store.expire_analysis_leases()
     released = store.release_analysis_tasks(request.worker_id, request.task_ids)
     return {"status": "ok", "released": released}
 
@@ -1019,14 +1336,38 @@ def start_analyze_heads(
     background_tasks: BackgroundTasks,
 ) -> dict[str, object]:
     job_id = create_job("analyze-heads", "Waiting to analyze Discogs-EffNet heads")
-    local_enabled = request.local_executor_enabled and request.execution_mode != "remote"
-    background_tasks.add_task(
-        _analyze_heads_job,
-        job_id,
+    local_enabled = request.execution_mode in {"both", "local"} and request.local_executor_enabled
+    store, _settings = context()
+    head_model_names = [head.id for head in DISCOGS_EFFNET_HEADS]
+    tracks = store.list_tracks_missing_head_pack(head_model_names, limit=request.limit)
+    durable_job = store.create_analysis_job(
+        "discogs-effnet-heads",
         request.limit,
-        local_enabled,
-        request.max_attempts,
+        kind="analyze-heads",
+        tracks=tracks,
+        local_executor_enabled=local_enabled,
+        max_attempts=request.max_attempts,
+        job_id=job_id,
     )
+    update_job(
+        job_id,
+        status="running" if durable_job.total else "completed",
+        total=durable_job.total,
+        message=(
+            f"Queued {durable_job.total} head analysis tasks"
+            if durable_job.total
+            else "Analyzed heads for 0 tracks, failed 0"
+        ),
+    )
+    if local_enabled and durable_job.total:
+        background_tasks.add_task(
+            _analyze_heads_job,
+            job_id,
+            request.limit,
+            True,
+            request.max_attempts,
+            False,
+        )
     return {
         "status": "accepted",
         "job_id": job_id,
@@ -1042,14 +1383,37 @@ def start_analyze_audio_features(
     background_tasks: BackgroundTasks,
 ) -> dict[str, object]:
     job_id = create_job("analyze-audio-features", "Waiting to analyze audio features")
-    local_enabled = request.local_executor_enabled and request.execution_mode != "remote"
-    background_tasks.add_task(
-        _analyze_audio_features_job,
-        job_id,
+    local_enabled = request.execution_mode in {"both", "local"} and request.local_executor_enabled
+    store, _settings = context()
+    tracks = store.list_tracks_missing_features(AUDIO_FEATURE_EXTRACTOR, limit=request.limit)
+    durable_job = store.create_analysis_job(
+        AUDIO_FEATURE_EXTRACTOR,
         request.limit,
-        local_enabled,
-        request.max_attempts,
+        kind="analyze-audio-features",
+        tracks=tracks,
+        local_executor_enabled=local_enabled,
+        max_attempts=request.max_attempts,
+        job_id=job_id,
     )
+    update_job(
+        job_id,
+        status="running" if durable_job.total else "completed",
+        total=durable_job.total,
+        message=(
+            f"Queued {durable_job.total} audio feature tasks"
+            if durable_job.total
+            else "Analyzed audio features for 0 tracks, failed 0"
+        ),
+    )
+    if local_enabled and durable_job.total:
+        background_tasks.add_task(
+            _analyze_audio_features_job,
+            job_id,
+            request.limit,
+            True,
+            request.max_attempts,
+            False,
+        )
     return {
         "status": "accepted",
         "job_id": job_id,
@@ -1084,7 +1448,8 @@ def start_check_missing_files(background_tasks: BackgroundTasks) -> dict[str, ob
 @app.get("/jobs")
 def list_jobs() -> dict[str, object]:
     store, _settings = context()
-    durable_jobs = {job.id: analysis_job_status_dict(job) for job in store.recent_analysis_jobs(limit=20)}
+    store.expire_analysis_leases()
+    durable_jobs = {job.id: analysis_job_status_dict(job, store) for job in store.recent_analysis_jobs(limit=20)}
     with JOBS_LOCK:
         now = perf_counter()
         jobs = []
@@ -1100,6 +1465,46 @@ def list_jobs() -> dict[str, object]:
     return {
         "jobs": jobs[:20],
         "workers": [analysis_worker_dict(worker) for worker in store.list_analysis_workers()],
+    }
+
+
+@app.get("/jobs/{job_id}")
+def get_job_detail(job_id: str) -> dict[str, object]:
+    store, _settings = context()
+    store.expire_analysis_leases()
+    job = store.get_analysis_job(job_id)
+    if job is None:
+        with JOBS_LOCK:
+            memory_job = JOBS.get(job_id)
+        if memory_job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return {"job": asdict(memory_job), "tasks": []}
+    statuses = ["leased", "queued", "failed_retryable", "final_failed"]
+    tasks = store.list_analysis_job_tasks(job_id, statuses=statuses, limit=200)
+    return {
+        "job": analysis_job_status_dict(job, store),
+        "tasks": [analysis_task_dict(task) for task in tasks],
+    }
+
+
+@app.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, request: CancelJobRequest | None = None) -> dict[str, object]:
+    reason = request.reason if request is not None else "Cancelled by user"
+    store, _settings = context()
+    durable_job = store.cancel_analysis_job(job_id, reason)
+    with JOBS_LOCK:
+        memory_job = JOBS.get(job_id)
+        if memory_job is not None:
+            memory_job.status = "cancelled"
+            memory_job.message = reason
+            memory_job.current = None
+            memory_job.finished_at = perf_counter()
+    if durable_job is None and memory_job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {
+        "status": "cancelled",
+        "job_id": job_id,
+        "job": analysis_job_status_dict(durable_job, store) if durable_job is not None else asdict(memory_job),
     }
 
 
@@ -1474,21 +1879,28 @@ def _analyze_job(
     tf_threads: int = DEFAULT_ANALYZE_TF_THREADS,
     local_executor_enabled: bool = True,
     max_attempts: int = 3,
+    enqueue: bool = True,
 ) -> None:
     try:
         if SHUTDOWN_REQUESTED:
             finish_job(job_id, "failed", "Analyze cancelled during application shutdown")
             return
         store, settings = context()
-        durable_job = store.create_analysis_job(
-            model,
-            limit,
-            local_executor_enabled=local_executor_enabled,
-            workers=workers,
-            tf_threads=tf_threads,
-            max_attempts=max_attempts,
-            job_id=job_id,
-        )
+        if enqueue:
+            durable_job = store.create_analysis_job(
+                model,
+                limit,
+                kind="analyze",
+                local_executor_enabled=local_executor_enabled,
+                workers=workers,
+                tf_threads=tf_threads,
+                max_attempts=max_attempts,
+                job_id=job_id,
+            )
+        else:
+            durable_job = store.get_analysis_job(job_id)
+            if durable_job is None:
+                raise ValueError(f"Analysis job not found: {job_id}")
         total = durable_job.total
         started_at = perf_counter()
         analysis_logger.info(
@@ -1661,6 +2073,7 @@ def _analyze_heads_job(
     limit: int | None,
     local_executor_enabled: bool = True,
     max_attempts: int = 3,
+    enqueue: bool = True,
 ) -> None:
     try:
         if SHUTDOWN_REQUESTED:
@@ -1668,16 +2081,21 @@ def _analyze_heads_job(
             return
         store, settings = context()
         head_model_names = [head.id for head in DISCOGS_EFFNET_HEADS]
-        tracks = store.list_tracks_missing_head_pack(head_model_names, limit=limit)
-        durable_job = store.create_analysis_job(
-            "discogs-effnet-heads",
-            limit,
-            kind="analyze-heads",
-            tracks=tracks,
-            local_executor_enabled=local_executor_enabled,
-            max_attempts=max_attempts,
-            job_id=job_id,
-        )
+        if enqueue:
+            tracks = store.list_tracks_missing_head_pack(head_model_names, limit=limit)
+            durable_job = store.create_analysis_job(
+                "discogs-effnet-heads",
+                limit,
+                kind="analyze-heads",
+                tracks=tracks,
+                local_executor_enabled=local_executor_enabled,
+                max_attempts=max_attempts,
+                job_id=job_id,
+            )
+        else:
+            durable_job = store.get_analysis_job(job_id)
+            if durable_job is None:
+                raise ValueError(f"Head analysis job not found: {job_id}")
         total = durable_job.total
         started_at = perf_counter()
         analysis_logger.info(
@@ -1911,22 +2329,28 @@ def _analyze_audio_features_job(
     limit: int | None,
     local_executor_enabled: bool = True,
     max_attempts: int = 3,
+    enqueue: bool = True,
 ) -> None:
     try:
         if SHUTDOWN_REQUESTED:
             finish_job(job_id, "failed", "Audio feature analysis cancelled during application shutdown")
             return
         store, _settings = context()
-        tracks = store.list_tracks_missing_features(AUDIO_FEATURE_EXTRACTOR, limit=limit)
-        durable_job = store.create_analysis_job(
-            AUDIO_FEATURE_EXTRACTOR,
-            limit,
-            kind="analyze-audio-features",
-            tracks=tracks,
-            local_executor_enabled=local_executor_enabled,
-            max_attempts=max_attempts,
-            job_id=job_id,
-        )
+        if enqueue:
+            tracks = store.list_tracks_missing_features(AUDIO_FEATURE_EXTRACTOR, limit=limit)
+            durable_job = store.create_analysis_job(
+                AUDIO_FEATURE_EXTRACTOR,
+                limit,
+                kind="analyze-audio-features",
+                tracks=tracks,
+                local_executor_enabled=local_executor_enabled,
+                max_attempts=max_attempts,
+                job_id=job_id,
+            )
+        else:
+            durable_job = store.get_analysis_job(job_id)
+            if durable_job is None:
+                raise ValueError(f"Audio feature analysis job not found: {job_id}")
         total = durable_job.total
         started_at = perf_counter()
         analysis_logger.info(
@@ -2229,6 +2653,7 @@ UI_HTML = r"""
         <button data-nav="library" onclick="showSection('library')">Library</button>
         <button data-nav="browse" onclick="showSection('browse')">Browse</button>
         <button data-nav="lostFiles" onclick="showSection('lostFiles')">Lost files</button>
+        <button data-nav="erroredFiles" onclick="showSection('erroredFiles')">Errored files</button>
         <button data-nav="recommendations" onclick="showSection('recommendations')">Recommendations</button>
         <button data-nav="evaluation" onclick="showSection('evaluation')">Evaluation</button>
         <button data-nav="jobs" onclick="showSection('jobsPage')">Jobs</button>
@@ -2360,6 +2785,28 @@ UI_HTML = r"""
           <div id="lostFilesList"></div>
         </div>
       </section>
+      <section id="erroredFiles" class="section">
+        <div class="panel">
+          <div class="row" style="justify-content:space-between; margin-bottom:10px">
+            <h2>Errored files</h2>
+            <span class="pill" id="erroredFilesCount">0 errors</span>
+          </div>
+          <div class="actions">
+            <button onclick="toggleErroredFilesSelection(true)">Select all</button>
+            <button onclick="toggleErroredFilesSelection(false)">Clear selection</button>
+            <button id="deleteErroredBtn" onclick="deleteSelectedErroredFiles()">Remove selected</button>
+            <button id="deleteAllErroredBtn" onclick="deleteAllErroredFiles()">Remove all</button>
+            <button class="primary" onclick="loadErroredFiles()">Refresh</button>
+          </div>
+          <div class="meta" style="margin-top:8px">Files that failed analysis, grouped by track and model.</div>
+          <div class="row" style="justify-content:flex-end; margin-top:10px">
+            <button onclick="previousErroredFilesPage()">Previous</button>
+            <span class="pill" id="erroredFilesPage">page 1 / 1</span>
+            <button onclick="nextErroredFilesPage()">Next</button>
+          </div>
+          <div id="erroredFilesList"></div>
+        </div>
+      </section>
       <section id="recommendations" class="section">
         <div class="layout">
           <div class="panel">
@@ -2417,6 +2864,10 @@ UI_HTML = r"""
           <div id="jobs" class="jobs"></div>
         </div>
         <div class="panel">
+          <h2>Job details</h2>
+          <div id="jobDetail" class="jobs"><div class="meta">Select a job to inspect queued, leased, and failed tasks.</div></div>
+        </div>
+        <div class="panel">
           <h2>Workers</h2>
           <div id="workers" class="jobs"></div>
         </div>
@@ -2472,6 +2923,9 @@ UI_HTML = r"""
         <label><span class="label-title">Lease seconds <span class="info" tabindex="0" data-tooltip="How long the server waits before returning an unfinished leased task to the queue. Increase for slow models or long tracks.">(i)</span></span>
           <input id="workerLeaseSeconds" type="number" min="30" value="900" oninput="refreshWorkerCommand()">
         </label>
+        <label><span class="label-title">Recycle after tasks <span class="info" tabindex="0" data-tooltip="Optional safety valve for suspected memory leaks. 0 keeps the worker running forever; a positive value exits after that many submitted tasks.">(i)</span></span>
+          <input id="workerMaxTasksBeforeExit" type="number" min="0" value="0" oninput="refreshWorkerCommand()">
+        </label>
         <label><span class="label-title">Worker command</span>
           <textarea id="workerCommand" rows="5" readonly></textarea>
         </label>
@@ -2514,6 +2968,7 @@ UI_HTML = r"""
       "musicDir", "model", "limit", "analyzeExecutionMode", "workers", "tfThreads",
       "workerServerUrl", "workerId", "workerClaimBatchSize", "workerMaxInflightTasks",
       "workerDownloadConcurrency", "workerSubmitBatchSize", "workerLeaseSeconds",
+      "workerMaxTasksBeforeExit",
       "k", "maxPerArtist", "excludeSameAlbum"
     ];
     let seedId = null;
@@ -2525,6 +2980,8 @@ UI_HTML = r"""
     let browseFilters = {};
     let lostFilesPage = 1;
     const lostFilesPageSize = 50;
+    let erroredFilesPage = 1;
+    const erroredFilesPageSize = 50;
     function model() { return document.getElementById("model").value; }
     function text(value) { return value || ""; }
     function esc(value) {
@@ -2603,7 +3060,8 @@ UI_HTML = r"""
         "--max-inflight-tasks", workerSetting("workerMaxInflightTasks", "128"),
         "--download-concurrency", workerSetting("workerDownloadConcurrency", "8"),
         "--submit-batch-size", workerSetting("workerSubmitBatchSize", "32"),
-        "--lease-seconds", workerSetting("workerLeaseSeconds", "900")
+        "--lease-seconds", workerSetting("workerLeaseSeconds", "900"),
+        "--max-tasks-before-exit", workerSetting("workerMaxTasksBeforeExit", "0")
       ].join(" ");
       const target = document.getElementById("workerCommand");
       if (target) target.value = command;
@@ -2612,6 +3070,7 @@ UI_HTML = r"""
       document.querySelectorAll(".section").forEach(section => section.classList.toggle("active", section.id === id));
       document.querySelectorAll("nav button").forEach(button => button.classList.toggle("active", button.dataset.nav === id || (id === "jobsPage" && button.dataset.nav === "jobs")));
       if (id === "lostFiles") loadLostFiles();
+      if (id === "erroredFiles") loadErroredFiles();
     }
     async function refreshStats() {
       const data = await json(`/stats?model=${encodeURIComponent(model())}`);
@@ -2787,6 +3246,77 @@ UI_HTML = r"""
         return loadLostFiles();
       }
       renderLostFiles(data);
+    }
+    function renderErroredFiles(data) {
+      document.getElementById("erroredFilesCount").textContent = `${data.count} errors`;
+      document.getElementById("erroredFilesPage").textContent = `page ${data.page} / ${data.pages}`;
+      if (!data.results.length) {
+        document.getElementById("erroredFilesList").innerHTML = `<div class="meta" style="margin-top:12px">No errored files.</div>`;
+        return;
+      }
+      const rows = data.results.map(item => {
+        const track = `${item.artist || ""}${item.artist && item.title ? " - " : ""}${item.title || ""}` || `track #${item.track_id}`;
+        return `
+          <tr>
+            <td><input type="checkbox" class="errored-checkbox" value="${esc(item.task_id)}"></td>
+            <td>#${item.track_id}<div class="meta">${esc(track)}</div></td>
+            <td class="path" title="${esc(item.path)}">${esc(item.path)}</td>
+            <td>${esc(item.model_name)}<div class="meta">${esc(item.job_kind)} · ${esc(item.status)} · attempt ${item.attempts}/${item.max_attempts}</div></td>
+            <td>
+              <pre class="meta" style="white-space:pre-wrap; margin:0">${esc(item.error)}</pre>
+              <div class="meta">${esc(item.error_type || "")}${item.stage ? ` · ${esc(item.stage)}` : ""}</div>
+            </td>
+            <td>${formatDate(item.updated_at)}</td>
+          </tr>`;
+      }).join("");
+      document.getElementById("erroredFilesList").innerHTML = `
+        <table class="model-table">
+          <thead><tr><th><input type="checkbox" onchange="toggleErroredFilesSelection(this.checked)"></th><th>Track</th><th>Path</th><th>Model</th><th>Error</th><th>Updated</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+    async function loadErroredFiles() {
+      const data = await json(`/analysis/errors?page=${erroredFilesPage}&page_size=${erroredFilesPageSize}`);
+      if (data.results.length === 0 && data.count > 0 && erroredFilesPage > 1) {
+        erroredFilesPage -= 1;
+        return loadErroredFiles();
+      }
+      renderErroredFiles(data);
+    }
+    function toggleErroredFilesSelection(checked) {
+      document.querySelectorAll(".errored-checkbox").forEach(input => { input.checked = checked; });
+    }
+    async function deleteSelectedErroredFiles() {
+      const ids = Array.from(document.querySelectorAll(".errored-checkbox:checked")).map(input => input.value);
+      if (!ids.length) return;
+      if (!confirm(`Remove ${ids.length} error record(s) from the error list?`)) return;
+      await json("/analysis/errors", {
+        method: "DELETE",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({task_ids: ids})
+      });
+      await loadErroredFiles();
+    }
+    async function deleteAllErroredFiles() {
+      if (!confirm("Remove all current error records from the error list?")) return;
+      await json("/analysis/errors", {
+        method: "DELETE",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({all_errors: true})
+      });
+      erroredFilesPage = 1;
+      await loadErroredFiles();
+    }
+    async function previousErroredFilesPage() {
+      if (erroredFilesPage <= 1) return;
+      erroredFilesPage -= 1;
+      await loadErroredFiles();
+    }
+    async function nextErroredFilesPage() {
+      const data = await json(`/analysis/errors?page=${erroredFilesPage}&page_size=${erroredFilesPageSize}`);
+      if (erroredFilesPage >= data.pages) return;
+      erroredFilesPage += 1;
+      await loadErroredFiles();
     }
     function toggleLostFilesSelection(checked) {
       document.querySelectorAll(".lost-checkbox").forEach(input => { input.checked = checked; });
@@ -3062,6 +3592,42 @@ UI_HTML = r"""
       });
       await refreshJobs();
     }
+    async function cancelJob(jobId) {
+      if (!confirm("Cancel this job? Queued and leased tasks will be marked cancelled.")) return;
+      await json(`/jobs/${encodeURIComponent(jobId)}/cancel`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({reason: "Cancelled from web UI"})
+      });
+      await refreshJobs();
+    }
+    async function loadJobDetail(jobId) {
+      const data = await json(`/jobs/${encodeURIComponent(jobId)}`);
+      const tasks = data.tasks || [];
+      const job = data.job || {};
+      const taskHtml = tasks.length ? tasks.map(task => `
+        <div class="job status-${text(task.status)}">
+          <div class="row" style="justify-content:space-between">
+            <strong>${text(task.status)} · ${text(task.stage || "unknown")}</strong>
+            <span class="pill">${text(task.model_name || "")}</span>
+          </div>
+          <div class="meta">${text(task.path || "")}</div>
+          <div class="meta">task ${text(task.task_id || "")}, track ${text(task.track_id || "")}, attempts ${task.attempts || 0}/${task.max_attempts || 0}</div>
+          <div class="meta">worker ${text(task.lease_owner || "")}${task.lease_expires_at ? `, lease expires ${text(task.lease_expires_at)}` : ""}</div>
+          ${task.error ? `<div class="meta">error: ${text(task.error_type || "Error")} - ${text(task.error)}</div>` : ""}
+        </div>`).join("") : `<div class="meta">No queued, leased, retryable, or final-failed tasks for this job.</div>`;
+      document.getElementById("jobDetail").innerHTML = `
+        <div class="job status-${text(job.status || "")}">
+          <div class="row" style="justify-content:space-between">
+            <strong>${text(job.kind || "job")}</strong>
+            <span class="pill">${text(job.status || "")}</span>
+          </div>
+          <div class="meta">${text(job.message || "")}</div>
+          <div class="meta">done ${job.done || 0}/${job.total || 0}, queued ${job.queued || 0}, leased ${job.leased || 0}, failed ${job.failed || 0}</div>
+        </div>
+        ${taskHtml}`;
+      showSection("jobsPage");
+    }
     async function refreshJobs() {
       const data = await json("/jobs");
       lastJobs = data.jobs;
@@ -3076,18 +3642,39 @@ UI_HTML = r"""
       const html = data.jobs.map(job => {
         const total = job.total || 0;
         const percent = total ? Math.round(((job.done + job.failed) / total) * 100) : (job.status === "completed" ? 100 : 0);
-        const elapsed = job.elapsed_seconds ? `${Math.round(job.elapsed_seconds)}s elapsed` : "";
+        const terminal = !["queued", "running"].includes(job.status);
+        const elapsed = job.elapsed_seconds ? `${Math.round(job.elapsed_seconds)}s ${terminal ? "duration" : "elapsed"}` : "";
         const rate = job.tracks_per_min ? `${job.tracks_per_min.toFixed(1)} tracks/min` : "";
         const eta = job.eta_seconds ? `${Math.round(job.eta_seconds)}s ETA` : "";
         const timing = [elapsed, rate, eta].filter(Boolean).join(" - ");
+        const startedAt = job.created_at || (job.started_at ? new Date(job.started_at * 1000).toLocaleString() : "");
+        const updatedAt = job.updated_at || "";
+        const finishedAt = job.finished_at_iso || "";
+        const workerLine = (job.leased_workers || []).length
+          ? `workers: ${(job.leased_workers || []).map(item => `${text(item.worker_id)}(${item.count})`).join(", ")}`
+          : "";
+        const breakdown = (job.status_breakdown || []).map(item => `${text(item.status)}${item.stage ? `/${text(item.stage)}` : ""}: ${item.count}`).join(", ");
+        const oldestLease = job.oldest_lease ? `oldest lease: ${text(job.oldest_lease.worker_id || "")}, ${Math.round(job.oldest_lease_age || 0)}s, ${text(job.oldest_lease.stage || "")}` : "";
+        const canCancel = ["queued", "running"].includes(job.status);
         return `<div class="job status-${job.status}">
           <div class="row" style="justify-content:space-between">
-            <strong>${job.kind}</strong><span class="pill">${job.status}</span>
+            <strong>${job.kind}</strong>
+            <div class="row">
+              <button onclick="loadJobDetail('${job.id}')">Details</button>
+              ${canCancel ? `<button onclick="cancelJob('${job.id}')">Cancel</button>` : ""}
+              <span class="pill">${job.status}</span>
+            </div>
           </div>
           <div class="meta">${job.message}</div>
+          <div class="meta">started: ${text(startedAt)}${updatedAt ? `, updated: ${text(updatedAt)}` : ""}${finishedAt ? `, finished: ${text(finishedAt)}` : ""}</div>
+          ${job.status_hint ? `<div class="meta">${text(job.status_hint)}</div>` : ""}
+          ${workerLine ? `<div class="meta">${workerLine}</div>` : ""}
+          ${oldestLease ? `<div class="meta">${oldestLease}</div>` : ""}
+          ${breakdown ? `<div class="meta">breakdown: ${breakdown}</div>` : ""}
+          ${job.last_error ? `<div class="meta">last error: ${text(job.last_error.error_type || "Error")} ${text(job.last_error.stage || "")} - ${text(job.last_error.error || "")}</div>` : ""}
           ${job.error_detail ? `<pre class="meta">${text(job.error_detail)}</pre>` : ""}
           ${job.current ? `<div class="meta">current: ${job.current}</div>` : ""}
-          <div class="meta">done ${job.done}${total ? ` / ${total}` : ""}${job.failed ? `, failed ${job.failed}` : ""}</div>
+          <div class="meta">done ${job.done}${total ? ` / ${total}` : ""}, queued ${job.queued || 0}, leased ${job.leased || 0}, failed ${job.failed || 0}</div>
           ${timing ? `<div class="meta">${timing}</div>` : ""}
           <div class="bar"><div class="fill" style="width:${percent}%"></div></div>
         </div>`;

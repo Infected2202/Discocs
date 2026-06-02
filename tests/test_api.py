@@ -1,5 +1,6 @@
 from pathlib import Path
 import base64
+import sqlite3
 import socket
 from urllib.error import URLError
 
@@ -7,15 +8,17 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 import app.main as main_module
+from app.cli import worker_failure_retryable
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR
 from app.head_pack import HeadOutput, Prediction
 from app.main import app
 from app.scanner import ScannedTrack
-from app.store import Store, Track, TrackFeature
+from app.store import INITIALIZED_DB_PATHS, Store, Track, TrackFeature
 
 
 def init_api_store(tmp_path: Path, monkeypatch) -> Store:
     db_path = tmp_path / "app.db"
+    INITIALIZED_DB_PATHS.discard(db_path.resolve())
     monkeypatch.setenv("DISCOCS_DB_PATH", str(db_path))
     monkeypatch.setenv("DISCOCS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("DISCOCS_INDEX_DIR", str(tmp_path))
@@ -78,6 +81,7 @@ def test_test_ui_loads():
     assert "Library" in response.text
     assert "Browse" in response.text
     assert "Lost files" in response.text
+    assert "Errored files" in response.text
     assert "Recommendations" in response.text
     assert "Evaluation" in response.text
     assert "Jobs" in response.text
@@ -114,6 +118,7 @@ def test_test_ui_loads():
     assert "workerCommand" in response.text
     assert "recs worker" in response.text
     assert "execution_mode: executionMode" in response.text
+    assert "cancelJob" in response.text
     assert "parsedLimit && parsedLimit > 0 ? parsedLimit : null" in response.text
     assert "Add seed" in response.text
     assert "openAnalysis" in response.text
@@ -123,6 +128,18 @@ def test_test_ui_loads():
     assert "browse/facets" in response.text
     assert "facet-list" in response.text
     assert "compactFolder" in response.text
+
+
+def test_worker_media_failures_are_not_retryable():
+    terminal_errors = [
+        RuntimeError("ffmpeg decoded no audio samples from /tmp/bad.mp3"),
+        RuntimeError("ffmpeg failed to decode /tmp/bad.mp3 with exit code 1: Invalid data found when processing input"),
+        RuntimeError("Output file #0 does not contain any stream"),
+        ValueError("Embedding vector has zero norm"),
+    ]
+
+    for error in terminal_errors:
+        assert worker_failure_retryable(error) is False
 
 
 def test_stats_includes_pipeline_fields(tmp_path: Path, monkeypatch):
@@ -246,6 +263,46 @@ def test_worker_submit_audio_feature_result(tmp_path: Path, monkeypatch):
     assert store.get_analysis_job(job.id).done == 1
 
 
+def test_worker_submit_sqlite_lock_returns_retryable_error(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    path = tmp_path / "track.flac"
+    path.write_bytes(b"fake-audio")
+    track_id = add_track(store, path)
+    store.create_analysis_job("discogs_multi", None)
+    task = store.claim_analysis_tasks("gpu-1", ["discogs_multi"], limit=1)[0]
+    vector = np.array([0.1, 0.2, 0.3], dtype=np.float32)
+
+    def raise_locked(_item):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(main_module, "decode_worker_vector", raise_locked)
+    client = TestClient(app)
+
+    response = client.post(
+        "/workers/results",
+        json={
+            "worker_id": "gpu-1",
+            "results": [
+                {
+                    "task_id": task.id,
+                    "track_id": track_id,
+                    "model_name": "discogs_multi",
+                    "dim": 3,
+                    "dtype": "float32",
+                    "vector_b64": base64.b64encode(vector.tobytes()).decode("ascii"),
+                    "file_size": task.file_size,
+                    "mtime": task.mtime,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 503
+    unchanged = store.get_analysis_task(task.id)
+    assert unchanged is not None
+    assert unchanged.status == "leased"
+
+
 def test_worker_submit_head_result(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     path = tmp_path / "track.flac"
@@ -359,7 +416,41 @@ def test_workers_endpoint_and_jobs_include_worker_status(tmp_path: Path, monkeyp
 
     jobs = client.get("/jobs")
     assert jobs.status_code == 200
+    first_job = jobs.json()["jobs"][0]
     assert jobs.json()["workers"][0]["worker_id"] == "gpu-1"
+    assert first_job["leased"] == 1
+    assert first_job["oldest_lease"]["worker_id"] == "gpu-1"
+
+    detail = client.get(f"/jobs/{first_job['id']}")
+    assert detail.status_code == 200
+    detail_data = detail.json()
+    assert detail_data["job"]["id"] == first_job["id"]
+    assert detail_data["tasks"][0]["lease_owner"] == "gpu-1"
+    assert detail_data["tasks"][0]["status"] == "leased"
+
+
+def test_cancel_analysis_job_endpoint_marks_zombie_cancelled(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    path = tmp_path / "track.flac"
+    path.write_bytes(b"fake-audio")
+    add_track(store, path)
+    job = store.create_analysis_job("discogs_multi", None, local_executor_enabled=False)
+    store.claim_analysis_tasks("gpu-1", ["discogs_multi"], limit=1)
+    client = TestClient(app)
+
+    response = client.post(
+        f"/jobs/{job.id}/cancel",
+        json={"reason": "test cancel"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+    cancelled = store.get_analysis_job(job.id)
+    assert cancelled is not None
+    assert cancelled.status == "cancelled"
+    assert cancelled.failed == 1
+    jobs = client.get("/jobs").json()["jobs"]
+    assert jobs[0]["status"] == "cancelled"
 
 
 def test_head_pack_endpoint_returns_readiness_and_counts(tmp_path: Path, monkeypatch):
@@ -482,6 +573,10 @@ def test_analyze_job_remote_mode_disables_local_executor(tmp_path: Path, monkeyp
     init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
 
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("remote-only must not start local analyze executor")
+
+    monkeypatch.setattr(main_module, "_analyze_job", fail_if_called)
     response = client.post(
         "/jobs/analyze",
         json={"model": "discogs_multi", "limit": 1, "execution_mode": "remote"},
@@ -499,6 +594,10 @@ def test_analyze_audio_features_remote_mode_queues_worker_task(tmp_path: Path, m
     track_id = add_track(store, path)
     client = TestClient(app)
 
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("remote-only must not start local audio feature executor")
+
+    monkeypatch.setattr(main_module, "_analyze_audio_features_job", fail_if_called)
     response = client.post(
         "/jobs/analyze-audio-features",
         json={"execution_mode": "remote", "local_executor_enabled": False},
@@ -510,6 +609,8 @@ def test_analyze_audio_features_remote_mode_queues_worker_task(tmp_path: Path, m
     assert job.kind == "analyze-audio-features"
     assert job.model_name == AUDIO_FEATURE_EXTRACTOR
     assert job.queued == 1
+    jobs = client.get("/jobs").json()["jobs"]
+    assert "Waiting for worker supporting audio_features_v1" in jobs[0]["status_hint"]
     claim = client.post(
         "/workers/claim",
         json={"worker_id": "gpu-1", "models": [AUDIO_FEATURE_EXTRACTOR], "limit": 1},
@@ -527,6 +628,10 @@ def test_analyze_heads_remote_mode_queues_worker_task(tmp_path: Path, monkeypatc
     track_id = add_track(store, path)
     client = TestClient(app)
 
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("remote-only must not start local head executor")
+
+    monkeypatch.setattr(main_module, "_analyze_heads_job", fail_if_called)
     response = client.post(
         "/jobs/analyze-heads",
         json={"execution_mode": "remote", "local_executor_enabled": False},
@@ -538,6 +643,8 @@ def test_analyze_heads_remote_mode_queues_worker_task(tmp_path: Path, monkeypatc
     assert job.kind == "analyze-heads"
     assert job.model_name == "discogs-effnet-heads"
     assert job.queued == 1
+    jobs = client.get("/jobs").json()["jobs"]
+    assert "Waiting for worker supporting discogs-effnet-heads" in jobs[0]["status_hint"]
     claim = client.post(
         "/workers/claim",
         json={"worker_id": "gpu-1", "models": ["discogs-effnet-heads"], "limit": 1},
@@ -797,6 +904,36 @@ def test_lost_files_list_paginates_and_delete_missing_tracks(tmp_path: Path, mon
     assert delete_all_response.status_code == 200
     assert delete_all_response.json()["deleted"] == 1
     assert store.get_track(second_missing_id) is None
+
+
+def test_analysis_errors_list_paths_and_errors(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    bad_path = tmp_path / "bad.mp3"
+    bad_path.write_bytes(b"not audio")
+    track_id = add_track(store, bad_path, title="Broken")
+    store.create_analysis_job("discogs_multi", None, max_attempts=1)
+    task = store.claim_analysis_tasks("gpu-1", ["discogs_multi"], limit=1)[0]
+
+    store.fail_analysis_task(
+        task.id,
+        error="ffmpeg decoded no audio samples",
+        error_type="FfmpegDecodeError",
+        stage="worker",
+        worker_id="gpu-1",
+        retryable=False,
+    )
+
+    client = TestClient(app)
+    response = client.get("/analysis/errors")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    result = payload["results"][0]
+    assert result["track_id"] == track_id
+    assert result["path"] == str(bad_path)
+    assert result["error"] == "ffmpeg decoded no audio samples"
+    assert result["error_type"] == "FfmpegDecodeError"
 
 
 def test_check_missing_files_job_marks_missing_and_available(tmp_path: Path, monkeypatch):
