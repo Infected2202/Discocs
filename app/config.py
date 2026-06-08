@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -23,12 +24,51 @@ DISCOGS_EFFNET_MODEL = "discogs_effnet"
 
 
 @dataclass(frozen=True)
+class NavidromeSettings:
+    url: str = ""
+    user: str = ""
+    password: str = ""
+    auth_mode: str = "token"
+    timeout_seconds: int = 60
+    download_mode: str = "download"
+    temp_dir: Path = Path("data/tmp/navidrome")
+
+    @classmethod
+    def from_env(cls, data_dir: Path) -> "NavidromeSettings":
+        saved = load_runtime_settings(data_dir).get("navidrome", {})
+        return cls(
+            url=os.getenv("DISCOCS_NAVIDROME_URL", str(saved.get("url", ""))),
+            user=os.getenv("DISCOCS_NAVIDROME_USER", str(saved.get("user", ""))),
+            password=os.getenv("DISCOCS_NAVIDROME_PASSWORD", str(saved.get("password", ""))),
+            auth_mode=os.getenv(
+                "DISCOCS_NAVIDROME_AUTH_MODE",
+                str(saved.get("auth_mode", "token")),
+            ),
+            timeout_seconds=_positive_int(
+                os.getenv("DISCOCS_NAVIDROME_TIMEOUT_SECONDS"),
+                _positive_int(saved.get("timeout_seconds"), 60),
+            ),
+            download_mode=os.getenv(
+                "DISCOCS_NAVIDROME_DOWNLOAD_MODE",
+                str(saved.get("download_mode", "download")),
+            ),
+            temp_dir=Path(
+                os.getenv(
+                    "DISCOCS_NAVIDROME_TEMP_DIR",
+                    str(saved.get("temp_dir", data_dir / "tmp" / "navidrome")),
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class Settings:
     data_dir: Path
     db_path: Path
     model_dir: Path
     index_dir: Path
     default_model: str = "discogs_multi"
+    navidrome: NavidromeSettings = field(default_factory=NavidromeSettings)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -43,6 +83,7 @@ class Settings:
             model_dir=model_dir,
             index_dir=index_dir,
             default_model=default_model,
+            navidrome=NavidromeSettings.from_env(data_dir),
         )
 
     def model_path(self, model_name: str | None = None) -> Path:
@@ -57,3 +98,37 @@ class Settings:
     def index_path(self, model_name: str | None = None) -> Path:
         model_key = model_name or self.default_model
         return self.index_dir / f"index_{model_key}_hnsw.bin"
+
+
+def _positive_int(value: str | None, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def runtime_settings_path(data_dir: Path) -> Path:
+    return data_dir / "settings.json"
+
+
+def load_runtime_settings(data_dir: Path) -> dict[str, object]:
+    path = runtime_settings_path(data_dir)
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def save_runtime_settings(data_dir: Path, settings: dict[str, object]) -> None:
+    path = runtime_settings_path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(settings, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )

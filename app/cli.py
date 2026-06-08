@@ -22,6 +22,7 @@ import typer
 import numpy as np
 
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR, AudioFeatureAnalyzer
+from app.audio_source import track_audio_path
 from app.config import Settings
 from app.embedder import DiscogsEffnetEmbedder, pool_and_normalize
 from app.head_pack import (
@@ -32,6 +33,9 @@ from app.head_pack import (
     head_pack_readiness,
 )
 from app.logging_config import configure_logging, get_analysis_logger
+from app.navidrome import NavidromeClient
+from app.navidrome_migration import migrate_navidrome_duplicate_tracks
+from app.navidrome_sync import sync_navidrome_catalog
 from app.recommender import Recommender, build_index
 from app.scanner import AUDIO_EXTENSIONS, iter_audio_files, scan_music_folder
 from app.store import Store, similar_track_dict
@@ -47,6 +51,11 @@ def get_store_and_settings() -> tuple[Store, Settings]:
     store = Store(settings.db_path)
     store.init()
     return store, settings
+
+
+def get_navidrome_client() -> NavidromeClient:
+    settings = Settings.from_env()
+    return NavidromeClient(settings.navidrome)
 
 
 @cli.command()
@@ -98,6 +107,109 @@ def inspect_folder(
         typer.echo(f"  {path}")
 
 
+@cli.command("navidrome-ping")
+def navidrome_ping() -> None:
+    """Check configured Navidrome Subsonic API access."""
+    client = get_navidrome_client()
+    payload = client.ping()
+    version = payload.get("version", "")
+    server_version = payload.get("serverVersion", "")
+    suffix = f" server_version={server_version}" if server_version else ""
+    typer.echo(f"navidrome=ok api_version={version}{suffix}")
+
+
+@cli.command("navidrome-list")
+def navidrome_list(
+    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 10,
+    offset: Annotated[int, typer.Option("--offset", min=0)] = 0,
+    query: Annotated[str, typer.Option("--query")] = "",
+) -> None:
+    """List songs from Navidrome through the Subsonic API."""
+    client = get_navidrome_client()
+    songs = client.list_songs(limit=limit, offset=offset, query=query)
+    typer.echo(f"songs={len(songs)} offset={offset} query={query!r}")
+    for song in songs:
+        label = f"{song.artist or ''} - {song.title or ''}".strip(" -")
+        album = f" album={song.album}" if song.album else ""
+        duration = f" duration={song.duration}" if song.duration is not None else ""
+        suffix = f" suffix={song.suffix}" if song.suffix else ""
+        typer.echo(f"{song.id}  {label}{album}{duration}{suffix}")
+
+
+@cli.command("navidrome-download")
+def navidrome_download(
+    item_id: Annotated[str, typer.Option("--item-id")],
+    out_dir: Annotated[Path | None, typer.Option("--out-dir")] = None,
+    suffix: Annotated[str | None, typer.Option("--suffix")] = None,
+) -> None:
+    """Download a Navidrome song to a local temp file for diagnostics."""
+    settings = Settings.from_env()
+    client = NavidromeClient(settings.navidrome)
+    downloaded = client.download_track(item_id, out_dir, suffix=suffix)
+    typer.echo(
+        f"path={downloaded.path} bytes={downloaded.bytes_written} "
+        f"content_type={downloaded.content_type!r} mode={downloaded.mode}"
+    )
+
+
+@cli.command("navidrome-sync")
+def navidrome_sync(
+    page_size: Annotated[int, typer.Option("--page-size", min=1, max=2000)] = 500,
+    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
+    mark_stale: Annotated[
+        bool,
+        typer.Option("--mark-stale/--keep-stale"),
+    ] = True,
+) -> None:
+    """Import/update tracks from Navidrome and save external ID mappings."""
+    store, settings = get_store_and_settings()
+    client = NavidromeClient(settings.navidrome)
+
+    def progress(count: int, song) -> None:
+        if count == 1 or count % 100 == 0:
+            label = f"{song.artist or ''} - {song.title or song.id}".strip(" -")
+            typer.echo(f"syncing={count} item_id={song.id} {label}")
+
+    result = sync_navidrome_catalog(
+        store,
+        client,
+        page_size=page_size,
+        limit=limit,
+        mark_stale=mark_stale,
+        progress=progress,
+    )
+    typer.echo(result.summary())
+    if result.failed_count:
+        raise typer.Exit(1)
+
+
+@cli.command("navidrome-merge-duplicates")
+def navidrome_merge_duplicates(
+    apply: Annotated[
+        bool,
+        typer.Option("--apply/--dry-run", help="Apply the migration instead of reporting what would change."),
+    ] = False,
+    page_size: Annotated[int, typer.Option("--page-size", min=1, max=2000)] = 500,
+    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
+    batch_size: Annotated[int, typer.Option("--batch-size", min=1, max=5000)] = 500,
+) -> None:
+    """One-time migration: bind Navidrome IDs to existing local tracks and remove empty navidrome:// duplicates."""
+    store, settings = get_store_and_settings()
+    client = NavidromeClient(settings.navidrome)
+
+    def progress(done: int, total: int) -> None:
+        typer.echo(f"applied={done}/{total}")
+
+    result = migrate_navidrome_duplicate_tracks(
+        store,
+        songs=client.iter_songs(page_size=page_size, limit=limit),
+        dry_run=not apply,
+        batch_size=batch_size,
+        progress=progress if apply else None,
+    )
+    typer.echo(result.summary())
+
+
 @cli.command()
 def extract_one(
     path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
@@ -136,7 +248,8 @@ def analyze(
         typer.echo(f"[{index}/{total}] start track_id={track.id} {label}")
         track_started = perf_counter()
         try:
-            vector = embedder.extract_track_vector(Path(track.path))
+            with track_audio_path(store, settings, track) as audio_path:
+                vector = embedder.extract_track_vector(audio_path)
             store.save_embedding(track.id, model, vector)
             done += 1
             elapsed = perf_counter() - track_started
@@ -1286,7 +1399,8 @@ def analyze_heads(
         typer.echo(f"[{index}/{total}] start track_id={track.id} {label}")
         track_started = perf_counter()
         try:
-            outputs = analyzer.analyze_track(Path(track.path))
+            with track_audio_path(store, settings, track) as audio_path:
+                outputs = analyzer.analyze_track(audio_path)
             for output in outputs:
                 store.save_model_output(track.id, output.model_name, output.scores, output.aggregation)
                 store.save_predictions(track.id, output.model_name, output.predictions)
@@ -1355,7 +1469,8 @@ def analyze_audio_features(
         typer.echo(f"[{index}/{total}] start track_id={track.id} {label}")
         track_started = perf_counter()
         try:
-            features = analyzer.analyze_track(Path(track.path))
+            with track_audio_path(store, _settings, track) as audio_path:
+                features = analyzer.analyze_track(audio_path)
             store.save_features(track.id, features)
             done += 1
             elapsed = perf_counter() - track_started
@@ -1399,6 +1514,65 @@ def build_index_command(model: Annotated[str, typer.Option("--model")] = "discog
     path = build_index(store, settings, model)
     logger.info("Finished CLI build-index model=%s path=%s", model, path)
     typer.echo(f"index={path}")
+
+
+@cli.command("similar-mix")
+def similar_mix(
+    track_ids: Annotated[str, typer.Option("--track-ids")],
+    model: Annotated[str, typer.Option("--model")] = "discogs_multi",
+    k: Annotated[int, typer.Option("--k")] = 30,
+    max_per_artist: Annotated[int, typer.Option("--max-per-artist")] = 2,
+    exclude_same_album: Annotated[bool, typer.Option("--exclude-same-album/--include-same-album")] = True,
+) -> None:
+    """Print similar tracks for an average blend of seed track embeddings."""
+    store, settings = get_store_and_settings()
+    parsed_ids: list[int] = []
+    for part in track_ids.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            parsed_ids.append(int(part))
+        except ValueError as exc:
+            raise typer.BadParameter(f"Invalid track id: {part}") from exc
+    if not parsed_ids:
+        raise typer.BadParameter("Provide at least one track id via --track-ids")
+    seeds = []
+    for track_id in parsed_ids:
+        track = store.get_track(track_id)
+        if track is None:
+            raise typer.BadParameter(f"Unknown track id: {track_id}")
+        seeds.append(track)
+    logger.info(
+        "Starting CLI similar-mix track_ids=%s model=%s k=%s max_per_artist=%s exclude_same_album=%s",
+        parsed_ids,
+        model,
+        k,
+        max_per_artist,
+        exclude_same_album,
+    )
+    results, skipped_seed_ids = Recommender(store, settings, model).similar_mix(
+        seeds,
+        k=k,
+        max_per_artist=max_per_artist,
+        exclude_same_album=exclude_same_album,
+    )
+    if skipped_seed_ids:
+        typer.echo(f"Skipped seeds without embeddings: {skipped_seed_ids}")
+    typer.echo(f"Blend seeds: {', '.join(str(seed.id) for seed in seeds)}")
+    logger.info(
+        "Finished CLI similar-mix track_ids=%s model=%s skipped=%s results=%s",
+        parsed_ids,
+        model,
+        skipped_seed_ids,
+        len(results),
+    )
+    for item in results:
+        track = item.track
+        typer.echo(
+            f"{item.similarity:.3f}  {track.id}  "
+            f"{track.artist or ''} - {track.title or Path(track.path).stem}"
+        )
 
 
 @cli.command()

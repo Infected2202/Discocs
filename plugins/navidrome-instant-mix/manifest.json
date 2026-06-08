@@ -1,0 +1,120 @@
+{
+  "name": "discocs Instant Mix",
+  "id": "discocs",
+  "author": "discocs",
+  "website": "https://github.com/navidrome/navidrome",
+  "version": "0.1.7",
+  "description": "Uses discocs Discogs-EffNet recommendations as Navidrome's similar-song source for Instant Mix.",
+  "capabilities": [
+    "MetadataAgent",
+    "LifecycleManagement"
+  ],
+  "config": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "discocsUrl": {
+          "type": "string",
+          "title": "discocs URL",
+          "description": "Base URL reachable from the Navidrome container/plugin runtime.",
+          "default": "http://127.0.0.1:8711"
+        },
+        "model": {
+          "type": "string",
+          "title": "Embedding model",
+          "description": "discocs model alias used for recommendations.",
+          "default": "discogs_multi"
+        },
+        "count": {
+          "type": "integer",
+          "title": "Default result count",
+          "description": "Used when Navidrome does not provide a count.",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 500
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "title": "HTTP timeout seconds",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 120
+        },
+        "maxPerArtist": {
+          "type": "integer",
+          "title": "Max tracks per artist",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 100
+        },
+        "excludeSameAlbum": {
+          "type": "boolean",
+          "title": "Exclude same album",
+          "default": true
+        },
+        "debugPluginEvents": {
+          "type": "boolean",
+          "title": "POST debug events to discocs",
+          "description": "Optional verbose plugin tracing. Keep disabled until discocsUrl is reachable from the Navidrome plugin runtime.",
+          "default": false
+        }
+      }
+    },
+    "uiSchema": {
+      "type": "VerticalLayout",
+      "elements": [
+        {
+          "type": "Group",
+          "label": "discocs API",
+          "elements": [
+            {
+              "type": "Control",
+              "scope": "#/properties/discocsUrl"
+            },
+            {
+              "type": "Control",
+              "scope": "#/properties/timeoutSeconds"
+            },
+            {
+              "type": "Control",
+              "scope": "#/properties/debugPluginEvents"
+            }
+          ]
+        },
+        {
+          "type": "Group",
+          "label": "Recommendations",
+          "elements": [
+            {
+              "type": "Control",
+              "scope": "#/properties/model"
+            },
+            {
+              "type": "Control",
+              "scope": "#/properties/count"
+            },
+            {
+              "type": "Control",
+              "scope": "#/properties/maxPerArtist"
+            },
+            {
+              "type": "Control",
+              "scope": "#/properties/excludeSameAlbum"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "permissions": {
+    "config": {
+      "reason": "Read plugin configuration from Navidrome UI."
+    },
+    "http": {
+      "reason": "Call the configured discocs API for similar tracks.",
+      "requiredHosts": [
+        "*"
+      ]
+    }
+  }
+}

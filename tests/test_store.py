@@ -94,6 +94,130 @@ def test_metadata_rescan_without_file_change_keeps_embedding(tmp_path: Path):
     assert np.allclose(store.load_embedding(track_id, "discogs_multi"), vector)
 
 
+def test_external_track_mapping_round_trip_and_idempotent_upsert(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=Path("navidrome://song-1"),
+            artist="Artist",
+            title="Title",
+            album="Album",
+            genre="Techno",
+            year=2001,
+            duration=123.0,
+            file_size=100,
+            mtime=1,
+        )
+    )
+
+    mapping = store.upsert_external_track(
+        "navidrome",
+        "song-1",
+        track_id,
+        raw_json='{"id":"song-1"}',
+        synced_at="2026-06-02T10:00:00+00:00",
+    )
+    refreshed = store.upsert_external_track(
+        "navidrome",
+        "song-1",
+        track_id,
+        raw_json='{"id":"song-1","title":"Title"}',
+        synced_at="2026-06-02T11:00:00+00:00",
+    )
+
+    assert mapping.provider == "navidrome"
+    assert refreshed.track_id == track_id
+    assert refreshed.raw_json == '{"id":"song-1","title":"Title"}'
+    assert refreshed.synced_at == "2026-06-02T11:00:00+00:00"
+    assert store.count_external_tracks("navidrome") == 1
+    assert store.get_external_track("navidrome", "song-1") == refreshed
+    assert store.get_track_by_external_id("navidrome", "song-1").id == track_id
+    assert store.external_id_for_track("navidrome", track_id) == "song-1"
+    assert store.list_external_tracks("navidrome") == [refreshed]
+
+
+def test_external_track_replaces_old_provider_mapping_for_track(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=Path("navidrome://old-song"),
+            artist="Artist",
+            title="Title",
+            album="Album",
+            duration=123.0,
+            file_size=100,
+            mtime=1,
+        )
+    )
+    store.upsert_external_track("navidrome", "old-song", track_id)
+
+    mapping = store.upsert_external_track("navidrome", "new-song", track_id)
+
+    assert mapping.external_id == "new-song"
+    assert store.get_external_track("navidrome", "old-song") is None
+    assert store.external_id_for_track("navidrome", track_id) == "new-song"
+    assert store.count_external_tracks("navidrome") == 1
+
+
+def test_external_track_cascades_when_track_is_deleted(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=Path("navidrome://song-1"),
+            artist="Artist",
+            title="Title",
+            album="Album",
+            duration=123.0,
+            file_size=100,
+            mtime=1,
+        )
+    )
+    store.upsert_external_track("navidrome", "song-1", track_id)
+
+    assert store.delete_tracks([track_id]) == 1
+
+    assert store.get_track_by_external_id("navidrome", "song-1") is None
+    assert store.get_external_track("navidrome", "song-1") is None
+    assert store.count_external_tracks("navidrome") == 0
+
+
+def test_external_track_rejects_missing_track_and_empty_keys(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+
+    try:
+        store.upsert_external_track("navidrome", "song-1", 999)
+    except ValueError as exc:
+        assert str(exc) == "Track not found: 999"
+    else:
+        raise AssertionError("missing track should fail")
+
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=Path("navidrome://song-1"),
+            artist="Artist",
+            title="Title",
+            album="Album",
+            duration=123.0,
+            file_size=100,
+            mtime=1,
+        )
+    )
+    for provider, external_id, expected in [
+        ("", "song-1", "provider must not be empty"),
+        ("navidrome", "", "external_id must not be empty"),
+    ]:
+        try:
+            store.upsert_external_track(provider, external_id, track_id)
+        except ValueError as exc:
+            assert str(exc) == expected
+        else:
+            raise AssertionError("empty external mapping value should fail")
+
+
 def test_analysis_tasks_claim_retry_and_complete(tmp_path: Path):
     store = Store(tmp_path / "app.db")
     store.init()

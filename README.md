@@ -22,7 +22,8 @@ The app also has optional analysis packs:
 - Per-track analysis inspector in the web UI.
 
 See [docs/analysis-pipeline.md](docs/analysis-pipeline.md) and
-[docs/operations.md](docs/operations.md) for details.
+[docs/operations.md](docs/operations.md) for details. Navidrome Instant Mix
+integration is documented in [docs/navidrome-plugin.md](docs/navidrome-plugin.md).
 
 ## Quick Start
 
