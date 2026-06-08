@@ -34,6 +34,15 @@ class Track:
 
 
 @dataclass(frozen=True)
+class ExternalTrack:
+    provider: str
+    external_id: str
+    track_id: int
+    raw_json: str | None
+    synced_at: str
+
+
+@dataclass(frozen=True)
 class TrackListing:
     track: Track
     has_embedding: bool
@@ -239,12 +248,25 @@ class Store:
                     FOREIGN KEY (result_track_id) REFERENCES tracks(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS external_tracks (
+                    provider TEXT NOT NULL,
+                    external_id TEXT NOT NULL,
+                    track_id INTEGER NOT NULL,
+                    raw_json TEXT,
+                    synced_at TEXT NOT NULL,
+                    PRIMARY KEY (provider, external_id),
+                    UNIQUE (provider, track_id),
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS analysis_jobs (
                     id TEXT PRIMARY KEY,
                     kind TEXT NOT NULL DEFAULT 'analyze',
                     model_name TEXT NOT NULL,
                     status TEXT NOT NULL,
                     total INTEGER NOT NULL DEFAULT 0,
+                    progress_done INTEGER NOT NULL DEFAULT 0,
+                    progress_failed INTEGER NOT NULL DEFAULT 0,
                     local_executor_enabled INTEGER NOT NULL DEFAULT 1,
                     workers INTEGER NOT NULL DEFAULT 1,
                     tf_threads INTEGER NOT NULL DEFAULT 1,
@@ -305,6 +327,8 @@ class Store:
             self._ensure_column(conn, "tracks", "missing_at", "TEXT")
             self._ensure_column(conn, "tracks", "last_seen_at", "TEXT")
             self._ensure_column(conn, "analysis_jobs", "kind", "TEXT NOT NULL DEFAULT 'analyze'")
+            self._ensure_column(conn, "analysis_jobs", "progress_done", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "analysis_jobs", "progress_failed", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "analysis_workers", "claimed_count", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "analysis_workers", "completed_count", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "analysis_workers", "failed_count", "INTEGER NOT NULL DEFAULT 0")
@@ -456,6 +480,126 @@ class Store:
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM tracks WHERE id = ?", (track_id,)).fetchone()
         return row_to_track(row) if row else None
+
+    def upsert_external_track(
+        self,
+        provider: str,
+        external_id: str,
+        track_id: int,
+        raw_json: str | None = None,
+        synced_at: str | None = None,
+    ) -> ExternalTrack:
+        provider = _require_external_value(provider, "provider")
+        external_id = _require_external_value(external_id, "external_id")
+        synced_at = synced_at or utc_now()
+        with self.connect() as conn:
+            track_exists = conn.execute(
+                "SELECT 1 FROM tracks WHERE id = ?",
+                (track_id,),
+            ).fetchone()
+            if track_exists is None:
+                raise ValueError(f"Track not found: {track_id}")
+            conn.execute(
+                """
+                DELETE FROM external_tracks
+                WHERE provider = ? AND track_id = ? AND external_id != ?
+                """,
+                (provider, track_id, external_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO external_tracks (
+                    provider, external_id, track_id, raw_json, synced_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(provider, external_id) DO UPDATE SET
+                    track_id = excluded.track_id,
+                    raw_json = excluded.raw_json,
+                    synced_at = excluded.synced_at
+                """,
+                (provider, external_id, track_id, raw_json, synced_at),
+            )
+            row = conn.execute(
+                """
+                SELECT * FROM external_tracks
+                WHERE provider = ? AND external_id = ?
+                """,
+                (provider, external_id),
+            ).fetchone()
+        return row_to_external_track(row)
+
+    def get_external_track(self, provider: str, external_id: str) -> ExternalTrack | None:
+        provider = _require_external_value(provider, "provider")
+        external_id = _require_external_value(external_id, "external_id")
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM external_tracks
+                WHERE provider = ? AND external_id = ?
+                """,
+                (provider, external_id),
+            ).fetchone()
+        return row_to_external_track(row) if row else None
+
+    def get_track_by_external_id(self, provider: str, external_id: str) -> Track | None:
+        provider = _require_external_value(provider, "provider")
+        external_id = _require_external_value(external_id, "external_id")
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT t.*
+                FROM tracks t
+                JOIN external_tracks e ON e.track_id = t.id
+                WHERE e.provider = ? AND e.external_id = ?
+                """,
+                (provider, external_id),
+            ).fetchone()
+        return row_to_track(row) if row else None
+
+    def external_id_for_track(self, provider: str, track_id: int) -> str | None:
+        provider = _require_external_value(provider, "provider")
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT external_id FROM external_tracks
+                WHERE provider = ? AND track_id = ?
+                """,
+                (provider, track_id),
+            ).fetchone()
+        return str(row["external_id"]) if row else None
+
+    def list_external_tracks(self, provider: str | None = None) -> list[ExternalTrack]:
+        params: list[object] = []
+        where = ""
+        if provider is not None:
+            provider = _require_external_value(provider, "provider")
+            where = "WHERE provider = ?"
+            params.append(provider)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM external_tracks
+                {where}
+                ORDER BY provider, external_id
+                """,
+                params,
+            ).fetchall()
+        return [row_to_external_track(row) for row in rows]
+
+    def count_external_tracks(self, provider: str | None = None) -> int:
+        params: list[object] = []
+        where = ""
+        if provider is not None:
+            provider = _require_external_value(provider, "provider")
+            where = "WHERE provider = ?"
+            params.append(provider)
+        with self.connect() as conn:
+            return int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM external_tracks {where}",
+                    params,
+                ).fetchone()[0]
+            )
 
     def mark_track_missing(self, track_id: int, missing_at: str | None = None) -> None:
         with self.connect() as conn:
@@ -781,6 +925,79 @@ class Store:
                     (now, f"Analyzed 0 tracks, failed 0", job_id),
                 )
         return self.get_analysis_job(job_id)  # type: ignore[return-value]
+
+    def create_progress_job(
+        self,
+        kind: str,
+        model_name: str,
+        *,
+        total: int = 0,
+        message: str = "",
+        job_id: str | None = None,
+    ) -> AnalysisJob:
+        now = utc_now()
+        job_id = job_id or str(uuid4())
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO analysis_jobs (
+                    id, kind, model_name, status, total, progress_done,
+                    progress_failed, local_executor_enabled, workers, tf_threads,
+                    max_attempts, message, created_at, updated_at
+                )
+                VALUES (?, ?, ?, 'running', ?, 0, 0, 0, 0, 0, 1, ?, ?, ?)
+                """,
+                (
+                    job_id,
+                    kind,
+                    model_name,
+                    max(int(total), 0),
+                    message or f"Running {kind}",
+                    now,
+                    now,
+                ),
+            )
+        return self._get_analysis_job_no_refresh(job_id)  # type: ignore[return-value]
+
+    def update_progress_job(
+        self,
+        job_id: str,
+        *,
+        done: int | None = None,
+        failed: int | None = None,
+        total: int | None = None,
+        status: str | None = None,
+        message: str | None = None,
+        finished: bool = False,
+    ) -> AnalysisJob | None:
+        now = utc_now()
+        updates = ["updated_at = ?"]
+        params: list[object] = [now]
+        if done is not None:
+            updates.append("progress_done = ?")
+            params.append(max(int(done), 0))
+        if failed is not None:
+            updates.append("progress_failed = ?")
+            params.append(max(int(failed), 0))
+        if total is not None:
+            updates.append("total = ?")
+            params.append(max(int(total), 0))
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+        if message is not None:
+            updates.append("message = ?")
+            params.append(message)
+        if finished:
+            updates.append("finished_at = ?")
+            params.append(now)
+        params.append(job_id)
+        with self.connect() as conn:
+            conn.execute(
+                f"UPDATE analysis_jobs SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+        return self._get_analysis_job_no_refresh(job_id)
 
     def expire_analysis_leases(self, now: str | None = None) -> int:
         now = now or utc_now()
@@ -1268,11 +1485,13 @@ class Store:
         now = utc_now()
         with self.connect() as conn:
             current = conn.execute(
-                "SELECT status FROM analysis_jobs WHERE id = ?",
+                "SELECT kind, status FROM analysis_jobs WHERE id = ?",
                 (job_id,),
             ).fetchone()
             if current is None:
                 return None
+            if not str(current["kind"]).startswith("analyze"):
+                return self._get_analysis_job_no_refresh(job_id)
             if str(current["status"]) == "cancelled":
                 return self._get_analysis_job_no_refresh(job_id)
             counts = conn.execute(
@@ -1320,11 +1539,26 @@ class Store:
             row = conn.execute(
                 """
                 SELECT j.*,
-                    SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) AS done,
-                    SUM(CASE WHEN t.status = 'final_failed' THEN 1 ELSE 0 END) AS failed,
-                    SUM(CASE WHEN t.status = 'queued' THEN 1 ELSE 0 END) AS queued,
-                    SUM(CASE WHEN t.status = 'leased' THEN 1 ELSE 0 END) AS leased,
-                    SUM(CASE WHEN t.status = 'final_failed' THEN 1 ELSE 0 END) AS final_failed
+                    CASE
+                        WHEN COUNT(t.id) > 0 THEN SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END)
+                        ELSE j.progress_done
+                    END AS done,
+                    CASE
+                        WHEN COUNT(t.id) > 0 THEN SUM(CASE WHEN t.status = 'final_failed' THEN 1 ELSE 0 END)
+                        ELSE j.progress_failed
+                    END AS failed,
+                    CASE
+                        WHEN COUNT(t.id) > 0 THEN SUM(CASE WHEN t.status = 'queued' THEN 1 ELSE 0 END)
+                        ELSE 0
+                    END AS queued,
+                    CASE
+                        WHEN COUNT(t.id) > 0 THEN SUM(CASE WHEN t.status = 'leased' THEN 1 ELSE 0 END)
+                        ELSE 0
+                    END AS leased,
+                    CASE
+                        WHEN COUNT(t.id) > 0 THEN SUM(CASE WHEN t.status = 'final_failed' THEN 1 ELSE 0 END)
+                        ELSE j.progress_failed
+                    END AS final_failed
                 FROM analysis_jobs j
                 LEFT JOIN analysis_tasks t ON t.job_id = j.id
                 WHERE j.id = ?
@@ -1862,6 +2096,23 @@ def row_to_track(row: sqlite3.Row) -> Track:
         mtime=int(row["mtime"]),
         missing_at=row["missing_at"] if "missing_at" in row.keys() else None,
     )
+
+
+def row_to_external_track(row: sqlite3.Row) -> ExternalTrack:
+    return ExternalTrack(
+        provider=str(row["provider"]),
+        external_id=str(row["external_id"]),
+        track_id=int(row["track_id"]),
+        raw_json=row["raw_json"],
+        synced_at=str(row["synced_at"]),
+    )
+
+
+def _require_external_value(value: str, name: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError(f"{name} must not be empty")
+    return cleaned
 
 
 def row_to_analysis_task(row: sqlite3.Row | dict[str, object]) -> AnalysisTask:

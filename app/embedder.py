@@ -291,6 +291,31 @@ def load_audio_with_ffmpeg(path: Path) -> np.ndarray:
     return audio
 
 
+def _l2_normalize(vector: np.ndarray) -> np.ndarray:
+    pooled = vector.astype(np.float32)
+    norm = np.linalg.norm(pooled)
+    if norm == 0:
+        raise ValueError("Embedding vector has zero norm")
+    return (pooled / norm).astype(np.float32)
+
+
+def blend_embeddings(vectors: list[np.ndarray] | np.ndarray) -> np.ndarray:
+    if isinstance(vectors, list):
+        if not vectors:
+            raise ValueError("No vectors to blend")
+        stacked = np.stack([np.asarray(vector, dtype=np.float32).reshape(-1) for vector in vectors], axis=0)
+    else:
+        array = np.asarray(vectors, dtype=np.float32)
+        if array.ndim == 1:
+            return _l2_normalize(array)
+        if array.ndim != 2:
+            raise ValueError(f"Expected 1D or 2D embeddings, got shape {array.shape}")
+        if array.shape[0] == 0:
+            raise ValueError("No vectors to blend")
+        stacked = array
+    return _l2_normalize(stacked.mean(axis=0))
+
+
 def pool_and_normalize(embeddings: np.ndarray) -> np.ndarray:
     if embeddings.ndim == 1:
         pooled = embeddings.astype(np.float32)
@@ -298,8 +323,4 @@ def pool_and_normalize(embeddings: np.ndarray) -> np.ndarray:
         pooled = embeddings.mean(axis=0).astype(np.float32)
     else:
         raise ValueError(f"Expected 1D or 2D embeddings, got shape {embeddings.shape}")
-
-    norm = np.linalg.norm(pooled)
-    if norm == 0:
-        raise ValueError("Embedding vector has zero norm")
-    return (pooled / norm).astype(np.float32)
+    return _l2_normalize(pooled)

@@ -4,6 +4,7 @@ import base64
 import binascii
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, replace
+import json
 import logging
 import multiprocessing
 import os
@@ -18,12 +19,14 @@ import traceback
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 import numpy as np
+from starlette.background import BackgroundTask
 
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR, AudioFeatureAnalyzer
-from app.config import MODEL_FILES, Settings
+from app.audio_source import is_navidrome_track, track_audio_path
+from app.config import MODEL_FILES, Settings, load_runtime_settings, save_runtime_settings
 from app.embedder import DiscogsEffnetEmbedder
 from app.head_pack import (
     DISCOGS_EFFNET_HEADS,
@@ -34,9 +37,11 @@ from app.head_pack import (
     head_pack_readiness,
     required_model_files,
 )
-from app.logging_config import configure_logging, get_analysis_logger
+from app.logging_config import configure_logging, get_analysis_logger, get_navidrome_plugin_logger
+from app.navidrome import NavidromeClient
+from app.navidrome_starred import build_starred_catalog, ready_tracks_from_starred_catalog
+from app.navidrome_sync import sync_navidrome_catalog
 from app.recommender import Recommender, build_index
-from app.scanner import scan_music_folder
 from app.store import (
     AnalysisTask,
     Store,
@@ -52,12 +57,15 @@ from app.store import (
 configure_logging()
 logger = logging.getLogger(__name__)
 analysis_logger = get_analysis_logger()
+navidrome_logger = logging.getLogger("discocs.navidrome")
+navidrome_plugin_logger = get_navidrome_plugin_logger()
 app = FastAPI(title="discocs", version="0.1.0")
 JOBS_LOCK = Lock()
 JOBS: dict[str, "JobStatus"] = {}
 ANALYZE_EXECUTORS_LOCK = Lock()
 ANALYZE_EXECUTORS: set[ProcessPoolExecutor] = set()
 SHUTDOWN_REQUESTED = False
+MAX_MIX_SEEDS = 50
 MAX_ANALYZE_WORKERS = max(1, os.cpu_count() or 1)
 DEFAULT_ANALYZE_WORKERS = min(4, MAX_ANALYZE_WORKERS)
 MAX_ANALYZE_TF_THREADS = MAX_ANALYZE_WORKERS
@@ -80,10 +88,6 @@ class JobStatus:
     error_detail: str | None = None
     started_at: float = 0.0
     finished_at: float | None = None
-
-
-class ScanRequest(BaseModel):
-    music_dir: str
 
 
 class AnalyzeRequest(BaseModel):
@@ -220,6 +224,48 @@ class DeleteAnalysisErrorsRequest(BaseModel):
 
 class IndexRequest(BaseModel):
     model: str = "discogs_multi"
+
+
+class NavidromeSyncRequest(BaseModel):
+    page_size: int = Field(default=500, ge=1, le=2000)
+    limit: int | None = Field(default=None, ge=1)
+    mark_stale: bool = True
+
+
+class NavidromeSettingsRequest(BaseModel):
+    url: str = ""
+    user: str = ""
+    password: str | None = None
+    auth_mode: str = Field(default="token", pattern="^(token|password)$")
+    timeout_seconds: int = Field(default=60, ge=1, le=600)
+    download_mode: str = Field(default="download", pattern="^(download|stream)$")
+    temp_dir: str | None = None
+
+
+class NavidromeSimilarItem(BaseModel):
+    item_id: str
+    track_id: int
+    artist: str | None = None
+    title: str | None = None
+    album: str | None = None
+    similarity: float
+
+
+class NavidromeSimilarResponse(BaseModel):
+    provider: str = "navidrome"
+    seed_item_id: str
+    model: str
+    results: list[NavidromeSimilarItem]
+
+
+class NavidromePluginEventRequest(BaseModel):
+    event: str
+    item_id: str | None = None
+    model: str | None = None
+    count: int | None = None
+    status: int | None = None
+    discocs_url: str | None = None
+    message: str | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -634,6 +680,7 @@ def stats(model: str = "discogs_multi") -> dict[str, object]:
         "db": str(settings.db_path),
         "tracks": store.count_tracks(),
         "missing_files": store.count_missing_files(),
+        "navidrome_external_tracks": store.count_external_tracks("navidrome"),
         "embeddings": store.count_embeddings(model),
         "missing_embeddings": store.count_missing_embeddings(model),
         "head_pack_expected_outputs": head_status["expected_outputs"],
@@ -652,6 +699,82 @@ def stats(model: str = "discogs_multi") -> dict[str, object]:
         "index": str(settings.index_path(model)),
         "index_exists": settings.index_path(model).exists(),
     }
+
+
+@app.get("/settings/navidrome")
+def get_navidrome_settings() -> dict[str, object]:
+    _store, settings = context()
+    nav = settings.navidrome
+    return {
+        "url": nav.url,
+        "user": nav.user,
+        "password_set": bool(nav.password),
+        "auth_mode": nav.auth_mode,
+        "timeout_seconds": nav.timeout_seconds,
+        "download_mode": nav.download_mode,
+        "temp_dir": str(nav.temp_dir),
+    }
+
+
+@app.put("/settings/navidrome")
+def update_navidrome_settings(request: NavidromeSettingsRequest) -> dict[str, object]:
+    _store, settings = context()
+    saved = load_runtime_settings(settings.data_dir)
+    existing = saved.get("navidrome", {})
+    existing_password = existing.get("password", "") if isinstance(existing, dict) else ""
+    password = request.password if request.password is not None else str(existing_password)
+    saved["navidrome"] = {
+        "url": request.url.strip(),
+        "user": request.user.strip(),
+        "password": password,
+        "auth_mode": request.auth_mode,
+        "timeout_seconds": request.timeout_seconds,
+        "download_mode": request.download_mode,
+        "temp_dir": request.temp_dir.strip()
+        if request.temp_dir
+        else str(settings.data_dir / "tmp" / "navidrome"),
+    }
+    save_runtime_settings(settings.data_dir, saved)
+    navidrome_logger.info(
+        "Saved Navidrome settings url=%s user=%s auth_mode=%s timeout_seconds=%s download_mode=%s password_set=%s",
+        request.url,
+        request.user,
+        request.auth_mode,
+        request.timeout_seconds,
+        request.download_mode,
+        bool(password),
+    )
+    return get_navidrome_settings()
+
+
+@app.post("/navidrome/ping")
+def ping_navidrome() -> dict[str, object]:
+    _store, settings = context()
+    try:
+        payload = NavidromeClient(settings.navidrome).ping()
+    except Exception as exc:
+        navidrome_logger.warning("Navidrome ping failed", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Navidrome ping failed: {exc}") from exc
+    return {
+        "status": "ok",
+        "version": payload.get("version", ""),
+        "server_version": payload.get("serverVersion", ""),
+    }
+
+
+@app.post("/navidrome/plugin-event")
+def record_navidrome_plugin_event(request: NavidromePluginEventRequest) -> dict[str, str]:
+    navidrome_plugin_logger.info(
+        "plugin_event event=%s item_id=%s model=%s count=%s status=%s discocs_url=%s message=%s",
+        request.event,
+        request.item_id,
+        request.model,
+        request.count,
+        request.status,
+        request.discocs_url,
+        request.message,
+    )
+    return {"status": "ok"}
 
 
 @app.get("/models/head-pack")
@@ -928,11 +1051,25 @@ def get_track_analysis(track_id: int) -> dict[str, object]:
 
 @app.get("/tracks/{track_id}/audio")
 def get_track_audio(track_id: int) -> FileResponse:
-    store, _settings = context()
+    store, settings = context()
     track = store.get_track(track_id)
     if track is None:
         logger.warning("Audio requested for missing track track_id=%s", track_id)
         raise HTTPException(status_code=404, detail="Track not found")
+    if is_navidrome_track(track):
+        try:
+            manager = track_audio_path(store, settings, track)
+            path = manager.__enter__()
+        except Exception as exc:
+            logger.warning(
+                "Navidrome audio unavailable track_id=%s path=%s",
+                track_id,
+                track.path,
+                exc_info=True,
+            )
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        store.mark_track_available(track_id)
+        return FileResponse(path, background=BackgroundTask(manager.__exit__, None, None, None))
     path = Path(track.path)
     if not path.exists() or not path.is_file():
         logger.warning("Audio file missing track_id=%s path=%s", track_id, path)
@@ -940,6 +1077,45 @@ def get_track_audio(track_id: int) -> FileResponse:
         raise HTTPException(status_code=410, detail="Audio file not mounted or no longer exists")
     store.mark_track_available(track_id)
     return FileResponse(path)
+
+
+@app.get("/tracks/{track_id}/cover")
+def get_track_cover(track_id: int, size: int = Query(default=96, ge=32, le=600)) -> Response:
+    store, settings = context()
+    track = store.get_track(track_id)
+    if track is None:
+        logger.warning("Cover requested for missing track track_id=%s", track_id)
+        raise HTTPException(status_code=404, detail="Track not found")
+    external_id = store.external_id_for_track("navidrome", track_id)
+    if external_id is None:
+        raise HTTPException(status_code=404, detail="Track has no Navidrome mapping")
+    mapping = store.get_external_track("navidrome", external_id)
+    raw: dict[str, object] = {}
+    if mapping is not None and mapping.raw_json:
+        try:
+            parsed = json.loads(mapping.raw_json)
+            raw = parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            logger.warning("Invalid Navidrome raw_json for track_id=%s item_id=%s", track_id, external_id)
+    cover_art_id = raw.get("coverArt")
+    if not cover_art_id:
+        raise HTTPException(status_code=404, detail="Track has no Navidrome cover art id")
+    try:
+        cover = NavidromeClient(settings.navidrome).get_cover_art(str(cover_art_id), size=size)
+    except Exception as exc:
+        navidrome_logger.warning(
+            "Navidrome cover art unavailable track_id=%s item_id=%s cover_art_id=%s",
+            track_id,
+            external_id,
+            cover_art_id,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(
+        content=cover.payload,
+        media_type=cover.content_type,
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
 
 
 @app.get("/tracks/{track_id}/similar")
@@ -980,11 +1156,277 @@ def get_similar_tracks(
     }
 
 
-@app.post("/jobs/scan")
-def start_scan(request: ScanRequest, background_tasks: BackgroundTasks) -> dict[str, object]:
-    job_id = create_job("scan", f"Waiting to scan {request.music_dir}")
-    background_tasks.add_task(_scan_job, job_id, Path(request.music_dir))
-    return {"status": "accepted", "job_id": job_id, "music_dir": request.music_dir}
+def _parse_seed_ids_param(seed_ids: str) -> list[int]:
+    parts = [part.strip() for part in seed_ids.split(",") if part.strip()]
+    if not parts:
+        raise HTTPException(status_code=400, detail="seed_ids is required")
+    if len(parts) > MAX_MIX_SEEDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"At most {MAX_MIX_SEEDS} seed_ids are allowed",
+        )
+    parsed: list[int] = []
+    for part in parts:
+        try:
+            parsed.append(int(part))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid seed id: {part}",
+            ) from exc
+    return parsed
+
+
+@app.get("/tracks/similar/mix")
+def get_similar_mix_tracks(
+    seed_ids: str = Query(..., description="Comma-separated track ids"),
+    model: str = "discogs_multi",
+    k: int = 30,
+    max_per_artist: int = 2,
+    exclude_same_album: bool = True,
+) -> dict[str, object]:
+    store, settings = context()
+    track_ids = _parse_seed_ids_param(seed_ids)
+    seeds: list[Track] = []
+    missing_ids: list[int] = []
+    for track_id in track_ids:
+        track = store.get_track(track_id)
+        if track is None:
+            missing_ids.append(track_id)
+            continue
+        seeds.append(track)
+    if missing_ids:
+        logger.warning("Similar mix requested missing tracks track_ids=%s", missing_ids)
+        raise HTTPException(
+            status_code=404,
+            detail=f"Tracks not found: {', '.join(str(track_id) for track_id in missing_ids)}",
+        )
+    try:
+        results, skipped_seed_ids = Recommender(store, settings, model).similar_mix(
+            seeds,
+            k=k,
+            max_per_artist=max_per_artist,
+            exclude_same_album=exclude_same_album,
+        )
+    except FileNotFoundError as exc:
+        logger.warning("Similar mix index missing model=%s error=%s", model, exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LookupError as exc:
+        logger.warning("Similar mix lookup failed model=%s error=%s", model, exc)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "blend": "average",
+        "seeds": [track_dict(track) for track in seeds],
+        "skipped_seed_ids": skipped_seed_ids,
+        "model": model,
+        "results": [similar_track_dict(result) for result in results],
+    }
+
+
+def _navidrome_client(settings: Settings) -> NavidromeClient:
+    try:
+        return NavidromeClient(settings.navidrome)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/navidrome/starred")
+def get_navidrome_starred(model: str = "discogs_multi") -> dict[str, object]:
+    store, settings = context()
+    client = _navidrome_client(settings)
+    try:
+        return build_starred_catalog(
+            store,
+            client,
+            model=model,
+            user=settings.navidrome.user,
+        )
+    except Exception as exc:
+        navidrome_logger.warning("Navidrome starred failed model=%s error=%s", model, exc)
+        raise HTTPException(status_code=502, detail=f"Navidrome starred failed: {exc}") from exc
+
+
+@app.get("/navidrome/starred/similar")
+def get_navidrome_starred_similar(
+    model: str = "discogs_multi",
+    count: int = Query(default=50, ge=1, le=500),
+    max_per_artist: int = Query(default=2, ge=1, le=100),
+    exclude_same_album: bool = True,
+) -> dict[str, object]:
+    store, settings = context()
+    client = _navidrome_client(settings)
+    try:
+        catalog = build_starred_catalog(
+            store,
+            client,
+            model=model,
+            user=settings.navidrome.user,
+        )
+    except Exception as exc:
+        navidrome_logger.warning("Navidrome starred similar catalog failed model=%s error=%s", model, exc)
+        raise HTTPException(status_code=502, detail=f"Navidrome starred failed: {exc}") from exc
+
+    ready_tracks = ready_tracks_from_starred_catalog(catalog, store, model)
+    if not ready_tracks:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No ready liked tracks with embeddings. "
+                "Sync Navidrome catalog and analyze missing tracks first."
+            ),
+        )
+    try:
+        results, skipped_seed_ids = Recommender(store, settings, model).similar_mix(
+            ready_tracks,
+            k=count,
+            max_per_artist=max_per_artist,
+            exclude_same_album=exclude_same_album,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {
+        "source": "navidrome_starred",
+        "blend": "average",
+        "user": catalog.get("user", ""),
+        "count": catalog.get("count", 0),
+        "mapped_count": catalog.get("mapped_count", 0),
+        "ready_count": catalog.get("ready_count", 0),
+        "missing_embedding_count": catalog.get("missing_embedding_count", 0),
+        "not_synced_count": catalog.get("not_synced_count", 0),
+        "skipped_seed_ids": skipped_seed_ids,
+        "model": model,
+        "results": [similar_track_dict(result) for result in results],
+    }
+
+
+@app.get("/navidrome/similar", response_model=NavidromeSimilarResponse)
+def get_navidrome_similar(
+    item_id: str,
+    count: int = Query(default=50, ge=1, le=500),
+    model: str = "discogs_multi",
+    max_per_artist: int = Query(default=2, ge=1, le=100),
+    exclude_same_album: bool = True,
+) -> NavidromeSimilarResponse:
+    started = perf_counter()
+    store, settings = context()
+    navidrome_logger.info(
+        "Navidrome similar request item_id=%s model=%s count=%s max_per_artist=%s exclude_same_album=%s",
+        item_id,
+        model,
+        count,
+        max_per_artist,
+        exclude_same_album,
+    )
+    navidrome_plugin_logger.info(
+        "api_request item_id=%s model=%s count=%s max_per_artist=%s exclude_same_album=%s",
+        item_id,
+        model,
+        count,
+        max_per_artist,
+        exclude_same_album,
+    )
+    seed = store.get_track_by_external_id("navidrome", item_id)
+    if seed is None:
+        navidrome_logger.warning(
+            "Navidrome similar failed item_id=%s reason=no_external_mapping",
+            item_id,
+        )
+        navidrome_plugin_logger.warning(
+            "api_failed item_id=%s model=%s reason=no_external_mapping",
+            item_id,
+            model,
+        )
+        raise HTTPException(status_code=404, detail="Navidrome item_id is not synced")
+
+    try:
+        candidates = Recommender(store, settings, model).similar(
+            seed,
+            k=count,
+            max_per_artist=max_per_artist,
+            exclude_same_album=exclude_same_album,
+        )
+    except FileNotFoundError as exc:
+        navidrome_logger.warning(
+            "Navidrome similar failed item_id=%s track_id=%s model=%s reason=missing_index error=%s",
+            item_id,
+            seed.id,
+            model,
+            exc,
+        )
+        navidrome_plugin_logger.warning(
+            "api_failed item_id=%s track_id=%s model=%s reason=missing_index error=%s",
+            item_id,
+            seed.id,
+            model,
+            exc,
+        )
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LookupError as exc:
+        navidrome_logger.warning(
+            "Navidrome similar failed item_id=%s track_id=%s model=%s reason=missing_embedding error=%s",
+            item_id,
+            seed.id,
+            model,
+            exc,
+        )
+        navidrome_plugin_logger.warning(
+            "api_failed item_id=%s track_id=%s model=%s reason=missing_embedding error=%s",
+            item_id,
+            seed.id,
+            model,
+            exc,
+        )
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    results: list[NavidromeSimilarItem] = []
+    skipped_without_external_id = 0
+    for candidate in candidates:
+        external_id = store.external_id_for_track("navidrome", candidate.track.id)
+        if external_id is None:
+            skipped_without_external_id += 1
+            continue
+        results.append(
+            NavidromeSimilarItem(
+                item_id=external_id,
+                track_id=candidate.track.id,
+                artist=candidate.track.artist,
+                title=candidate.track.title,
+                album=candidate.track.album,
+                similarity=candidate.similarity,
+            )
+        )
+    if skipped_without_external_id:
+        navidrome_logger.warning(
+            "Navidrome similar skipped results without external ids item_id=%s skipped=%s",
+            item_id,
+            skipped_without_external_id,
+        )
+    navidrome_logger.info(
+        "Navidrome similar completed item_id=%s track_id=%s model=%s results=%s skipped_without_external_id=%s duration_ms=%.1f",
+        item_id,
+        seed.id,
+        model,
+        len(results),
+        skipped_without_external_id,
+        (perf_counter() - started) * 1000,
+    )
+    navidrome_plugin_logger.info(
+        "api_completed item_id=%s track_id=%s model=%s results=%s skipped_without_external_id=%s duration_ms=%.1f",
+        item_id,
+        seed.id,
+        model,
+        len(results),
+        skipped_without_external_id,
+        (perf_counter() - started) * 1000,
+    )
+    return NavidromeSimilarResponse(
+        seed_item_id=item_id,
+        model=model,
+        results=results,
+    )
 
 
 @app.post("/jobs/analyze")
@@ -1072,7 +1514,7 @@ def claim_worker_tasks(request: WorkerClaimRequest) -> dict[str, object]:
 
 @app.get("/workers/tasks/{task_id}/audio")
 def get_worker_task_audio(task_id: str) -> FileResponse:
-    store, _settings = context()
+    store, settings = context()
     task = store.get_analysis_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -1100,6 +1542,21 @@ def get_worker_task_audio(task_id: str) -> FileResponse:
             retryable=False,
         )
         raise HTTPException(status_code=409, detail="Task file identity is stale")
+    if is_navidrome_track(track):
+        try:
+            manager = track_audio_path(store, settings, track)
+            path = manager.__enter__()
+        except Exception as exc:
+            store.fail_analysis_task(
+                task_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+                stage="navidrome-download",
+                worker_id=task.lease_owner,
+                retryable=True,
+            )
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return FileResponse(path, background=BackgroundTask(manager.__exit__, None, None, None))
     path = Path(track.path)
     if not path.exists() or not path.is_file():
         store.mark_track_missing(track.id)
@@ -1445,6 +1902,35 @@ def start_check_missing_files(background_tasks: BackgroundTasks) -> dict[str, ob
     return {"status": "accepted", "job_id": job_id}
 
 
+@app.post("/jobs/navidrome-sync")
+def start_navidrome_sync(
+    request: NavidromeSyncRequest,
+    background_tasks: BackgroundTasks,
+) -> dict[str, object]:
+    store, _settings = context()
+    known_total = request.limit or store.count_external_tracks("navidrome") or 0
+    job = store.create_progress_job(
+        "navidrome-sync",
+        "navidrome",
+        total=known_total,
+        message="Waiting to sync Navidrome catalog",
+    )
+    background_tasks.add_task(
+        _navidrome_sync_job,
+        job.id,
+        request.page_size,
+        request.limit,
+        request.mark_stale,
+    )
+    return {
+        "status": "accepted",
+        "job_id": job.id,
+        "page_size": request.page_size,
+        "limit": request.limit,
+        "mark_stale": request.mark_stale,
+    }
+
+
 @app.get("/jobs")
 def list_jobs() -> dict[str, object]:
     store, _settings = context()
@@ -1550,44 +2036,6 @@ def save_feedback(request: FeedbackRequest) -> dict[str, str]:
     return {"status": "ok"}
 
 
-def _scan_job(job_id: str, music_dir: Path) -> None:
-    try:
-        if not music_dir.exists() or not music_dir.is_dir():
-            logger.warning("Scan job music directory not found job_id=%s music_dir=%s", job_id, music_dir)
-            finish_job(job_id, "failed", f"Music directory not found: {music_dir}")
-            return
-        store, _settings = context()
-        logger.info("Starting scan job job_id=%s music_dir=%s", job_id, music_dir)
-        update_job(job_id, status="running", message=f"Scanning {music_dir}", total=None)
-        total = 0
-        changed = 0
-        for scanned in scan_music_folder(music_dir):
-            _track_id, did_change = store.upsert_track(scanned)
-            total += 1
-            changed += int(did_change)
-            update_job(job_id, done=total, current=str(scanned.path))
-            if total % 25 == 0:
-                update_job(job_id, done=total, message=f"Scanned {total} files")
-        library_total = store.count_tracks()
-        finish_job(
-            job_id,
-            "completed",
-            f"Scanned {total} files, changed {changed}; library has {library_total} tracks",
-        )
-        update_job(job_id, done=total)
-        logger.info(
-            "Finished scan job job_id=%s music_dir=%s scanned=%s changed=%s library_total=%s",
-            job_id,
-            music_dir,
-            total,
-            changed,
-            library_total,
-        )
-    except Exception as exc:
-        logger.exception("Scan job failed job_id=%s music_dir=%s", job_id, music_dir)
-        finish_job(job_id, "failed", str(exc))
-
-
 def _check_missing_files_job(job_id: str) -> None:
     try:
         store, _settings = context()
@@ -1606,6 +2054,71 @@ def _check_missing_files_job(job_id: str) -> None:
     except Exception as exc:
         logger.exception("Missing-file check failed job_id=%s", job_id)
         finish_job(job_id, "failed", str(exc))
+
+
+def _navidrome_sync_job(
+    job_id: str,
+    page_size: int,
+    limit: int | None,
+    mark_stale: bool,
+) -> None:
+    store: Store | None = None
+    try:
+        store, settings = context()
+        client = NavidromeClient(settings.navidrome)
+        logger.info(
+            "Starting Navidrome sync job job_id=%s page_size=%s limit=%s mark_stale=%s",
+            job_id,
+            page_size,
+            limit,
+            mark_stale,
+        )
+        known_total = limit or store.count_external_tracks("navidrome") or 0
+        store.update_progress_job(
+            job_id,
+            status="running",
+            total=known_total,
+            message="Syncing Navidrome catalog",
+        )
+
+        def progress(count, song) -> None:
+            nonlocal known_total
+            if count > known_total:
+                known_total = count
+            if count == 1 or count % 25 == 0:
+                current = f"{song.id} {song.artist or ''} - {song.title or ''}".strip()
+                store.update_progress_job(
+                    job_id,
+                    done=count,
+                    total=known_total,
+                    message=f"Synced {count} Navidrome songs; current {current}",
+                )
+
+        result = sync_navidrome_catalog(
+            store,
+            client,
+            page_size=page_size,
+            limit=limit,
+            mark_stale=mark_stale,
+            progress=progress,
+        )
+        status = "failed" if result.failed_count else "completed"
+        store.update_progress_job(
+            job_id,
+            done=result.seen_count,
+            failed=result.failed_count,
+            total=max(known_total, result.seen_count),
+            status=status,
+            message=f"Navidrome sync {result.summary()}",
+            finished=True,
+        )
+        logger.info("Finished Navidrome sync job job_id=%s %s", job_id, result.summary())
+    except Exception as exc:
+        logger.exception("Navidrome sync job failed job_id=%s", job_id)
+        if store is not None:
+            store.update_progress_job(job_id, status="failed", message=str(exc), finished=True)
+        else:
+            finish_job(job_id, "failed", str(exc))
 
 
 @dataclass(frozen=True)
@@ -1698,9 +2211,17 @@ def _extract_embedding_worker(task_id: str | None, track_id: int, path: str) -> 
         )
 
 
-def _extract_embedding_local(embedder: DiscogsEffnetEmbedder, track: Track) -> AnalyzeResult:
+def _extract_embedding_local(
+    embedder: DiscogsEffnetEmbedder,
+    store: Store,
+    settings: Settings,
+    track: Track,
+) -> AnalyzeResult:
+    audio_path, manager, failure = _prepare_analyze_audio_path(store, settings, track)
+    if failure is not None:
+        return failure
     try:
-        vector = embedder.extract_track_vector(Path(track.path))
+        vector = embedder.extract_track_vector(audio_path)
         return AnalyzeResult(task_id=None, track_id=track.id, path=track.path, status="ok", vector=vector)
     except Exception as exc:
         return AnalyzeResult(
@@ -1710,6 +2231,39 @@ def _extract_embedding_local(embedder: DiscogsEffnetEmbedder, track: Track) -> A
             status="failed",
             **analyze_failure_fields(exc, embedding_failure_stage(exc)),
         )
+    finally:
+        _cleanup_audio_manager(manager)
+
+
+def _prepare_analyze_audio_path(
+    store: Store,
+    settings: Settings,
+    track: Track,
+) -> tuple[Path | None, object | None, AnalyzeResult | None]:
+    manager = track_audio_path(store, settings, track)
+    try:
+        return manager.__enter__(), manager, None
+    except Exception as exc:
+        return (
+            None,
+            None,
+            AnalyzeResult(
+                task_id=None,
+                track_id=track.id,
+                path=track.path,
+                status="failed",
+                **analyze_failure_fields(exc, "navidrome-download" if is_navidrome_track(track) else embedding_failure_stage(exc)),
+            ),
+        )
+
+
+def _cleanup_audio_manager(manager: object | None) -> None:
+    if manager is None:
+        return
+    try:
+        manager.__exit__(None, None, None)
+    except Exception:
+        logger.debug("Audio source cleanup failed", exc_info=True)
 
 
 def register_analyze_executor(executor: ProcessPoolExecutor) -> None:
@@ -1749,6 +2303,7 @@ def terminate_process_pool(executor: ProcessPoolExecutor) -> None:
 
 def _iter_analyze_results(
     tracks: list[Track],
+    store: Store,
     settings: Settings,
     model: str,
     workers: int,
@@ -1762,7 +2317,7 @@ def _iter_analyze_results(
         for track in tracks:
             if SHUTDOWN_REQUESTED:
                 return
-            yield _extract_embedding_local(embedder, track)
+            yield _extract_embedding_local(embedder, store, settings, track)
         return
 
     executor = ProcessPoolExecutor(
@@ -1772,11 +2327,17 @@ def _iter_analyze_results(
         mp_context=multiprocessing.get_context("spawn"),
     )
     register_analyze_executor(executor)
+    audio_managers: list[object] = []
     try:
-        future_to_track = {
-            executor.submit(_extract_embedding_worker, None, track.id, track.path): track
-            for track in tracks
-        }
+        future_to_track = {}
+        for track in tracks:
+            audio_path, manager, failure = _prepare_analyze_audio_path(store, settings, track)
+            if failure is not None:
+                yield failure
+                continue
+            audio_managers.append(manager)
+            future = executor.submit(_extract_embedding_worker, None, track.id, str(audio_path))
+            future_to_track[future] = track
         for future in as_completed(future_to_track):
             if SHUTDOWN_REQUESTED:
                 break
@@ -1792,6 +2353,8 @@ def _iter_analyze_results(
                     **analyze_failure_fields(exc, "predict"),
                 )
     finally:
+        for manager in audio_managers:
+            _cleanup_audio_manager(manager)
         unregister_analyze_executor(executor)
         if SHUTDOWN_REQUESTED:
             terminate_process_pool(executor)
@@ -1817,6 +2380,7 @@ def task_to_track(task: AnalysisTask) -> Track:
 
 def _iter_analyze_task_results(
     tasks: list[AnalysisTask],
+    store: Store,
     settings: Settings,
     model: str,
     workers: int,
@@ -1830,7 +2394,7 @@ def _iter_analyze_task_results(
         for task in tasks:
             if SHUTDOWN_REQUESTED:
                 return
-            result = _extract_embedding_local(embedder, task_to_track(task))
+            result = _extract_embedding_local(embedder, store, settings, task_to_track(task))
             yield replace(result, task_id=task.id)
         return
 
@@ -1841,11 +2405,18 @@ def _iter_analyze_task_results(
         mp_context=multiprocessing.get_context("spawn"),
     )
     register_analyze_executor(executor)
+    audio_managers: list[object] = []
     try:
-        future_to_task = {
-            executor.submit(_extract_embedding_worker, task.id, task.track_id, task.path): task
-            for task in tasks
-        }
+        future_to_task = {}
+        for task in tasks:
+            track = task_to_track(task)
+            audio_path, manager, failure = _prepare_analyze_audio_path(store, settings, track)
+            if failure is not None:
+                yield replace(failure, task_id=task.id)
+                continue
+            audio_managers.append(manager)
+            future = executor.submit(_extract_embedding_worker, task.id, task.track_id, str(audio_path))
+            future_to_task[future] = task
         for future in as_completed(future_to_task):
             if SHUTDOWN_REQUESTED:
                 break
@@ -1861,6 +2432,8 @@ def _iter_analyze_task_results(
                     **analyze_failure_fields(exc, "predict"),
                 )
     finally:
+        for manager in audio_managers:
+            _cleanup_audio_manager(manager)
         unregister_analyze_executor(executor)
         if SHUTDOWN_REQUESTED:
             terminate_process_pool(executor)
@@ -1955,7 +2528,7 @@ def _analyze_job(
                     **analyze_progress(started_at, total, durable_job.done, durable_job.failed),
                 )
                 return
-            for result in _iter_analyze_task_results(tasks, settings, model, workers, tf_threads):
+            for result in _iter_analyze_task_results(tasks, store, settings, model, workers, tf_threads):
                 if SHUTDOWN_REQUESTED:
                     finish_job(job_id, "failed", "Analyze cancelled during application shutdown")
                     return
@@ -2049,10 +2622,23 @@ def _analyze_job(
 
 def _extract_heads_local(
     analyzer: DiscogsEffnetHeadPackAnalyzer,
+    store: Store,
+    settings: Settings,
     track: Track,
 ) -> HeadAnalyzeResult:
+    audio_path, manager, failure = _prepare_analyze_audio_path(store, settings, track)
+    if failure is not None:
+        return HeadAnalyzeResult(
+            track_id=track.id,
+            path=track.path,
+            status="failed",
+            error=failure.error,
+            error_type=failure.error_type,
+            traceback=failure.traceback,
+            stage=failure.stage,
+        )
     try:
-        outputs = analyzer.analyze_track(Path(track.path))
+        outputs = analyzer.analyze_track(audio_path)
         return HeadAnalyzeResult(
             track_id=track.id,
             path=track.path,
@@ -2066,6 +2652,8 @@ def _extract_heads_local(
             status="failed",
             **analyze_failure_fields(exc, "analyze_heads"),
         )
+    finally:
+        _cleanup_audio_manager(manager)
 
 
 def _analyze_heads_job(
@@ -2157,7 +2745,7 @@ def _analyze_heads_job(
                 )
                 continue
             update_job(job_id, current=track.path, message=f"Analyzing heads for {track.path}")
-            result = _extract_heads_local(analyzer, track)
+            result = _extract_heads_local(analyzer, store, settings, track)
             if result.status == "ok" and result.outputs is not None:
                 try:
                     for output in result.outputs:
@@ -2305,10 +2893,23 @@ def _download_head_models_job(job_id: str) -> None:
 
 def _extract_audio_features_local(
     analyzer: AudioFeatureAnalyzer,
+    store: Store,
+    settings: Settings,
     track: Track,
 ) -> AudioFeaturesResult:
+    audio_path, manager, failure = _prepare_analyze_audio_path(store, settings, track)
+    if failure is not None:
+        return AudioFeaturesResult(
+            track_id=track.id,
+            path=track.path,
+            status="failed",
+            error=failure.error,
+            error_type=failure.error_type,
+            traceback=failure.traceback,
+            stage=failure.stage,
+        )
     try:
-        features = analyzer.analyze_track(Path(track.path))
+        features = analyzer.analyze_track(audio_path)
         return AudioFeaturesResult(
             track_id=track.id,
             path=track.path,
@@ -2322,6 +2923,8 @@ def _extract_audio_features_local(
             status="failed",
             **analyze_failure_fields(exc, "audio_features"),
         )
+    finally:
+        _cleanup_audio_manager(manager)
 
 
 def _analyze_audio_features_job(
@@ -2335,7 +2938,7 @@ def _analyze_audio_features_job(
         if SHUTDOWN_REQUESTED:
             finish_job(job_id, "failed", "Audio feature analysis cancelled during application shutdown")
             return
-        store, _settings = context()
+        store, settings = context()
         if enqueue:
             tracks = store.list_tracks_missing_features(AUDIO_FEATURE_EXTRACTOR, limit=limit)
             durable_job = store.create_analysis_job(
@@ -2412,7 +3015,7 @@ def _analyze_audio_features_job(
                 )
                 continue
             update_job(job_id, current=track.path, message=f"Analyzing audio features for {track.path}")
-            result = _extract_audio_features_local(analyzer, track)
+            result = _extract_audio_features_local(analyzer, store, settings, track)
             if result.status == "ok" and result.features is not None:
                 try:
                     store.save_features(result.track_id, result.features)
@@ -2529,7 +3132,10 @@ UI_HTML = r"""
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); }
+    body {
+      margin: 0; height: 100vh; min-height: 100vh; display: flex; flex-direction: column;
+      overflow: hidden; background: var(--bg); color: var(--text);
+    }
     button, input, select { font: inherit; }
     button {
       min-height: 36px; border: 1px solid var(--line); border-radius: 6px; padding: 0 12px;
@@ -2541,9 +3147,12 @@ UI_HTML = r"""
       min-height: 36px; border: 1px solid var(--line); border-radius: 6px; padding: 0 10px;
       background: #0d0f11; color: var(--text);
     }
-    .app { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 100vh; }
-    aside { border-right: 1px solid var(--line); background: #111518; padding: 18px; }
-    main { padding: 18px; display: grid; gap: 16px; align-content: start; }
+    .app { display: grid; grid-template-columns: 220px minmax(0, 1fr); flex: 1; min-height: 0; }
+    aside { border-right: 1px solid var(--line); background: #111518; padding: 18px; overflow-y: auto; min-height: 0; }
+    main {
+      padding: 18px; display: flex; flex-direction: column; gap: 16px;
+      min-height: 0; overflow-y: auto;
+    }
     h1 { font-size: 22px; margin: 0 0 16px; letter-spacing: 0; }
     h2 { font-size: 16px; margin: 0 0 10px; letter-spacing: 0; }
     label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; margin: 10px 0; }
@@ -2569,13 +3178,30 @@ UI_HTML = r"""
     nav button.active { border-color: var(--accent); color: var(--accent); }
     .section { display: none; }
     .section.active { display: grid; gap: 16px; }
+    .section.section-fill.active {
+      display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; gap: 16px;
+    }
+    .section-fill.active > .layout,
+    .section-fill.active > .browse-layout { flex: 1; min-height: 0; align-items: stretch; }
+    .section-fill.active > .panel.panel-fill { flex: 1; min-height: 0; }
     .actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
     .stat { border: 1px solid var(--line); border-radius: 6px; padding: 12px; background: var(--panel); }
     .stat strong { display: block; font-size: 24px; }
     .stat span { color: var(--muted); font-size: 12px; }
-    .layout { display: grid; grid-template-columns: minmax(320px, .9fr) minmax(360px, 1.1fr); gap: 16px; }
-    .browse-layout { display: grid; grid-template-columns: minmax(240px, .55fr) minmax(420px, 1.45fr); gap: 16px; }
+    .layout {
+      display: grid; grid-template-columns: minmax(320px, .9fr) minmax(360px, 1.1fr);
+      gap: 16px; min-height: 0;
+    }
+    .browse-layout {
+      display: grid; grid-template-columns: minmax(240px, .55fr) minmax(420px, 1.45fr);
+      gap: 16px; min-height: 0;
+    }
+    .panel-fill { display: flex; flex-direction: column; min-height: 0; }
+    .list-region, .table-region, .facet-scroll {
+      flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; padding-bottom: 8px;
+    }
+    .blend-status { flex-shrink: 0; }
     .facet-group { display: grid; gap: 6px; margin-bottom: 12px; }
     .facet-list { display: grid; gap: 6px; max-height: 164px; overflow: auto; padding-right: 4px; }
     .facet-button { justify-content: space-between; text-align: left; width: 100%; min-height: 32px; overflow: hidden; }
@@ -2586,11 +3212,22 @@ UI_HTML = r"""
     .panel { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 14px; min-width: 0; }
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-bottom: 10px; }
-    .list { display: grid; gap: 8px; max-height: 58vh; overflow: auto; padding-right: 4px; }
+    .list { display: grid; gap: 8px; align-content: start; }
     .track {
       display: grid; gap: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 10px;
       background: #14181b;
     }
+    .track-body { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; align-items: start; }
+    .track-main { min-width: 0; display: grid; gap: 4px; }
+    .cover {
+      width: 64px; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+      background: linear-gradient(135deg, #20272b, #111518); display: grid; place-items: center; color: var(--muted);
+      font-size: 11px; font-weight: 700; position: relative;
+    }
+    .cover::before { content: "ART"; }
+    .cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+    .cover.empty img { display: none; }
+    .cover.empty::before { content: "ART"; }
     .track.selected { border-color: var(--accent); }
     .title { font-weight: 700; overflow-wrap: anywhere; }
     .meta { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
@@ -2607,7 +3244,10 @@ UI_HTML = r"""
     .status-failed .fill { background: var(--bad); }
     .pill { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); font-size: 12px; }
     .bad-pill { border: 1px solid var(--bad); color: var(--bad); background: transparent; }
-    .player { position: sticky; bottom: 0; border-top: 1px solid var(--line); background: #0f1316; padding: 12px 18px; display: grid; gap: 8px; }
+    .player {
+      flex-shrink: 0; border-top: 1px solid var(--line); background: #0f1316;
+      padding: 12px 18px; display: grid; gap: 8px;
+    }
     audio { width: 100%; }
     .error { color: var(--bad); min-height: 20px; }
     .active-track { border-color: var(--blue); }
@@ -2641,6 +3281,12 @@ UI_HTML = r"""
       .app { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--line); }
       .stats, .layout, .browse-layout { grid-template-columns: 1fr; }
+      .section-fill.active > .layout,
+      .section-fill.active > .browse-layout {
+        grid-template-rows: minmax(180px, .9fr) minmax(240px, 1.1fr);
+      }
+      .track-body { grid-template-columns: 52px minmax(0, 1fr); }
+      .cover { width: 52px; }
     }
   </style>
 </head>
@@ -2655,6 +3301,7 @@ UI_HTML = r"""
         <button data-nav="lostFiles" onclick="showSection('lostFiles')">Lost files</button>
         <button data-nav="erroredFiles" onclick="showSection('erroredFiles')">Errored files</button>
         <button data-nav="recommendations" onclick="showSection('recommendations')">Recommendations</button>
+        <button data-nav="navidromeLikes" onclick="showSection('navidromeLikes')">Navidrome likes</button>
         <button data-nav="evaluation" onclick="showSection('evaluation')">Evaluation</button>
         <button data-nav="jobs" onclick="showSection('jobsPage')">Jobs</button>
         <button data-nav="settings" onclick="showSection('settings')">Settings</button>
@@ -2668,12 +3315,13 @@ UI_HTML = r"""
           <div class="stat"><strong id="missingHeadPackTracks">0</strong><span>need tags</span></div>
           <div class="stat"><strong id="missingAudioFeatures">0</strong><span>need audio features</span></div>
           <div class="stat"><strong id="missingFiles">0</strong><span>lost files</span></div>
+          <div class="stat"><strong id="navidromeExternalTracks">0</strong><span>Navidrome IDs</span></div>
           <div class="stat"><strong id="indexState">no</strong><span>index</span></div>
         </div>
         <div class="panel">
           <h2>Pipeline</h2>
           <div class="actions">
-            <button id="scanBtn" onclick="startScan()">Scan</button>
+            <button id="navidromeSyncBtn" onclick="startNavidromeSync()">Sync Navidrome</button>
             <button id="analyzeBtn" onclick="startAnalyze()">Analyze missing</button>
             <button id="analyzeHeadsBtn" onclick="startAnalyzeHeads()">Analyze Discogs-EffNet heads</button>
             <button id="analyzeAudioFeaturesBtn" onclick="startAnalyzeAudioFeatures()">Analyze audio features</button>
@@ -2695,8 +3343,8 @@ UI_HTML = r"""
           <div id="dashboardJobs" class="jobs"></div>
         </div>
       </section>
-      <section id="library" class="section">
-        <div class="panel">
+      <section id="library" class="section section-fill">
+        <div class="panel panel-fill">
           <h2>Library</h2>
           <div class="search">
             <input id="query" placeholder="Search artist, title, album, path">
@@ -2711,12 +3359,12 @@ UI_HTML = r"""
               </select>
             </label>
           </div>
-          <div id="tracksList" class="list"></div>
+          <div class="list-region"><div id="tracksList" class="list"></div></div>
         </div>
       </section>
-      <section id="browse" class="section">
+      <section id="browse" class="section section-fill">
         <div class="browse-layout">
-          <div class="panel">
+          <div class="panel panel-fill">
             <div class="row" style="justify-content:space-between; margin-bottom:10px">
               <h2>Browse</h2>
               <button onclick="clearBrowseFilters()">Clear</button>
@@ -2728,28 +3376,30 @@ UI_HTML = r"""
                 <option value="missing">missing</option>
               </select>
             </label>
-            <div class="facet-group">
-              <strong>Genres</strong>
-              <div id="genreFacets" class="facet-list"></div>
-            </div>
-            <div class="facet-group">
-              <strong>Years</strong>
-              <div id="yearFacets" class="facet-list"></div>
-            </div>
-            <div class="facet-group">
-              <strong>Artists</strong>
-              <div id="artistFacets" class="facet-list"></div>
-            </div>
-            <div class="facet-group">
-              <strong>Albums</strong>
-              <div id="albumFacets" class="facet-list"></div>
-            </div>
-            <div class="facet-group">
-              <strong>Folders</strong>
-              <div id="folderFacets" class="facet-list"></div>
+            <div class="facet-scroll">
+              <div class="facet-group">
+                <strong>Genres</strong>
+                <div id="genreFacets" class="facet-list"></div>
+              </div>
+              <div class="facet-group">
+                <strong>Years</strong>
+                <div id="yearFacets" class="facet-list"></div>
+              </div>
+              <div class="facet-group">
+                <strong>Artists</strong>
+                <div id="artistFacets" class="facet-list"></div>
+              </div>
+              <div class="facet-group">
+                <strong>Albums</strong>
+                <div id="albumFacets" class="facet-list"></div>
+              </div>
+              <div class="facet-group">
+                <strong>Folders</strong>
+                <div id="folderFacets" class="facet-list"></div>
+              </div>
             </div>
           </div>
-          <div class="panel">
+          <div class="panel panel-fill">
             <div class="row" style="justify-content:space-between; margin-bottom:10px">
               <h2>Tracks</h2>
               <span class="pill" id="browseFilterLabel">all tracks</span>
@@ -2758,12 +3408,12 @@ UI_HTML = r"""
               <input id="browseQuery" placeholder="Search within selected folder or tag">
               <button onclick="loadBrowseTracks()">Search</button>
             </div>
-            <div id="browseTracks" class="list"></div>
+            <div class="list-region"><div id="browseTracks" class="list"></div></div>
           </div>
         </div>
       </section>
-      <section id="lostFiles" class="section">
-        <div class="panel">
+      <section id="lostFiles" class="section section-fill">
+        <div class="panel panel-fill">
           <div class="row" style="justify-content:space-between; margin-bottom:10px">
             <h2>Lost files</h2>
             <span class="pill" id="lostFilesCount">0 lost</span>
@@ -2782,11 +3432,11 @@ UI_HTML = r"""
             <span class="pill" id="lostFilesPage">page 1 / 1</span>
             <button onclick="nextLostFilesPage()">Next</button>
           </div>
-          <div id="lostFilesList"></div>
+          <div class="table-region"><div id="lostFilesList"></div></div>
         </div>
       </section>
-      <section id="erroredFiles" class="section">
-        <div class="panel">
+      <section id="erroredFiles" class="section section-fill">
+        <div class="panel panel-fill">
           <div class="row" style="justify-content:space-between; margin-bottom:10px">
             <h2>Errored files</h2>
             <span class="pill" id="erroredFilesCount">0 errors</span>
@@ -2804,12 +3454,12 @@ UI_HTML = r"""
             <span class="pill" id="erroredFilesPage">page 1 / 1</span>
             <button onclick="nextErroredFilesPage()">Next</button>
           </div>
-          <div id="erroredFilesList"></div>
+          <div class="table-region"><div id="erroredFilesList"></div></div>
         </div>
       </section>
-      <section id="recommendations" class="section">
+      <section id="recommendations" class="section section-fill">
         <div class="layout">
-          <div class="panel">
+          <div class="panel panel-fill">
             <h2>Seed</h2>
             <div id="seedPanel">
               <div class="track">
@@ -2821,20 +3471,81 @@ UI_HTML = r"""
               <input id="seedQuery" placeholder="Search seed track">
               <button onclick="searchSeeds()">Search</button>
             </div>
-            <div id="seedResults" class="list"></div>
+            <div class="list-region"><div id="seedResults" class="list"></div></div>
           </div>
-          <div class="panel">
+          <div class="panel panel-fill">
             <div class="row" style="justify-content:space-between; margin-bottom:10px">
               <h2>Similar</h2>
-              <button onclick="loadSimilar(seedId)" id="refreshSimilarBtn" disabled>Refresh similar</button>
+              <button onclick="refreshSimilarTracks()" id="refreshSimilarBtn" disabled>Refresh similar</button>
             </div>
-            <div id="similarList" class="list"></div>
+            <div class="list-region"><div id="similarList" class="list"></div></div>
           </div>
         </div>
       </section>
-      <section id="evaluation" class="section">
+      <section id="navidromeLikes" class="section section-fill">
+        <div class="panel blend-status">
+          <div class="row" style="justify-content:space-between; margin-bottom:10px">
+            <h2>Navidrome likes</h2>
+            <span class="pill">Blend: Average</span>
+          </div>
+          <div class="meta" id="likedStatusLine">Source: Navidrome starred · not loaded yet</div>
+          <div class="meta" id="likedStatusDetail">Load starred tracks for the configured Navidrome user, then refresh recommendations from their average embedding.</div>
+          <div class="error" id="likedStatusError"></div>
+          <div class="actions">
+            <button class="primary" onclick="loadNavidromeLikes()">Load Navidrome likes</button>
+            <button onclick="refreshLikedRecommendations()" id="refreshLikedBtn" disabled>Refresh recommendations</button>
+            <button onclick="startAnalyze()">Analyze missing</button>
+            <button onclick="startNavidromeSync()">Sync catalog</button>
+            <button onclick="clearLikedBlend()">Clear</button>
+          </div>
+        </div>
         <div class="layout">
-          <div class="panel">
+          <div class="panel panel-fill">
+            <div class="row" style="justify-content:space-between; margin-bottom:10px">
+              <h2>Liked tracks</h2>
+              <label style="margin:0">
+                Filter
+                <select id="likedFilter" onchange="onLikedFilterChange()">
+                  <option value="all">all</option>
+                  <option value="ready">ready</option>
+                  <option value="missing_embedding">needs embedding</option>
+                  <option value="not_synced">not synced</option>
+                </select>
+              </label>
+            </div>
+            <div class="search">
+              <input id="likedLocalQuery" placeholder="Filter loaded likes">
+              <button onclick="renderLikedTracks()">Filter</button>
+            </div>
+            <div class="list-region"><div id="likedTracksList" class="list"></div></div>
+            <details style="margin-top:12px">
+              <summary>Add extra track</summary>
+              <div class="search" style="margin-top:10px">
+                <input id="likedExtraQuery" placeholder="Search library to add">
+                <button onclick="searchLikedExtra()">Search</button>
+              </div>
+              <label class="row" style="margin-top:8px">
+                <input id="likedExtraShowMissing" type="checkbox" style="min-height:auto">
+                <span>Show tracks without embeddings</span>
+              </label>
+              <div class="list-region"><div id="likedExtraSearchResults" class="list"></div></div>
+              <div class="meta" id="likedExtraSummary" style="margin-top:8px"></div>
+            </details>
+          </div>
+          <div class="panel panel-fill">
+            <div class="row" style="justify-content:space-between; margin-bottom:10px">
+              <div>
+                <h2>Recommendations</h2>
+                <div class="meta" id="likedSimilarSubtitle">Recommendations from liked blend</div>
+              </div>
+            </div>
+            <div class="list-region"><div id="likedSimilarList" class="list"></div></div>
+          </div>
+        </div>
+      </section>
+      <section id="evaluation" class="section section-fill">
+        <div class="layout">
+          <div class="panel panel-fill">
             <div class="row" style="justify-content:space-between; margin-bottom:10px">
               <h2>Seed basket</h2>
               <button onclick="clearSeedBasket()">Clear</button>
@@ -2846,15 +3557,15 @@ UI_HTML = r"""
             </div>
             <div class="meta" style="margin-top:8px">Ratings are absolute listening judgements for the current seed: good, okay, or bad.</div>
             <div id="evaluationProgress" class="meta" style="margin-top:8px"></div>
-            <div id="seedBasket" class="basket"></div>
+            <div class="list-region"><div id="seedBasket" class="basket"></div></div>
           </div>
-          <div class="panel">
+          <div class="panel panel-fill">
             <div class="row" style="justify-content:space-between; margin-bottom:10px">
               <h2>Evaluate similar</h2>
-              <button onclick="loadSimilar(seedId)" id="evaluationRefreshBtn" disabled>Refresh similar</button>
+              <button onclick="refreshSimilarTracks()" id="evaluationRefreshBtn" disabled>Refresh similar</button>
             </div>
             <div id="evaluationSeedPanel"></div>
-            <div id="evaluationSimilarList" class="list" style="margin-top:10px"></div>
+            <div class="list-region"><div id="evaluationSimilarList" class="list"></div></div>
           </div>
         </div>
       </section>
@@ -2875,9 +3586,6 @@ UI_HTML = r"""
       <section id="settings" class="section">
         <div class="panel">
         <h2>Settings</h2>
-        <label><span class="label-title">Music path in container <span class="info" tabindex="0" data-tooltip="Folder path visible to the app. Scan reads audio files from here; wrong mounts give an empty library.">(i)</span></span>
-          <input id="musicDir" value="/music">
-        </label>
         <label><span class="label-title">Model <span class="info" tabindex="0" data-tooltip="Embedding model used for analyze, index, and recommendations. Changing it requires separate embeddings and index.">(i)</span></span>
           <select id="model">
             <option value="discogs_multi">discogs_multi</option>
@@ -2901,6 +3609,40 @@ UI_HTML = r"""
         <label><span class="label-title">Analyze TF threads <span class="info" tabindex="0" data-tooltip="TensorFlow/OMP threads per analyzer process. Too high causes contention; benchmarked default is 4 with 4 workers.">(i)</span></span>
           <input id="tfThreads" type="number" min="1" value="4">
         </label>
+        <h3>Navidrome</h3>
+        <label><span class="label-title">Navidrome URL <span class="info" tabindex="0" data-tooltip="Base URL that this app can reach, for example http://192.168.1.41:4533 or http://navidrome:4533 from Docker.">(i)</span></span>
+          <input id="navidromeUrl" placeholder="http://127.0.0.1:4533">
+        </label>
+        <label><span class="label-title">Navidrome user <span class="info" tabindex="0" data-tooltip="Subsonic/Navidrome username used by this app for sync and audio downloads.">(i)</span></span>
+          <input id="navidromeUser" autocomplete="username">
+        </label>
+        <label><span class="label-title">Navidrome password <span class="info" tabindex="0" data-tooltip="Leave blank when saving to keep the existing saved password.">(i)</span></span>
+          <input id="navidromePassword" type="password" autocomplete="current-password" placeholder="leave blank to keep saved password">
+        </label>
+        <label><span class="label-title">Auth mode</span>
+          <select id="navidromeAuthMode">
+            <option value="token">token</option>
+            <option value="password">password</option>
+          </select>
+        </label>
+        <label><span class="label-title">Timeout seconds</span>
+          <input id="navidromeTimeoutSeconds" type="number" min="1" max="600" value="60">
+        </label>
+        <label><span class="label-title">Download mode</span>
+          <select id="navidromeDownloadMode">
+            <option value="download">download</option>
+            <option value="stream">stream</option>
+          </select>
+        </label>
+        <label><span class="label-title">Temp dir</span>
+          <input id="navidromeTempDir" placeholder="data/tmp/navidrome">
+        </label>
+        <div class="actions">
+          <button class="primary" onclick="saveNavidromeSettings()">Save Navidrome</button>
+          <button onclick="pingNavidrome()">Ping</button>
+        </div>
+        <div class="meta" id="navidromeStatus">Navidrome settings are loaded from server config.</div>
+        <div class="meta">For Navidrome Instant Mix set <code>ND_AGENTS=discocs-instant-mix,deezer,lastfm,listenbrainz</code>.</div>
         <h3>Remote worker</h3>
         <label><span class="label-title">Server URL for worker <span class="info" tabindex="0" data-tooltip="Base URL that the remote machine can reach. Use the host/IP running this web app, not localhost unless the worker runs on the same machine.">(i)</span></span>
           <input id="workerServerUrl" value="http://127.0.0.1:8711" oninput="refreshWorkerCommand()">
@@ -2964,18 +3706,26 @@ UI_HTML = r"""
   </div>
   <script>
     const SETTINGS_KEY = "discocs.settings.v1";
+    const LIKED_EXTRA_KEY = "discocs.likedExtra.v1";
     const SETTINGS_FIELDS = [
-      "musicDir", "model", "limit", "analyzeExecutionMode", "workers", "tfThreads",
+      "model", "limit", "analyzeExecutionMode", "workers", "tfThreads",
       "workerServerUrl", "workerId", "workerClaimBatchSize", "workerMaxInflightTasks",
       "workerDownloadConcurrency", "workerSubmitBatchSize", "workerLeaseSeconds",
       "workerMaxTasksBeforeExit",
       "k", "maxPerArtist", "excludeSameAlbum"
     ];
+    const NAVIDROME_SETTINGS_FIELDS = [
+      "navidromeUrl", "navidromeUser", "navidromeAuthMode", "navidromeTimeoutSeconds",
+      "navidromeDownloadMode", "navidromeTempDir"
+    ];
     let seedId = null;
     let seedTrack = null;
     let activeTrackId = null;
+    let currentSimilarTracks = [];
     let lastJobs = [];
     let seedBasket = [];
+    let likedCatalog = null;
+    let extraBlendIds = [];
     let evaluationIndex = -1;
     let browseFilters = {};
     let lostFilesPage = 1;
@@ -3066,11 +3816,202 @@ UI_HTML = r"""
       const target = document.getElementById("workerCommand");
       if (target) target.value = command;
     }
+    const VIEW_TO_SECTION = {
+      dashboard: "dashboard",
+      library: "library",
+      browse: "browse",
+      lostFiles: "lostFiles",
+      erroredFiles: "erroredFiles",
+      recommendations: "recommendations",
+      navidromeLikes: "navidromeLikes",
+      evaluation: "evaluation",
+      jobs: "jobsPage",
+      settings: "settings",
+    };
+    const BROWSE_FACET_KEYS = ["folder", "genre", "year", "artist", "album"];
+    let applyingRoute = false;
+
+    function sectionIdForView(view) {
+      return VIEW_TO_SECTION[view] || view || "dashboard";
+    }
+    function viewForSection(sectionId) {
+      if (sectionId === "jobsPage") return "jobs";
+      return sectionId;
+    }
+    function paramsFromSearch(search = location.search) {
+      const raw = Object.fromEntries(new URLSearchParams(search));
+      const params = {view: raw.view || "dashboard"};
+      Object.entries(raw).forEach(([key, value]) => {
+        if (value === "" || value === undefined || value === null) return;
+        params[key] = value;
+      });
+      return params;
+    }
+    function recommendationParams() {
+      return {
+        k: document.getElementById("k").value,
+        max_per_artist: document.getElementById("maxPerArtist").value,
+        exclude_same_album: document.getElementById("excludeSameAlbum").checked ? "true" : "false",
+      };
+    }
+    function libraryParams() {
+      return {
+        query: document.getElementById("query").value,
+        embedding_status: document.getElementById("embeddingStatus").value,
+      };
+    }
+    function browseParams() {
+      const params = {
+        query: document.getElementById("browseQuery").value,
+        embedding_status: document.getElementById("browseEmbeddingStatus").value,
+      };
+      BROWSE_FACET_KEYS.forEach(key => {
+        if (browseFilters[key]) params[key] = browseFilters[key];
+      });
+      return params;
+    }
+    function buildRouteSearch(params) {
+      const search = new URLSearchParams();
+      Object.entries(params).forEach(([key, value]) => {
+        if (value === "" || value === undefined || value === null) return;
+        search.set(key, String(value));
+      });
+      return search.toString();
+    }
+    function activateSection(sectionId) {
+      document.querySelectorAll(".section").forEach(section => section.classList.toggle("active", section.id === sectionId));
+      document.querySelectorAll("nav button").forEach(button => button.classList.toggle(
+        "active",
+        button.dataset.nav === sectionId || (sectionId === "jobsPage" && button.dataset.nav === "jobs")
+      ));
+    }
+    function applySettingsFromParams(params) {
+      if (params.model) {
+        const modelElement = document.getElementById("model");
+        if (modelElement) modelElement.value = params.model;
+      }
+      if (params.k) document.getElementById("k").value = params.k;
+      if (params.max_per_artist) document.getElementById("maxPerArtist").value = params.max_per_artist;
+      if (params.exclude_same_album !== undefined) {
+        document.getElementById("excludeSameAlbum").checked = params.exclude_same_album !== "false";
+      }
+    }
+    async function restoreRecommendations(params) {
+      const seed = params.seed ? Number(params.seed) : null;
+      if (!Number.isInteger(seed) || seed <= 0) {
+        seedId = null;
+        seedTrack = null;
+        document.getElementById("seedPanel").innerHTML = `
+          <div class="track">
+            <div class="title">No seed selected</div>
+            <div class="meta">Pick a seed from Library or search here.</div>
+          </div>`;
+        document.getElementById("refreshSimilarBtn").disabled = true;
+        document.getElementById("similarList").innerHTML = "";
+        return;
+      }
+      try {
+        seedId = seed;
+        seedTrack = await json(`/tracks/${seed}`);
+        document.getElementById("seedPanel").innerHTML = renderTrack({...seedTrack, has_embedding: true}, "seed");
+        document.getElementById("refreshSimilarBtn").disabled = false;
+        await loadSimilar(seed, {updateUrl: false});
+      } catch (err) {
+        seedId = null;
+        seedTrack = null;
+        document.getElementById("seedPanel").innerHTML = `
+          <div class="track">
+            <div class="title">Seed #${seed} not found</div>
+            <div class="meta">${esc(err.message)}</div>
+          </div>`;
+        document.getElementById("refreshSimilarBtn").disabled = true;
+        document.getElementById("similarList").innerHTML = "";
+      }
+    }
+    async function applyRoute(params) {
+      applyingRoute = true;
+      try {
+        const view = params.view || "dashboard";
+        const sectionId = sectionIdForView(view);
+        applySettingsFromParams(params);
+        activateSection(sectionId);
+        if (sectionId === "library") {
+          if (params.query !== undefined) document.getElementById("query").value = params.query;
+          if (params.embedding_status) document.getElementById("embeddingStatus").value = params.embedding_status;
+          await searchTracks({updateUrl: false});
+        } else if (sectionId === "browse") {
+          browseFilters = {};
+          BROWSE_FACET_KEYS.forEach(key => {
+            if (params[key]) browseFilters[key] = params[key];
+          });
+          if (params.query !== undefined) document.getElementById("browseQuery").value = params.query;
+          if (params.embedding_status) document.getElementById("browseEmbeddingStatus").value = params.embedding_status;
+          await refreshBrowse({updateUrl: false});
+        } else if (sectionId === "recommendations") {
+          if (params.seedQuery !== undefined) document.getElementById("seedQuery").value = params.seedQuery;
+          await restoreRecommendations(params);
+        } else if (sectionId === "navidromeLikes") {
+          if (params.filter) document.getElementById("likedFilter").value = params.filter;
+          if (params.autoload === "1") await loadNavidromeLikes({updateUrl: false});
+          renderLikedTracks();
+          if (params.refresh === "1" && likedReadyTrackIds().length) {
+            await refreshLikedRecommendations({updateUrl: false});
+          }
+        } else if (sectionId === "evaluation") {
+          if (params.index !== undefined && seedBasket.length) {
+            const index = Math.max(0, Math.min(Number(params.index), seedBasket.length - 1));
+            if (Number.isInteger(index)) await selectEvaluationSeed(index, {updateUrl: false});
+          }
+        } else if (sectionId === "lostFiles") {
+          lostFilesPage = params.page ? Math.max(1, Number(params.page) || 1) : 1;
+          await loadLostFiles({updateUrl: false});
+        } else if (sectionId === "erroredFiles") {
+          erroredFilesPage = params.page ? Math.max(1, Number(params.page) || 1) : 1;
+          await loadErroredFiles({updateUrl: false});
+        } else if (sectionId === "jobsPage") {
+          if (params.job) await loadJobDetail(params.job, {updateUrl: false});
+        }
+      } finally {
+        applyingRoute = false;
+      }
+    }
+    function mergeRouteParams(params, {reset = false} = {}) {
+      if (reset) return {view: params.view || "dashboard", ...params, model: params.model || model()};
+      return {...paramsFromSearch(), ...params, model: params.model || model()};
+    }
+    function pushRouteOnly(params, {replace = false, reset = false} = {}) {
+      const merged = mergeRouteParams(params, {reset});
+      const search = buildRouteSearch(merged);
+      const url = search ? `?${search}` : location.pathname;
+      if (replace) history.replaceState({route: merged}, "", url);
+      else history.pushState({route: merged}, "", url);
+    }
+    function routeTo(params, {replace = false, reset = false} = {}) {
+      const merged = mergeRouteParams(params, {reset});
+      const search = buildRouteSearch(merged);
+      const url = search ? `?${search}` : location.pathname;
+      if (replace) history.replaceState({route: merged}, "", url);
+      else history.pushState({route: merged}, "", url);
+      return applyRoute(merged);
+    }
+    function replaceRoute(params, options = {}) {
+      return routeTo(params, {...options, replace: true});
+    }
+    function writeRoutePatch(patch, {replace = false} = {}) {
+      return routeTo({...paramsFromSearch(), ...patch, model: patch.model || model()}, {replace});
+    }
     function showSection(id) {
-      document.querySelectorAll(".section").forEach(section => section.classList.toggle("active", section.id === id));
-      document.querySelectorAll("nav button").forEach(button => button.classList.toggle("active", button.dataset.nav === id || (id === "jobsPage" && button.dataset.nav === "jobs")));
-      if (id === "lostFiles") loadLostFiles();
-      if (id === "erroredFiles") loadErroredFiles();
+      const view = viewForSection(id);
+      routeTo({view, model: model()}, {reset: true});
+    }
+    function syncRecommendationRoute() {
+      if (paramsFromSearch().view !== "recommendations" || !seedId) return;
+      pushRouteOnly({
+        view: "recommendations",
+        seed: String(seedId),
+        model: model(),
+        ...recommendationParams()
+      }, {replace: true, reset: true});
     }
     async function refreshStats() {
       const data = await json(`/stats?model=${encodeURIComponent(model())}`);
@@ -3079,6 +4020,7 @@ UI_HTML = r"""
       document.getElementById("missingHeadPackTracks").textContent = data.head_pack_missing_tracks;
       document.getElementById("missingAudioFeatures").textContent = data.audio_features_missing_tracks;
       document.getElementById("missingFiles").textContent = data.missing_files;
+      document.getElementById("navidromeExternalTracks").textContent = data.navidrome_external_tracks;
       document.getElementById("indexState").textContent = data.index_exists ? "yes" : "no";
       document.getElementById("modelState").textContent = `Model file: ${data.model_exists ? "ready" : "missing"} · ${data.model_path}`;
       renderHeadPackStatus(data.head_pack);
@@ -3105,25 +4047,104 @@ UI_HTML = r"""
           <tbody>${rows}</tbody>
         </table>`;
     }
+    function setNavidromeStatus(message, isError = false) {
+      const target = document.getElementById("navidromeStatus");
+      if (!target) return;
+      target.textContent = message;
+      target.classList.toggle("error", isError);
+    }
+    async function loadNavidromeSettings() {
+      try {
+        const data = await json("/settings/navidrome");
+        document.getElementById("navidromeUrl").value = data.url || "";
+        document.getElementById("navidromeUser").value = data.user || "";
+        document.getElementById("navidromePassword").value = "";
+        document.getElementById("navidromeAuthMode").value = data.auth_mode || "token";
+        document.getElementById("navidromeTimeoutSeconds").value = data.timeout_seconds || 60;
+        document.getElementById("navidromeDownloadMode").value = data.download_mode || "download";
+        document.getElementById("navidromeTempDir").value = data.temp_dir || "";
+        setNavidromeStatus(data.password_set ? "Navidrome settings loaded; password is saved." : "Navidrome settings loaded; password is not set.");
+      } catch (err) {
+        setNavidromeStatus(`Failed to load Navidrome settings: ${err.message}`, true);
+      }
+    }
+    async function saveNavidromeSettings() {
+      const password = document.getElementById("navidromePassword").value;
+      const body = {
+        url: document.getElementById("navidromeUrl").value,
+        user: document.getElementById("navidromeUser").value,
+        auth_mode: document.getElementById("navidromeAuthMode").value,
+        timeout_seconds: Number(document.getElementById("navidromeTimeoutSeconds").value || 60),
+        download_mode: document.getElementById("navidromeDownloadMode").value,
+        temp_dir: document.getElementById("navidromeTempDir").value || null
+      };
+      if (password) body.password = password;
+      try {
+        const data = await json("/settings/navidrome", {
+          method: "PUT",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(body)
+        });
+        document.getElementById("navidromePassword").value = "";
+        setNavidromeStatus(data.password_set ? "Navidrome settings saved." : "Navidrome settings saved; password is not set.");
+      } catch (err) {
+        setNavidromeStatus(`Save failed: ${err.message}`, true);
+      }
+    }
+    async function pingNavidrome() {
+      try {
+        const data = await json("/navidrome/ping", {method: "POST"});
+        const version = [data.version, data.server_version].filter(Boolean).join(" / ");
+        setNavidromeStatus(`Navidrome ping OK${version ? `: ${version}` : ""}.`);
+      } catch (err) {
+        setNavidromeStatus(`Navidrome ping failed: ${err.message}`, true);
+      }
+    }
+    async function startNavidromeSync() {
+      try {
+        await json("/jobs/navidrome-sync", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({page_size: 500, mark_stale: true})
+        });
+        setNavidromeStatus("Navidrome sync queued.");
+        await refreshJobs();
+      } catch (err) {
+        setNavidromeStatus(`Navidrome sync failed: ${err.message}`, true);
+      }
+    }
+    function coverMarkup(t) {
+      return `<div class="cover">
+        <img src="/tracks/${t.id}/cover?size=128" loading="lazy" alt="" onerror="this.parentElement.classList.add('empty'); this.remove()">
+      </div>`;
+    }
     function renderTrack(t, mode) {
       const emb = t.has_embedding ? "ready" : "missing";
       const tagBits = [text(t.genre), t.year ? String(t.year) : "", text(t.album)].filter(Boolean).join(" / ");
       const addSeedButton = ["browse", "library", "seed"].includes(mode)
         ? `<button onclick="addSeed(${t.id})">Add seed</button>` : "";
+      const addBlendButton = ["browse", "library", "seed", "blend"].includes(mode)
+        ? `<button onclick="addToBlendExtra(${t.id})">Add to blend</button>` : "";
       return `<div class="track ${t.id === seedId ? "selected" : ""} ${t.id === activeTrackId ? "active-track" : ""}">
-        <div class="row" style="justify-content:space-between">
-          <div class="title">#${t.id} ${label(t)}</div>
-          <div class="row">
-            <button class="icon-button" onclick="openAnalysis(${t.id})" title="Analysis metadata" aria-label="Analysis metadata">
-              <span class="icon-tablet" aria-hidden="true"></span>
-            </button>
-            <button onclick="playTrack(${t.id}, '${encodedArg(label(t))}')">Play</button>
-            ${addSeedButton}
-            <button onclick="setSeed(${t.id})">Seed</button>
+        <div class="track-body">
+          ${coverMarkup(t)}
+          <div class="track-main">
+            <div class="row" style="justify-content:space-between">
+              <div class="title">#${t.id} ${label(t)}</div>
+              <div class="row">
+                <button class="icon-button" onclick="openAnalysis(${t.id})" title="Analysis metadata" aria-label="Analysis metadata">
+                  <span class="icon-tablet" aria-hidden="true"></span>
+                </button>
+                <button onclick="playTrack(${t.id}, '${encodedArg(label(t))}')">Play</button>
+                ${addSeedButton}
+                ${addBlendButton}
+                <button onclick="setSeed(${t.id})">Seed</button>
+              </div>
+            </div>
+            <div class="meta">${text(t.album)} ${t.duration ? `· ${Math.round(t.duration)}s` : ""} · embedding ${emb}</div>
+            <div class="path" title="${t.path}">${t.path}</div>
           </div>
         </div>
-        <div class="meta">${text(t.album)} ${t.duration ? `· ${Math.round(t.duration)}s` : ""} · embedding ${emb}</div>
-        <div class="path" title="${t.path}">${t.path}</div>
       </div>`;
     }
     function formatScore(value) {
@@ -3309,28 +4330,24 @@ UI_HTML = r"""
     }
     async function previousErroredFilesPage() {
       if (erroredFilesPage <= 1) return;
-      erroredFilesPage -= 1;
-      await loadErroredFiles();
+      routeTo({view: "erroredFiles", page: String(erroredFilesPage - 1), model: model()}, {reset: true});
     }
     async function nextErroredFilesPage() {
       const data = await json(`/analysis/errors?page=${erroredFilesPage}&page_size=${erroredFilesPageSize}`);
       if (erroredFilesPage >= data.pages) return;
-      erroredFilesPage += 1;
-      await loadErroredFiles();
+      routeTo({view: "erroredFiles", page: String(erroredFilesPage + 1), model: model()}, {reset: true});
     }
     function toggleLostFilesSelection(checked) {
       document.querySelectorAll(".lost-checkbox").forEach(input => { input.checked = checked; });
     }
     async function previousLostFilesPage() {
       if (lostFilesPage <= 1) return;
-      lostFilesPage -= 1;
-      await loadLostFiles();
+      routeTo({view: "lostFiles", page: String(lostFilesPage - 1), model: model()}, {reset: true});
     }
     async function nextLostFilesPage() {
       const data = await json(`/lost-files?page=${lostFilesPage}&page_size=${lostFilesPageSize}`);
       if (lostFilesPage >= data.pages) return;
-      lostFilesPage += 1;
-      await loadLostFiles();
+      routeTo({view: "lostFiles", page: String(lostFilesPage + 1), model: model()}, {reset: true});
     }
     async function checkMissingFiles() {
       await json("/jobs/check-missing-files", {method: "POST"});
@@ -3359,9 +4376,13 @@ UI_HTML = r"""
       await loadLostFiles();
       await refreshStats();
     }
-    async function searchTracks() {
+    async function searchTracks({updateUrl = true} = {}) {
       const q = document.getElementById("query").value;
       const status = document.getElementById("embeddingStatus").value;
+      if (updateUrl && !applyingRoute) {
+        routeTo({view: "library", query: q, embedding_status: status, model: model()}, {reset: true});
+        return;
+      }
       const data = await json(`/tracks?query=${encodeURIComponent(q)}&limit=80&embedding_status=${status}&model=${encodeURIComponent(model())}`);
       document.getElementById("tracksList").innerHTML = data.results.map(t => renderTrack(t, "library")).join("");
     }
@@ -3385,7 +4406,11 @@ UI_HTML = r"""
       document.getElementById("artistFacets").innerHTML = data.artists.map(item => facetButton("artist", item)).join("") || `<div class="meta">No artists</div>`;
       document.getElementById("albumFacets").innerHTML = data.albums.map(item => facetButton("album", item)).join("") || `<div class="meta">No albums</div>`;
     }
-    async function refreshBrowse() {
+    async function refreshBrowse({updateUrl = true} = {}) {
+      if (updateUrl && !applyingRoute) {
+        routeTo({view: "browse", model: model(), ...browseParams()}, {reset: true});
+        return;
+      }
       const status = document.getElementById("browseEmbeddingStatus").value;
       const data = await json(`/browse/facets?embedding_status=${status}&model=${encodeURIComponent(model())}`);
       renderFacets(data);
@@ -3454,7 +4479,7 @@ UI_HTML = r"""
       await selectEvaluationSeed(0);
       showSection("evaluation");
     }
-    async function selectEvaluationSeed(index) {
+    async function selectEvaluationSeed(index, {updateUrl = true} = {}) {
       if (index < 0 || index >= seedBasket.length) return;
       evaluationIndex = index;
       seedId = seedBasket[index].id;
@@ -3463,6 +4488,17 @@ UI_HTML = r"""
       document.getElementById("evaluationRefreshBtn").disabled = false;
       renderSeedBasket();
       await loadSimilar(seedId);
+      if (updateUrl && !applyingRoute) {
+        routeTo({view: "evaluation", index: String(index), model: model(), ...recommendationParams()}, {reset: true});
+      }
+    }
+    function onLikedFilterChange() {
+      if (!applyingRoute) {
+        const patch = {view: "navidromeLikes", filter: document.getElementById("likedFilter").value, model: model()};
+        if (likedCatalog) patch.autoload = "1";
+        writeRoutePatch(patch, {replace: true});
+      }
+      renderLikedTracks();
     }
     async function nextEvaluationSeed() {
       if (!seedBasket.length) return;
@@ -3472,37 +4508,280 @@ UI_HTML = r"""
     async function skipEvaluationSeed() {
       await nextEvaluationSeed();
     }
-    async function setSeed(id) {
-      seedId = id;
-      seedTrack = await json(`/tracks/${id}`);
-      document.getElementById("seedPanel").innerHTML = renderTrack({...seedTrack, has_embedding: true}, "seed");
-      document.getElementById("refreshSimilarBtn").disabled = false;
-      showSection("recommendations");
-      await loadSimilar(id);
-      await searchTracks();
+    function readExtraBlendIds() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(LIKED_EXTRA_KEY) || "[]");
+        return Array.isArray(parsed) ? parsed.map(Number).filter(id => Number.isInteger(id) && id > 0) : [];
+      } catch (err) {
+        return [];
+      }
     }
-    async function loadSimilar(id) {
+    function saveExtraBlendIds() {
+      localStorage.setItem(LIKED_EXTRA_KEY, JSON.stringify(extraBlendIds));
+    }
+    function loadExtraBlendIds() {
+      extraBlendIds = readExtraBlendIds();
+    }
+    function likedStatusLabel(status) {
+      if (status === "ready") return "ready";
+      if (status === "missing_embedding") return "needs embedding";
+      return "not synced";
+    }
+    function renderLikedStatus() {
+      const line = document.getElementById("likedStatusLine");
+      const detail = document.getElementById("likedStatusDetail");
+      if (!likedCatalog) {
+        line.textContent = "Source: Navidrome starred · not loaded yet";
+        detail.textContent = "Load starred tracks for the configured Navidrome user, then refresh recommendations from their average embedding.";
+        document.getElementById("refreshLikedBtn").disabled = true;
+        return;
+      }
+      line.textContent = [
+        `Source: Navidrome starred`,
+        `User: ${text(likedCatalog.user)}`,
+        `Loaded: ${likedCatalog.count}`,
+        `Mapped: ${likedCatalog.mapped_count}`,
+        `Ready: ${likedCatalog.ready_count}`,
+        `Missing embedding: ${likedCatalog.missing_embedding_count}`,
+        `Not synced: ${likedCatalog.not_synced_count}`
+      ].join(" · ");
+      detail.textContent = likedCatalog.ready_count > 0
+        ? `Average blend can use ${likedCatalog.ready_count} liked tracks${extraBlendIds.length ? ` plus ${extraBlendIds.length} extra track(s)` : ""}.`
+        : "No liked tracks with embeddings yet. Sync catalog and analyze missing tracks.";
+      document.getElementById("refreshLikedBtn").disabled = likedReadyTrackIds().length < 1;
+    }
+    function likedReadyTrackIds() {
+      if (!likedCatalog) return [...extraBlendIds];
+      const readyIds = (likedCatalog.results || [])
+        .filter(item => item.status === "ready" && item.track && item.track.id)
+        .map(item => Number(item.track.id));
+      const merged = [...readyIds];
+      extraBlendIds.forEach(id => {
+        if (!merged.includes(id)) merged.push(id);
+      });
+      return merged;
+    }
+    function renderLikedTracks() {
+      const list = document.getElementById("likedTracksList");
+      if (!likedCatalog || !likedCatalog.results.length) {
+        list.innerHTML = `<div class="meta">Load Navidrome likes to see starred tracks here.</div>`;
+        return;
+      }
+      const filter = document.getElementById("likedFilter").value;
+      const query = document.getElementById("likedLocalQuery").value.trim().toLowerCase();
+      const items = likedCatalog.results.filter(item => {
+        if (filter !== "all" && item.status !== filter) return false;
+        if (!query) return true;
+        const track = item.track || {};
+        const haystack = `${track.artist || ""} ${track.title || ""} ${track.album || ""} ${item.item_id || ""}`.toLowerCase();
+        return haystack.includes(query);
+      });
+      if (!items.length) {
+        list.innerHTML = `<div class="meta">No liked tracks match this filter.</div>`;
+        return;
+      }
+      list.innerHTML = items.map(item => {
+        const track = item.track || {};
+        const title = track.id ? `#${track.id} ${label(track)}` : `${label(track)} (${item.item_id})`;
+        const playButton = track.id
+          ? `<button onclick="playTrack(${track.id}, '${encodedArg(label(track))}')">Play</button>`
+          : "";
+        return `<div class="track">
+          <div class="row" style="justify-content:space-between">
+            <div class="title">${title}</div>
+            <div class="row">
+              <span class="pill">${likedStatusLabel(item.status)}</span>
+              ${playButton}
+            </div>
+          </div>
+          <div class="meta">${text(track.album)} · ${text(track.path || `navidrome://${item.item_id}`)}</div>
+        </div>`;
+      }).join("");
+    }
+    function renderLikedExtraSummary() {
+      const target = document.getElementById("likedExtraSummary");
+      target.textContent = extraBlendIds.length
+        ? `Extra blend tracks: ${extraBlendIds.join(", ")}`
+        : "No extra tracks added.";
+    }
+    function renderLikedSimilarResults(results, metaHtml = "") {
+      const html = (results || []).map(t => `
+        <div class="track ${t.id === activeTrackId ? "active-track" : ""}">
+          <div class="track-body">
+            ${coverMarkup(t)}
+            <div class="track-main">
+              <div class="row" style="justify-content:space-between">
+                <div class="title"><span class="score">${t.similarity.toFixed(3)}</span> #${t.id} ${label(t)}</div>
+                <div class="row">
+                  <button onclick="playTrack(${t.id}, '${encodedArg(label(t))}')">Play</button>
+                  <button onclick="setSeed(${t.id})">Seed</button>
+                </div>
+              </div>
+              <div class="meta">${[text(t.genre), t.year || "", text(t.album)].filter(Boolean).join(" / ")}</div>
+              <div class="path" title="${t.path}">${t.path}</div>
+            </div>
+          </div>
+        </div>`).join("");
+      document.getElementById("likedSimilarList").innerHTML = `${metaHtml}${html || `<div class="meta">No similar tracks.</div>`}`;
+    }
+    async function loadNavidromeLikes({updateUrl = true} = {}) {
+      const errorTarget = document.getElementById("likedStatusError");
+      errorTarget.textContent = "";
+      try {
+        likedCatalog = await json(`/navidrome/starred?model=${encodeURIComponent(model())}`);
+        renderLikedStatus();
+        renderLikedTracks();
+        if (updateUrl && !applyingRoute) {
+          writeRoutePatch({
+            view: "navidromeLikes",
+            autoload: "1",
+            filter: document.getElementById("likedFilter").value,
+            model: model()
+          }, {replace: true});
+        }
+      } catch (err) {
+        errorTarget.textContent = err.message;
+      }
+    }
+    async function refreshLikedRecommendations({updateUrl = true} = {}) {
+      const errorTarget = document.getElementById("likedStatusError");
+      errorTarget.textContent = "";
+      const readyIds = likedReadyTrackIds();
+      if (!readyIds.length) {
+        errorTarget.textContent = "No ready liked tracks with embeddings. Sync catalog and analyze missing tracks first.";
+        document.getElementById("likedSimilarList").innerHTML = `<div class="meta">Analyze liked tracks first.</div>`;
+        return;
+      }
+      const k = document.getElementById("k").value;
+      const max = document.getElementById("maxPerArtist").value;
+      const exclude = document.getElementById("excludeSameAlbum").checked;
+      try {
+        let data;
+        if (extraBlendIds.length) {
+          const params = new URLSearchParams({
+            seed_ids: readyIds.join(","),
+            model: model(),
+            k: String(k),
+            max_per_artist: String(max),
+            exclude_same_album: String(exclude)
+          });
+          data = await json(`/tracks/similar/mix?${params.toString()}`);
+          document.getElementById("likedSimilarSubtitle").textContent =
+            `Recommendations from liked blend · average of ${readyIds.length} tracks`;
+          const skipped = (data.skipped_seed_ids || []).length
+            ? `<div class="meta">Skipped seeds without embeddings: ${data.skipped_seed_ids.join(", ")}</div>`
+            : "";
+          renderLikedSimilarResults(data.results, skipped);
+        } else {
+          const params = new URLSearchParams({
+            model: model(),
+            count: String(k),
+            max_per_artist: String(max),
+            exclude_same_album: String(exclude)
+          });
+          data = await json(`/navidrome/starred/similar?${params.toString()}`);
+          document.getElementById("likedSimilarSubtitle").textContent =
+            `Recommendations from liked blend · average of ${data.ready_count} liked tracks`;
+          const skipped = (data.skipped_seed_ids || []).length
+            ? `<div class="meta">Skipped liked tracks without embeddings: ${data.skipped_seed_ids.join(", ")}</div>`
+            : "";
+          renderLikedSimilarResults(data.results, skipped);
+        }
+        if (updateUrl && !applyingRoute) {
+          writeRoutePatch({
+            view: "navidromeLikes",
+            autoload: "1",
+            refresh: "1",
+            filter: document.getElementById("likedFilter").value,
+            model: model()
+          }, {replace: true});
+        }
+      } catch (err) {
+        errorTarget.textContent = err.message;
+      }
+    }
+    async function addToBlendExtra(id) {
+      if (!extraBlendIds.includes(id)) {
+        extraBlendIds.push(id);
+        saveExtraBlendIds();
+      }
+      renderLikedExtraSummary();
+      showSection("navidromeLikes");
+      if (likedCatalog && likedReadyTrackIds().length) await refreshLikedRecommendations();
+    }
+    function clearLikedBlend() {
+      likedCatalog = null;
+      extraBlendIds = [];
+      saveExtraBlendIds();
+      document.getElementById("likedStatusError").textContent = "";
+      document.getElementById("likedTracksList").innerHTML = `<div class="meta">Load Navidrome likes to see starred tracks here.</div>`;
+      document.getElementById("likedSimilarList").innerHTML = "";
+      document.getElementById("likedExtraSearchResults").innerHTML = "";
+      document.getElementById("likedSimilarSubtitle").textContent = "Recommendations from liked blend";
+      renderLikedExtraSummary();
+      renderLikedStatus();
+    }
+    async function searchLikedExtra() {
+      const q = document.getElementById("likedExtraQuery").value;
+      const showMissing = document.getElementById("likedExtraShowMissing").checked;
+      const embeddingStatus = showMissing ? "all" : "ready";
+      const target = document.getElementById("likedExtraSearchResults");
+      const errorTarget = document.getElementById("likedStatusError");
+      target.innerHTML = `<div class="meta">Searching...</div>`;
+      try {
+        const data = await json(`/tracks?query=${encodeURIComponent(q)}&limit=30&embedding_status=${embeddingStatus}&model=${encodeURIComponent(model())}`);
+        if (!data.results.length) {
+          target.innerHTML = `<div class="meta">${showMissing ? "No tracks found." : "No ready tracks found. Enable 'Show tracks without embeddings' or analyze missing tracks."}</div>`;
+          return;
+        }
+        target.innerHTML = data.results.map(t => renderTrack(t, "blend")).join("");
+      } catch (err) {
+        errorTarget.textContent = err.message;
+        target.innerHTML = "";
+      }
+    }
+    async function setSeed(id) {
+      routeTo({
+        view: "recommendations",
+        seed: String(id),
+        model: model(),
+        ...recommendationParams()
+      }, {reset: true});
+    }
+    async function loadSimilar(id, {updateUrl = false} = {}) {
       if (!id) return;
       const k = document.getElementById("k").value;
       const max = document.getElementById("maxPerArtist").value;
       const exclude = document.getElementById("excludeSameAlbum").checked;
       const data = await json(`/tracks/${id}/similar?model=${encodeURIComponent(model())}&k=${k}&max_per_artist=${max}&exclude_same_album=${exclude}`);
+      currentSimilarTracks = data.results.map(t => ({id: t.id, label: label(t)}));
       const html = data.results.map(t => `
         <div class="track ${t.id === activeTrackId ? "active-track" : ""}">
-          <div class="row" style="justify-content:space-between">
-            <div class="title"><span class="score">${t.similarity.toFixed(3)}</span> #${t.id} ${label(t)}</div>
-            <button onclick="playTrack(${t.id}, '${encodedArg(label(t))}')">Play</button>
-          </div>
-          <div class="meta">${[text(t.genre), t.year || "", text(t.album)].filter(Boolean).join(" / ")}</div>
-          <div class="path" title="${t.path}">${t.path}</div>
-          <div class="row">
-            <button class="${t.rating === 3 ? "rating-active" : ""}" onclick="rate(${t.id}, 3)">good</button>
-            <button class="${t.rating === 2 ? "rating-active" : ""}" onclick="rate(${t.id}, 2)">okay</button>
-            <button class="${t.rating === 0 ? "rating-active" : ""}" onclick="rate(${t.id}, 0)">bad</button>
+          <div class="track-body">
+            ${coverMarkup(t)}
+            <div class="track-main">
+              <div class="row" style="justify-content:space-between">
+                <div class="title"><span class="score">${t.similarity.toFixed(3)}</span> #${t.id} ${label(t)}</div>
+                <div class="row">
+                  <button onclick="playTrack(${t.id}, '${encodedArg(label(t))}')">Play</button>
+                  <button onclick="setSeed(${t.id})">Seed</button>
+                </div>
+              </div>
+              <div class="meta">${[text(t.genre), t.year || "", text(t.album)].filter(Boolean).join(" / ")}</div>
+              <div class="path" title="${t.path}">${t.path}</div>
+              <div class="row">
+                <button class="${t.rating === 3 ? "rating-active" : ""}" onclick="rate(${t.id}, 3)">good</button>
+                <button class="${t.rating === 2 ? "rating-active" : ""}" onclick="rate(${t.id}, 2)">okay</button>
+                <button class="${t.rating === 0 ? "rating-active" : ""}" onclick="rate(${t.id}, 0)">bad</button>
+              </div>
+            </div>
           </div>
         </div>`).join("");
       document.getElementById("similarList").innerHTML = html;
       document.getElementById("evaluationSimilarList").innerHTML = html;
+      if (updateUrl && !applyingRoute && paramsFromSearch().view === "recommendations" && seedId) {
+        syncRecommendationRoute();
+      }
     }
     async function playTrack(id, encodedLabel) {
       activeTrackId = id;
@@ -3515,8 +4794,17 @@ UI_HTML = r"""
       } catch (err) {
         document.getElementById("playerError").textContent = "Click play in the audio controls if autoplay is blocked.";
       }
-      await searchTracks();
+      await searchTracks({updateUrl: false});
       if (seedId) await loadSimilar(seedId);
+    }
+    async function refreshSimilarTracks() {
+      if (seedId) await loadSimilar(seedId, {updateUrl: true});
+    }
+    async function playNextSimilarTrack() {
+      const index = currentSimilarTracks.findIndex(track => track.id === activeTrackId);
+      if (index < 0 || index >= currentSimilarTracks.length - 1) return;
+      const next = currentSimilarTracks[index + 1];
+      await playTrack(next.id, encodedArg(next.label));
     }
     async function rate(resultId, rating) {
       if (!seedId) return;
@@ -3526,13 +4814,6 @@ UI_HTML = r"""
         body: JSON.stringify({seed_track_id: seedId, result_track_id: resultId, model: model(), rating})
       });
       await loadSimilar(seedId);
-    }
-    async function startScan() {
-      await json("/jobs/scan", {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({music_dir: document.getElementById("musicDir").value})
-      });
-      await refreshJobs();
     }
     async function startAnalyze() {
       const rawLimit = document.getElementById("limit").value;
@@ -3601,7 +4882,7 @@ UI_HTML = r"""
       });
       await refreshJobs();
     }
-    async function loadJobDetail(jobId) {
+    async function loadJobDetail(jobId, {updateUrl = true} = {}) {
       const data = await json(`/jobs/${encodeURIComponent(jobId)}`);
       const tasks = data.tasks || [];
       const job = data.job || {};
@@ -3626,13 +4907,16 @@ UI_HTML = r"""
           <div class="meta">done ${job.done || 0}/${job.total || 0}, queued ${job.queued || 0}, leased ${job.leased || 0}, failed ${job.failed || 0}</div>
         </div>
         ${taskHtml}`;
-      showSection("jobsPage");
+      activateSection("jobsPage");
+      if (updateUrl && !applyingRoute) {
+        pushRouteOnly({view: "jobs", job: jobId, model: model()}, {reset: true});
+      }
     }
     async function refreshJobs() {
       const data = await json("/jobs");
       lastJobs = data.jobs;
       const running = new Set(data.jobs.filter(job => ["queued", "running"].includes(job.status)).map(job => job.kind));
-      document.getElementById("scanBtn").disabled = running.has("scan");
+      document.getElementById("navidromeSyncBtn").disabled = running.has("navidrome-sync");
       document.getElementById("analyzeBtn").disabled = running.has("analyze");
       document.getElementById("analyzeHeadsBtn").disabled = running.has("analyze-heads");
       document.getElementById("downloadHeadsBtn").disabled = running.has("download-head-models");
@@ -3696,11 +4980,34 @@ UI_HTML = r"""
     }
     async function refreshAll() {
       await refreshStats();
-      await searchTracks();
-      await refreshBrowse();
-      await loadLostFiles();
       await refreshJobs();
+      await loadNavidromeSettings();
       renderSeedBasket();
+      loadExtraBlendIds();
+      renderLikedExtraSummary();
+      renderLikedStatus();
+      renderLikedTracks();
+      await applyRoute(paramsFromSearch());
+    }
+    async function initFromUrl() {
+      const params = paramsFromSearch();
+      applySettingsFromParams(params);
+      if (!location.search || !new URLSearchParams(location.search).get("view")) {
+        await replaceRoute({view: "dashboard", model: model()}, {reset: true});
+        await refreshStats();
+        await refreshJobs();
+        await loadNavidromeSettings();
+        loadExtraBlendIds();
+        renderLikedExtraSummary();
+        return;
+      }
+      await applyRoute(params);
+      await refreshStats();
+      await refreshJobs();
+      await loadNavidromeSettings();
+      loadExtraBlendIds();
+      renderLikedExtraSummary();
+      renderLikedStatus();
     }
     document.getElementById("model").addEventListener("change", refreshAll);
     document.getElementById("model").addEventListener("change", refreshWorkerCommand);
@@ -3710,16 +5017,29 @@ UI_HTML = r"""
     document.getElementById("seedQuery").addEventListener("keydown", event => {
       if (event.key === "Enter") searchSeeds();
     });
+    document.getElementById("likedExtraQuery").addEventListener("keydown", event => {
+      if (event.key === "Enter") searchLikedExtra();
+    });
+    document.getElementById("likedLocalQuery").addEventListener("keydown", event => {
+      if (event.key === "Enter") renderLikedTracks();
+    });
     document.getElementById("browseQuery").addEventListener("keydown", event => {
-      if (event.key === "Enter") loadBrowseTracks();
+      if (event.key === "Enter") refreshBrowse();
+    });
+    document.getElementById("k").addEventListener("change", syncRecommendationRoute);
+    document.getElementById("maxPerArtist").addEventListener("change", syncRecommendationRoute);
+    document.getElementById("excludeSameAlbum").addEventListener("change", syncRecommendationRoute);
+    window.addEventListener("popstate", () => {
+      applyRoute(paramsFromSearch());
     });
     document.getElementById("audioPlayer").addEventListener("error", () => {
       document.getElementById("playerError").textContent = "file not mounted";
     });
+    document.getElementById("audioPlayer").addEventListener("ended", playNextSimilarTrack);
     loadSettings();
     bindSettingsAutosave();
     refreshWorkerCommand();
-    refreshAll();
+    initFromUrl();
     setInterval(() => { refreshStats(); refreshJobs(); }, 2500);
   </script>
 </body>

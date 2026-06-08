@@ -12,12 +12,14 @@ logger = logging.getLogger(__name__)
 AUDIO_EXTENSIONS = {
     ".aif",
     ".aiff",
+    ".ape",
     ".flac",
     ".m4a",
     ".mp3",
     ".ogg",
     ".opus",
     ".wav",
+    ".wma",
 }
 
 

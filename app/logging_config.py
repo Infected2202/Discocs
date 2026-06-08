@@ -11,6 +11,7 @@ from app.config import Settings
 DEFAULT_LOG_MAX_BYTES = 10 * 1024 * 1024
 DEFAULT_LOG_BACKUP_COUNT = 5
 ANALYSIS_LOGGER_NAME = "discocs.analysis"
+NAVIDROME_PLUGIN_LOGGER_NAME = "discocs.navidrome.plugin"
 _CONFIGURED = False
 
 
@@ -57,11 +58,28 @@ def configure_logging(settings: Settings | None = None) -> None:
         backup_count,
         "discocs-analysis-file",
     )
+
+    navidrome_plugin_logger = get_navidrome_plugin_logger()
+    navidrome_plugin_logger.setLevel(level)
+    navidrome_plugin_logger.propagate = False
+    _add_rotating_handler(
+        navidrome_plugin_logger,
+        log_dir / "navidrome_plugin.log",
+        formatter,
+        level,
+        max_bytes,
+        backup_count,
+        "discocs-navidrome-plugin-file",
+    )
     _CONFIGURED = True
 
 
 def get_analysis_logger() -> logging.Logger:
     return logging.getLogger(ANALYSIS_LOGGER_NAME)
+
+
+def get_navidrome_plugin_logger() -> logging.Logger:
+    return logging.getLogger(NAVIDROME_PLUGIN_LOGGER_NAME)
 
 
 def _add_rotating_handler(

@@ -10,8 +10,11 @@ from fastapi.testclient import TestClient
 import app.main as main_module
 from app.cli import worker_failure_retryable
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR
+from app.config import Settings
 from app.head_pack import HeadOutput, Prediction
 from app.main import app
+from app.navidrome import DownloadedTrack
+from app.navidrome import NavidromeSong
 from app.scanner import ScannedTrack
 from app.store import INITIALIZED_DB_PATHS, Store, Track, TrackFeature
 
@@ -23,6 +26,10 @@ def init_api_store(tmp_path: Path, monkeypatch) -> Store:
     monkeypatch.setenv("DISCOCS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("DISCOCS_INDEX_DIR", str(tmp_path))
     monkeypatch.setenv("DISCOCS_MODEL_DIR", str(tmp_path / "models"))
+    monkeypatch.delenv("DISCOCS_NAVIDROME_URL", raising=False)
+    monkeypatch.delenv("DISCOCS_NAVIDROME_USER", raising=False)
+    monkeypatch.delenv("DISCOCS_NAVIDROME_PASSWORD", raising=False)
+    monkeypatch.delenv("DISCOCS_NAVIDROME_AUTH_MODE", raising=False)
     store = Store(db_path)
     store.init()
     return store
@@ -61,6 +68,27 @@ def add_track(
     return track_id
 
 
+def add_navidrome_track(
+    store: Store,
+    item_id: str,
+    title: str = "Title",
+    artist: str = "Artist",
+    album: str = "Album",
+) -> int:
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=f"navidrome://{item_id}",  # type: ignore[arg-type]
+            artist=artist,
+            title=title,
+            album=album,
+            duration=123.0,
+            file_size=100,
+            mtime=0,
+        )
+    )
+    return track_id
+
+
 def test_health():
     client = TestClient(app)
 
@@ -68,6 +96,48 @@ def test_health():
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_navidrome_sync_job_imports_catalog(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+
+    class FakeNavidromeClient:
+        def __init__(self, _settings):
+            pass
+
+        def iter_songs(self, *, page_size: int, query: str = "", limit: int | None = None):
+            assert page_size == 10
+            assert limit is None
+            yield NavidromeSong(
+                id="song-1",
+                title="One",
+                artist="Artist",
+                album="Album",
+                duration=123,
+                size=100,
+                suffix="flac",
+                raw={"id": "song-1", "title": "One"},
+            )
+
+    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    client = TestClient(app)
+
+    response = client.post(
+        "/jobs/navidrome-sync",
+        json={"page_size": 10, "mark_stale": True},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "accepted"
+    assert body["page_size"] == 10
+    imported = store.get_track_by_external_id("navidrome", "song-1")
+    assert imported is not None
+    assert imported.path == "navidrome://song-1"
+    jobs = client.get("/jobs").json()["jobs"]
+    sync_job = next(job for job in jobs if job["id"] == body["job_id"])
+    assert sync_job["status"] == "completed"
+    assert "seen=1 imported=1" in sync_job["message"]
 
 
 def test_test_ui_loads():
@@ -83,13 +153,26 @@ def test_test_ui_loads():
     assert "Lost files" in response.text
     assert "Errored files" in response.text
     assert "Recommendations" in response.text
+    assert "Navidrome likes" in response.text
+    assert "navidromeLikes" in response.text
+    assert "Load Navidrome likes" in response.text
+    assert "Recommendations from liked blend" in response.text
+    assert "addToBlendExtra" in response.text
+    assert "discocs.likedExtra.v1" in response.text
+    assert "/navidrome/starred" in response.text
     assert "Evaluation" in response.text
     assert "Jobs" in response.text
     assert "Settings" in response.text
+    assert "Sync Navidrome" in response.text
     assert "Analyze missing" in response.text
     assert "Download head models" in response.text
     assert "Analyze Discogs-EffNet heads" in response.text
     assert "Analyze audio features" in response.text
+    assert "Navidrome" in response.text
+    assert "Save Navidrome" in response.text
+    assert "Sync catalog" in response.text
+    assert "startScan" not in response.text
+    assert "/jobs/scan" not in response.text
     assert "<details class=\"panel\" id=\"headPackDetails\">" in response.text
     assert "headPackModelTable" in response.text
     assert "model-table" in response.text
@@ -120,6 +203,10 @@ def test_test_ui_loads():
     assert "execution_mode: executionMode" in response.text
     assert "cancelJob" in response.text
     assert "parsedLimit && parsedLimit > 0 ? parsedLimit : null" in response.text
+    assert "section-fill" in response.text
+    assert "panel-fill" in response.text
+    assert "list-region" in response.text
+    assert "max-height: 58vh" not in response.text
     assert "Add seed" in response.text
     assert "openAnalysis" in response.text
     assert "analysisModal" in response.text
@@ -128,6 +215,68 @@ def test_test_ui_loads():
     assert "browse/facets" in response.text
     assert "facet-list" in response.text
     assert "compactFolder" in response.text
+    assert "function routeTo(" in response.text
+    assert "function applyRoute(" in response.text
+    assert "function initFromUrl(" in response.text
+    assert 'window.addEventListener("popstate"' in response.text
+    assert "function activateSection(" in response.text
+    assert "function restoreRecommendations(" in response.text
+    assert 'view: "recommendations"' in response.text
+    assert "seed: String(id)" in response.text
+
+
+def test_navidrome_settings_round_trip(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    initial = client.get("/settings/navidrome")
+
+    assert initial.status_code == 200
+    assert initial.json()["password_set"] is False
+
+    saved = client.put(
+        "/settings/navidrome",
+        json={
+            "url": "http://navidrome:4533",
+            "user": "tester",
+            "password": "secret",
+            "auth_mode": "token",
+            "timeout_seconds": 45,
+            "download_mode": "download",
+            "temp_dir": str(tmp_path / "navidrome-tmp"),
+        },
+    )
+
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["url"] == "http://navidrome:4533"
+    assert body["user"] == "tester"
+    assert body["password_set"] is True
+    assert "password" not in body
+    settings = Settings.from_env()
+    assert settings.navidrome.url == "http://navidrome:4533"
+    assert settings.navidrome.user == "tester"
+    assert settings.navidrome.password == "secret"
+
+
+def test_navidrome_plugin_event_is_accepted(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.post(
+        "/navidrome/plugin-event",
+        json={
+            "event": "similar_called",
+            "item_id": "song-1",
+            "model": "discogs_multi",
+            "count": 50,
+            "discocs_url": "http://discocs:8711",
+            "message": "debug",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
 
 
 def test_worker_media_failures_are_not_retryable():
@@ -212,6 +361,106 @@ def test_worker_claim_audio_and_submit_embedding(tmp_path: Path, monkeypatch):
     assert submit.json()["accepted"] == [task["task_id"]]
     assert np.allclose(store.load_embedding(track_id, "discogs_multi"), vector)
     assert store.get_analysis_job(job.id).done == 1
+
+
+def test_worker_audio_endpoint_downloads_navidrome_track(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path="navidrome://song-1",  # type: ignore[arg-type]
+            artist="Artist",
+            title="Title",
+            album="Album",
+            duration=123.0,
+            file_size=100,
+            mtime=0,
+        )
+    )
+    store.upsert_external_track("navidrome", "song-1", track_id)
+    job = store.create_analysis_job("discogs_multi", None, local_executor_enabled=False)
+
+    class FakeNavidromeClient:
+        def __init__(self, _settings):
+            pass
+
+        def download_track(self, item_id: str, target_dir: Path, *, suffix: str | None = None):
+            assert item_id == "song-1"
+            target_dir.mkdir(parents=True, exist_ok=True)
+            path = target_dir / "song-1.audio"
+            path.write_bytes(b"navidrome-audio")
+            return DownloadedTrack(
+                path=path,
+                bytes_written=len(b"navidrome-audio"),
+                content_type="audio/flac",
+                mode="download",
+            )
+
+    monkeypatch.setattr("app.audio_source.NavidromeClient", FakeNavidromeClient)
+    client = TestClient(app)
+    task = client.post(
+        "/workers/claim",
+        json={"worker_id": "gpu-1", "models": ["discogs_multi"], "limit": 4},
+    ).json()["tasks"][0]
+
+    response = client.get(task["audio_url"])
+
+    assert response.status_code == 200
+    assert response.content == b"navidrome-audio"
+    assert store.get_analysis_job(job.id).leased == 1
+    assert not (tmp_path / "tmp" / "navidrome" / "song-1.audio").exists()
+
+
+def test_local_embedding_uses_navidrome_downloaded_audio(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path="navidrome://song-1",  # type: ignore[arg-type]
+            artist="Artist",
+            title="Title",
+            album="Album",
+            duration=123.0,
+            file_size=100,
+            mtime=0,
+        )
+    )
+    store.upsert_external_track("navidrome", "song-1", track_id)
+    track = store.get_track(track_id)
+    seen_paths: list[Path] = []
+
+    class FakeNavidromeClient:
+        def __init__(self, _settings):
+            pass
+
+        def download_track(self, item_id: str, target_dir: Path, *, suffix: str | None = None):
+            target_dir.mkdir(parents=True, exist_ok=True)
+            path = target_dir / "song-1.audio"
+            path.write_bytes(b"navidrome-audio")
+            return DownloadedTrack(
+                path=path,
+                bytes_written=len(b"navidrome-audio"),
+                content_type="audio/flac",
+                mode="download",
+            )
+
+    class FakeEmbedder:
+        def extract_track_vector(self, path: Path):
+            seen_paths.append(path)
+            assert path.read_bytes() == b"navidrome-audio"
+            return np.array([0.1, 0.2, 0.3], dtype=np.float32)
+
+    monkeypatch.setattr("app.audio_source.NavidromeClient", FakeNavidromeClient)
+
+    result = main_module._extract_embedding_local(
+        FakeEmbedder(),
+        store,
+        main_module.Settings.from_env(),
+        track,
+    )
+
+    assert result.status == "ok"
+    assert np.allclose(result.vector, np.array([0.1, 0.2, 0.3], dtype=np.float32))
+    assert seen_paths == [tmp_path / "tmp" / "navidrome" / "song-1.audio"]
+    assert not seen_paths[0].exists()
 
 
 def test_worker_submit_audio_feature_result(tmp_path: Path, monkeypatch):
@@ -830,17 +1079,6 @@ def test_analyze_job_rejects_zero_limit(tmp_path: Path, monkeypatch):
     assert response.status_code == 422
 
 
-def test_scan_job_fails_for_missing_music_directory(tmp_path: Path, monkeypatch):
-    init_api_store(tmp_path, monkeypatch)
-    job_id = main_module.create_job("scan", "test")
-
-    main_module._scan_job(job_id, tmp_path / "missing")
-
-    job = main_module.JOBS[job_id]
-    assert job.status == "failed"
-    assert "Music directory not found" in job.message
-
-
 def test_track_audio_returns_404_for_missing_track(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
@@ -1040,6 +1278,115 @@ def test_browse_facets_include_counts_and_hide_missing_genres(tmp_path: Path, mo
     assert any(item["value"] == str(tagged_path.parent) for item in data["folders"])
 
 
+def test_similar_mix_returns_blended_results(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    first_path = tmp_path / "seed-a.flac"
+    second_path = tmp_path / "seed-b.flac"
+    result_path = tmp_path / "result.flac"
+    for path in [first_path, second_path, result_path]:
+        path.write_bytes(b"fake")
+    first_id = add_track(store, first_path, title="Seed A", artist="A")
+    second_id = add_track(store, second_path, title="Seed B", artist="B")
+    result_id = add_track(store, result_path, title="Result", artist="C", album="Other")
+    store.save_embedding(first_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    store.save_embedding(second_id, "discogs_multi", np.array([0.0, 1.0], dtype=np.float32))
+    store.save_embedding(result_id, "discogs_multi", np.array([0.7, 0.7], dtype=np.float32))
+    main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
+    client = TestClient(app)
+
+    response = client.get(
+        f"/tracks/similar/mix?seed_ids={first_id},{second_id}&model=discogs_multi&k=5"
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["blend"] == "average"
+    assert {seed["id"] for seed in data["seeds"]} == {first_id, second_id}
+    assert data["skipped_seed_ids"] == []
+    assert [item["id"] for item in data["results"]] == [result_id]
+
+
+def test_similar_mix_reports_missing_tracks(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.get("/tracks/similar/mix?seed_ids=999")
+
+    assert response.status_code == 404
+    assert "Tracks not found" in response.json()["detail"]
+
+
+def test_similar_mix_rejects_empty_seed_ids(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.get("/tracks/similar/mix?seed_ids=")
+
+    assert response.status_code == 400
+
+
+def test_similar_mix_rejects_invalid_seed_ids(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.get("/tracks/similar/mix?seed_ids=1,abc")
+
+    assert response.status_code == 400
+    assert "Invalid seed id" in response.json()["detail"]
+
+
+def test_similar_mix_reports_missing_index(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    seed_path = tmp_path / "seed.flac"
+    seed_path.write_bytes(b"fake")
+    seed_id = add_track(store, seed_path, title="Seed")
+    store.save_embedding(seed_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    client = TestClient(app)
+
+    response = client.get(f"/tracks/similar/mix?seed_ids={seed_id}&model=discogs_multi")
+
+    assert response.status_code == 503
+    assert "Index not found" in response.json()["detail"]
+
+
+def test_similar_mix_reports_missing_embeddings(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    seed_path = tmp_path / "seed.flac"
+    seed_path.write_bytes(b"fake")
+    seed_id = add_track(store, seed_path, title="Seed")
+    client = TestClient(app)
+
+    response = client.get(f"/tracks/similar/mix?seed_ids={seed_id}&model=discogs_multi")
+
+    assert response.status_code == 404
+    assert "No embeddings for mix seeds" in response.json()["detail"]
+
+
+def test_similar_mix_skips_seeds_without_embeddings(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    ready_path = tmp_path / "ready.flac"
+    missing_path = tmp_path / "missing.flac"
+    result_path = tmp_path / "result.flac"
+    for path in [ready_path, missing_path, result_path]:
+        path.write_bytes(b"fake")
+    ready_id = add_track(store, ready_path, title="Ready")
+    missing_id = add_track(store, missing_path, title="Missing")
+    result_id = add_track(store, result_path, title="Result", album="Two")
+    store.save_embedding(ready_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    store.save_embedding(result_id, "discogs_multi", np.array([0.9, 0.1], dtype=np.float32))
+    main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
+    client = TestClient(app)
+
+    response = client.get(
+        f"/tracks/similar/mix?seed_ids={ready_id},{missing_id}&model=discogs_multi&k=1"
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["skipped_seed_ids"] == [missing_id]
+    assert [item["id"] for item in data["results"]] == [result_id]
+
+
 def test_similar_tracks_include_saved_rating(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     seed_path = tmp_path / "seed.flac"
@@ -1058,6 +1405,196 @@ def test_similar_tracks_include_saved_rating(tmp_path: Path, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["results"][0]["rating"] == 3
+
+
+def _configure_navidrome_env(monkeypatch) -> None:
+    monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_USER", "alice")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_PASSWORD", "secret")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_AUTH_MODE", "plain")
+
+
+def test_navidrome_starred_catalog(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    _configure_navidrome_env(monkeypatch)
+
+    class FakeNavidromeClient:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def get_starred_songs(self):
+            return [
+                NavidromeSong(id="like-1", title="Like One", artist="A", album="Album"),
+                NavidromeSong(id="like-2", title="Like Two", artist="B", album="Other"),
+                NavidromeSong(id="ghost", title="Ghost", artist="C"),
+            ]
+
+    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    ready_id = add_navidrome_track(store, "like-1", title="Like One", artist="A")
+    missing_id = add_navidrome_track(store, "like-2", title="Like Two", artist="B")
+    store.upsert_external_track("navidrome", "like-1", ready_id)
+    store.upsert_external_track("navidrome", "like-2", missing_id)
+    store.save_embedding(ready_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    client = TestClient(app)
+
+    response = client.get("/navidrome/starred?model=discogs_multi")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["user"] == "alice"
+    assert data["count"] == 3
+    assert data["mapped_count"] == 2
+    assert data["ready_count"] == 1
+    assert data["missing_embedding_count"] == 1
+    assert data["not_synced_count"] == 1
+    statuses = {item["item_id"]: item["status"] for item in data["results"]}
+    assert statuses["like-1"] == "ready"
+    assert statuses["like-2"] == "missing_embedding"
+    assert statuses["ghost"] == "not_synced"
+
+
+def test_navidrome_starred_similar_blends_ready_likes(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    _configure_navidrome_env(monkeypatch)
+
+    class FakeNavidromeClient:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def get_starred_songs(self):
+            return [
+                NavidromeSong(id="like-1", title="Like One", artist="A"),
+                NavidromeSong(id="like-2", title="Like Two", artist="B"),
+            ]
+
+    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    like1_id = add_navidrome_track(store, "like-1", title="Like One", artist="A")
+    like2_id = add_navidrome_track(store, "like-2", title="Like Two", artist="B")
+    result_id = add_navidrome_track(store, "result", title="Result", artist="C", album="Other")
+    store.upsert_external_track("navidrome", "like-1", like1_id)
+    store.upsert_external_track("navidrome", "like-2", like2_id)
+    store.upsert_external_track("navidrome", "result", result_id)
+    store.save_embedding(like1_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    store.save_embedding(like2_id, "discogs_multi", np.array([0.0, 1.0], dtype=np.float32))
+    store.save_embedding(result_id, "discogs_multi", np.array([0.7, 0.7], dtype=np.float32))
+    main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
+    client = TestClient(app)
+
+    response = client.get("/navidrome/starred/similar?model=discogs_multi&count=5")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["source"] == "navidrome_starred"
+    assert data["blend"] == "average"
+    assert data["ready_count"] == 2
+    assert data["missing_embedding_count"] == 0
+    assert [item["id"] for item in data["results"]] == [result_id]
+
+
+def test_navidrome_starred_similar_requires_ready_embeddings(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    _configure_navidrome_env(monkeypatch)
+
+    class FakeNavidromeClient:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def get_starred_songs(self):
+            return [NavidromeSong(id="like-1", title="Like One", artist="A")]
+
+    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    like_id = add_navidrome_track(store, "like-1", title="Like One", artist="A")
+    store.upsert_external_track("navidrome", "like-1", like_id)
+    client = TestClient(app)
+
+    response = client.get("/navidrome/starred/similar?model=discogs_multi")
+
+    assert response.status_code == 404
+    assert "No ready liked tracks" in response.json()["detail"]
+
+
+def test_navidrome_similar_returns_external_ids(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    seed_id = add_navidrome_track(store, "seed", title="Seed")
+    result_id = add_navidrome_track(store, "result", title="Result", album="Two")
+    store.upsert_external_track("navidrome", "seed", seed_id)
+    store.upsert_external_track("navidrome", "result", result_id)
+    store.save_embedding(seed_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    store.save_embedding(result_id, "discogs_multi", np.array([0.9, 0.1], dtype=np.float32))
+    main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
+    client = TestClient(app)
+
+    response = client.get("/navidrome/similar?item_id=seed&model=discogs_multi&count=1")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["provider"] == "navidrome"
+    assert data["seed_item_id"] == "seed"
+    assert data["model"] == "discogs_multi"
+    assert data["results"][0]["item_id"] == "result"
+    assert data["results"][0]["track_id"] == result_id
+    assert data["results"][0]["title"] == "Result"
+    assert data["results"][0]["similarity"] > 0
+
+
+def test_navidrome_similar_rejects_unsynced_seed(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.get("/navidrome/similar?item_id=missing")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Navidrome item_id is not synced"
+
+
+def test_navidrome_similar_reports_missing_index(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    seed_id = add_navidrome_track(store, "seed", title="Seed")
+    store.upsert_external_track("navidrome", "seed", seed_id)
+    store.save_embedding(seed_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    client = TestClient(app)
+
+    response = client.get("/navidrome/similar?item_id=seed&model=discogs_multi")
+
+    assert response.status_code == 503
+    assert "Index not found" in response.json()["detail"]
+
+
+def test_navidrome_similar_reports_missing_seed_embedding(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    seed_id = add_navidrome_track(store, "seed", title="Seed")
+    result_id = add_navidrome_track(store, "result", title="Result", album="Two")
+    store.upsert_external_track("navidrome", "seed", seed_id)
+    store.upsert_external_track("navidrome", "result", result_id)
+    store.save_embedding(result_id, "discogs_multi", np.array([0.9, 0.1], dtype=np.float32))
+    main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
+    client = TestClient(app)
+
+    response = client.get("/navidrome/similar?item_id=seed&model=discogs_multi")
+
+    assert response.status_code == 404
+    assert "No embedding for track" in response.json()["detail"]
+
+
+def test_navidrome_similar_skips_results_without_external_id(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    seed_id = add_navidrome_track(store, "seed", title="Seed")
+    mapped_id = add_navidrome_track(store, "mapped", title="Mapped", album="Two")
+    local_path = tmp_path / "local.flac"
+    local_path.write_bytes(b"fake")
+    local_id = add_track(store, local_path, title="Local", album="Three")
+    store.upsert_external_track("navidrome", "seed", seed_id)
+    store.upsert_external_track("navidrome", "mapped", mapped_id)
+    store.save_embedding(seed_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    store.save_embedding(local_id, "discogs_multi", np.array([0.99, 0.01], dtype=np.float32))
+    store.save_embedding(mapped_id, "discogs_multi", np.array([0.9, 0.1], dtype=np.float32))
+    main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
+    client = TestClient(app)
+
+    response = client.get("/navidrome/similar?item_id=seed&model=discogs_multi&count=2")
+
+    assert response.status_code == 200
+    assert [item["item_id"] for item in response.json()["results"]] == ["mapped"]
 
 
 def test_analyze_job_saves_successes_and_counts_failures_with_one_worker(tmp_path: Path, monkeypatch):
@@ -1081,16 +1618,21 @@ def test_analyze_job_saves_successes_and_counts_failures_with_one_worker(tmp_pat
             return np.array([1.0, 0.0], dtype=np.float32)
 
     monkeypatch.setattr(main_module, "DiscogsEffnetEmbedder", FakeEmbedder)
-    result = main_module._extract_embedding_local(FakeEmbedder(None, "discogs_multi"), Track(
-        id=99,
-        path=str(fail_path),
-        artist=None,
-        title="Fail",
-        album=None,
-        duration=123.0,
-        file_size=1,
-        mtime=1,
-    ))
+    result = main_module._extract_embedding_local(
+        FakeEmbedder(None, "discogs_multi"),
+        store,
+        main_module.Settings.from_env(),
+        Track(
+            id=99,
+            path=str(fail_path),
+            artist=None,
+            title="Fail",
+            album=None,
+            duration=123.0,
+            file_size=1,
+            mtime=1,
+        ),
+    )
     assert result.status == "failed"
     assert result.error_type == "RuntimeError"
     assert result.stage == "load_audio"
