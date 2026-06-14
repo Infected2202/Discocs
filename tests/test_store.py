@@ -338,6 +338,19 @@ def test_analysis_worker_status_counters_and_release(tmp_path: Path):
     assert store.claim_analysis_tasks("gpu-2", ["discogs_multi"], limit=1)[0].lease_owner == "gpu-2"
 
 
+def test_analysis_worker_heartbeat_skips_fresh_write(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    store.register_analysis_worker("gpu-1", ["discogs_multi"])
+    initial = store.list_analysis_workers()[0]
+
+    wrote = store.heartbeat_analysis_worker("gpu-1", ["discogs_multi"], min_interval_seconds=60)
+
+    refreshed = store.list_analysis_workers()[0]
+    assert wrote is False
+    assert refreshed.last_seen_at == initial.last_seen_at
+
+
 def test_cancel_analysis_job_stops_running_queue(tmp_path: Path):
     store = Store(tmp_path / "app.db")
     store.init()
@@ -571,7 +584,7 @@ def test_store_model_output_round_trip_and_missing_pack_counts(tmp_path: Path):
     ]
 
 
-def test_store_feature_round_trip_and_missing_counts(tmp_path: Path):
+def test_store_features_round_trip_and_missing_features_counts(tmp_path: Path):
     store = Store(tmp_path / "app.db")
     store.init()
     first_id, _changed = store.upsert_track(
@@ -629,6 +642,13 @@ def test_store_feature_round_trip_and_missing_counts(tmp_path: Path):
     assert [track.id for track in store.list_tracks_missing_features("audio_features_v1")] == [
         second_id
     ]
+
+    assert [track.id for track in store.list_active_tracks()] == [first_id, second_id]
+    deleted = store.delete_features_for_tracks([first_id], "audio_features_v1")
+
+    assert deleted == 2
+    assert store.load_features(first_id, "audio_features_v1") == []
+    assert store.count_tracks_missing_features("audio_features_v1") == 2
 
 
 def test_changed_file_scan_removes_predictions(tmp_path: Path):

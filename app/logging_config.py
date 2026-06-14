@@ -93,12 +93,16 @@ def _add_rotating_handler(
 ) -> None:
     if any(getattr(handler, "_discocs_marker", None) == marker for handler in logger.handlers):
         return
-    handler = RotatingFileHandler(
-        path,
-        maxBytes=max_bytes,
-        backupCount=backup_count,
-        encoding="utf-8",
-    )
+    try:
+        handler = RotatingFileHandler(
+            path,
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        logging.getLogger(__name__).warning("Could not open log file %s: %s", path, exc)
+        return
     handler.setLevel(level)
     handler.setFormatter(formatter)
     handler._discocs_marker = marker  # type: ignore[attr-defined]

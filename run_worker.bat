@@ -19,7 +19,13 @@ rem Stable worker name shown in the web UI under Jobs / Workers.
 if "%DISCOCS_WORKER_ID%"=="" set "DISCOCS_WORKER_ID=gpu-worker-1"
 
 rem Worker capabilities. By default it accepts the full analyze pipeline.
-if "%DISCOCS_WORKER_EMBEDDING_MODEL%"=="" set "DISCOCS_WORKER_EMBEDDING_MODEL=discogs_multi"
+if "%DISCOCS_WORKER_EMBEDDING_MODELS%"=="" (
+  if "%DISCOCS_WORKER_EMBEDDING_MODEL%"=="" (
+    set "DISCOCS_WORKER_EMBEDDING_MODELS=discogs_multi,discogs_track,discogs_release,discogs_label"
+  ) else (
+    set "DISCOCS_WORKER_EMBEDDING_MODELS=%DISCOCS_WORKER_EMBEDDING_MODEL%"
+  )
+)
 if "%DISCOCS_WORKER_AUDIO_FEATURE_MODEL%"=="" set "DISCOCS_WORKER_AUDIO_FEATURE_MODEL=audio_features_v1"
 if "%DISCOCS_WORKER_HEAD_MODEL%"=="" set "DISCOCS_WORKER_HEAD_MODEL=discogs-effnet-heads"
 
@@ -40,13 +46,13 @@ if "%TF_CPP_MIN_LOG_LEVEL%"=="" set "TF_CPP_MIN_LOG_LEVEL=3"
 echo Starting discocs worker
 echo Server: %DISCOCS_WORKER_SERVER%
 echo Worker: %DISCOCS_WORKER_ID%
-echo Models: %DISCOCS_WORKER_EMBEDDING_MODEL%, %DISCOCS_WORKER_AUDIO_FEATURE_MODEL%, %DISCOCS_WORKER_HEAD_MODEL%
+echo Models: %DISCOCS_WORKER_EMBEDDING_MODELS%, %DISCOCS_WORKER_AUDIO_FEATURE_MODEL%, %DISCOCS_WORKER_HEAD_MODEL%
 echo Models dir: %DISCOCS_MODEL_DIR%
 
 ".venv\Scripts\python.exe" -m app.cli worker ^
   --server "%DISCOCS_WORKER_SERVER%" ^
   --worker-id "%DISCOCS_WORKER_ID%" ^
-  --models "%DISCOCS_WORKER_EMBEDDING_MODEL%" ^
+  --models "%DISCOCS_WORKER_EMBEDDING_MODELS%" ^
   --models "%DISCOCS_WORKER_AUDIO_FEATURE_MODEL%" ^
   --models "%DISCOCS_WORKER_HEAD_MODEL%" ^
   --claim-batch-size "%DISCOCS_WORKER_CLAIM_BATCH_SIZE%" ^

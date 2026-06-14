@@ -11,14 +11,15 @@ import os
 from pathlib import Path
 import socket
 import sqlite3
-from threading import Lock
+from threading import Lock, Thread
 import time
 from time import perf_counter
-from datetime import datetime
+from datetime import UTC, datetime
 import traceback
+from typing import Callable
 from uuid import uuid4
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 import numpy as np
@@ -26,8 +27,15 @@ from starlette.background import BackgroundTask
 
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR, AudioFeatureAnalyzer
 from app.audio_source import is_navidrome_track, track_audio_path
-from app.config import MODEL_FILES, Settings, load_runtime_settings, save_runtime_settings
-from app.embedder import DiscogsEffnetEmbedder
+from app.config import (
+    DISCOGS_EFFNET_MODEL,
+    MODEL_FILES,
+    MUQ_MULAN_MODEL,
+    Settings,
+    load_runtime_settings,
+    save_runtime_settings,
+)
+from app.embedder import DiscogsEffnetEmbedder, MuqMulanEmbedder, create_track_embedder
 from app.head_pack import (
     DISCOGS_EFFNET_HEADS,
     DiscogsEffnetHeadPackAnalyzer,
@@ -39,11 +47,18 @@ from app.head_pack import (
 )
 from app.logging_config import configure_logging, get_analysis_logger, get_navidrome_plugin_logger
 from app.navidrome import NavidromeClient
-from app.navidrome_starred import build_starred_catalog, ready_tracks_from_starred_catalog
+from app.navidrome_starred import (
+    build_starred_catalog,
+    build_starred_track_ids,
+    ready_tracks_from_starred_catalog,
+)
 from app.navidrome_sync import sync_navidrome_catalog
-from app.recommender import Recommender, build_index
+from app.recommender import Recommender, build_index, index_metadata_path
 from app.store import (
     AnalysisTask,
+    FeatureFilter,
+    FeatureTrack,
+    InstantMixRequest,
     Store,
     Track,
     TrackFeature,
@@ -51,6 +66,7 @@ from app.store import (
     similar_track_dict,
     track_dict,
     track_listing_dict,
+    utc_now,
 )
 
 
@@ -62,6 +78,9 @@ navidrome_plugin_logger = get_navidrome_plugin_logger()
 app = FastAPI(title="discocs", version="0.1.0")
 JOBS_LOCK = Lock()
 JOBS: dict[str, "JobStatus"] = {}
+DEFERRED_JOBS_LOCK = Lock()
+DEFERRED_JOB_ORDER: list[str] = []
+DEFERRED_JOB_STARTERS: dict[str, Callable[[], None]] = {}
 ANALYZE_EXECUTORS_LOCK = Lock()
 ANALYZE_EXECUTORS: set[ProcessPoolExecutor] = set()
 SHUTDOWN_REQUESTED = False
@@ -70,6 +89,70 @@ MAX_ANALYZE_WORKERS = max(1, os.cpu_count() or 1)
 DEFAULT_ANALYZE_WORKERS = min(4, MAX_ANALYZE_WORKERS)
 MAX_ANALYZE_TF_THREADS = MAX_ANALYZE_WORKERS
 DEFAULT_ANALYZE_TF_THREADS = min(4, MAX_ANALYZE_TF_THREADS)
+COVER_TIMEOUT_SECONDS = 5
+WORKER_HEARTBEAT_WRITE_INTERVAL_SECONDS = 60
+WORKER_CONNECTED_TTL_SECONDS = WORKER_HEARTBEAT_WRITE_INTERVAL_SECONDS * 3
+COVER_CACHE_TTL_SECONDS = 3600
+COVER_ERROR_CACHE_TTL_SECONDS = 300
+COVER_CACHE_MAX_ITEMS = 512
+COVER_CACHE_LOCK = Lock()
+COVER_CACHE: dict[tuple[str, int], tuple[float, bytes, str]] = {}
+COVER_ERROR_CACHE: dict[tuple[str, int], tuple[float, str]] = {}
+STATS_CACHE_TTL_SECONDS = 10
+STATS_CACHE_LOCK = Lock()
+STATS_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
+AUTO_INDEX_LOCK = Lock()
+AUTO_INDEX_ANALYSIS_JOBS: set[str] = set()
+TEXT_SEARCH_EMBEDDER_LOCK = Lock()
+TEXT_SEARCH_EMBEDDER: MuqMulanEmbedder | None = None
+UI_BUILD_ID = "likes-remote-only-20260611-1918"
+
+
+def should_log_http_request(path: str) -> bool:
+    if path in {"/stats", "/jobs"}:
+        return True
+    if path.startswith(("/metrics", "/navidrome", "/instant-mix", "/text-search")):
+        return True
+    return path.startswith("/tracks/") and (
+        path.endswith("/cover")
+        or path.endswith("/similar")
+        or path.endswith("/navidrome-star")
+    )
+
+
+@app.middleware("http")
+async def log_http_request(request: Request, call_next):
+    path = request.url.path
+    should_log = should_log_http_request(path)
+    started = perf_counter()
+    if should_log:
+        logger.info(
+            "HTTP request started method=%s path=%s query=%s",
+            request.method,
+            path,
+            request.url.query,
+        )
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "HTTP request failed method=%s path=%s query=%s seconds=%.3f",
+            request.method,
+            path,
+            request.url.query,
+            perf_counter() - started,
+        )
+        raise
+    seconds = perf_counter() - started
+    if should_log or seconds >= 1.0:
+        logger.info(
+            "HTTP request completed method=%s path=%s status=%s seconds=%.3f",
+            request.method,
+            path,
+            response.status_code,
+            seconds,
+        )
+    return response
 
 
 @dataclass
@@ -210,6 +293,8 @@ class AnalyzeAudioFeaturesRequest(BaseModel):
     local_executor_enabled: bool = True
     max_attempts: int = Field(default=3, ge=1, le=20)
     execution_mode: str = Field(default="both", pattern="^(both|local|remote)$")
+    reset_existing: bool = False
+    extractor: str = AUDIO_FEATURE_EXTRACTOR
 
 
 class DeleteTracksRequest(BaseModel):
@@ -227,7 +312,7 @@ class IndexRequest(BaseModel):
 
 
 class NavidromeSyncRequest(BaseModel):
-    page_size: int = Field(default=500, ge=1, le=2000)
+    page_size: int = Field(default=2000, ge=1, le=2000)
     limit: int | None = Field(default=None, ge=1)
     mark_stale: bool = True
 
@@ -242,20 +327,49 @@ class NavidromeSettingsRequest(BaseModel):
     temp_dir: str | None = None
 
 
+class NavidromeStarRequest(BaseModel):
+    starred: bool
+
+
 class NavidromeSimilarItem(BaseModel):
     item_id: str
     track_id: int
     artist: str | None = None
     title: str | None = None
     album: str | None = None
+    distance: float
     similarity: float
 
 
 class NavidromeSimilarResponse(BaseModel):
     provider: str = "navidrome"
+    request_id: str
     seed_item_id: str
+    seed_track_id: int
     model: str
+    requested_count: int | None = None
+    effective_count: int
+    min_similarity: float | None = None
+    skipped_without_external_id: int = 0
     results: list[NavidromeSimilarItem]
+
+
+class InstantMixSettingsRequest(BaseModel):
+    model: str = "discogs_multi"
+    count: int = Field(default=50, ge=1, le=500)
+    min_similarity: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_per_artist: int = Field(default=2, ge=1, le=100)
+    exclude_same_album: bool = True
+    count_collaboration_artists: bool = True
+
+
+class TextSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=1000)
+    count: int = Field(default=50, ge=1, le=500)
+    min_similarity: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_per_artist: int = Field(default=2, ge=1, le=100)
+    exclude_same_album: bool = True
+    count_collaboration_artists: bool = True
 
 
 class NavidromePluginEventRequest(BaseModel):
@@ -276,11 +390,205 @@ class FeedbackRequest(BaseModel):
     note: str | None = None
 
 
+class FeatureFilterRequest(BaseModel):
+    name: str
+    min_value: float | None = None
+    max_value: float | None = None
+    text_values: list[str] = Field(default_factory=list)
+
+
+class FeatureSearchRequest(BaseModel):
+    source: str = Field(default="audio_features", pattern="^(audio_features|heads)$")
+    extractor: str = AUDIO_FEATURE_EXTRACTOR
+    query: str = ""
+    filters: list[FeatureFilterRequest] = Field(default_factory=list)
+    sort_by: str | None = None
+    sort_direction: str = Field(default="asc", pattern="^(asc|desc)$")
+    limit: int = Field(default=50, ge=1, le=500)
+
+
 def context() -> tuple[Store, Settings]:
     settings = Settings.from_env()
     store = Store(settings.db_path)
     store.init()
     return store, settings
+
+
+def instant_mix_settings(settings: Settings) -> dict[str, object]:
+    saved = load_runtime_settings(settings.data_dir).get("instant_mix", {})
+    saved = saved if isinstance(saved, dict) else {}
+    return {
+        "model": str(saved.get("model") or "discogs_multi"),
+        "count": _bounded_int(saved.get("count"), default=50, minimum=1, maximum=500),
+        "min_similarity": _optional_bounded_float(
+            saved.get("min_similarity"),
+            default=None,
+            minimum=0.0,
+            maximum=1.0,
+        ),
+        "max_per_artist": _bounded_int(
+            saved.get("max_per_artist"),
+            default=2,
+            minimum=1,
+            maximum=100,
+        ),
+        "exclude_same_album": bool(saved.get("exclude_same_album", True)),
+        "count_collaboration_artists": bool(saved.get("count_collaboration_artists", True)),
+    }
+
+
+def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(maximum, number))
+
+
+def _optional_bounded_float(
+    value: object,
+    *,
+    default: float | None,
+    minimum: float,
+    maximum: float,
+) -> float | None:
+    if value is None:
+        return default
+    if value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, number))
+
+
+def instant_mix_result_dict(
+    store: Store,
+    raw: dict[str, object],
+    ratings: dict[int, int],
+) -> dict[str, object]:
+    track_id = raw.get("track_id")
+    try:
+        parsed_track_id = int(track_id) if track_id is not None else None
+    except (TypeError, ValueError):
+        parsed_track_id = None
+    if parsed_track_id is None:
+        return raw
+    track = store.get_track(parsed_track_id)
+    if track is None:
+        return raw
+    data = enriched_track_dict(store, track)
+    data["item_id"] = raw.get("item_id")
+    data["distance"] = raw.get("distance")
+    data["similarity"] = raw.get("similarity")
+    data["rating"] = ratings.get(parsed_track_id)
+    data["has_embedding"] = True
+    return data
+
+
+def instant_mix_request_dict(
+    request: InstantMixRequest,
+    *,
+    include_results: bool,
+    store: Store | None = None,
+) -> dict[str, object]:
+    data: dict[str, object] = {
+        "id": request.id,
+        "provider": request.provider,
+        "seed_item_id": request.seed_item_id,
+        "seed_track_id": request.seed_track_id,
+        "model": request.model_name,
+        "requested_count": request.requested_count,
+        "effective_count": request.effective_count,
+        "max_per_artist": request.max_per_artist,
+        "exclude_same_album": request.exclude_same_album,
+        "min_similarity": request.min_similarity,
+        "status": request.status,
+        "result_count": request.result_count,
+        "skipped_without_external_id": request.skipped_without_external_id,
+        "duration_ms": request.duration_ms,
+        "error": request.error,
+        "created_at": request.created_at,
+        "params": json.loads(request.params_json or "{}"),
+    }
+    if store is not None and request.seed_track_id is not None:
+        seed_track = store.get_track(request.seed_track_id)
+        if seed_track is not None:
+            data["seed_track"] = enriched_track_dict(store, seed_track)
+    if include_results:
+        results = json.loads(request.results_json or "[]")
+        if store is not None and request.seed_track_id is not None:
+            ratings = store.feedback_for_seed(request.seed_track_id, request.model_name)
+            results = [
+                instant_mix_result_dict(store, result, ratings)
+                if isinstance(result, dict)
+                else result
+                for result in results
+            ]
+        data["results"] = results
+    return data
+
+
+def record_instant_mix_request(
+    store: Store,
+    *,
+    request_id: str,
+    item_id: str,
+    seed_track_id: int | None,
+    model: str,
+    requested_model: str | None,
+    requested_count: int | None,
+    effective_count: int,
+    max_per_artist: int,
+    exclude_same_album: bool,
+    count_collaboration_artists: bool,
+    min_similarity: float | None,
+    status: str,
+    results: list[NavidromeSimilarItem],
+    skipped_without_external_id: int,
+    duration_ms: float | None,
+    requested_max_per_artist: int | None = None,
+    requested_exclude_same_album: bool | None = None,
+    error: str | None = None,
+) -> None:
+    params = {
+        "requested_model": requested_model,
+        "effective_model": model,
+        "requested_count": requested_count,
+        "requested_max_per_artist": requested_max_per_artist,
+        "requested_exclude_same_album": requested_exclude_same_album,
+        "effective_count": effective_count,
+        "max_per_artist": max_per_artist,
+        "exclude_same_album": exclude_same_album,
+        "count_collaboration_artists": count_collaboration_artists,
+        "min_similarity": min_similarity,
+    }
+    store.record_instant_mix_request(
+        request_id=request_id,
+        provider="navidrome",
+        seed_item_id=item_id,
+        seed_track_id=seed_track_id,
+        model_name=model,
+        requested_count=requested_count,
+        effective_count=effective_count,
+        max_per_artist=max_per_artist,
+        exclude_same_album=exclude_same_album,
+        min_similarity=min_similarity,
+        status=status,
+        result_count=len(results),
+        skipped_without_external_id=skipped_without_external_id,
+        duration_ms=duration_ms,
+        error=error,
+        params_json=json.dumps(params, ensure_ascii=True, sort_keys=True),
+        results_json=json.dumps([model_to_dict(item) for item in results], ensure_ascii=True),
+    )
+
+
+def model_to_dict(model: BaseModel) -> dict[str, object]:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    return model.dict()
 
 
 def create_job(kind: str, message: str) -> str:
@@ -305,16 +613,166 @@ def update_job(job_id: str, **changes: object) -> None:
 
 
 def finish_job(job_id: str, status: str, message: str, error_detail: str | None = None) -> None:
+    finished_at = perf_counter()
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        elapsed_seconds = max(0.0, finished_at - job.started_at) if job else 0.0
     update_job(
         job_id,
         status=status,
         message=message,
         current=None,
+        elapsed_seconds=elapsed_seconds,
+        eta_seconds=None,
         error_detail=error_detail,
-        finished_at=perf_counter(),
+        finished_at=finished_at,
     )
     log = logger.error if status == "failed" else logger.info
     log("Finished job job_id=%s status=%s message=%s", job_id, status, message)
+    maybe_start_next_deferred_job()
+
+
+def has_active_job(store: Store | None = None) -> bool:
+    with JOBS_LOCK:
+        if any(job.status in {"queued", "running"} for job in JOBS.values()):
+            return True
+    if store is None:
+        try:
+            store, _settings = context()
+        except Exception:
+            logger.exception("Failed to inspect durable jobs while checking active queue state")
+            return True
+    return store.has_active_analysis_job()
+
+
+def create_deferred_job_if_busy(
+    kind: str,
+    message: str,
+    starter_factory: Callable[[str], Callable[[], None]],
+    *,
+    store: Store | None = None,
+) -> tuple[str | None, bool]:
+    with DEFERRED_JOBS_LOCK:
+        if not has_active_job(store):
+            return None, False
+        job_id = create_job(kind, message)
+        DEFERRED_JOB_STARTERS[job_id] = starter_factory(job_id)
+        DEFERRED_JOB_ORDER.append(job_id)
+    update_job(
+        job_id,
+        status="deferred",
+        message=f"Waiting for previous job: {message}",
+        current=None,
+    )
+    logger.info("Deferred job job_id=%s kind=%s message=%s", job_id, kind, message)
+    return job_id, True
+
+
+def _run_deferred_job(job_id: str) -> None:
+    with DEFERRED_JOBS_LOCK:
+        starter = DEFERRED_JOB_STARTERS.get(job_id)
+    if starter is None:
+        return
+    try:
+        starter()
+    finally:
+        with DEFERRED_JOBS_LOCK:
+            DEFERRED_JOB_STARTERS.pop(job_id, None)
+            if job_id in DEFERRED_JOB_ORDER:
+                DEFERRED_JOB_ORDER.remove(job_id)
+        maybe_start_next_deferred_job()
+
+
+def maybe_start_next_deferred_job() -> str | None:
+    with DEFERRED_JOBS_LOCK:
+        if has_active_job():
+            return None
+        next_job_id = None
+        for candidate in list(DEFERRED_JOB_ORDER):
+            with JOBS_LOCK:
+                job = JOBS.get(candidate)
+                is_waiting = job is not None and job.status == "deferred"
+            if candidate in DEFERRED_JOB_STARTERS and is_waiting:
+                next_job_id = candidate
+                DEFERRED_JOB_ORDER.remove(candidate)
+                break
+            DEFERRED_JOB_STARTERS.pop(candidate, None)
+            DEFERRED_JOB_ORDER.remove(candidate)
+    if next_job_id is None:
+        return None
+    update_job(
+        next_job_id,
+        status="queued",
+        message="Starting deferred job",
+        current=None,
+        started_at=perf_counter(),
+    )
+    Thread(target=_run_deferred_job, args=(next_job_id,), daemon=True).start()
+    logger.info("Started deferred job job_id=%s", next_job_id)
+    return next_job_id
+
+
+def sync_memory_jobs_from_durable_jobs(jobs: list[object]) -> None:
+    with JOBS_LOCK:
+        for durable_job in jobs:
+            memory_job = JOBS.get(durable_job.id)
+            if memory_job is None:
+                continue
+            memory_job.status = durable_job.status
+            memory_job.message = durable_job.message
+            memory_job.total = durable_job.total
+            memory_job.done = durable_job.done
+            memory_job.failed = durable_job.failed
+            if durable_job.status not in {"queued", "running"}:
+                memory_job.current = None
+                memory_job.eta_seconds = None
+                if memory_job.finished_at is None:
+                    memory_job.finished_at = perf_counter()
+
+
+def schedule_auto_index_for_analysis(
+    store: Store,
+    analysis_job_id: str,
+    background_tasks: BackgroundTasks | None = None,
+) -> str | None:
+    job = store.get_analysis_job(analysis_job_id)
+    if job is None or job.kind != "analyze" or job.status != "completed" or job.done <= 0:
+        return None
+    with AUTO_INDEX_LOCK:
+        if analysis_job_id in AUTO_INDEX_ANALYSIS_JOBS:
+            return None
+        AUTO_INDEX_ANALYSIS_JOBS.add(analysis_job_id)
+
+    deferred_job_id, deferred = create_deferred_job_if_busy(
+        "index",
+        f"Waiting to rebuild index for {job.model_name} after analyze",
+        lambda job_id: lambda: _index_job(job_id, job.model_name),
+        store=store,
+    )
+    if deferred:
+        logger.info(
+            "Deferred auto index job analysis_job_id=%s index_job_id=%s model=%s",
+            analysis_job_id,
+            deferred_job_id,
+            job.model_name,
+        )
+        return deferred_job_id
+
+    index_job_id = create_job(
+        "index",
+        f"Waiting to rebuild index for {job.model_name} after analyze",
+    )
+    logger.info(
+        "Scheduled auto index job analysis_job_id=%s index_job_id=%s model=%s",
+        analysis_job_id,
+        index_job_id,
+        job.model_name,
+    )
+    if background_tasks is not None:
+        background_tasks.add_task(_index_job, index_job_id, job.model_name)
+    else:
+        _index_job(index_job_id, job.model_name)
+    return index_job_id
 
 
 def exception_detail(exc: Exception) -> str:
@@ -337,6 +795,10 @@ def is_sqlite_locked(exc: Exception) -> bool:
     return isinstance(exc, sqlite3.OperationalError) and "database is locked" in str(exc).lower()
 
 
+def is_sqlite_disk_io_error(exc: Exception) -> bool:
+    return isinstance(exc, sqlite3.OperationalError) and "disk i/o error" in str(exc).lower()
+
+
 def sqlite_retry(operation, *, attempts: int = 8):
     delay = 0.05
     for attempt in range(attempts):
@@ -348,6 +810,18 @@ def sqlite_retry(operation, *, attempts: int = 8):
             time.sleep(delay)
             delay = min(delay * 2, 1.0)
     raise RuntimeError("unreachable sqlite retry state")
+
+
+def raise_worker_sqlite_http_exception(exc: sqlite3.OperationalError, action: str) -> None:
+    if is_sqlite_locked(exc):
+        raise HTTPException(status_code=503, detail=f"SQLite is busy; retry worker {action}") from exc
+    if is_sqlite_disk_io_error(exc):
+        logger.error("SQLite disk I/O error during worker %s", action, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="SQLite disk I/O error; check database storage and retry",
+        ) from exc
+    raise exc
 
 
 def download_failure_hint(exc: Exception) -> str | None:
@@ -404,6 +878,71 @@ def audio_feature_status(store: Store) -> dict[str, object]:
     }
 
 
+def recommender_index_status(
+    settings: Settings,
+    model: str,
+    embedding_count: int,
+) -> dict[str, object]:
+    path = settings.index_path(model)
+    metadata_path = index_metadata_path(path)
+    metadata: dict[str, object] = {}
+    if metadata_path.exists():
+        try:
+            loaded = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata = loaded if isinstance(loaded, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            metadata = {}
+
+    raw_index_count = metadata.get("count")
+    try:
+        index_count = int(raw_index_count) if raw_index_count is not None else None
+    except (TypeError, ValueError):
+        index_count = None
+
+    exists = path.exists()
+    metadata_matches_model = metadata.get("model_name") == model
+    if not exists:
+        status = "missing"
+    elif index_count is None or not metadata_matches_model:
+        status = "unknown"
+    elif index_count == embedding_count:
+        status = "ready"
+    else:
+        status = "stale"
+
+    return {
+        "status": status,
+        "exists": exists,
+        "path": str(path),
+        "metadata_path": str(metadata_path),
+        "metadata_exists": metadata_path.exists(),
+        "count": index_count,
+        "embedding_count": embedding_count,
+        "stale": status in {"stale", "unknown"},
+    }
+
+
+def analysis_error_count(store: Store) -> int:
+    where = """
+        t.error IS NOT NULL
+        AND COALESCE(t.error_type, '') != 'Cancelled'
+        AND COALESCE(t.stage, '') != 'cancelled'
+        AND t.error NOT LIKE 'Model file not found:%'
+    """
+    with store.connect() as conn:
+        return conn.execute(
+            f"""
+            SELECT COUNT(*) FROM (
+                SELECT t.track_id, t.model_name
+                FROM analysis_tasks t
+                JOIN tracks tr ON tr.id = t.track_id
+                WHERE {where}
+                GROUP BY t.track_id, t.model_name
+            )
+            """
+        ).fetchone()[0]
+
+
 def prediction_dict(prediction) -> dict[str, object]:
     return {
         "label": prediction.label,
@@ -421,6 +960,126 @@ def feature_dict(feature) -> dict[str, object]:
         "confidence": feature.confidence,
         "extractor": feature.extractor,
     }
+
+
+def feature_track_dict(item: FeatureTrack) -> dict[str, object]:
+    data = track_dict(item.track)
+    data["features"] = [feature_dict(feature) for feature in item.features]
+    return data
+
+
+def enriched_feature_track_dict(store: Store, item: FeatureTrack) -> dict[str, object]:
+    data = feature_track_dict(item)
+    data.update(track_card_metadata(store, item.track))
+    return data
+
+
+def track_card_metadata(store: Store, track: Track) -> dict[str, object]:
+    features = store.load_features(track.id, AUDIO_FEATURE_EXTRACTOR)
+    feature_by_name = {feature.name: feature for feature in features}
+    navidrome_item_id = store.external_id_for_track("navidrome", track.id)
+    raw = navidrome_raw_metadata(store, track)
+    return {
+        "navidrome_item_id": navidrome_item_id,
+        "card_features": {
+            name: feature_dict(feature)
+            for name, feature in feature_by_name.items()
+            if name in {"bpm", "key", "scale"}
+        },
+        "genre_discogs400": [
+            prediction_dict(prediction)
+            for prediction in store.load_predictions(track.id, "genre_discogs400", limit=3)
+        ],
+        "approachability_3c": first_prediction_dict(
+            store.load_predictions(track.id, "approachability_3c", limit=3),
+            "approachable",
+        ),
+        "engagement_3c": first_prediction_dict(
+            store.load_predictions(track.id, "engagement_3c", limit=3),
+            "engaging",
+        ),
+        "audio_format": audio_format(track, raw),
+        "bitrate": audio_bitrate(track, raw),
+    }
+
+
+def first_prediction_dict(
+    predictions: list[TrackPrediction],
+    preferred_label: str,
+) -> dict[str, object] | None:
+    preferred = preferred_label.strip().lower()
+    for prediction in predictions:
+        if prediction.label.strip().lower() == preferred:
+            return prediction_dict(prediction)
+    return None
+
+
+def navidrome_raw_metadata(store: Store, track: Track) -> dict[str, object]:
+    external_id = store.external_id_for_track("navidrome", track.id)
+    if external_id is None:
+        return {}
+    mapping = store.get_external_track("navidrome", external_id)
+    if mapping is None or not mapping.raw_json:
+        return {}
+    try:
+        parsed = json.loads(mapping.raw_json)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def audio_format(track: Track, raw: dict[str, object]) -> str | None:
+    suffix = raw.get("suffix") or raw.get("format")
+    if suffix:
+        return str(suffix).strip(". ").upper() or None
+    content_type = raw.get("contentType") or raw.get("content_type")
+    if content_type:
+        clean = str(content_type).split("/")[-1].strip()
+        return clean.upper() if clean else None
+    path_suffix = Path(track.path).suffix
+    return path_suffix.strip(".").upper() if path_suffix else None
+
+
+def audio_bitrate(track: Track, raw: dict[str, object]) -> int | None:
+    for key in ("bitRate", "bitrate", "bit_rate"):
+        value = raw.get(key)
+        if value is None:
+            continue
+        try:
+            bitrate = int(float(value))
+        except (TypeError, ValueError):
+            continue
+        if bitrate > 0:
+            return bitrate
+    if track.duration and track.file_size > 0:
+        return max(1, round((track.file_size * 8) / (float(track.duration) * 1000)))
+    return None
+
+
+def enriched_track_dict(store: Store, track: Track) -> dict[str, object]:
+    data = track_dict(track)
+    data.update(track_card_metadata(store, track))
+    return data
+
+
+def enriched_track_listing_dict(store: Store, listing) -> dict[str, object]:
+    data = track_listing_dict(listing)
+    data["navidrome_item_id"] = store.external_id_for_track("navidrome", listing.track.id)
+    return data
+
+
+def enriched_similar_track_dict(store: Store, result) -> dict[str, object]:
+    data = similar_track_dict(result)
+    data.update(track_card_metadata(store, result.track))
+    return data
+
+
+def text_search_embedder(settings: Settings) -> MuqMulanEmbedder:
+    global TEXT_SEARCH_EMBEDDER
+    with TEXT_SEARCH_EMBEDDER_LOCK:
+        if TEXT_SEARCH_EMBEDDER is None:
+            TEXT_SEARCH_EMBEDDER = MuqMulanEmbedder(settings)
+        return TEXT_SEARCH_EMBEDDER
 
 
 def analysis_task_dict(task: AnalysisTask) -> dict[str, object]:
@@ -451,26 +1110,52 @@ def timestamp_from_iso(value: str) -> float:
         return 0.0
 
 
+def analysis_worker_age_seconds(worker, now: datetime | None = None) -> float | None:
+    try:
+        last_seen = datetime.fromisoformat(worker.last_seen_at)
+    except (TypeError, ValueError):
+        return None
+    current = now or datetime.now(last_seen.tzinfo)
+    return max(0.0, (current - last_seen).total_seconds())
+
+
+def analysis_worker_connected(worker, now: datetime | None = None) -> bool:
+    age = analysis_worker_age_seconds(worker, now)
+    return worker.status == "online" and age is not None and age <= WORKER_CONNECTED_TTL_SECONDS
+
+
 def analysis_job_status_dict(job, store: Store | None = None) -> dict[str, object]:
     completed = job.done + job.failed
     started_at = timestamp_from_iso(job.created_at)
+    now_ts = datetime.now().timestamp()
     finished_at = timestamp_from_iso(job.finished_at) if job.finished_at else None
     terminal = job.status not in {"queued", "running"}
-    elapsed_until = finished_at or (timestamp_from_iso(job.updated_at) if terminal else datetime.now().timestamp())
+    elapsed_until = finished_at or (timestamp_from_iso(job.updated_at) if terminal else now_ts)
     elapsed_seconds = max(0.0, elapsed_until - started_at) if started_at else 0.0
     tracks_per_min = (
         (completed / elapsed_seconds) * 60
         if job.status == "running" and elapsed_seconds > 0 and completed > 0
         else None
     )
+    recent_tracks_per_min = None
+    recent_window_seconds = None
+    recent_completed = None
+    if store is not None and job.status == "running" and started_at:
+        recent_window_seconds = min(300.0, max(1.0, now_ts - started_at))
+        recent_since = datetime.fromtimestamp(now_ts - recent_window_seconds, UTC).isoformat()
+        recent_completed = store.count_recent_finished_analysis_tasks(job.id, recent_since)
+        if recent_completed > 0:
+            recent_tracks_per_min = (recent_completed / recent_window_seconds) * 60
     eta_seconds = None
-    if tracks_per_min and job.total > completed and job.status == "running":
-        eta_seconds = ((job.total - completed) / tracks_per_min) * 60
+    eta_rate = recent_tracks_per_min or tracks_per_min
+    if eta_rate and job.total > completed and job.status == "running":
+        eta_seconds = ((job.total - completed) / eta_rate) * 60
     task_summary = store.analysis_job_task_summary(job.id) if store is not None else {}
     workers = store.list_analysis_workers() if store is not None else []
+    connected_workers = [worker for worker in workers if analysis_worker_connected(worker)]
     supporting_workers = [
         worker.worker_id
-        for worker in workers
+        for worker in connected_workers
         if job.model_name in {model for model in worker.models.split(",") if model}
     ]
     online_workers = [
@@ -481,7 +1166,7 @@ def analysis_job_status_dict(job, store: Store | None = None) -> dict[str, objec
             "message": worker.message,
             "last_seen_at": worker.last_seen_at,
         }
-        for worker in workers
+        for worker in connected_workers
     ]
     status_hint = ""
     if job.status == "running":
@@ -520,6 +1205,9 @@ def analysis_job_status_dict(job, store: Store | None = None) -> dict[str, objec
         "current": None,
         "elapsed_seconds": elapsed_seconds,
         "tracks_per_min": tracks_per_min,
+        "recent_tracks_per_min": recent_tracks_per_min,
+        "recent_rate_window_seconds": recent_window_seconds,
+        "recent_rate_completed": recent_completed,
         "eta_seconds": eta_seconds,
         "error_detail": None,
         "started_at": started_at,
@@ -545,10 +1233,16 @@ def analysis_job_status_dict(job, store: Store | None = None) -> dict[str, objec
 
 
 def analysis_worker_dict(worker) -> dict[str, object]:
+    age_seconds = analysis_worker_age_seconds(worker)
+    connected = analysis_worker_connected(worker)
     return {
         "worker_id": worker.worker_id,
         "models": [model for model in worker.models.split(",") if model],
         "status": worker.status,
+        "display_status": worker.status if connected else "stale",
+        "connected": connected,
+        "stale_seconds": age_seconds,
+        "connected_ttl_seconds": WORKER_CONNECTED_TTL_SECONDS,
         "stage": worker.stage,
         "message": worker.message,
         "current_task_id": worker.current_task_id,
@@ -604,8 +1298,11 @@ def validate_worker_task_identity(
     model_name: str,
     file_size: int,
     mtime: int,
+    *,
+    expire_leases: bool = True,
 ) -> AnalysisTask:
-    store.expire_analysis_leases()
+    if expire_leases:
+        store.expire_analysis_leases()
     task = store.get_analysis_task(task_id)
     if task is None:
         raise ValueError("Task not found")
@@ -631,12 +1328,11 @@ def get_worker_task_state(task_id: str, worker_id: str) -> dict[str, object]:
     task = store.get_analysis_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    job = store.get_analysis_job(task.job_id)
+    job_status = store.get_analysis_job_status(task.job_id)
     active = (
         task.status == "leased"
         and task.lease_owner == worker_id
-        and job is not None
-        and job.status == "running"
+        and job_status == "running"
     )
     return {
         "task_id": task.id,
@@ -644,7 +1340,7 @@ def get_worker_task_state(task_id: str, worker_id: str) -> dict[str, object]:
         "status": task.status,
         "stage": task.stage,
         "lease_owner": task.lease_owner,
-        "job_status": job.status if job is not None else None,
+        "job_status": job_status,
         "active": active,
     }
 
@@ -665,40 +1361,262 @@ def shutdown_analyze_workers() -> None:
         terminate_process_pool(executor)
 
 
+@app.get("/metrics/features")
+def metrics_features(
+    source: str = Query(default="audio_features", pattern="^(audio_features|heads)$"),
+    extractor: str = AUDIO_FEATURE_EXTRACTOR,
+):
+    store, _settings = context()
+    if source == "heads":
+        summaries = store.list_head_summaries()
+        return {
+            "source": source,
+            "features": [
+                {
+                    "name": item.model_name,
+                    "extractor": "discogs_effnet_heads",
+                    "value_count": item.prediction_track_count,
+                    "text_count": item.label_count,
+                    "track_count": item.output_count,
+                    "min_value": None,
+                    "max_value": item.max_score,
+                    "avg_value": item.avg_score,
+                    "unit": "score",
+                }
+                for item in summaries
+            ],
+        }
+    summaries = store.list_feature_summaries(extractor or None)
+    return {
+        "source": source,
+        "extractor": extractor,
+        "features": [
+            {
+                "name": item.name,
+                "extractor": item.extractor,
+                "value_count": item.value_count,
+                "text_count": item.text_count,
+                "track_count": item.track_count,
+                "min_value": item.min_value,
+                "max_value": item.max_value,
+                "avg_value": item.avg_value,
+                "unit": item.unit,
+            }
+            for item in summaries
+        ],
+    }
+
+
+@app.get("/metrics/features/{feature_name}/values")
+def metrics_feature_values(
+    feature_name: str,
+    source: str = Query(default="audio_features", pattern="^(audio_features|heads)$"),
+    extractor: str = AUDIO_FEATURE_EXTRACTOR,
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    store, _settings = context()
+    if source == "heads":
+        values = store.list_head_prediction_labels(feature_name, limit)
+        return {
+            "feature": feature_name,
+            "source": source,
+            "values": [
+                {
+                    "value": label,
+                    "track_count": track_count,
+                    "avg_score": avg_score,
+                    "max_score": max_score,
+                }
+                for label, track_count, avg_score, max_score in values
+            ],
+        }
+    values = store.list_feature_text_values(feature_name, extractor or None, limit)
+    return {
+        "feature": feature_name,
+        "source": source,
+        "extractor": extractor,
+        "values": [
+            {"value": value, "track_count": track_count}
+            for value, track_count in values
+        ],
+    }
+
+
+@app.post("/metrics/search")
+def metrics_search(request: FeatureSearchRequest):
+    store, _settings = context()
+    filters = [
+        FeatureFilter(
+            name=item.name,
+            min_value=item.min_value,
+            max_value=item.max_value,
+            text_values=tuple(value for value in item.text_values if value),
+        )
+        for item in request.filters
+        if item.name.strip()
+    ]
+    if request.source == "heads":
+        results = store.search_tracks_by_head_predictions(
+            filters,
+            query=request.query,
+            sort_by=request.sort_by,
+            sort_direction=request.sort_direction,
+            limit=request.limit,
+        )
+    else:
+        results = store.search_tracks_by_features(
+            filters,
+            query=request.query,
+            extractor=request.extractor or None,
+            sort_by=request.sort_by,
+            sort_direction=request.sort_direction,
+            limit=request.limit,
+        )
+    return {
+        "source": request.source,
+        "extractor": request.extractor,
+        "count": len(results),
+        "results": [enriched_feature_track_dict(store, item) for item in results],
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
-def test_ui() -> str:
-    return UI_HTML
+def test_ui() -> HTMLResponse:
+    return HTMLResponse(
+        UI_HTML,
+        headers={
+            "Cache-Control": "no-store",
+            "X-Discocs-UI-Build": UI_BUILD_ID,
+        },
+    )
+
+
+@app.get("/debug/ui")
+def debug_ui() -> dict[str, object]:
+    return {
+        "build": UI_BUILD_ID,
+        "likes_source": "navidrome",
+        "frontend_likes_cache": False,
+    }
 
 
 @app.get("/stats")
 def stats(model: str = "discogs_multi") -> dict[str, object]:
+    cached = cached_stats(model)
+    if cached is not None:
+        return cached
+    started = perf_counter()
     store, settings = context()
-    head_model_names = [head.id for head in DISCOGS_EFFNET_HEADS]
+    logger.info("Stats build started model=%s", model)
+    head_started = perf_counter()
     head_status = head_pack_status(store, settings)
+    logger.info("Stats head_pack_status seconds=%.3f", perf_counter() - head_started)
+    audio_started = perf_counter()
     audio_status = audio_feature_status(store)
-    return {
+    logger.info("Stats audio_feature_status seconds=%.3f", perf_counter() - audio_started)
+    counts_started = perf_counter()
+    tracks = store.count_tracks()
+    missing_files = store.count_missing_files()
+    navidrome_external_tracks = store.count_external_tracks("navidrome")
+    errored_files = analysis_error_count(store)
+    embeddings = store.count_embeddings(model)
+    missing_embeddings = store.count_missing_embeddings(model)
+    index_status = recommender_index_status(settings, model, embeddings)
+    known_models = sorted(model for model in [*MODEL_FILES, MUQ_MULAN_MODEL] if model != DISCOGS_EFFNET_MODEL)
+    model_stats = []
+    for known_model in known_models:
+        model_embeddings = store.count_embeddings(known_model)
+        model_missing_embeddings = store.count_missing_embeddings(known_model)
+        model_index_status = recommender_index_status(settings, known_model, model_embeddings)
+        if known_model == MUQ_MULAN_MODEL:
+            known_model_path = settings.model_dir / "muq"
+            known_model_exists = known_model_path.exists()
+        else:
+            known_model_path = settings.model_path(known_model)
+            known_model_exists = known_model_path.exists()
+        model_stats.append(
+            {
+                "model": known_model,
+                "embeddings": model_embeddings,
+                "missing_embeddings": model_missing_embeddings,
+                "model_path": str(known_model_path),
+                "model_exists": known_model_exists,
+                "index": str(settings.index_path(known_model)),
+                "index_exists": settings.index_path(known_model).exists(),
+                "index_status": model_index_status["status"],
+                "index_stale": model_index_status["stale"],
+                "index_count": model_index_status["count"],
+                "index_embedding_count": model_index_status["embedding_count"],
+                "index_metadata_exists": model_index_status["metadata_exists"],
+                "index_metadata": model_index_status["metadata_path"],
+            }
+        )
+    if model == MUQ_MULAN_MODEL:
+        model_path = settings.model_dir / "muq"
+        model_exists = model_path.exists()
+    else:
+        model_path = settings.model_path(model)
+        model_exists = model_path.exists()
+    logger.info("Stats base_counts seconds=%.3f", perf_counter() - counts_started)
+    data: dict[str, object] = {
         "db": str(settings.db_path),
-        "tracks": store.count_tracks(),
-        "missing_files": store.count_missing_files(),
-        "navidrome_external_tracks": store.count_external_tracks("navidrome"),
-        "embeddings": store.count_embeddings(model),
-        "missing_embeddings": store.count_missing_embeddings(model),
+        "tracks": tracks,
+        "missing_files": missing_files,
+        "analysis_error_count": errored_files,
+        "navidrome_external_tracks": navidrome_external_tracks,
+        "embeddings": embeddings,
+        "missing_embeddings": missing_embeddings,
         "head_pack_expected_outputs": head_status["expected_outputs"],
         "head_pack_outputs": head_status["saved_outputs"],
         "head_pack_complete_tracks": head_status["complete_tracks"],
         "head_pack_missing_tracks": head_status["missing_tracks"],
-        "missing_head_pack_tracks": store.count_tracks_missing_head_pack(head_model_names),
+        "missing_head_pack_tracks": head_status["missing_tracks"],
         "head_pack": head_status,
         "audio_features_complete_tracks": audio_status["complete_tracks"],
         "audio_features_missing_tracks": audio_status["missing_tracks"],
         "audio_features": audio_status,
         "model": model,
-        "models": sorted(MODEL_FILES),
-        "model_path": str(settings.model_path(model)),
-        "model_exists": settings.model_path(model).exists(),
+        "models": known_models,
+        "model_stats": model_stats,
+        "model_path": str(model_path),
+        "model_exists": model_exists,
         "index": str(settings.index_path(model)),
         "index_exists": settings.index_path(model).exists(),
+        "index_status": index_status["status"],
+        "index_stale": index_status["stale"],
+        "index_count": index_status["count"],
+        "index_embedding_count": index_status["embedding_count"],
+        "index_metadata_exists": index_status["metadata_exists"],
+        "index_metadata": index_status["metadata_path"],
     }
+    remember_stats(model, data)
+    logger.info("Stats build completed model=%s seconds=%.3f", model, perf_counter() - started)
+    return data
+
+
+def cached_stats(model: str) -> dict[str, object] | None:
+    now = time.time()
+    with STATS_CACHE_LOCK:
+        cached = STATS_CACHE.get(model)
+        if cached is None:
+            return None
+        cached_at, data = cached
+        if now - cached_at > STATS_CACHE_TTL_SECONDS:
+            STATS_CACHE.pop(model, None)
+            return None
+        result = dict(data)
+        result["cached"] = True
+        return result
+
+
+def remember_stats(model: str, data: dict[str, object]) -> None:
+    with STATS_CACHE_LOCK:
+        STATS_CACHE[model] = (time.time(), dict(data))
+
+
+def clear_stats_cache() -> None:
+    with STATS_CACHE_LOCK:
+        STATS_CACHE.clear()
 
 
 @app.get("/settings/navidrome")
@@ -777,6 +1695,55 @@ def record_navidrome_plugin_event(request: NavidromePluginEventRequest) -> dict[
     return {"status": "ok"}
 
 
+@app.get("/instant-mix/settings")
+def get_instant_mix_settings() -> dict[str, object]:
+    _store, settings = context()
+    return instant_mix_settings(settings)
+
+
+@app.put("/instant-mix/settings")
+def update_instant_mix_settings(request: InstantMixSettingsRequest) -> dict[str, object]:
+    _store, settings = context()
+    saved = load_runtime_settings(settings.data_dir)
+    saved["instant_mix"] = {
+        "model": request.model,
+        "count": request.count,
+        "min_similarity": request.min_similarity,
+        "max_per_artist": request.max_per_artist,
+        "exclude_same_album": request.exclude_same_album,
+        "count_collaboration_artists": request.count_collaboration_artists,
+    }
+    save_runtime_settings(settings.data_dir, saved)
+    return instant_mix_settings(settings)
+
+
+@app.get("/instant-mix/requests")
+def list_instant_mix_requests(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, object]:
+    store, _settings = context()
+    requests = store.list_instant_mix_requests(limit=limit, offset=offset)
+    return {
+        "count": len(requests),
+        "limit": limit,
+        "offset": offset,
+        "results": [
+            instant_mix_request_dict(request, include_results=False, store=store)
+            for request in requests
+        ],
+    }
+
+
+@app.get("/instant-mix/requests/{request_id}")
+def get_instant_mix_request(request_id: str) -> dict[str, object]:
+    store, _settings = context()
+    request = store.get_instant_mix_request(request_id)
+    if request is None:
+        raise HTTPException(status_code=404, detail="Instant mix request not found")
+    return instant_mix_request_dict(request, include_results=True, store=store)
+
+
 @app.get("/models/head-pack")
 def get_head_pack() -> dict[str, object]:
     store, settings = context()
@@ -811,7 +1778,7 @@ def list_tracks(
     except ValueError as exc:
         logger.warning("Invalid track list filters query=%s embedding_status=%s model=%s error=%s", query, embedding_status, model, exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"results": [track_listing_dict(track) for track in tracks]}
+    return {"results": [enriched_track_listing_dict(store, track) for track in tracks]}
 
 
 @app.get("/tracks/search")
@@ -1003,7 +1970,7 @@ def get_track(track_id: int) -> dict[str, object]:
     if track is None:
         logger.warning("Track not found track_id=%s", track_id)
         raise HTTPException(status_code=404, detail="Track not found")
-    return track_dict(track)
+    return enriched_track_dict(store, track)
 
 
 @app.get("/tracks/{track_id}/analysis")
@@ -1043,7 +2010,7 @@ def get_track_analysis(track_id: int) -> dict[str, object]:
             )
     outputs.sort(key=lambda output: str(output["model_name"]))
     return {
-        "track": track_dict(track),
+        "track": enriched_track_dict(store, track),
         "outputs": outputs,
         "features": [feature_dict(feature) for feature in store.load_features(track_id)],
     }
@@ -1079,8 +2046,60 @@ def get_track_audio(track_id: int) -> FileResponse:
     return FileResponse(path)
 
 
+def cached_cover_response(cache_key: tuple[str, int]) -> tuple[bytes, str] | None:
+    now = time.time()
+    with COVER_CACHE_LOCK:
+        cached = COVER_CACHE.get(cache_key)
+        if cached is None:
+            return None
+        cached_at, payload, content_type = cached
+        if now - cached_at > COVER_CACHE_TTL_SECONDS:
+            COVER_CACHE.pop(cache_key, None)
+            return None
+        return payload, content_type
+
+
+def cached_cover_error(cache_key: tuple[str, int]) -> str | None:
+    now = time.time()
+    with COVER_CACHE_LOCK:
+        cached = COVER_ERROR_CACHE.get(cache_key)
+        if cached is None:
+            return None
+        cached_at, message = cached
+        if now - cached_at > COVER_ERROR_CACHE_TTL_SECONDS:
+            COVER_ERROR_CACHE.pop(cache_key, None)
+            return None
+        return message
+
+
+def remember_cover(cache_key: tuple[str, int], payload: bytes, content_type: str) -> None:
+    with COVER_CACHE_LOCK:
+        COVER_CACHE[cache_key] = (time.time(), payload, content_type)
+        COVER_ERROR_CACHE.pop(cache_key, None)
+        while len(COVER_CACHE) > COVER_CACHE_MAX_ITEMS:
+            oldest_key = next(iter(COVER_CACHE))
+            COVER_CACHE.pop(oldest_key, None)
+
+
+def remember_cover_error(cache_key: tuple[str, int], message: str) -> None:
+    with COVER_CACHE_LOCK:
+        COVER_ERROR_CACHE[cache_key] = (time.time(), message)
+        while len(COVER_ERROR_CACHE) > COVER_CACHE_MAX_ITEMS:
+            oldest_key = next(iter(COVER_ERROR_CACHE))
+            COVER_ERROR_CACHE.pop(oldest_key, None)
+
+
+def cover_response(payload: bytes, content_type: str) -> Response:
+    return Response(
+        content=payload,
+        media_type=content_type,
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
+
+
 @app.get("/tracks/{track_id}/cover")
 def get_track_cover(track_id: int, size: int = Query(default=96, ge=32, le=600)) -> Response:
+    started = perf_counter()
     store, settings = context()
     track = store.get_track(track_id)
     if track is None:
@@ -1100,9 +2119,47 @@ def get_track_cover(track_id: int, size: int = Query(default=96, ge=32, le=600))
     cover_art_id = raw.get("coverArt")
     if not cover_art_id:
         raise HTTPException(status_code=404, detail="Track has no Navidrome cover art id")
+    cache_key = (str(cover_art_id), size)
+    cached = cached_cover_response(cache_key)
+    if cached is not None:
+        payload, content_type = cached
+        logger.info(
+            "Cover cache hit track_id=%s item_id=%s cover_art_id=%s size=%s seconds=%.3f",
+            track_id,
+            external_id,
+            cover_art_id,
+            size,
+            perf_counter() - started,
+        )
+        return cover_response(payload, content_type)
+    cached_error = cached_cover_error(cache_key)
+    if cached_error is not None:
+        logger.info(
+            "Cover negative cache hit track_id=%s item_id=%s cover_art_id=%s size=%s error=%s seconds=%.3f",
+            track_id,
+            external_id,
+            cover_art_id,
+            size,
+            cached_error,
+            perf_counter() - started,
+        )
+        raise HTTPException(status_code=502, detail=cached_error)
+    logger.info(
+        "Cover fetch started track_id=%s item_id=%s cover_art_id=%s size=%s timeout_seconds=%s",
+        track_id,
+        external_id,
+        cover_art_id,
+        size,
+        min(settings.navidrome.timeout_seconds, COVER_TIMEOUT_SECONDS),
+    )
     try:
-        cover = NavidromeClient(settings.navidrome).get_cover_art(str(cover_art_id), size=size)
+        cover_settings = replace(
+            settings.navidrome,
+            timeout_seconds=min(settings.navidrome.timeout_seconds, COVER_TIMEOUT_SECONDS),
+        )
+        cover = NavidromeClient(cover_settings).get_cover_art(str(cover_art_id), size=size)
     except Exception as exc:
+        remember_cover_error(cache_key, str(exc))
         navidrome_logger.warning(
             "Navidrome cover art unavailable track_id=%s item_id=%s cover_art_id=%s",
             track_id,
@@ -1111,11 +2168,17 @@ def get_track_cover(track_id: int, size: int = Query(default=96, ge=32, le=600))
             exc_info=True,
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return Response(
-        content=cover.payload,
-        media_type=cover.content_type,
-        headers={"Cache-Control": "private, max-age=86400"},
+    remember_cover(cache_key, cover.payload, cover.content_type)
+    logger.info(
+        "Cover fetch completed track_id=%s item_id=%s cover_art_id=%s size=%s bytes=%s seconds=%.3f",
+        track_id,
+        external_id,
+        cover_art_id,
+        size,
+        len(cover.payload),
+        perf_counter() - started,
     )
+    return cover_response(cover.payload, cover.content_type)
 
 
 @app.get("/tracks/{track_id}/similar")
@@ -1150,9 +2213,59 @@ def get_similar_tracks(
         logger.warning("Similar lookup failed track_id=%s model=%s error=%s", track_id, model, exc)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
-        "seed": track_dict(seed),
+        "seed": enriched_track_dict(store, seed),
         "model": model,
-        "results": [similar_track_dict(result) for result in results],
+        "results": [enriched_similar_track_dict(store, result) for result in results],
+    }
+
+
+@app.post("/text-search")
+def text_search(request: TextSearchRequest) -> dict[str, object]:
+    query = request.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Text query is empty")
+    store, settings = context()
+    started = perf_counter()
+    try:
+        vector = text_search_embedder(settings).extract_text_vector(query)
+        results = Recommender(store, settings, MUQ_MULAN_MODEL).similar_vector(
+            vector,
+            exclude_track_ids=set(),
+            album_seeds=[],
+            k=request.count,
+            max_per_artist=request.max_per_artist,
+            exclude_same_album=request.exclude_same_album,
+            count_collaboration_artists=request.count_collaboration_artists,
+        )
+    except FileNotFoundError as exc:
+        logger.warning("Text search index missing model=%s error=%s", MUQ_MULAN_MODEL, exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        logger.warning("Text search embedding failed error=%s", exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    filtered = [
+        result
+        for result in results
+        if request.min_similarity is None or result.similarity >= request.min_similarity
+    ]
+    similarities = [float(result.similarity) for result in filtered]
+    logger.info(
+        "Text search completed query=%r results=%s returned=%s seconds=%.3f",
+        query,
+        len(results),
+        len(filtered),
+        perf_counter() - started,
+    )
+    return {
+        "query": query,
+        "model": MUQ_MULAN_MODEL,
+        "count": request.count,
+        "min_similarity": request.min_similarity,
+        "vector_norm": float(np.linalg.norm(vector)),
+        "similarity_min": min(similarities) if similarities else None,
+        "similarity_max": max(similarities) if similarities else None,
+        "similarity_avg": (sum(similarities) / len(similarities)) if similarities else None,
+        "results": [enriched_similar_track_dict(store, result) for result in filtered],
     }
 
 
@@ -1216,10 +2329,10 @@ def get_similar_mix_tracks(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
         "blend": "average",
-        "seeds": [track_dict(track) for track in seeds],
+        "seeds": [enriched_track_dict(store, track) for track in seeds],
         "skipped_seed_ids": skipped_seed_ids,
         "model": model,
-        "results": [similar_track_dict(result) for result in results],
+        "results": [enriched_similar_track_dict(store, result) for result in results],
     }
 
 
@@ -1244,6 +2357,64 @@ def get_navidrome_starred(model: str = "discogs_multi") -> dict[str, object]:
     except Exception as exc:
         navidrome_logger.warning("Navidrome starred failed model=%s error=%s", model, exc)
         raise HTTPException(status_code=502, detail=f"Navidrome starred failed: {exc}") from exc
+
+
+@app.get("/navidrome/starred/ids")
+def get_navidrome_starred_ids() -> dict[str, object]:
+    store, settings = context()
+    client = _navidrome_client(settings)
+    try:
+        data = build_starred_track_ids(store, client, user=settings.navidrome.user)
+        navidrome_logger.info(
+            "Navidrome starred ids user=%s count=%s mapped_count=%s track_ids=%s",
+            data.get("user"),
+            data.get("count"),
+            data.get("mapped_count"),
+            data.get("track_ids"),
+        )
+        return data
+    except Exception as exc:
+        navidrome_logger.warning("Navidrome starred ids failed error=%s", exc)
+        raise HTTPException(status_code=502, detail=f"Navidrome starred failed: {exc}") from exc
+
+
+@app.put("/tracks/{track_id}/navidrome-star")
+def set_track_navidrome_star(track_id: int, request: NavidromeStarRequest) -> dict[str, object]:
+    store, settings = context()
+    track = store.get_track(track_id)
+    if track is None:
+        raise HTTPException(status_code=404, detail="Track not found")
+    item_id = store.external_id_for_track("navidrome", track_id)
+    if item_id is None:
+        raise HTTPException(status_code=404, detail="Track has no Navidrome mapping")
+    client = _navidrome_client(settings)
+    try:
+        if request.starred:
+            client.star_song(item_id)
+        else:
+            client.unstar_song(item_id)
+    except Exception as exc:
+        navidrome_logger.warning(
+            "Navidrome star update failed track_id=%s item_id=%s starred=%s error=%s",
+            track_id,
+            item_id,
+            request.starred,
+            exc,
+        )
+        raise HTTPException(status_code=502, detail=f"Navidrome star update failed: {exc}") from exc
+    navidrome_logger.info(
+        "Navidrome star update ok user=%s track_id=%s item_id=%s starred=%s",
+        settings.navidrome.user,
+        track_id,
+        item_id,
+        request.starred,
+    )
+    return {
+        "track_id": track_id,
+        "item_id": item_id,
+        "starred": request.starred,
+        "user": settings.navidrome.user,
+    }
 
 
 @app.get("/navidrome/starred/similar")
@@ -1298,7 +2469,7 @@ def get_navidrome_starred_similar(
         "not_synced_count": catalog.get("not_synced_count", 0),
         "skipped_seed_ids": skipped_seed_ids,
         "model": model,
-        "results": [similar_track_dict(result) for result in results],
+        "results": [enriched_similar_track_dict(store, result) for result in results],
     }
 
 
@@ -1306,36 +2477,77 @@ def get_navidrome_starred_similar(
 def get_navidrome_similar(
     item_id: str,
     count: int = Query(default=50, ge=1, le=500),
-    model: str = "discogs_multi",
-    max_per_artist: int = Query(default=2, ge=1, le=100),
-    exclude_same_album: bool = True,
+    model: str | None = None,
+    max_per_artist: int | None = Query(default=None, ge=1, le=100),
+    exclude_same_album: bool | None = None,
 ) -> NavidromeSimilarResponse:
     started = perf_counter()
+    request_id = str(uuid4())
     store, settings = context()
+    mix_settings = instant_mix_settings(settings)
+    requested_model = model
+    model = str(mix_settings["model"])
+    effective_count = int(mix_settings["count"])
+    min_similarity = mix_settings["min_similarity"]
+    effective_max_per_artist = int(mix_settings["max_per_artist"])
+    effective_exclude_same_album = bool(mix_settings["exclude_same_album"])
+    effective_count_collaboration_artists = bool(mix_settings["count_collaboration_artists"])
     navidrome_logger.info(
-        "Navidrome similar request item_id=%s model=%s count=%s max_per_artist=%s exclude_same_album=%s",
+        "Navidrome similar request request_id=%s item_id=%s requested_model=%s model=%s requested_count=%s effective_count=%s max_per_artist=%s exclude_same_album=%s min_similarity=%s",
+        request_id,
         item_id,
+        requested_model,
         model,
         count,
-        max_per_artist,
-        exclude_same_album,
+        effective_count,
+        effective_max_per_artist,
+        effective_exclude_same_album,
+        min_similarity,
     )
     navidrome_plugin_logger.info(
-        "api_request item_id=%s model=%s count=%s max_per_artist=%s exclude_same_album=%s",
+        "api_request request_id=%s item_id=%s requested_model=%s model=%s requested_count=%s effective_count=%s max_per_artist=%s exclude_same_album=%s min_similarity=%s",
+        request_id,
         item_id,
+        requested_model,
         model,
         count,
-        max_per_artist,
-        exclude_same_album,
+        effective_count,
+        effective_max_per_artist,
+        effective_exclude_same_album,
+        min_similarity,
     )
     seed = store.get_track_by_external_id("navidrome", item_id)
     if seed is None:
+        duration_ms = (perf_counter() - started) * 1000
+        record_instant_mix_request(
+            store,
+            request_id=request_id,
+            item_id=item_id,
+            seed_track_id=None,
+            model=model,
+            requested_model=requested_model,
+            requested_count=count,
+            requested_max_per_artist=max_per_artist,
+            requested_exclude_same_album=exclude_same_album,
+            effective_count=effective_count,
+            max_per_artist=effective_max_per_artist,
+            exclude_same_album=effective_exclude_same_album,
+            count_collaboration_artists=effective_count_collaboration_artists,
+            min_similarity=min_similarity,
+            status="failed",
+            results=[],
+            skipped_without_external_id=0,
+            duration_ms=duration_ms,
+            error="Navidrome item_id is not synced",
+        )
         navidrome_logger.warning(
-            "Navidrome similar failed item_id=%s reason=no_external_mapping",
+            "Navidrome similar failed request_id=%s item_id=%s reason=no_external_mapping",
+            request_id,
             item_id,
         )
         navidrome_plugin_logger.warning(
-            "api_failed item_id=%s model=%s reason=no_external_mapping",
+            "api_failed request_id=%s item_id=%s model=%s reason=no_external_mapping",
+            request_id,
             item_id,
             model,
         )
@@ -1344,20 +2556,45 @@ def get_navidrome_similar(
     try:
         candidates = Recommender(store, settings, model).similar(
             seed,
-            k=count,
-            max_per_artist=max_per_artist,
-            exclude_same_album=exclude_same_album,
+            k=effective_count,
+            max_per_artist=effective_max_per_artist,
+            exclude_same_album=effective_exclude_same_album,
+            count_collaboration_artists=effective_count_collaboration_artists,
         )
     except FileNotFoundError as exc:
+        duration_ms = (perf_counter() - started) * 1000
+        record_instant_mix_request(
+            store,
+            request_id=request_id,
+            item_id=item_id,
+            seed_track_id=seed.id,
+            model=model,
+            requested_model=requested_model,
+            requested_count=count,
+            requested_max_per_artist=max_per_artist,
+            requested_exclude_same_album=exclude_same_album,
+            effective_count=effective_count,
+            max_per_artist=effective_max_per_artist,
+            exclude_same_album=effective_exclude_same_album,
+            count_collaboration_artists=effective_count_collaboration_artists,
+            min_similarity=min_similarity,
+            status="failed",
+            results=[],
+            skipped_without_external_id=0,
+            duration_ms=duration_ms,
+            error=str(exc),
+        )
         navidrome_logger.warning(
-            "Navidrome similar failed item_id=%s track_id=%s model=%s reason=missing_index error=%s",
+            "Navidrome similar failed request_id=%s item_id=%s track_id=%s model=%s reason=missing_index error=%s",
+            request_id,
             item_id,
             seed.id,
             model,
             exc,
         )
         navidrome_plugin_logger.warning(
-            "api_failed item_id=%s track_id=%s model=%s reason=missing_index error=%s",
+            "api_failed request_id=%s item_id=%s track_id=%s model=%s reason=missing_index error=%s",
+            request_id,
             item_id,
             seed.id,
             model,
@@ -1365,25 +2602,91 @@ def get_navidrome_similar(
         )
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except LookupError as exc:
+        duration_ms = (perf_counter() - started) * 1000
+        record_instant_mix_request(
+            store,
+            request_id=request_id,
+            item_id=item_id,
+            seed_track_id=seed.id,
+            model=model,
+            requested_model=requested_model,
+            requested_count=count,
+            requested_max_per_artist=max_per_artist,
+            requested_exclude_same_album=exclude_same_album,
+            effective_count=effective_count,
+            max_per_artist=effective_max_per_artist,
+            exclude_same_album=effective_exclude_same_album,
+            count_collaboration_artists=effective_count_collaboration_artists,
+            min_similarity=min_similarity,
+            status="failed",
+            results=[],
+            skipped_without_external_id=0,
+            duration_ms=duration_ms,
+            error=str(exc),
+        )
         navidrome_logger.warning(
-            "Navidrome similar failed item_id=%s track_id=%s model=%s reason=missing_embedding error=%s",
+            "Navidrome similar failed request_id=%s item_id=%s track_id=%s model=%s reason=missing_embedding error=%s",
+            request_id,
             item_id,
             seed.id,
             model,
             exc,
         )
         navidrome_plugin_logger.warning(
-            "api_failed item_id=%s track_id=%s model=%s reason=missing_embedding error=%s",
+            "api_failed request_id=%s item_id=%s track_id=%s model=%s reason=missing_embedding error=%s",
+            request_id,
             item_id,
             seed.id,
             model,
             exc,
         )
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        duration_ms = (perf_counter() - started) * 1000
+        record_instant_mix_request(
+            store,
+            request_id=request_id,
+            item_id=item_id,
+            seed_track_id=seed.id,
+            model=model,
+            requested_model=requested_model,
+            requested_count=count,
+            requested_max_per_artist=max_per_artist,
+            requested_exclude_same_album=exclude_same_album,
+            effective_count=effective_count,
+            max_per_artist=effective_max_per_artist,
+            exclude_same_album=effective_exclude_same_album,
+            count_collaboration_artists=effective_count_collaboration_artists,
+            min_similarity=min_similarity,
+            status="failed",
+            results=[],
+            skipped_without_external_id=0,
+            duration_ms=duration_ms,
+            error=str(exc),
+        )
+        navidrome_logger.exception(
+            "Navidrome similar failed request_id=%s item_id=%s track_id=%s model=%s reason=unexpected",
+            request_id,
+            item_id,
+            seed.id,
+            model,
+        )
+        navidrome_plugin_logger.warning(
+            "api_failed request_id=%s item_id=%s track_id=%s model=%s reason=unexpected error=%s",
+            request_id,
+            item_id,
+            seed.id,
+            model,
+            exc,
+        )
+        raise HTTPException(status_code=503, detail=f"Navidrome similar failed: {exc}") from exc
 
     results: list[NavidromeSimilarItem] = []
     skipped_without_external_id = 0
-    for candidate in candidates:
+    sorted_candidates = sorted(candidates, key=lambda item: item.similarity, reverse=True)
+    for candidate in sorted_candidates:
+        if min_similarity is not None and candidate.similarity < float(min_similarity):
+            continue
         external_id = store.external_id_for_track("navidrome", candidate.track.id)
         if external_id is None:
             skipped_without_external_id += 1
@@ -1395,100 +2698,180 @@ def get_navidrome_similar(
                 artist=candidate.track.artist,
                 title=candidate.track.title,
                 album=candidate.track.album,
+                distance=candidate.distance,
                 similarity=candidate.similarity,
             )
         )
+        if len(results) >= effective_count:
+            break
     if skipped_without_external_id:
         navidrome_logger.warning(
-            "Navidrome similar skipped results without external ids item_id=%s skipped=%s",
+            "Navidrome similar skipped results without external ids request_id=%s item_id=%s skipped=%s",
+            request_id,
             item_id,
             skipped_without_external_id,
         )
+    duration_ms = (perf_counter() - started) * 1000
+    record_instant_mix_request(
+        store,
+        request_id=request_id,
+        item_id=item_id,
+        seed_track_id=seed.id,
+        model=model,
+        requested_model=requested_model,
+        requested_count=count,
+        requested_max_per_artist=max_per_artist,
+        requested_exclude_same_album=exclude_same_album,
+        effective_count=effective_count,
+        max_per_artist=effective_max_per_artist,
+        exclude_same_album=effective_exclude_same_album,
+        count_collaboration_artists=effective_count_collaboration_artists,
+        min_similarity=min_similarity,
+        status="completed",
+        results=results,
+        skipped_without_external_id=skipped_without_external_id,
+        duration_ms=duration_ms,
+    )
     navidrome_logger.info(
-        "Navidrome similar completed item_id=%s track_id=%s model=%s results=%s skipped_without_external_id=%s duration_ms=%.1f",
+        "Navidrome similar completed request_id=%s item_id=%s track_id=%s model=%s results=%s skipped_without_external_id=%s duration_ms=%.1f",
+        request_id,
         item_id,
         seed.id,
         model,
         len(results),
         skipped_without_external_id,
-        (perf_counter() - started) * 1000,
+        duration_ms,
     )
     navidrome_plugin_logger.info(
-        "api_completed item_id=%s track_id=%s model=%s results=%s skipped_without_external_id=%s duration_ms=%.1f",
+        "api_completed request_id=%s item_id=%s track_id=%s model=%s results=%s skipped_without_external_id=%s duration_ms=%.1f",
+        request_id,
         item_id,
         seed.id,
         model,
         len(results),
         skipped_without_external_id,
-        (perf_counter() - started) * 1000,
+        duration_ms,
     )
     return NavidromeSimilarResponse(
+        request_id=request_id,
         seed_item_id=item_id,
+        seed_track_id=seed.id,
         model=model,
+        requested_count=count,
+        effective_count=effective_count,
+        min_similarity=min_similarity,
+        skipped_without_external_id=skipped_without_external_id,
         results=results,
     )
 
 
 @app.post("/jobs/analyze")
 def start_analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks) -> dict[str, object]:
-    job_id = create_job("analyze", f"Waiting to analyze {request.model}")
-    local_executor_enabled = request.execution_mode in {"both", "local"} and request.local_executor_enabled
-    store, _settings = context()
-    durable_job = store.create_analysis_job(
-        request.model,
-        request.limit,
-        kind="analyze",
-        local_executor_enabled=local_executor_enabled,
-        workers=request.workers,
-        tf_threads=request.tf_threads,
-        max_attempts=request.max_attempts,
-        job_id=job_id,
-    )
-    update_job(
-        job_id,
-        status="running" if durable_job.total else "completed",
-        total=durable_job.total,
-        message=(
-            f"Queued {durable_job.total} tracks for {request.model}"
-            if durable_job.total
-            else "Analyzed 0 tracks, failed 0"
-        ),
-    )
-    if local_executor_enabled and durable_job.total:
-        background_tasks.add_task(
-            _analyze_job,
-            job_id,
+    def start_now(job_id: str, tasks: BackgroundTasks | None) -> dict[str, object]:
+        local_executor_enabled = request.execution_mode in {"both", "local"} and request.local_executor_enabled
+        if request.model == MUQ_MULAN_MODEL:
+            local_executor_enabled = False
+        store, _settings = context()
+        durable_job = store.create_analysis_job(
             request.model,
             request.limit,
-            request.workers,
-            request.tf_threads,
-            True,
-            request.max_attempts,
-            False,
+            kind="analyze",
+            local_executor_enabled=local_executor_enabled,
+            workers=request.workers,
+            tf_threads=request.tf_threads,
+            max_attempts=request.max_attempts,
+            job_id=job_id,
         )
-    return {
-        "status": "accepted",
-        "job_id": job_id,
-        "model": request.model,
-        "limit": request.limit,
-        "workers": request.workers,
-        "tf_threads": request.tf_threads,
-        "local_executor_enabled": local_executor_enabled,
-        "execution_mode": request.execution_mode,
-    }
+        update_job(
+            job_id,
+            status="running" if durable_job.total else "completed",
+            total=durable_job.total,
+            message=(
+                f"Queued {durable_job.total} tracks for {request.model}"
+                if durable_job.total
+                else "Analyzed 0 tracks, failed 0"
+            ),
+        )
+        if local_executor_enabled and durable_job.total:
+            args = (
+                job_id,
+                request.model,
+                request.limit,
+                request.workers,
+                request.tf_threads,
+                True,
+                request.max_attempts,
+                False,
+            )
+            if tasks is None:
+                _analyze_job(*args)
+            else:
+                tasks.add_task(_analyze_job, *args)
+        elif not durable_job.total:
+            maybe_start_next_deferred_job()
+        return {
+            "status": "accepted",
+            "job_id": job_id,
+            "model": request.model,
+            "limit": request.limit,
+            "workers": request.workers,
+            "tf_threads": request.tf_threads,
+            "local_executor_enabled": local_executor_enabled,
+            "execution_mode": request.execution_mode,
+        }
+
+    store, _settings = context()
+    deferred_job_id, deferred = create_deferred_job_if_busy(
+        "analyze",
+        f"Waiting to analyze {request.model}",
+        lambda job_id: lambda: start_now(job_id, None),
+        store=store,
+    )
+    if deferred:
+        return {
+            "status": "deferred",
+            "job_id": deferred_job_id,
+            "model": request.model,
+            "limit": request.limit,
+            "workers": request.workers,
+            "tf_threads": request.tf_threads,
+            "local_executor_enabled": request.execution_mode != "remote" and request.local_executor_enabled,
+            "execution_mode": request.execution_mode,
+        }
+    job_id = create_job("analyze", f"Waiting to analyze {request.model}")
+    return start_now(job_id, background_tasks)
 
 
 @app.post("/workers/register")
 def register_worker(request: WorkerRegisterRequest) -> dict[str, object]:
     store, _settings = context()
-    store.expire_analysis_leases()
-    store.register_analysis_worker(request.worker_id, request.models)
+    try:
+        sqlite_retry(store.expire_analysis_leases)
+        sqlite_retry(lambda: store.register_analysis_worker(request.worker_id, request.models))
+    except sqlite3.OperationalError as exc:
+        raise_worker_sqlite_http_exception(exc, "register")
     return {"status": "ok", "worker_id": request.worker_id, "models": request.models}
 
 
 @app.post("/workers/heartbeat")
 def heartbeat_worker(request: WorkerRegisterRequest) -> dict[str, object]:
-    return register_worker(request)
+    store, _settings = context()
+    try:
+        wrote = sqlite_retry(
+            lambda: store.heartbeat_analysis_worker(
+                request.worker_id,
+                request.models,
+                min_interval_seconds=WORKER_HEARTBEAT_WRITE_INTERVAL_SECONDS,
+            )
+        )
+    except sqlite3.OperationalError as exc:
+        raise_worker_sqlite_http_exception(exc, "heartbeat")
+    return {
+        "status": "ok",
+        "worker_id": request.worker_id,
+        "models": request.models,
+        "heartbeat_written": bool(wrote),
+    }
 
 
 @app.get("/workers")
@@ -1501,14 +2884,19 @@ def list_workers() -> dict[str, object]:
 @app.post("/workers/claim")
 def claim_worker_tasks(request: WorkerClaimRequest) -> dict[str, object]:
     store, _settings = context()
-    store.expire_analysis_leases()
-    store.register_analysis_worker(request.worker_id, request.models)
-    tasks = store.claim_analysis_tasks(
-        request.worker_id,
-        request.models,
-        limit=request.limit,
-        lease_seconds=request.lease_seconds,
-    )
+    try:
+        sqlite_retry(store.expire_analysis_leases)
+        sqlite_retry(lambda: store.register_analysis_worker(request.worker_id, request.models))
+        tasks = sqlite_retry(
+            lambda: store.claim_analysis_tasks(
+                request.worker_id,
+                request.models,
+                limit=request.limit,
+                lease_seconds=request.lease_seconds,
+            )
+        )
+    except sqlite3.OperationalError as exc:
+        raise_worker_sqlite_http_exception(exc, "claim")
     return {"tasks": [analysis_task_dict(task) for task in tasks]}
 
 
@@ -1520,8 +2908,8 @@ def get_worker_task_audio(task_id: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="Task not found")
     if task.status != "leased":
         raise HTTPException(status_code=409, detail=f"Task is not active: {task.status}")
-    job = store.get_analysis_job(task.job_id)
-    if job is None or job.status != "running":
+    job_status = store.get_analysis_job_status(task.job_id)
+    if job_status != "running":
         raise HTTPException(status_code=409, detail="Task job is not running")
     track = store.get_track(task.track_id)
     if track is None:
@@ -1572,7 +2960,11 @@ def get_worker_task_audio(task_id: str) -> FileResponse:
 
 
 @app.post("/workers/results")
-def submit_worker_results(request: WorkerSubmitRequest) -> dict[str, object]:
+def submit_worker_results(
+    request: WorkerSubmitRequest,
+    background_tasks: BackgroundTasks,
+) -> dict[str, object]:
+    started = perf_counter()
     store, _settings = context()
     try:
         sqlite_retry(store.expire_analysis_leases)
@@ -1613,6 +3005,9 @@ def submit_worker_results(request: WorkerSubmitRequest) -> dict[str, object]:
         except Exception:
             logger.exception("Failed to mark worker %s rejected task_id=%s", log_label, task_id)
 
+    completed_embedding_job_ids: set[str] = set()
+    completed_job_ids: set[str] = set()
+
     def accept_embedding(item: WorkerResultItem) -> str:
         vector = decode_worker_vector(item)
         task = validate_worker_task_identity(
@@ -1623,10 +3018,18 @@ def submit_worker_results(request: WorkerSubmitRequest) -> dict[str, object]:
             item.model_name,
             item.file_size,
             item.mtime,
+            expire_leases=False,
         )
         store.save_embedding(task.track_id, task.model_name, vector)
         store.mark_track_available(task.track_id)
-        store.complete_analysis_task(task.id, request.worker_id)
+        store.complete_analysis_task(
+            task.id,
+            request.worker_id,
+            refresh_job=False,
+            update_worker=False,
+        )
+        completed_embedding_job_ids.add(task.job_id)
+        completed_job_ids.add(task.job_id)
         return task.id
 
     def accept_features(item: WorkerFeatureResultItem) -> str:
@@ -1638,6 +3041,7 @@ def submit_worker_results(request: WorkerSubmitRequest) -> dict[str, object]:
             item.model_name,
             item.file_size,
             item.mtime,
+            expire_leases=False,
         )
         features = [
             TrackFeature(
@@ -1652,7 +3056,13 @@ def submit_worker_results(request: WorkerSubmitRequest) -> dict[str, object]:
         ]
         store.save_features(task.track_id, features)
         store.mark_track_available(task.track_id)
-        store.complete_analysis_task(task.id, request.worker_id)
+        store.complete_analysis_task(
+            task.id,
+            request.worker_id,
+            refresh_job=False,
+            update_worker=False,
+        )
+        completed_job_ids.add(task.job_id)
         return task.id
 
     def accept_heads(item: WorkerHeadResultItem) -> str:
@@ -1664,6 +3074,7 @@ def submit_worker_results(request: WorkerSubmitRequest) -> dict[str, object]:
             item.model_name,
             item.file_size,
             item.mtime,
+            expire_leases=False,
         )
         for output in item.outputs:
             scores = decode_worker_scores(output)
@@ -1686,8 +3097,99 @@ def submit_worker_results(request: WorkerSubmitRequest) -> dict[str, object]:
                 ],
             )
         store.mark_track_available(task.track_id)
-        store.complete_analysis_task(task.id, request.worker_id)
+        store.complete_analysis_task(
+            task.id,
+            request.worker_id,
+            refresh_job=False,
+            update_worker=False,
+        )
+        completed_job_ids.add(task.job_id)
         return task.id
+
+    def accept_feature_batch(items: list[WorkerFeatureResultItem]) -> list[str]:
+        if not items:
+            return []
+        now = utc_now()
+        accepted_ids: list[str] = []
+        with store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for item in items:
+                row = conn.execute(
+                    """
+                    SELECT
+                        task.*,
+                        track.file_size AS current_file_size,
+                        track.mtime AS current_mtime
+                    FROM analysis_tasks task
+                    JOIN tracks track ON track.id = task.track_id
+                    WHERE task.id = ?
+                    """,
+                    (item.task_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("Task not found")
+                if str(row["status"]) != "leased":
+                    raise ValueError(f"Task is not active: {row['status']}")
+                if row["lease_owner"] != request.worker_id:
+                    raise ValueError("Task is not leased by this worker")
+                if int(row["track_id"]) != item.track_id or row["model_name"] != item.model_name:
+                    raise ValueError("Task result identity mismatch")
+                if int(row["file_size"]) != item.file_size or int(row["mtime"]) != item.mtime:
+                    raise ValueError("Task result is stale")
+                if int(row["current_file_size"]) != item.file_size or int(row["current_mtime"]) != item.mtime:
+                    raise ValueError("Track changed after task was created")
+
+                extractors = sorted({feature.extractor for feature in item.features})
+                for extractor in extractors:
+                    conn.execute(
+                        "DELETE FROM track_features WHERE track_id = ? AND extractor = ?",
+                        (item.track_id, extractor),
+                    )
+                conn.executemany(
+                    """
+                    INSERT INTO track_features (
+                        track_id, feature_name, value, text_value, unit, confidence,
+                        extractor, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            item.track_id,
+                            feature.name,
+                            feature.value,
+                            feature.text_value,
+                            feature.unit,
+                            feature.confidence,
+                            feature.extractor,
+                            now,
+                        )
+                        for feature in item.features
+                    ],
+                )
+                conn.execute(
+                    "UPDATE tracks SET missing_at = NULL, last_seen_at = ?, updated_at = ? WHERE id = ?",
+                    (now, now, item.track_id),
+                )
+                conn.execute(
+                    """
+                    UPDATE analysis_tasks
+                    SET status = 'completed',
+                        lease_owner = NULL,
+                        lease_expires_at = NULL,
+                        error = NULL,
+                        error_type = NULL,
+                        stage = 'completed',
+                        updated_at = ?,
+                        completed_at = ?
+                    WHERE id = ?
+                      AND lease_owner = ?
+                    """,
+                    (now, now, item.task_id, request.worker_id),
+                )
+                completed_job_ids.add(str(row["job_id"]))
+                accepted_ids.append(item.task_id)
+        return accepted_ids
 
     def accept_with_retry(operation):
         try:
@@ -1699,6 +3201,7 @@ def submit_worker_results(request: WorkerSubmitRequest) -> dict[str, object]:
 
     accepted: list[str] = []
     rejected: list[dict[str, str]] = []
+    accept_started = perf_counter()
     for item in request.results:
         try:
             accepted.append(accept_with_retry(lambda item=item: accept_embedding(item)))
@@ -1706,13 +3209,24 @@ def submit_worker_results(request: WorkerSubmitRequest) -> dict[str, object]:
             raise
         except Exception as exc:
             reject_task(item.task_id, exc, "result")
-    for item in request.feature_results:
+    if request.feature_results:
         try:
-            accepted.append(accept_with_retry(lambda item=item: accept_features(item)))
+            accepted.extend(accept_with_retry(lambda: accept_feature_batch(request.feature_results)))
         except HTTPException:
             raise
-        except Exception as exc:
-            reject_task(item.task_id, exc, "feature result")
+        except Exception:
+            logger.exception(
+                "Batch feature submit failed; falling back to per-item submit worker_id=%s count=%s",
+                request.worker_id,
+                len(request.feature_results),
+            )
+            for item in request.feature_results:
+                try:
+                    accepted.append(accept_with_retry(lambda item=item: accept_features(item)))
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    reject_task(item.task_id, exc, "feature result")
     for item in request.head_results:
         try:
             accepted.append(accept_with_retry(lambda item=item: accept_heads(item)))
@@ -1720,19 +3234,45 @@ def submit_worker_results(request: WorkerSubmitRequest) -> dict[str, object]:
             raise
         except Exception as exc:
             reject_task(item.task_id, exc, "head result")
+    accept_seconds = perf_counter() - accept_started
     sqlite_retry(
         lambda: store.update_analysis_worker(
             request.worker_id,
             stage="submitted",
             message=f"accepted {len(accepted)}, rejected {len(rejected)} result(s)",
             current_task_id=None,
+            completed_delta=len(accepted),
         )
     )
+    refresh_started = perf_counter()
+    for completed_job_id in sorted(completed_job_ids):
+        sqlite_retry(lambda completed_job_id=completed_job_id: store.refresh_analysis_job(completed_job_id))
+    refresh_seconds = perf_counter() - refresh_started
+    for completed_job_id in sorted(completed_embedding_job_ids):
+        schedule_auto_index_for_analysis(store, completed_job_id, background_tasks)
+    total_seconds = perf_counter() - started
+    if total_seconds >= 1.0 or len(accepted) + len(rejected) >= 16:
+        logger.info(
+            "Worker submit completed worker_id=%s embeddings=%s features=%s heads=%s "
+            "accepted=%s rejected=%s accept_seconds=%.3f refresh_seconds=%.3f total_seconds=%.3f",
+            request.worker_id,
+            len(request.results),
+            len(request.feature_results),
+            len(request.head_results),
+            len(accepted),
+            len(rejected),
+            accept_seconds,
+            refresh_seconds,
+            total_seconds,
+        )
     return {"status": "ok", "accepted": accepted, "rejected": rejected}
 
 
 @app.post("/workers/failures")
-def submit_worker_failures(request: WorkerFailuresRequest) -> dict[str, object]:
+def submit_worker_failures(
+    request: WorkerFailuresRequest,
+    background_tasks: BackgroundTasks,
+) -> dict[str, object]:
     store, _settings = context()
     store.expire_analysis_leases()
     store.update_analysis_worker(
@@ -1741,7 +3281,11 @@ def submit_worker_failures(request: WorkerFailuresRequest) -> dict[str, object]:
         message=f"reporting {len(request.failures)} failure(s)",
     )
     failed: list[str] = []
+    candidate_job_ids: set[str] = set()
     for item in request.failures:
+        task = store.get_analysis_task(item.task_id)
+        if task is not None:
+            candidate_job_ids.add(task.job_id)
         store.fail_analysis_task(
             item.task_id,
             error=item.error,
@@ -1757,6 +3301,8 @@ def submit_worker_failures(request: WorkerFailuresRequest) -> dict[str, object]:
         message=f"accepted {len(failed)} failure(s)",
         current_task_id=None,
     )
+    for completed_job_id in sorted(candidate_job_ids):
+        schedule_auto_index_for_analysis(store, completed_job_id, background_tasks)
     return {"status": "ok", "failed": failed}
 
 
@@ -1782,6 +3328,13 @@ def download_head_pack() -> dict[str, object]:
 
 @app.post("/jobs/download-head-models")
 def start_download_head_models(background_tasks: BackgroundTasks) -> dict[str, object]:
+    deferred_job_id, deferred = create_deferred_job_if_busy(
+        "download-head-models",
+        "Waiting to download head models",
+        lambda job_id: lambda: _download_head_models_job(job_id),
+    )
+    if deferred:
+        return {"status": "deferred", "job_id": deferred_job_id}
     job_id = create_job("download-head-models", "Waiting to download head models")
     background_tasks.add_task(_download_head_models_job, job_id)
     return {"status": "accepted", "job_id": job_id}
@@ -1792,46 +3345,63 @@ def start_analyze_heads(
     request: AnalyzeHeadsRequest,
     background_tasks: BackgroundTasks,
 ) -> dict[str, object]:
-    job_id = create_job("analyze-heads", "Waiting to analyze Discogs-EffNet heads")
-    local_enabled = request.execution_mode in {"both", "local"} and request.local_executor_enabled
-    store, _settings = context()
-    head_model_names = [head.id for head in DISCOGS_EFFNET_HEADS]
-    tracks = store.list_tracks_missing_head_pack(head_model_names, limit=request.limit)
-    durable_job = store.create_analysis_job(
-        "discogs-effnet-heads",
-        request.limit,
-        kind="analyze-heads",
-        tracks=tracks,
-        local_executor_enabled=local_enabled,
-        max_attempts=request.max_attempts,
-        job_id=job_id,
-    )
-    update_job(
-        job_id,
-        status="running" if durable_job.total else "completed",
-        total=durable_job.total,
-        message=(
-            f"Queued {durable_job.total} head analysis tasks"
-            if durable_job.total
-            else "Analyzed heads for 0 tracks, failed 0"
-        ),
-    )
-    if local_enabled and durable_job.total:
-        background_tasks.add_task(
-            _analyze_heads_job,
-            job_id,
+    def start_now(job_id: str, tasks: BackgroundTasks | None) -> dict[str, object]:
+        local_enabled = request.execution_mode in {"both", "local"} and request.local_executor_enabled
+        store, _settings = context()
+        head_model_names = [head.id for head in DISCOGS_EFFNET_HEADS]
+        tracks = store.list_tracks_missing_head_pack(head_model_names, limit=request.limit)
+        durable_job = store.create_analysis_job(
+            "discogs-effnet-heads",
             request.limit,
-            True,
-            request.max_attempts,
-            False,
+            kind="analyze-heads",
+            tracks=tracks,
+            local_executor_enabled=local_enabled,
+            max_attempts=request.max_attempts,
+            job_id=job_id,
         )
-    return {
-        "status": "accepted",
-        "job_id": job_id,
-        "limit": request.limit,
-        "execution_mode": request.execution_mode,
-        "local_executor_enabled": local_enabled,
-    }
+        update_job(
+            job_id,
+            status="running" if durable_job.total else "completed",
+            total=durable_job.total,
+            message=(
+                f"Queued {durable_job.total} head analysis tasks"
+                if durable_job.total
+                else "Analyzed heads for 0 tracks, failed 0"
+            ),
+        )
+        if local_enabled and durable_job.total:
+            args = (job_id, request.limit, True, request.max_attempts, False)
+            if tasks is None:
+                _analyze_heads_job(*args)
+            else:
+                tasks.add_task(_analyze_heads_job, *args)
+        elif not durable_job.total:
+            maybe_start_next_deferred_job()
+        return {
+            "status": "accepted",
+            "job_id": job_id,
+            "limit": request.limit,
+            "execution_mode": request.execution_mode,
+            "local_executor_enabled": local_enabled,
+        }
+
+    store, _settings = context()
+    deferred_job_id, deferred = create_deferred_job_if_busy(
+        "analyze-heads",
+        "Waiting to analyze Discogs-EffNet heads",
+        lambda job_id: lambda: start_now(job_id, None),
+        store=store,
+    )
+    if deferred:
+        return {
+            "status": "deferred",
+            "job_id": deferred_job_id,
+            "limit": request.limit,
+            "execution_mode": request.execution_mode,
+            "local_executor_enabled": request.execution_mode != "remote" and request.local_executor_enabled,
+        }
+    job_id = create_job("analyze-heads", "Waiting to analyze Discogs-EffNet heads")
+    return start_now(job_id, background_tasks)
 
 
 @app.post("/jobs/analyze-audio-features")
@@ -1839,45 +3409,90 @@ def start_analyze_audio_features(
     request: AnalyzeAudioFeaturesRequest,
     background_tasks: BackgroundTasks,
 ) -> dict[str, object]:
-    job_id = create_job("analyze-audio-features", "Waiting to analyze audio features")
-    local_enabled = request.execution_mode in {"both", "local"} and request.local_executor_enabled
-    store, _settings = context()
-    tracks = store.list_tracks_missing_features(AUDIO_FEATURE_EXTRACTOR, limit=request.limit)
-    durable_job = store.create_analysis_job(
-        AUDIO_FEATURE_EXTRACTOR,
-        request.limit,
-        kind="analyze-audio-features",
-        tracks=tracks,
-        local_executor_enabled=local_enabled,
-        max_attempts=request.max_attempts,
-        job_id=job_id,
-    )
-    update_job(
-        job_id,
-        status="running" if durable_job.total else "completed",
-        total=durable_job.total,
-        message=(
-            f"Queued {durable_job.total} audio feature tasks"
-            if durable_job.total
-            else "Analyzed audio features for 0 tracks, failed 0"
-        ),
-    )
-    if local_enabled and durable_job.total:
-        background_tasks.add_task(
-            _analyze_audio_features_job,
-            job_id,
-            request.limit,
-            True,
-            request.max_attempts,
-            False,
+    extractor = request.extractor.strip() or AUDIO_FEATURE_EXTRACTOR
+    if extractor != AUDIO_FEATURE_EXTRACTOR:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported audio feature extractor: {extractor}",
         )
-    return {
-        "status": "accepted",
-        "job_id": job_id,
-        "limit": request.limit,
-        "execution_mode": request.execution_mode,
-        "local_executor_enabled": local_enabled,
-    }
+
+    def start_now(job_id: str, tasks: BackgroundTasks | None) -> dict[str, object]:
+        local_enabled = request.execution_mode in {"both", "local"} and request.local_executor_enabled
+        store, _settings = context()
+        if request.reset_existing:
+            tracks = store.list_active_tracks(limit=request.limit)
+            deleted_features = store.delete_features_for_tracks(
+                [track.id for track in tracks],
+                extractor,
+            )
+            logger.info(
+                "Reset audio features before analysis tracks=%s deleted_features=%s extractor=%s",
+                len(tracks),
+                deleted_features,
+                extractor,
+            )
+        else:
+            tracks = store.list_tracks_missing_features(extractor, limit=request.limit)
+            deleted_features = 0
+        clear_stats_cache()
+        durable_job = store.create_analysis_job(
+            extractor,
+            request.limit,
+            kind="analyze-audio-features",
+            tracks=tracks,
+            local_executor_enabled=local_enabled,
+            max_attempts=request.max_attempts,
+            job_id=job_id,
+        )
+        update_job(
+            job_id,
+            status="running" if durable_job.total else "completed",
+            total=durable_job.total,
+            message=(
+                f"Queued {durable_job.total} audio feature tasks"
+                if durable_job.total
+                else "Analyzed audio features for 0 tracks, failed 0"
+            ),
+        )
+        if local_enabled and durable_job.total:
+            args = (job_id, request.limit, True, request.max_attempts, False)
+            if tasks is None:
+                _analyze_audio_features_job(*args)
+            else:
+                tasks.add_task(_analyze_audio_features_job, *args)
+        elif not durable_job.total:
+            maybe_start_next_deferred_job()
+        return {
+            "status": "accepted",
+            "job_id": job_id,
+            "limit": request.limit,
+            "execution_mode": request.execution_mode,
+            "local_executor_enabled": local_enabled,
+            "reset_existing": request.reset_existing,
+            "deleted_features": deleted_features,
+            "extractor": extractor,
+        }
+
+    store, _settings = context()
+    deferred_job_id, deferred = create_deferred_job_if_busy(
+        "analyze-audio-features",
+        "Waiting to analyze audio features",
+        lambda job_id: lambda: start_now(job_id, None),
+        store=store,
+    )
+    if deferred:
+        return {
+            "status": "deferred",
+            "job_id": deferred_job_id,
+            "limit": request.limit,
+            "execution_mode": request.execution_mode,
+            "local_executor_enabled": request.execution_mode != "remote" and request.local_executor_enabled,
+            "reset_existing": request.reset_existing,
+            "deleted_features": 0,
+            "extractor": extractor,
+        }
+    job_id = create_job("analyze-audio-features", "Waiting to analyze audio features")
+    return start_now(job_id, background_tasks)
 
 
 @app.post("/jobs/analyze-genres")
@@ -1890,6 +3505,13 @@ def start_analyze_genres_compat(
 
 @app.post("/jobs/index")
 def start_index(request: IndexRequest, background_tasks: BackgroundTasks) -> dict[str, object]:
+    deferred_job_id, deferred = create_deferred_job_if_busy(
+        "index",
+        f"Waiting to build index for {request.model}",
+        lambda job_id: lambda: _index_job(job_id, request.model),
+    )
+    if deferred:
+        return {"status": "deferred", "job_id": deferred_job_id, "model": request.model}
     job_id = create_job("index", f"Waiting to build index for {request.model}")
     background_tasks.add_task(_index_job, job_id, request.model)
     return {"status": "accepted", "job_id": job_id, "model": request.model}
@@ -1897,6 +3519,13 @@ def start_index(request: IndexRequest, background_tasks: BackgroundTasks) -> dic
 
 @app.post("/jobs/check-missing-files")
 def start_check_missing_files(background_tasks: BackgroundTasks) -> dict[str, object]:
+    deferred_job_id, deferred = create_deferred_job_if_busy(
+        "check-missing-files",
+        "Waiting to check file availability",
+        lambda job_id: lambda: _check_missing_files_job(job_id),
+    )
+    if deferred:
+        return {"status": "deferred", "job_id": deferred_job_id}
     job_id = create_job("check-missing-files", "Waiting to check file availability")
     background_tasks.add_task(_check_missing_files_job, job_id)
     return {"status": "accepted", "job_id": job_id}
@@ -1907,37 +3536,60 @@ def start_navidrome_sync(
     request: NavidromeSyncRequest,
     background_tasks: BackgroundTasks,
 ) -> dict[str, object]:
+    def start_now(job_id: str, tasks: BackgroundTasks | None) -> dict[str, object]:
+        store, _settings = context()
+        known_total = request.limit or store.count_external_tracks("navidrome") or 0
+        job = store.create_progress_job(
+            "navidrome-sync",
+            "navidrome",
+            total=known_total,
+            message="Waiting to sync Navidrome catalog",
+            job_id=job_id,
+        )
+        args = (job.id, request.page_size, request.limit, request.mark_stale)
+        if tasks is None:
+            _navidrome_sync_job(*args)
+        else:
+            tasks.add_task(_navidrome_sync_job, *args)
+        return {
+            "status": "accepted",
+            "job_id": job.id,
+            "page_size": request.page_size,
+            "limit": request.limit,
+            "mark_stale": request.mark_stale,
+        }
+
     store, _settings = context()
-    known_total = request.limit or store.count_external_tracks("navidrome") or 0
-    job = store.create_progress_job(
+    deferred_job_id, deferred = create_deferred_job_if_busy(
         "navidrome-sync",
-        "navidrome",
-        total=known_total,
-        message="Waiting to sync Navidrome catalog",
+        "Waiting to sync Navidrome catalog",
+        lambda job_id: lambda: start_now(job_id, None),
+        store=store,
     )
-    background_tasks.add_task(
-        _navidrome_sync_job,
-        job.id,
-        request.page_size,
-        request.limit,
-        request.mark_stale,
-    )
-    return {
-        "status": "accepted",
-        "job_id": job.id,
-        "page_size": request.page_size,
-        "limit": request.limit,
-        "mark_stale": request.mark_stale,
-    }
+    if deferred:
+        return {
+            "status": "deferred",
+            "job_id": deferred_job_id,
+            "page_size": request.page_size,
+            "limit": request.limit,
+            "mark_stale": request.mark_stale,
+        }
+    job_id = create_job("navidrome-sync", "Waiting to sync Navidrome catalog")
+    return start_now(job_id, background_tasks)
 
 
 @app.get("/jobs")
 def list_jobs() -> dict[str, object]:
     store, _settings = context()
     store.expire_analysis_leases()
+    store.refresh_active_analysis_jobs()
+    sync_memory_jobs_from_durable_jobs(store.recent_analysis_jobs(limit=100))
+    maybe_start_next_deferred_job()
+    store.refresh_active_analysis_jobs()
     durable_jobs = {job.id: analysis_job_status_dict(job, store) for job in store.recent_analysis_jobs(limit=20)}
     with JOBS_LOCK:
         now = perf_counter()
+        queue_positions = {job_id: index + 1 for index, job_id in enumerate(DEFERRED_JOB_ORDER)}
         jobs = []
         for job in JOBS.values():
             if job.id in durable_jobs:
@@ -1945,9 +3597,23 @@ def list_jobs() -> dict[str, object]:
             data = asdict(job)
             if job.status in {"queued", "running"}:
                 data["elapsed_seconds"] = max(0.0, now - job.started_at)
+            elif job.finished_at is not None:
+                data["elapsed_seconds"] = max(0.0, job.finished_at - job.started_at)
+                data["eta_seconds"] = None
+            if job.status == "deferred":
+                data["queue_position"] = queue_positions.get(job.id)
+                data["status_hint"] = "Waiting for previous job to finish"
             jobs.append(data)
     jobs.extend(durable_jobs.values())
-    jobs.sort(key=lambda job: job["started_at"], reverse=True)
+    def job_sort_key(job: dict[str, object]) -> tuple[int, float]:
+        status = str(job.get("status") or "")
+        if status in {"queued", "running"}:
+            return (0, -float(job.get("started_at") or 0.0))
+        if status == "deferred":
+            return (1, float(job.get("queue_position") or 999999))
+        return (2, -float(job.get("started_at") or 0.0))
+
+    jobs.sort(key=job_sort_key)
     return {
         "jobs": jobs[:20],
         "workers": [analysis_worker_dict(worker) for worker in store.list_analysis_workers()],
@@ -1978,13 +3644,21 @@ def cancel_job(job_id: str, request: CancelJobRequest | None = None) -> dict[str
     reason = request.reason if request is not None else "Cancelled by user"
     store, _settings = context()
     durable_job = store.cancel_analysis_job(job_id, reason)
+    was_deferred = False
     with JOBS_LOCK:
         memory_job = JOBS.get(job_id)
         if memory_job is not None:
+            was_deferred = memory_job.status == "deferred"
             memory_job.status = "cancelled"
             memory_job.message = reason
             memory_job.current = None
             memory_job.finished_at = perf_counter()
+    if was_deferred:
+        with DEFERRED_JOBS_LOCK:
+            DEFERRED_JOB_STARTERS.pop(job_id, None)
+            if job_id in DEFERRED_JOB_ORDER:
+                DEFERRED_JOB_ORDER.remove(job_id)
+        maybe_start_next_deferred_job()
     if durable_job is None and memory_job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return {
@@ -2113,10 +3787,12 @@ def _navidrome_sync_job(
             finished=True,
         )
         logger.info("Finished Navidrome sync job job_id=%s %s", job_id, result.summary())
+        maybe_start_next_deferred_job()
     except Exception as exc:
         logger.exception("Navidrome sync job failed job_id=%s", job_id)
         if store is not None:
             store.update_progress_job(job_id, status="failed", message=str(exc), finished=True)
+            maybe_start_next_deferred_job()
         else:
             finish_job(job_id, "failed", str(exc))
 
@@ -2179,7 +3855,27 @@ def mark_missing_after_failure(store: Store, result: AnalyzeResult | HeadAnalyze
         store.mark_track_missing(result.track_id)
 
 
-_WORKER_EMBEDDER: DiscogsEffnetEmbedder | None = None
+def analyze_failure_retryable(result: AnalyzeResult | HeadAnalyzeResult | AudioFeaturesResult) -> bool:
+    if result.error_type == "FileNotFoundError":
+        return False
+    text = (result.error or "").lower()
+    terminal_fragments = (
+        "torch is required for muq-mulan",
+        "muq is required for muq-mulan",
+        "muq-mulan model could not be loaded",
+        "model file not found",
+        "embedding vector has zero norm",
+    )
+    return not any(fragment in text for fragment in terminal_fragments)
+
+
+def create_analyze_embedder(settings: Settings, model: str) -> object:
+    if model == MUQ_MULAN_MODEL:
+        return create_track_embedder(settings, model)
+    return DiscogsEffnetEmbedder(settings, model)
+
+
+_WORKER_EMBEDDER: object | None = None
 
 
 def configure_analyze_runtime(tf_threads: int) -> None:
@@ -2191,7 +3887,7 @@ def configure_analyze_runtime(tf_threads: int) -> None:
 def _init_embedding_worker(settings: Settings, model: str, tf_threads: int) -> None:
     global _WORKER_EMBEDDER
     configure_analyze_runtime(tf_threads)
-    _WORKER_EMBEDDER = DiscogsEffnetEmbedder(settings, model)
+    _WORKER_EMBEDDER = create_analyze_embedder(settings, model)
     analysis_logger.info("Initialized embedding worker model=%s tf_threads=%s", model, tf_threads)
 
 
@@ -2212,7 +3908,7 @@ def _extract_embedding_worker(task_id: str | None, track_id: int, path: str) -> 
 
 
 def _extract_embedding_local(
-    embedder: DiscogsEffnetEmbedder,
+    embedder: object,
     store: Store,
     settings: Settings,
     track: Track,
@@ -2312,8 +4008,8 @@ def _iter_analyze_results(
     if SHUTDOWN_REQUESTED:
         return
     configure_analyze_runtime(tf_threads)
-    if workers <= 1:
-        embedder = DiscogsEffnetEmbedder(settings, model)
+    if workers <= 1 or model == MUQ_MULAN_MODEL:
+        embedder = create_analyze_embedder(settings, model)
         for track in tracks:
             if SHUTDOWN_REQUESTED:
                 return
@@ -2389,8 +4085,8 @@ def _iter_analyze_task_results(
     if SHUTDOWN_REQUESTED:
         return
     configure_analyze_runtime(tf_threads)
-    if workers <= 1:
-        embedder = DiscogsEffnetEmbedder(settings, model)
+    if workers <= 1 or model == MUQ_MULAN_MODEL:
+        embedder = create_analyze_embedder(settings, model)
         for task in tasks:
             if SHUTDOWN_REQUESTED:
                 return
@@ -2564,7 +4260,7 @@ def _analyze_job(
                         error_type=result.error_type or "AnalyzeError",
                         stage=result.stage or "predict",
                         worker_id=local_worker_id,
-                        retryable=result.error_type != "FileNotFoundError",
+                        retryable=analyze_failure_retryable(result),
                     )
                     analysis_logger.error(
                         "Analyze track failed job_id=%s track_id=%s path=%s model=%s stage=%s error_type=%s error=%s\n%s",
@@ -2615,6 +4311,7 @@ def _analyze_job(
             total,
         )
         finish_job(job_id, "completed", f"Analyzed {done} tracks, failed {failed}")
+        schedule_auto_index_for_analysis(store, job_id)
     except Exception as exc:
         analysis_logger.exception("Analyze job failed job_id=%s model=%s", job_id, model)
         finish_job(job_id, "failed", str(exc))
@@ -3182,17 +4879,47 @@ UI_HTML = r"""
       display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; gap: 16px;
     }
     .section-fill.active > .layout,
-    .section-fill.active > .browse-layout { flex: 1; min-height: 0; align-items: stretch; }
+    .section-fill.active > .browse-layout,
+    .section-fill.active > .instant-mix-layout,
+    .section-fill.active > .metrics-layout { flex: 1; min-height: 0; align-items: stretch; }
     .section-fill.active > .panel.panel-fill { flex: 1; min-height: 0; }
     .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-    .stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
-    .stat { border: 1px solid var(--line); border-radius: 6px; padding: 12px; background: var(--panel); }
-    .stat strong { display: block; font-size: 24px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+    .stat {
+      border: 1px solid var(--line); border-radius: 6px; padding: 12px; background: var(--panel);
+      display: grid; grid-template-rows: auto auto 1fr auto; gap: 8px; min-width: 0;
+    }
+    .stat strong { display: block; font-size: 24px; line-height: 1.05; }
     .stat span { color: var(--muted); font-size: 12px; }
+    .stat h3 { margin: 0; font-size: 13px; overflow-wrap: anywhere; min-height: 18px; }
+    .stat-count { display: grid; gap: 2px; }
+    .stat-lines { display: grid; gap: 4px; align-content: start; }
+    .stat-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 36px; }
+    .stat-actions button { width: fit-content; }
+    .stat-index-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .stat-icon-button {
+      min-height: 26px; width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 6px; line-height: 1; font-size: 16px;
+    }
+    .model-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; }
+    .model-card.selected { border-color: var(--accent); }
+    .status-ready { border: 1px solid var(--accent); color: var(--accent); background: transparent; }
+    .status-stale, .status-unknown { border: 1px solid var(--accent-2); color: var(--accent-2); background: transparent; }
+    .status-missing, .status-failed { border: 1px solid var(--bad); color: var(--bad); background: transparent; }
+    .index-status-ready { color: var(--accent); }
+    .index-status-stale, .index-status-unknown { color: var(--accent-2); }
+    .index-status-missing, .index-status-failed { color: var(--bad); }
     .layout {
       display: grid; grid-template-columns: minmax(320px, .9fr) minmax(360px, 1.1fr);
       gap: 16px; min-height: 0;
     }
+    .instant-mix-layout {
+      display: grid; grid-template-columns: minmax(280px, 360px) minmax(460px, 1fr);
+      gap: 16px; min-height: 0;
+    }
+    .instant-mix-sidebar { display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+    .instant-mix-controls { flex: 0 0 auto; }
+    .instant-mix-history { flex: 1; min-height: 0; }
     .browse-layout {
       display: grid; grid-template-columns: minmax(240px, .55fr) minmax(420px, 1.45fr);
       gap: 16px; min-height: 0;
@@ -3209,6 +4936,9 @@ UI_HTML = r"""
     .facet-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .basket { display: grid; gap: 8px; margin-top: 10px; }
     .rating-active { border-color: var(--accent); color: var(--accent); }
+    .like-active { border-color: var(--accent); color: var(--accent); }
+    .navidrome-like-button { display: inline-flex; align-items: center; justify-content: center; min-width: 42px; }
+    .bi { width: 1em; height: 1em; fill: currentColor; flex: 0 0 auto; }
     .panel { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 14px; min-width: 0; }
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-bottom: 10px; }
@@ -3217,10 +4947,29 @@ UI_HTML = r"""
       display: grid; gap: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 10px;
       background: #14181b;
     }
-    .track-body { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; align-items: start; }
-    .track-main { min-width: 0; display: grid; gap: 4px; }
+    .track:has(.track-body) {
+      grid-template-columns: 112px minmax(0, 1fr); grid-template-rows: auto auto;
+      column-gap: 12px; row-gap: 6px;
+    }
+    .track-body { display: contents; }
+    .track-main { grid-column: 2; grid-row: 1; min-width: 0; display: grid; gap: 4px; }
+    .track-head { min-width: 0; }
+    .track-title-row { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; }
+    .track-title-main { min-width: 0; overflow-wrap: anywhere; }
+    .track-id { color: var(--muted); }
+    .track-score-inline { color: var(--accent-2); font-weight: 700; }
+    .track-card-line { display: flex; gap: 12px; justify-content: space-between; align-items: baseline; min-width: 0; }
+    .track-card-left { min-width: 0; overflow-wrap: anywhere; }
+    .track-card-right { flex: 0 0 auto; text-align: right; white-space: nowrap; }
+    .track-actions {
+      display: flex; gap: 8px; flex-wrap: wrap; justify-content: space-between;
+      grid-column: 2; grid-row: 2; align-items: center; margin-top: 0;
+    }
+    .track-action-group { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .track-command-group { justify-content: flex-end; margin-left: auto; }
     .cover {
-      width: 64px; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+      grid-column: 1; grid-row: 1 / span 2; align-self: stretch;
+      width: 112px; min-height: 112px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
       background: linear-gradient(135deg, #20272b, #111518); display: grid; place-items: center; color: var(--muted);
       font-size: 11px; font-weight: 700; position: relative;
     }
@@ -3235,12 +4984,26 @@ UI_HTML = r"""
     .model-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
     .model-table th, .model-table td { border-top: 1px solid var(--line); padding: 8px; text-align: left; vertical-align: top; }
     .model-table th { color: var(--muted); font-weight: 600; }
+    #erroredFiles .table-region { overflow: auto; }
+    .error-table { min-width: 1180px; table-layout: fixed; }
+    .error-table .check-col { width: 32px; }
+    .error-table .track-col { width: 220px; }
+    .error-table .path-col { width: 42%; }
+    .error-table .model-col { width: 170px; }
+    .error-table .error-col { width: 300px; }
+    .error-table .updated-col { width: 150px; }
+    .error-table .track-cell, .error-table .model-cell, .error-table .updated-cell { overflow-wrap: anywhere; }
+    .error-table .path-cell { max-width: 0; }
+    .error-table .error-text {
+      white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; max-height: 180px; overflow: auto;
+    }
     .score { color: var(--accent-2); font-weight: 700; }
     .jobs { display: grid; gap: 8px; }
     .job { border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: #14181b; }
     .job pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 0; }
     .bar { height: 6px; background: #0b0d0f; border-radius: 999px; overflow: hidden; margin-top: 8px; }
     .fill { height: 100%; background: var(--accent); width: 0%; }
+    .status-deferred .fill { background: var(--accent-2); }
     .status-failed .fill { background: var(--bad); }
     .pill { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); font-size: 12px; }
     .bad-pill { border: 1px solid var(--bad); color: var(--bad); background: transparent; }
@@ -3248,6 +5011,10 @@ UI_HTML = r"""
       flex-shrink: 0; border-top: 1px solid var(--line); background: #0f1316;
       padding: 12px 18px; display: grid; gap: 8px;
     }
+    .navidrome-debug {
+      color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .build-marker { color: var(--accent-2); font-size: 12px; font-weight: 700; }
     audio { width: 100%; }
     .error { color: var(--bad); min-height: 20px; }
     .active-track { border-color: var(--blue); }
@@ -3280,13 +5047,49 @@ UI_HTML = r"""
     @media (max-width: 920px) {
       .app { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--line); }
-      .stats, .layout, .browse-layout { grid-template-columns: 1fr; }
+      .stats, .layout, .browse-layout, .instant-mix-layout { grid-template-columns: 1fr; }
       .section-fill.active > .layout,
-      .section-fill.active > .browse-layout {
+      .section-fill.active > .browse-layout,
+      .section-fill.active > .instant-mix-layout {
         grid-template-rows: minmax(180px, .9fr) minmax(240px, 1.1fr);
       }
-      .track-body { grid-template-columns: 52px minmax(0, 1fr); }
-      .cover { width: 52px; }
+      .track:has(.track-body) { grid-template-columns: 80px minmax(0, 1fr); }
+      .cover { width: 80px; min-height: 80px; }
+      .track-card-line { display: block; }
+      .track-card-right { text-align: left; white-space: normal; }
+    }
+    .metrics-layout { display:grid; grid-template-columns:minmax(260px, 340px) minmax(0, 1fr); gap:16px; height:100%; min-height:0; }
+    .metrics-controls { flex-shrink:0; }
+    .metric-filter-scroll { flex:1; min-height:0; overflow-y:auto; padding-right:4px; padding-bottom:8px; margin-top:8px; }
+    .metric-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; margin-bottom:12px; }
+    .metric-card { border:1px solid var(--line); border-radius:8px; padding:10px; background:var(--panel-2); cursor:pointer; }
+    .metric-card.active { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+    .metric-card strong { display:block; margin-bottom:4px; }
+    .metric-filter { border-top:1px solid var(--line); padding-top:10px; margin-top:10px; }
+    .metric-filter:first-child { border-top:0; padding-top:0; margin-top:0; }
+    .metric-value-list { display:grid; gap:6px; margin-top:8px; max-height:240px; overflow:auto; padding-right:4px; }
+    .metric-value-list label { margin:0; display:grid; grid-template-columns:18px minmax(0, 1fr); align-items:center; gap:6px; font-size:12px; }
+    .metric-value-list span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .range-pair { display:grid; gap:8px; margin-top:8px; min-width:0; }
+    .range-values { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .range-values input { min-height:34px; min-width:0; }
+    .range-slider { position:relative; height:30px; margin:0 2px; }
+    .range-slider .range-track { position:absolute; left:0; right:0; top:13px; height:4px; border-radius:999px; background:var(--line); }
+    .range-slider input[type="range"] {
+      position:absolute; left:0; top:0; width:100%; min-height:30px; padding:0; margin:0;
+      background:transparent; pointer-events:none; -webkit-appearance:none; appearance:none;
+    }
+    .range-slider input[type="range"]::-webkit-slider-thumb { pointer-events:auto; -webkit-appearance:none; appearance:none; width:16px; height:16px; border-radius:50%; background:var(--accent); border:0; }
+    .range-slider input[type="range"]::-moz-range-thumb { pointer-events:auto; width:16px; height:16px; border-radius:50%; background:var(--accent); border:0; }
+    .range-slider input[type="range"]::-webkit-slider-runnable-track { background:transparent; }
+    .range-slider input[type="range"]::-moz-range-track { background:transparent; }
+    .feature-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+    .feature-chip { border:1px solid var(--line); border-radius:999px; padding:3px 8px; font-size:12px; color:var(--muted); }
+    @media (max-width: 1100px) { .metrics-layout { grid-template-columns:minmax(320px, .75fr) minmax(360px, 1.25fr); } }
+    @media (max-width: 900px) {
+      .metrics-layout { grid-template-columns:1fr; overflow:auto; }
+      .metrics-layout > .panel { min-height:420px; }
+      .metric-filter-scroll { max-height:none; }
     }
   </style>
 </head>
@@ -3298,36 +5101,32 @@ UI_HTML = r"""
         <button class="active" data-nav="dashboard" onclick="showSection('dashboard')">Dashboard</button>
         <button data-nav="library" onclick="showSection('library')">Library</button>
         <button data-nav="browse" onclick="showSection('browse')">Browse</button>
+        <button data-nav="metrics" onclick="showSection('metrics')">Metrics</button>
         <button data-nav="lostFiles" onclick="showSection('lostFiles')">Lost files</button>
         <button data-nav="erroredFiles" onclick="showSection('erroredFiles')">Errored files</button>
         <button data-nav="recommendations" onclick="showSection('recommendations')">Recommendations</button>
+        <button data-nav="textSearch" onclick="showSection('textSearch')">Text search</button>
         <button data-nav="navidromeLikes" onclick="showSection('navidromeLikes')">Navidrome likes</button>
+        <button data-nav="instantMix" onclick="showSection('instantMix')">Instant mix</button>
         <button data-nav="evaluation" onclick="showSection('evaluation')">Evaluation</button>
         <button data-nav="jobs" onclick="showSection('jobsPage')">Jobs</button>
+        <button data-nav="workers" onclick="showSection('workersPage')">Workers</button>
         <button data-nav="settings" onclick="showSection('settings')">Settings</button>
       </nav>
     </aside>
     <main>
       <section id="dashboard" class="section active">
-        <div class="stats">
+        <div class="stats" id="dashboardCards">
           <div class="stat"><strong id="tracks">0</strong><span>tracks</span></div>
-          <div class="stat"><strong id="missing">0</strong><span>need embeddings</span></div>
           <div class="stat"><strong id="missingHeadPackTracks">0</strong><span>need tags</span></div>
           <div class="stat"><strong id="missingAudioFeatures">0</strong><span>need audio features</span></div>
           <div class="stat"><strong id="missingFiles">0</strong><span>lost files</span></div>
-          <div class="stat"><strong id="navidromeExternalTracks">0</strong><span>Navidrome IDs</span></div>
-          <div class="stat"><strong id="indexState">no</strong><span>index</span></div>
+          <div class="stat"><strong id="erroredFilesStat">0</strong><span>errored files</span></div>
+          <div class="stat"><strong id="navidromeExternalTracks">0</strong><span>Navidrome mapped</span></div>
         </div>
+        <div class="model-cards" id="modelCards"></div>
         <div class="panel">
           <h2>Pipeline</h2>
-          <div class="actions">
-            <button id="navidromeSyncBtn" onclick="startNavidromeSync()">Sync Navidrome</button>
-            <button id="analyzeBtn" onclick="startAnalyze()">Analyze missing</button>
-            <button id="analyzeHeadsBtn" onclick="startAnalyzeHeads()">Analyze Discogs-EffNet heads</button>
-            <button id="analyzeAudioFeaturesBtn" onclick="startAnalyzeAudioFeatures()">Analyze audio features</button>
-            <button id="indexBtn" onclick="startIndex()">Build index</button>
-            <button class="primary" onclick="refreshAll()">Refresh</button>
-          </div>
           <div class="meta" id="modelState"></div>
         </div>
         <details class="panel" id="headPackDetails">
@@ -3412,6 +5211,46 @@ UI_HTML = r"""
           </div>
         </div>
       </section>
+      <section id="metrics" class="section section-fill">
+        <div class="metrics-layout">
+          <div class="panel panel-fill">
+            <div class="metrics-controls">
+            <div class="row" style="justify-content:space-between; margin-bottom:10px">
+              <h2>Metrics</h2>
+              <button onclick="clearMetricFilters()">Clear</button>
+            </div>
+            <label style="margin-top:0">Source
+              <select id="metricsSource" onchange="loadMetricsExplorer()">
+                <option value="audio_features">Audio features</option>
+                <option value="heads">Discogs-EffNet heads</option>
+              </select>
+            </label>
+            <label style="margin-top:0">Extractor
+              <input id="metricsExtractor" value="audio_features_v1" onchange="loadMetricsExplorer()">
+            </label>
+            <div class="search">
+              <input id="metricsQuery" placeholder="Search artist, title, album, path">
+              <button onclick="searchMetrics()">Search</button>
+            </div>
+            <label>Sort by
+              <select id="metricsSort" onchange="searchMetrics()"></select>
+            </label>
+            <label>Limit
+              <input id="metricsLimit" type="number" min="1" max="500" value="50" onchange="searchMetrics()">
+            </label>
+            </div>
+            <div id="metricFilterList" class="metric-filter-scroll"></div>
+          </div>
+          <div class="panel panel-fill">
+            <div class="row" style="justify-content:space-between; margin-bottom:10px">
+              <h2>Catalog lab</h2>
+              <span class="pill" id="metricsResultCount">0 tracks</span>
+            </div>
+            <div id="metricsSummary" class="metric-grid"></div>
+            <div class="list-region"><div id="metricsResults" class="list"></div></div>
+          </div>
+        </div>
+      </section>
       <section id="lostFiles" class="section section-fill">
         <div class="panel panel-fill">
           <div class="row" style="justify-content:space-between; margin-bottom:10px">
@@ -3482,6 +5321,54 @@ UI_HTML = r"""
           </div>
         </div>
       </section>
+      <section id="textSearch" class="section section-fill">
+        <div class="layout">
+          <div class="panel panel-fill">
+            <h2>Text search</h2>
+            <label style="margin-top:0">Describe music
+              <textarea id="textSearchQuery" rows="5" placeholder="deep dub techno with warm chords and no vocals"></textarea>
+            </label>
+            <div class="actions">
+              <button class="primary" onclick="runTextSearch()">Search</button>
+              <button onclick="clearTextSearch()">Clear</button>
+            </div>
+            <div class="row">
+              <label style="margin:0">Count
+                <input id="textSearchCount" type="number" min="1" max="500" value="50">
+              </label>
+              <label style="margin:0">Min similarity
+                <input id="textSearchMinSimilarity" type="number" min="0" max="1" step="0.001" value="">
+              </label>
+            </div>
+            <label>Max per artist
+              <input id="textSearchMaxPerArtist" type="number" min="1" max="100" value="2">
+            </label>
+            <label class="row">
+              <input id="textSearchExcludeSameAlbum" type="checkbox" checked style="min-height:auto">
+              <span>Exclude same album</span>
+            </label>
+            <div class="meta" id="textSearchStatus">Model: muq_mulan</div>
+            <div class="actions">
+              <button onclick="setTextSearchQuery('ambient dub, spacious, slow')">ambient dub</button>
+              <button onclick="setTextSearchQuery('fast electro, metallic drums')">fast electro</button>
+              <button onclick="setTextSearchQuery('warm deep house, late night')">deep house</button>
+              <button onclick="setTextSearchQuery('breakbeat, melancholic, 90s')">breakbeat</button>
+              <button onclick="setTextSearchQuery('dark minimal techno, hypnotic')">minimal techno</button>
+            </div>
+            <h2 style="margin-top:18px">Recent queries</h2>
+            <div id="textSearchRecent" class="list"></div>
+          </div>
+          <div class="panel panel-fill">
+            <div class="row" style="justify-content:space-between; margin-bottom:10px">
+              <h2>Results</h2>
+              <span class="pill">muq_mulan</span>
+            </div>
+            <div class="list-region"><div id="textSearchResults" class="list">
+              <div class="meta">Describe the music you want to find.</div>
+            </div></div>
+          </div>
+        </div>
+      </section>
       <section id="navidromeLikes" class="section section-fill">
         <div class="panel blend-status">
           <div class="row" style="justify-content:space-between; margin-bottom:10px">
@@ -3543,6 +5430,63 @@ UI_HTML = r"""
           </div>
         </div>
       </section>
+      <section id="instantMix" class="section section-fill">
+        <div class="instant-mix-layout">
+          <div class="instant-mix-sidebar">
+            <div class="panel instant-mix-controls">
+            <div class="row" style="justify-content:space-between; margin-bottom:10px">
+              <h2>Instant mix</h2>
+              <button class="primary" onclick="loadInstantMixRequests()">Refresh</button>
+            </div>
+              <label style="margin-top:0">Model
+                <select id="instantMixModel">
+                  <option value="discogs_multi">discogs_multi</option>
+                  <option value="discogs_track">discogs_track</option>
+                  <option value="discogs_release">discogs_release</option>
+                  <option value="discogs_label">discogs_label</option>
+                  <option value="muq_mulan">muq_mulan</option>
+                </select>
+              </label>
+              <div class="row">
+                <label style="margin:0">Count
+                  <input id="instantMixCount" type="number" min="1" max="500" value="50">
+                </label>
+                <label style="margin:0">Min similarity
+                  <input id="instantMixMinSimilarity" type="number" min="0" max="1" step="0.001" value="0.5">
+                </label>
+              </div>
+              <label>Max per artist
+                <input id="instantMixMaxPerArtist" type="number" min="1" max="100" value="2">
+              </label>
+              <label class="row">
+                <input id="instantMixExcludeSameAlbum" type="checkbox" checked style="min-height:auto">
+                <span>Exclude same album</span>
+              </label>
+              <label class="row">
+                <input id="instantMixCountCollaborationArtists" type="checkbox" checked style="min-height:auto">
+                <span>Count collaboration artists in artist cap</span>
+              </label>
+              <div class="actions">
+                <button onclick="saveInstantMixSettings()">Save settings</button>
+              </div>
+              <div class="meta" id="instantMixStatus">Settings are loaded from runtime config.</div>
+            </div>
+            <div class="panel panel-fill instant-mix-history">
+              <h2>Requests</h2>
+              <div class="list-region" style="margin-top:12px"><div id="instantMixRequests" class="list"></div></div>
+            </div>
+          </div>
+          <div class="panel panel-fill">
+            <div class="row" style="justify-content:space-between; margin-bottom:10px">
+              <h2>Request detail</h2>
+              <button onclick="backToInstantMixList()">Back</button>
+            </div>
+            <div class="list-region"><div id="instantMixDetail" class="list">
+              <div class="meta">Select a request to inspect returned tracks and parameters.</div>
+            </div></div>
+          </div>
+        </div>
+      </section>
       <section id="evaluation" class="section section-fill">
         <div class="layout">
           <div class="panel panel-fill">
@@ -3578,9 +5522,12 @@ UI_HTML = r"""
           <h2>Job details</h2>
           <div id="jobDetail" class="jobs"><div class="meta">Select a job to inspect queued, leased, and failed tasks.</div></div>
         </div>
+      </section>
+      <section id="workersPage" class="section">
         <div class="panel">
           <h2>Workers</h2>
-          <div id="workers" class="jobs"></div>
+          <div id="workersSummary" class="stats"></div>
+          <div id="workersList" class="jobs"></div>
         </div>
       </section>
       <section id="settings" class="section">
@@ -3590,7 +5537,9 @@ UI_HTML = r"""
           <select id="model">
             <option value="discogs_multi">discogs_multi</option>
             <option value="discogs_track">discogs_track</option>
+            <option value="discogs_release">discogs_release</option>
             <option value="discogs_label">discogs_label</option>
+            <option value="muq_mulan">muq_mulan</option>
           </select>
         </label>
         <label><span class="label-title">Analyze limit <span class="info" tabindex="0" data-tooltip="Maximum number of missing tracks to process in one job. Empty means all missing tracks. Smaller batches are easier to test.">(i)</span></span>
@@ -3609,6 +5558,17 @@ UI_HTML = r"""
         <label><span class="label-title">Analyze TF threads <span class="info" tabindex="0" data-tooltip="TensorFlow/OMP threads per analyzer process. Too high causes contention; benchmarked default is 4 with 4 workers.">(i)</span></span>
           <input id="tfThreads" type="number" min="1" value="4">
         </label>
+        <h3>Audio features</h3>
+        <label><span class="label-title">Feature extractor <span class="info" tabindex="0" data-tooltip="Audio feature pipeline version stored in track_features. Rescan deletes existing values for this extractor and queues tracks for re-analysis.">(i)</span></span>
+          <select id="audioFeaturesExtractor">
+            <option value="audio_features_v1">audio_features_v1</option>
+          </select>
+        </label>
+        <div class="meta" id="audioFeaturesStatus">Audio feature status not loaded yet.</div>
+        <div class="actions">
+          <button id="rescanAudioFeaturesBtn" onclick="rescanAudioFeatures()">Rescan audio features</button>
+        </div>
+        <div class="meta" id="audioFeaturesRescanStatus"></div>
         <h3>Navidrome</h3>
         <label><span class="label-title">Navidrome URL <span class="info" tabindex="0" data-tooltip="Base URL that this app can reach, for example http://192.168.1.41:4533 or http://navidrome:4533 from Docker.">(i)</span></span>
           <input id="navidromeUrl" placeholder="http://127.0.0.1:4533">
@@ -3651,16 +5611,16 @@ UI_HTML = r"""
           <input id="workerId" value="gpu-4090-1" oninput="refreshWorkerCommand()">
         </label>
         <label><span class="label-title">Claim batch size <span class="info" tabindex="0" data-tooltip="How many queued tasks the worker asks for in one claim. Higher values reduce API round trips.">(i)</span></span>
-          <input id="workerClaimBatchSize" type="number" min="1" value="32" oninput="refreshWorkerCommand()">
+          <input id="workerClaimBatchSize" type="number" min="1" value="2" oninput="refreshWorkerCommand()">
         </label>
         <label><span class="label-title">Max in-flight tasks <span class="info" tabindex="0" data-tooltip="Maximum leased tasks held by the worker while it downloads and processes audio. Keep this high enough to avoid GPU starvation.">(i)</span></span>
-          <input id="workerMaxInflightTasks" type="number" min="1" value="128" oninput="refreshWorkerCommand()">
+          <input id="workerMaxInflightTasks" type="number" min="1" value="2" oninput="refreshWorkerCommand()">
         </label>
         <label><span class="label-title">Download concurrency <span class="info" tabindex="0" data-tooltip="How many source audio files the worker downloads at the same time. Useful on fast LAN storage.">(i)</span></span>
-          <input id="workerDownloadConcurrency" type="number" min="1" value="8" oninput="refreshWorkerCommand()">
+          <input id="workerDownloadConcurrency" type="number" min="1" value="1" oninput="refreshWorkerCommand()">
         </label>
         <label><span class="label-title">Submit batch size <span class="info" tabindex="0" data-tooltip="How many results/failures the worker sends back in one request.">(i)</span></span>
-          <input id="workerSubmitBatchSize" type="number" min="1" value="32" oninput="refreshWorkerCommand()">
+          <input id="workerSubmitBatchSize" type="number" min="1" value="1" oninput="refreshWorkerCommand()">
         </label>
         <label><span class="label-title">Lease seconds <span class="info" tabindex="0" data-tooltip="How long the server waits before returning an unfinished leased task to the queue. Increase for slow models or long tracks.">(i)</span></span>
           <input id="workerLeaseSeconds" type="number" min="30" value="900" oninput="refreshWorkerCommand()">
@@ -3702,17 +5662,22 @@ UI_HTML = r"""
       <strong id="nowPlaying">No track loaded</strong>
       <span class="error" id="playerError"></span>
     </div>
+    <div class="navidrome-debug" id="navidromeLikeDebug">
+      <span class="build-marker">UI build likes-remote-only-20260611-1918</span>
+      · Navidrome likes debug: idle
+    </div>
     <audio id="audioPlayer" controls preload="none"></audio>
   </div>
   <script>
     const SETTINGS_KEY = "discocs.settings.v1";
-    const LIKED_EXTRA_KEY = "discocs.likedExtra.v1";
+    const BLEND_EXTRA_KEY = "discocs.blendExtra.v1";
     const SETTINGS_FIELDS = [
-      "model", "limit", "analyzeExecutionMode", "workers", "tfThreads",
+      "model", "limit", "analyzeExecutionMode", "workers", "tfThreads", "audioFeaturesExtractor",
       "workerServerUrl", "workerId", "workerClaimBatchSize", "workerMaxInflightTasks",
       "workerDownloadConcurrency", "workerSubmitBatchSize", "workerLeaseSeconds",
       "workerMaxTasksBeforeExit",
-      "k", "maxPerArtist", "excludeSameAlbum"
+      "k", "maxPerArtist", "excludeSameAlbum",
+      "textSearchCount", "textSearchMinSimilarity", "textSearchMaxPerArtist", "textSearchExcludeSameAlbum"
     ];
     const NAVIDROME_SETTINGS_FIELDS = [
       "navidromeUrl", "navidromeUser", "navidromeAuthMode", "navidromeTimeoutSeconds",
@@ -3725,15 +5690,34 @@ UI_HTML = r"""
     let lastJobs = [];
     let seedBasket = [];
     let likedCatalog = null;
+    let navidromeLikeIdsRefreshScheduled = false;
+    let navidromeLikeLastDebug = "idle";
     let extraBlendIds = [];
+    let currentInstantMixRequestId = null;
+    let textSearchRecentQueries = [];
     let evaluationIndex = -1;
     let browseFilters = {};
     let lostFilesPage = 1;
     const lostFilesPageSize = 50;
     let erroredFilesPage = 1;
     const erroredFilesPageSize = 50;
+    let statsInFlight = false;
+    let jobsInFlight = false;
     function model() { return document.getElementById("model").value; }
     function text(value) { return value || ""; }
+    function formatDuration(seconds) {
+      const value = Number(seconds);
+      if (!Number.isFinite(value) || value < 0) return "";
+      const total = Math.round(value);
+      if (total < 60) return `${total}s`;
+      const days = Math.floor(total / 86400);
+      const hours = Math.floor((total % 86400) / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const secs = total % 60;
+      if (days > 0) return `${days}d ${String(hours).padStart(2, "0")}h`;
+      if (hours > 0) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+      return `${minutes}m ${String(secs).padStart(2, "0")}s`;
+    }
     function esc(value) {
       return String(value ?? "").replace(/[&<>"']/g, char => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -3746,11 +5730,28 @@ UI_HTML = r"""
       if (parts.length <= 2) return path;
       return parts.slice(-2).join(" / ");
     }
-    async function json(url, options) {
-      const response = await fetch(url, options);
+    async function json(url, options = {}) {
+      const timeoutMs = options.timeoutMs || 30000;
+      const timeoutController = new AbortController();
+      const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+      const externalSignal = options.signal;
+      if (externalSignal) {
+        if (externalSignal.aborted) timeoutController.abort();
+        else externalSignal.addEventListener("abort", () => timeoutController.abort(), {once: true});
+      }
+      const fetchOptions = {...options, signal: timeoutController.signal};
+      delete fetchOptions.timeoutMs;
+      try {
+      const response = await fetch(url, fetchOptions);
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || response.statusText);
       return data;
+      } catch (err) {
+        if (err.name === "AbortError") throw new Error("Request timed out or was cancelled");
+        throw err;
+      } finally {
+        clearTimeout(timeoutId);
+      }
     }
     function readSavedSettings() {
       try {
@@ -3799,17 +5800,18 @@ UI_HTML = r"""
     function refreshWorkerCommand() {
       const server = workerSetting("workerServerUrl", "http://127.0.0.1:8711");
       const workerId = workerSetting("workerId", "gpu-4090-1");
+      const embeddingModels = "discogs_multi,discogs_track,discogs_release,discogs_label,muq_mulan";
       const command = [
         "recs worker",
         "--server", shellQuote(server),
         "--worker-id", shellQuote(workerId),
-        "--models", shellQuote(model()),
+        "--models", embeddingModels,
         "--models", "audio_features_v1",
         "--models", "discogs-effnet-heads",
-        "--claim-batch-size", workerSetting("workerClaimBatchSize", "32"),
-        "--max-inflight-tasks", workerSetting("workerMaxInflightTasks", "128"),
-        "--download-concurrency", workerSetting("workerDownloadConcurrency", "8"),
-        "--submit-batch-size", workerSetting("workerSubmitBatchSize", "32"),
+        "--claim-batch-size", workerSetting("workerClaimBatchSize", "2"),
+        "--max-inflight-tasks", workerSetting("workerMaxInflightTasks", "2"),
+        "--download-concurrency", workerSetting("workerDownloadConcurrency", "1"),
+        "--submit-batch-size", workerSetting("workerSubmitBatchSize", "1"),
         "--lease-seconds", workerSetting("workerLeaseSeconds", "900"),
         "--max-tasks-before-exit", workerSetting("workerMaxTasksBeforeExit", "0")
       ].join(" ");
@@ -3820,15 +5822,25 @@ UI_HTML = r"""
       dashboard: "dashboard",
       library: "library",
       browse: "browse",
+      metrics: "metrics",
       lostFiles: "lostFiles",
       erroredFiles: "erroredFiles",
       recommendations: "recommendations",
+      textSearch: "textSearch",
       navidromeLikes: "navidromeLikes",
+      instantMix: "instantMix",
       evaluation: "evaluation",
       jobs: "jobsPage",
+      workers: "workersPage",
       settings: "settings",
     };
     const BROWSE_FACET_KEYS = ["folder", "genre", "year", "artist", "album"];
+    let metricSummaries = [];
+    let metricFilters = {};
+    let metricsLoadController = null;
+    let metricsSearchController = null;
+    let metricsLoadSeq = 0;
+    let metricsSearchSeq = 0;
     let applyingRoute = false;
 
     function sectionIdForView(view) {
@@ -3836,6 +5848,7 @@ UI_HTML = r"""
     }
     function viewForSection(sectionId) {
       if (sectionId === "jobsPage") return "jobs";
+      if (sectionId === "workersPage") return "workers";
       return sectionId;
     }
     function paramsFromSearch(search = location.search) {
@@ -3852,6 +5865,15 @@ UI_HTML = r"""
         k: document.getElementById("k").value,
         max_per_artist: document.getElementById("maxPerArtist").value,
         exclude_same_album: document.getElementById("excludeSameAlbum").checked ? "true" : "false",
+      };
+    }
+    function textSearchParams() {
+      return {
+        text_query: document.getElementById("textSearchQuery").value.trim(),
+        count: document.getElementById("textSearchCount").value,
+        min_similarity: document.getElementById("textSearchMinSimilarity").value,
+        max_per_artist: document.getElementById("textSearchMaxPerArtist").value,
+        exclude_same_album: document.getElementById("textSearchExcludeSameAlbum").checked ? "true" : "false",
       };
     }
     function libraryParams() {
@@ -3882,7 +5904,9 @@ UI_HTML = r"""
       document.querySelectorAll(".section").forEach(section => section.classList.toggle("active", section.id === sectionId));
       document.querySelectorAll("nav button").forEach(button => button.classList.toggle(
         "active",
-        button.dataset.nav === sectionId || (sectionId === "jobsPage" && button.dataset.nav === "jobs")
+        button.dataset.nav === sectionId
+        || (sectionId === "jobsPage" && button.dataset.nav === "jobs")
+        || (sectionId === "workersPage" && button.dataset.nav === "workers")
       ));
     }
     function applySettingsFromParams(params) {
@@ -3947,9 +5971,23 @@ UI_HTML = r"""
           if (params.query !== undefined) document.getElementById("browseQuery").value = params.query;
           if (params.embedding_status) document.getElementById("browseEmbeddingStatus").value = params.embedding_status;
           await refreshBrowse({updateUrl: false});
+        } else if (sectionId === "metrics") {
+          if (params.query !== undefined) document.getElementById("metricsQuery").value = params.query;
+          if (params.source) document.getElementById("metricsSource").value = params.source;
+          await loadMetricsExplorer({updateUrl: false});
         } else if (sectionId === "recommendations") {
           if (params.seedQuery !== undefined) document.getElementById("seedQuery").value = params.seedQuery;
           await restoreRecommendations(params);
+        } else if (sectionId === "textSearch") {
+          if (params.text_query !== undefined) document.getElementById("textSearchQuery").value = params.text_query;
+          if (params.count) document.getElementById("textSearchCount").value = params.count;
+          if (params.min_similarity !== undefined) document.getElementById("textSearchMinSimilarity").value = params.min_similarity;
+          if (params.max_per_artist) document.getElementById("textSearchMaxPerArtist").value = params.max_per_artist;
+          if (params.exclude_same_album !== undefined) {
+            document.getElementById("textSearchExcludeSameAlbum").checked = params.exclude_same_album !== "false";
+          }
+          renderTextSearchRecent();
+          if ((params.text_query || "").trim()) await runTextSearch({updateUrl: false});
         } else if (sectionId === "navidromeLikes") {
           if (params.filter) document.getElementById("likedFilter").value = params.filter;
           if (params.autoload === "1") await loadNavidromeLikes({updateUrl: false});
@@ -3957,6 +5995,12 @@ UI_HTML = r"""
           if (params.refresh === "1" && likedReadyTrackIds().length) {
             await refreshLikedRecommendations({updateUrl: false});
           }
+        } else if (sectionId === "instantMix") {
+          await loadInstantMixSettings();
+          const requests = await loadInstantMixRequests({updateUrl: false});
+          if (params.request) await loadInstantMixRequestDetail(params.request, {updateUrl: false});
+          else if (requests.length) await loadInstantMixRequestDetail(requests[0].id, {updateUrl: true});
+          else renderInstantMixEmptyDetail();
         } else if (sectionId === "evaluation") {
           if (params.index !== undefined && seedBasket.length) {
             const index = Math.max(0, Math.min(Number(params.index), seedBasket.length - 1));
@@ -3970,6 +6014,10 @@ UI_HTML = r"""
           await loadErroredFiles({updateUrl: false});
         } else if (sectionId === "jobsPage") {
           if (params.job) await loadJobDetail(params.job, {updateUrl: false});
+        } else if (sectionId === "workersPage") {
+          await refreshWorkers();
+        } else if (sectionId === "settings") {
+          await loadAudioFeaturesSettings();
         }
       } finally {
         applyingRoute = false;
@@ -3985,6 +6033,9 @@ UI_HTML = r"""
       const url = search ? `?${search}` : location.pathname;
       if (replace) history.replaceState({route: merged}, "", url);
       else history.pushState({route: merged}, "", url);
+    }
+    function syncModelRoute() {
+      pushRouteOnly({model: model()}, {replace: true});
     }
     function routeTo(params, {replace = false, reset = false} = {}) {
       const merged = mergeRouteParams(params, {reset});
@@ -4014,16 +6065,99 @@ UI_HTML = r"""
       }, {replace: true, reset: true});
     }
     async function refreshStats() {
-      const data = await json(`/stats?model=${encodeURIComponent(model())}`);
-      document.getElementById("tracks").textContent = data.tracks;
-      document.getElementById("missing").textContent = data.missing_embeddings;
-      document.getElementById("missingHeadPackTracks").textContent = data.head_pack_missing_tracks;
-      document.getElementById("missingAudioFeatures").textContent = data.audio_features_missing_tracks;
-      document.getElementById("missingFiles").textContent = data.missing_files;
-      document.getElementById("navidromeExternalTracks").textContent = data.navidrome_external_tracks;
-      document.getElementById("indexState").textContent = data.index_exists ? "yes" : "no";
-      document.getElementById("modelState").textContent = `Model file: ${data.model_exists ? "ready" : "missing"} · ${data.model_path}`;
-      renderHeadPackStatus(data.head_pack);
+      if (statsInFlight) return;
+      statsInFlight = true;
+      try {
+        const data = await json(`/stats?model=${encodeURIComponent(model())}`, {timeoutMs: 30000});
+        renderDashboardCards(data);
+        renderModelCards(data);
+        const indexStatus = data.index_status || (data.index_exists ? "ready" : "missing");
+        const indexCount = data.index_count ?? "?";
+        const embeddingCount = data.index_embedding_count ?? data.embeddings;
+        document.getElementById("modelState").textContent =
+          `Model file: ${data.model_exists ? "ready" : "missing"} · ${data.model_path} · ` +
+          `Index: ${indexStatus} (${indexCount}/${embeddingCount}) · ${data.index}`;
+        renderHeadPackStatus(data.head_pack);
+      } catch (err) {
+        document.getElementById("modelState").textContent = `Stats unavailable: ${err.message}`;
+      } finally {
+        statsInFlight = false;
+      }
+    }
+    function countText(value) {
+      const numeric = Number(value || 0);
+      return Number.isFinite(numeric) ? numeric.toLocaleString() : text(value);
+    }
+    function statusPill(status) {
+      const value = status || "missing";
+      return `<span class="pill status-${text(value)}">${text(value)}</span>`;
+    }
+    function statCard(title, value, subtitle, detailsHtml = "", actionHtml = "") {
+      return `<div class="stat">
+        <h3>${text(title)}</h3>
+        <div class="stat-count"><strong>${countText(value)}</strong><span>${text(subtitle)}</span></div>
+        <div class="stat-lines">${detailsHtml}</div>
+        <div class="stat-actions">${actionHtml}</div>
+      </div>`;
+    }
+    function modelStatCard(className, title, value, subtitle, detailsHtml = "", actionHtml = "") {
+      return `<div class="stat model-card${className}">
+        <h3>${text(title)}</h3>
+        <div class="stat-count"><strong>${countText(value)}</strong><span>${text(subtitle)}</span></div>
+        <div class="stat-lines">${detailsHtml}</div>
+        <div class="stat-actions">${actionHtml}</div>
+      </div>`;
+    }
+    function detailLine(value) {
+      return `<div class="meta">${value}</div>`;
+    }
+    function rebuildIndexButton(modelName) {
+      return `<button class="dashboard-index-btn stat-icon-button" data-model="${text(modelName)}" onclick="startIndex('${text(modelName)}')" title="Rebuild index" aria-label="Rebuild index">&#8635;</button>`;
+    }
+    function jobRunning(kind) {
+      return (lastJobs || []).some(job => job.kind === kind && ["queued", "running"].includes(job.status));
+    }
+    function disabledAttr(kind) {
+      return "";
+    }
+    function indexStatusText(status) {
+      const value = status || "missing";
+      return `<span class="index-status-${text(value)}">${text(value)}</span>`;
+    }
+    function renderDashboardCards(data) {
+      const audio = data.audio_features || {};
+      const headPack = data.head_pack || {};
+      const cards = [
+        statCard("Tracks", data.tracks, "total tracks", detailLine("Navidrome catalog"), `<button id="navidromeSyncBtn" onclick="startNavidromeSync()"${disabledAttr("navidrome-sync")}>Sync Navidrome</button>`),
+        statCard("Audio features", audio.missing_tracks ?? data.audio_features_missing_tracks, "need audio features", detailLine(`${countText(audio.complete_tracks || 0)} ready / ${countText(data.tracks)} total`), `<button id="analyzeAudioFeaturesBtn" onclick="startAnalyzeAudioFeatures()" title="Analyze audio features"${disabledAttr("analyze-audio-features")}>Analyze missing</button>`),
+        statCard("Discogs-EffNet heads", headPack.missing_tracks ?? data.head_pack_missing_tracks, "need head outputs", detailLine(`${countText(headPack.complete_tracks || 0)} ready / ${countText(data.tracks)} total`), `<button id="analyzeHeadsBtn" onclick="startAnalyzeHeads()" title="Analyze Discogs-EffNet heads"${disabledAttr("analyze-heads")}>Analyze missing</button>`),
+        statCard("Lost files", data.missing_files, "missing on disk", detailLine("Check unavailable paths"), `<button onclick="routeTo({view: 'lostFiles', model: model()}, {reset: true})">Open</button>`),
+        statCard("Errored files", data.analysis_error_count || 0, "analysis errors", detailLine("Latest failed track/model pairs"), `<button onclick="routeTo({view: 'erroredFiles', model: model()}, {reset: true})">Open</button>`)
+      ];
+      document.getElementById("dashboardCards").innerHTML = cards.join("");
+    }
+    function renderModelCards(data) {
+      const selected = model();
+      const total = data.tracks || 0;
+      const cards = (data.model_stats || []).map(item => {
+        const indexStatus = item.index_status || (item.index_exists ? "ready" : "missing");
+        const indexCount = item.index_count ?? "?";
+        const indexEmbeddingCount = item.index_embedding_count ?? item.embeddings;
+        const selectedClass = item.model === selected ? " selected" : "";
+        const details = [
+          detailLine(`${countText(item.embeddings)} ready / ${countText(total)} total`),
+          `<div class="meta stat-index-row">index ${indexStatusText(indexStatus)} ${countText(indexCount)} / ${countText(indexEmbeddingCount)} ${rebuildIndexButton(item.model)}</div>`
+        ].join("");
+        return modelStatCard(
+          selectedClass,
+          item.model,
+          item.missing_embeddings,
+          "need embeddings",
+          details,
+          `<button class="dashboard-analyze-btn" data-model="${text(item.model)}" onclick="startAnalyze('${text(item.model)}')"${disabledAttr("analyze")}>Analyze missing</button>`
+        );
+      }).join("");
+      document.getElementById("modelCards").innerHTML = cards || `<div class="meta">No models configured.</div>`;
     }
     function renderHeadPackStatus(pack) {
       const modelFiles = pack.model_files || [];
@@ -4052,6 +6186,22 @@ UI_HTML = r"""
       if (!target) return;
       target.textContent = message;
       target.classList.toggle("error", isError);
+    }
+    function audioFeaturesExtractor() {
+      return document.getElementById("audioFeaturesExtractor").value;
+    }
+    async function loadAudioFeaturesSettings() {
+      const statusTarget = document.getElementById("audioFeaturesStatus");
+      if (!statusTarget) return;
+      try {
+        const data = await json(`/stats?model=${encodeURIComponent(model())}`, {timeoutMs: 30000});
+        const audio = data.audio_features || {};
+        const extractor = audio.extractor || audioFeaturesExtractor();
+        statusTarget.textContent =
+          `${extractor}: ${audio.complete_tracks || 0} complete, ${audio.missing_tracks || 0} missing`;
+      } catch (err) {
+        statusTarget.textContent = `Audio feature status unavailable: ${err.message}`;
+      }
     }
     async function loadNavidromeSettings() {
       try {
@@ -4113,36 +6263,362 @@ UI_HTML = r"""
         setNavidromeStatus(`Navidrome sync failed: ${err.message}`, true);
       }
     }
+    function setInstantMixStatus(message, isError = false) {
+      const target = document.getElementById("instantMixStatus");
+      if (!target) return;
+      target.textContent = message;
+      target.classList.toggle("error", isError);
+    }
+    async function loadInstantMixSettings() {
+      try {
+        const data = await json("/instant-mix/settings");
+        document.getElementById("instantMixModel").value = data.model || "discogs_multi";
+        document.getElementById("instantMixCount").value = data.count ?? 50;
+        document.getElementById("instantMixMinSimilarity").value = data.min_similarity ?? "";
+        document.getElementById("instantMixMaxPerArtist").value = data.max_per_artist ?? 2;
+        document.getElementById("instantMixExcludeSameAlbum").checked = data.exclude_same_album !== false;
+        document.getElementById("instantMixCountCollaborationArtists").checked = data.count_collaboration_artists !== false;
+        setInstantMixStatus("Instant mix settings loaded.");
+      } catch (err) {
+        setInstantMixStatus(`Failed to load instant mix settings: ${err.message}`, true);
+      }
+    }
+    async function saveInstantMixSettings() {
+      const minSimilarityRaw = document.getElementById("instantMixMinSimilarity").value;
+      const body = {
+        model: document.getElementById("instantMixModel").value,
+        count: Number(document.getElementById("instantMixCount").value || 50),
+        min_similarity: minSimilarityRaw === "" ? null : Number(minSimilarityRaw),
+        max_per_artist: Number(document.getElementById("instantMixMaxPerArtist").value || 2),
+        exclude_same_album: document.getElementById("instantMixExcludeSameAlbum").checked,
+        count_collaboration_artists: document.getElementById("instantMixCountCollaborationArtists").checked,
+      };
+      try {
+        await json("/instant-mix/settings", {
+          method: "PUT",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(body)
+        });
+        setInstantMixStatus("Instant mix settings saved.");
+        await loadInstantMixSettings();
+      } catch (err) {
+        setInstantMixStatus(`Save failed: ${err.message}`, true);
+      }
+    }
+    function renderInstantMixEmptyDetail() {
+      currentInstantMixRequestId = null;
+      document.getElementById("instantMixDetail").innerHTML =
+        `<div class="meta">Select a request to inspect returned tracks and parameters.</div>`;
+    }
+    function renderInstantMixRequestCard(item) {
+      const statusClass = item.status === "completed" ? "" : "bad-pill";
+      const when = item.created_at ? new Date(item.created_at).toLocaleString() : "";
+      const seedTitle = item.seed_track ? label(item.seed_track) : item.seed_item_id;
+      const seedMeta = item.seed_track
+        ? `#${item.seed_track.id} - ${text(item.seed_track.album) || "no album"}`
+        : `Navidrome ${item.seed_item_id}`;
+      return `<button class="track" style="text-align:left" onclick="openInstantMixRequest('${encodedArg(item.id)}')">
+        <div class="row" style="justify-content:space-between">
+          <strong>${esc(seedTitle)}</strong>
+          <span class="pill ${statusClass}">${esc(item.status)}</span>
+        </div>
+        <div class="meta">${esc(seedMeta)}</div>
+        <div class="meta">returned ${item.result_count}/${item.effective_count} - min similarity ${item.min_similarity ?? "none"}</div>
+        <div class="meta">model ${esc(item.model)}</div>
+        <div class="meta">${esc(when)}</div>
+      </button>`;
+    }
+    async function loadInstantMixRequests({updateUrl = true} = {}) {
+      try {
+        const data = await json("/instant-mix/requests?limit=100");
+        const requests = data.results || [];
+        const html = requests.map(renderInstantMixRequestCard).join("");
+        document.getElementById("instantMixRequests").innerHTML = html || `<div class="meta">No instant mix requests yet.</div>`;
+        if (updateUrl && paramsFromSearch().view !== "instantMix") {
+          pushRouteOnly({view: "instantMix"}, {replace: true, reset: true});
+        }
+        return requests;
+      } catch (err) {
+        document.getElementById("instantMixRequests").innerHTML =
+          `<div class="error">Failed to load instant mix requests: ${esc(err.message)}</div>`;
+        return [];
+      }
+    }
+    async function openInstantMixRequest(requestId) {
+      const decodedId = decodeURIComponent(requestId);
+      await routeTo({view: "instantMix", request: decodedId}, {reset: true});
+    }
+    function backToInstantMixList() {
+      routeTo({view: "instantMix"}, {reset: true});
+    }
+    function renderTrackMetaLine(t) {
+      const base = [text(t.genre), t.year || "", text(t.album)].filter(Boolean).map(esc).join(" / ");
+      const predictedGenres = (t.genre_discogs400 || [])
+        .slice(0, 3)
+        .map(prediction => formatPredictionLabel(prediction.label))
+        .filter(Boolean)
+        .join(", ");
+      return [base, predictedGenres].filter(Boolean).join(" · ");
+    }
+    function renderTrackDetailLine(t) {
+      const features = t.card_features || {};
+      const left = [];
+      const bpm = numericFeatureValue(features.bpm);
+      if (bpm !== null) left.push(`BPM ${formatBpm(bpm)}`);
+      const key = featureTextValue(features.key);
+      const scale = featureTextValue(features.scale);
+      if (key || scale) left.push([key, scale].filter(Boolean).map(esc).join(" "));
+      if (t.approachability_3c) left.push(`ap ${formatScore(t.approachability_3c.score)}`);
+      if (t.engagement_3c) left.push(`eng ${formatScore(t.engagement_3c.score)}`);
+      const right = [
+        t.year || "",
+        t.audio_format ? esc(t.audio_format) : "",
+        t.bitrate ? `${esc(t.bitrate)} kbps` : "",
+        t.duration ? formatDuration(t.duration) : "",
+      ].filter(Boolean);
+      if (!left.length && !right.length) return "";
+      return `<span class="track-card-left">${left.join(" · ")}</span><span class="track-card-right">${right.join(" · ")}</span>`;
+    }
+    function numericFeatureValue(feature) {
+      if (!feature || feature.value === null || feature.value === undefined) return null;
+      const value = Number(feature.value);
+      return Number.isFinite(value) ? value : null;
+    }
+    function featureTextValue(feature) {
+      if (!feature) return "";
+      return feature.text_value || (feature.value === null || feature.value === undefined ? "" : String(feature.value));
+    }
+    function formatBpm(value) {
+      return Number.isInteger(value) ? String(value) : value.toFixed(1);
+    }
+    function formatPredictionLabel(label) {
+      return esc(String(label || "").replace(/---/g, " / "));
+    }
+    function setNavidromeLikeDebug(message, detail = null) {
+      const suffix = detail === null || detail === undefined ? "" : ` ${typeof detail === "string" ? detail : JSON.stringify(detail)}`;
+      navidromeLikeLastDebug = `${new Date().toLocaleTimeString()} ${message}${suffix}`;
+      const target = document.getElementById("navidromeLikeDebug");
+      if (target) target.textContent = `Navidrome likes debug: ${navidromeLikeLastDebug}`;
+      console.info("[discocs navidrome likes]", message, detail ?? "");
+    }
+    function bootstrapHeartIcon(filled) {
+      const path = filled
+        ? "M8 1.314C12.438-3.248 23.534 4.735 8 15-7.534 4.736 3.562-3.248 8 1.314z"
+        : "m8 2.748-.717-.737C5.6.281 2.514.878 1.4 3.053.918 3.995.78 5.323 1.508 6.692c.681 1.28 1.997 2.67 3.889 4.068.698.516 1.426.999 2.603 1.774 1.177-.775 1.905-1.258 2.603-1.774 1.892-1.398 3.208-2.788 3.889-4.068.728-1.369.59-2.697.108-3.639-1.114-2.175-4.2-2.772-5.883-1.042L8 2.748zM8 15C-7.333 4.868 3.279-3.04 7.824 1.143c.06.055.119.112.176.171a3.12 3.12 0 0 1 .176-.17C12.72-3.042 23.333 4.867 8 15z";
+      return `<svg class="bi ${filled ? "bi-heart-fill" : "bi-heart"}" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="${path}"></path>
+      </svg>`;
+    }
+    function scheduleNavidromeLikeIdsRefresh() {
+      if (navidromeLikeIdsRefreshScheduled) return;
+      navidromeLikeIdsRefreshScheduled = true;
+      setTimeout(() => {
+        navidromeLikeIdsRefreshScheduled = false;
+        fetchAndApplyNavidromeLikeIds({silent: true});
+      }, 0);
+    }
+    function navidromeLikeButton(t) {
+      if (!t.navidrome_item_id) return "";
+      scheduleNavidromeLikeIdsRefresh();
+      return `<button
+        class="navidrome-like-button"
+        data-track-id="${t.id}"
+        data-navidrome-like="1"
+        onclick="toggleNavidromeLike(${t.id})"
+        title="Like in Navidrome"
+        aria-label="Like in Navidrome"
+      >${bootstrapHeartIcon(false)}</button>`;
+    }
+    function applyNavidromeLikeIds(data) {
+      const likedTrackIds = new Set((data?.track_ids || []).map(Number));
+      document.querySelectorAll(".navidrome-like-button").forEach(button => {
+        const trackId = Number(button.dataset.trackId);
+        const liked = likedTrackIds.has(trackId);
+        button.classList.toggle("like-active", liked);
+        const label = liked ? "Liked" : "Like";
+        button.title = `${label} in Navidrome`;
+        button.setAttribute("aria-label", `${label} in Navidrome`);
+        button.innerHTML = bootstrapHeartIcon(liked);
+        button.disabled = false;
+      });
+    }
+    async function fetchAndApplyNavidromeLikeIds({silent = false} = {}) {
+      try {
+        setNavidromeLikeDebug("GET /navidrome/starred/ids start");
+        const data = await json(`/navidrome/starred/ids?_=${Date.now()}`, {timeoutMs: 15000});
+        applyNavidromeLikeIds(data);
+        setNavidromeLikeDebug("GET /navidrome/starred/ids ok", {
+          user: data.user,
+          mapped_count: data.mapped_count,
+          track_ids: data.track_ids || [],
+        });
+        return data;
+      } catch (err) {
+        setNavidromeLikeDebug("GET /navidrome/starred/ids failed", err.message);
+        if (!silent) throw err;
+        return null;
+      }
+    }
+    async function toggleNavidromeLike(trackId) {
+      const id = Number(trackId);
+      const before = await fetchAndApplyNavidromeLikeIds({silent: false});
+      const wasLiked = new Set((before?.track_ids || []).map(Number)).has(id);
+      const nextLiked = !wasLiked;
+      const buttons = document.querySelectorAll(`.navidrome-like-button[data-track-id="${id}"]`);
+      buttons.forEach(button => button.disabled = true);
+      try {
+        setNavidromeLikeDebug(`PUT /tracks/${id}/navidrome-star start`, {starred: nextLiked});
+        await json(`/tracks/${id}/navidrome-star`, {
+          method: "PUT",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({starred: nextLiked}),
+          timeoutMs: 15000
+        });
+        setNavidromeLikeDebug(`PUT /tracks/${id}/navidrome-star ok`, {starred: nextLiked});
+        await fetchAndApplyNavidromeLikeIds({silent: false});
+        if (likedCatalog) {
+          await loadNavidromeLikes({updateUrl: false});
+        }
+      } catch (err) {
+        await fetchAndApplyNavidromeLikeIds({silent: true});
+        setNavidromeLikeDebug(`PUT /tracks/${id}/navidrome-star failed`, err.message);
+        const target = document.getElementById("likedStatusError");
+        if (target) target.textContent = err.message;
+      } finally {
+        buttons.forEach(button => button.disabled = false);
+      }
+    }
+    document.addEventListener("click", event => {
+      const button = event.target.closest(".navidrome-like-button");
+      if (!button || !button.dataset.navidromeLike) return;
+      if (button.hasAttribute("onclick")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      toggleNavidromeLike(button.dataset.trackId);
+    });
+    function renderRecommendationTrack(t, {seedTrackId = null, rank = null, allowRating = true} = {}) {
+      const prefix = rank === null || rank === undefined ? "" : `${rank + 1}. `;
+      const score = t.similarity === null || t.similarity === undefined
+        ? ""
+        : `<span class="track-score-inline">| ${formatScore(t.similarity)}</span>`;
+      const rating = allowRating && seedTrackId
+        ? `<button class="${t.rating === 3 ? "rating-active" : ""}" onclick="rateForSeed(${seedTrackId}, ${t.id}, 3)">good</button>
+            <button class="${t.rating === 2 ? "rating-active" : ""}" onclick="rateForSeed(${seedTrackId}, ${t.id}, 2)">okay</button>
+            <button class="${t.rating === 0 ? "rating-active" : ""}" onclick="rateForSeed(${seedTrackId}, ${t.id}, 0)">bad</button>`
+        : "";
+      const details = renderTrackDetailLine(t);
+      return `<div class="track ${t.id === activeTrackId ? "active-track" : ""}">
+        <div class="track-body">
+          ${coverMarkup(t)}
+          <div class="track-main">
+            <div class="track-head">
+              <div class="title track-title-row">
+                <span class="track-title-main">${prefix}<span class="track-id">#${t.id}</span> ${esc(label(t))}</span>
+                ${score}
+              </div>
+            </div>
+            <div class="meta">${renderTrackMetaLine(t)}</div>
+            ${details ? `<div class="meta track-card-line">${details}</div>` : ""}
+          </div>
+        </div>
+        <div class="track-actions">
+          <div class="track-action-group">${rating}${navidromeLikeButton(t)}</div>
+          <div class="track-action-group track-command-group">
+            <button class="icon-button" onclick="openAnalysis(${t.id})" title="Analysis metadata" aria-label="Analysis metadata">
+              <span class="icon-tablet" aria-hidden="true"></span>
+            </button>
+            <button onclick="playTrack(${t.id}, '${encodedArg(label(t))}')">Play</button>
+            <button onclick="addSeed(${t.id})">Add seed</button>
+            <button onclick="addToBlendExtra(${t.id})">Add to blend</button>
+            <button onclick="setSeed(${t.id})">Seed</button>
+          </div>
+        </div>
+      </div>`;
+    }
+    function renderInstantMixResult(item, index, seedTrackId) {
+      if (item.id) return renderRecommendationTrack(item, {seedTrackId, rank: index});
+      return `<div class="track">
+        <div class="row" style="justify-content:space-between">
+          <div class="title">${index + 1}. ${esc(item.artist || "")} - ${esc(item.title || item.item_id)}</div>
+          <span class="score">${formatScore(item.similarity)}</span>
+        </div>
+        <div class="meta">Navidrome ${esc(item.item_id)} - track #${item.track_id} - distance ${formatScore(item.distance)}</div>
+        <div class="meta">${esc(item.album || "")}</div>
+      </div>`;
+    }
+    async function loadInstantMixRequestDetail(requestId, {updateUrl = true} = {}) {
+      try {
+        const item = await json(`/instant-mix/requests/${encodeURIComponent(requestId)}`);
+        currentInstantMixRequestId = item.id;
+        const params = item.params || {};
+        const results = item.results || [];
+        const seedCard = item.seed_track
+          ? renderRecommendationTrack(item.seed_track, {allowRating: false})
+          : `<div class="track">
+              <div class="title">${esc(item.seed_item_id)}</div>
+              <div class="meta">Seed track is not available in the local catalog.</div>
+            </div>`;
+        document.getElementById("instantMixDetail").innerHTML = `
+          <div>
+            <h2>Seed track</h2>
+            ${seedCard}
+          </div>
+          <div class="track">
+            <div class="row" style="justify-content:space-between">
+              <strong>${esc(item.seed_item_id)}</strong>
+              <span class="pill ${item.status === "completed" ? "" : "bad-pill"}">${esc(item.status)}</span>
+            </div>
+            <div class="meta">request ${esc(item.id)}</div>
+            <div class="meta">track #${item.seed_track_id || ""} - model ${esc(item.model)} - ${esc(item.created_at || "")}</div>
+            <div class="meta">requested ${item.requested_count ?? "none"} - effective ${item.effective_count} - returned ${item.result_count}</div>
+            <div class="meta">min similarity ${item.min_similarity ?? "none"} - max per artist ${item.max_per_artist} - exclude same album ${item.exclude_same_album ? "yes" : "no"} - count collaboration artists ${params.count_collaboration_artists !== false ? "yes" : "no"}</div>
+            ${item.error ? `<div class="error">${esc(item.error)}</div>` : ""}
+            <pre class="meta">${esc(JSON.stringify(params, null, 2))}</pre>
+          </div>
+          <h2>Returned tracks</h2>
+          ${results.map((result, index) => renderInstantMixResult(result, index, item.seed_track_id)).join("") || `<div class="meta">No returned tracks.</div>`}`;
+        if (updateUrl) {
+          pushRouteOnly({view: "instantMix", request: item.id}, {replace: true, reset: true});
+        }
+      } catch (err) {
+        document.getElementById("instantMixDetail").innerHTML =
+          `<div class="error">Failed to load instant mix request: ${esc(err.message)}</div>`;
+      }
+    }
     function coverMarkup(t) {
       return `<div class="cover">
         <img src="/tracks/${t.id}/cover?size=128" loading="lazy" alt="" onerror="this.parentElement.classList.add('empty'); this.remove()">
       </div>`;
     }
     function renderTrack(t, mode) {
-      const emb = t.has_embedding ? "ready" : "missing";
-      const tagBits = [text(t.genre), t.year ? String(t.year) : "", text(t.album)].filter(Boolean).join(" / ");
       const addSeedButton = ["browse", "library", "seed"].includes(mode)
         ? `<button onclick="addSeed(${t.id})">Add seed</button>` : "";
       const addBlendButton = ["browse", "library", "seed", "blend"].includes(mode)
         ? `<button onclick="addToBlendExtra(${t.id})">Add to blend</button>` : "";
+      const details = renderTrackDetailLine(t);
       return `<div class="track ${t.id === seedId ? "selected" : ""} ${t.id === activeTrackId ? "active-track" : ""}">
         <div class="track-body">
           ${coverMarkup(t)}
           <div class="track-main">
-            <div class="row" style="justify-content:space-between">
-              <div class="title">#${t.id} ${label(t)}</div>
-              <div class="row">
-                <button class="icon-button" onclick="openAnalysis(${t.id})" title="Analysis metadata" aria-label="Analysis metadata">
-                  <span class="icon-tablet" aria-hidden="true"></span>
-                </button>
-                <button onclick="playTrack(${t.id}, '${encodedArg(label(t))}')">Play</button>
-                ${addSeedButton}
-                ${addBlendButton}
-                <button onclick="setSeed(${t.id})">Seed</button>
+            <div class="track-head">
+              <div class="title track-title-row">
+                <span class="track-title-main"><span class="track-id">#${t.id}</span> ${esc(label(t))}</span>
               </div>
             </div>
-            <div class="meta">${text(t.album)} ${t.duration ? `· ${Math.round(t.duration)}s` : ""} · embedding ${emb}</div>
-            <div class="path" title="${t.path}">${t.path}</div>
+            <div class="meta">${renderTrackMetaLine(t)}</div>
+            ${details ? `<div class="meta track-card-line">${details}</div>` : ""}
+          </div>
+        </div>
+        <div class="track-actions">
+          <div class="track-action-group">${navidromeLikeButton(t)}</div>
+          <div class="track-action-group track-command-group">
+            <button class="icon-button" onclick="openAnalysis(${t.id})" title="Analysis metadata" aria-label="Analysis metadata">
+              <span class="icon-tablet" aria-hidden="true"></span>
+            </button>
+            <button onclick="playTrack(${t.id}, '${encodedArg(label(t))}')">Play</button>
+            ${addSeedButton}
+            ${addBlendButton}
+            <button onclick="setSeed(${t.id})">Seed</button>
           </div>
         </div>
       </div>`;
@@ -4280,18 +6756,26 @@ UI_HTML = r"""
         return `
           <tr>
             <td><input type="checkbox" class="errored-checkbox" value="${esc(item.task_id)}"></td>
-            <td>#${item.track_id}<div class="meta">${esc(track)}</div></td>
-            <td class="path" title="${esc(item.path)}">${esc(item.path)}</td>
-            <td>${esc(item.model_name)}<div class="meta">${esc(item.job_kind)} · ${esc(item.status)} · attempt ${item.attempts}/${item.max_attempts}</div></td>
-            <td>
-              <pre class="meta" style="white-space:pre-wrap; margin:0">${esc(item.error)}</pre>
+            <td class="track-cell">#${item.track_id}<div class="meta">${esc(track)}</div></td>
+            <td class="path path-cell" title="${esc(item.path)}">${esc(item.path)}</td>
+            <td class="model-cell">${esc(item.model_name)}<div class="meta">${esc(item.job_kind)} · ${esc(item.status)} · attempt ${item.attempts}/${item.max_attempts}</div></td>
+            <td class="error-cell">
+              <pre class="meta error-text">${esc(item.error)}</pre>
               <div class="meta">${esc(item.error_type || "")}${item.stage ? ` · ${esc(item.stage)}` : ""}</div>
             </td>
-            <td>${formatDate(item.updated_at)}</td>
+            <td class="updated-cell">${formatDate(item.updated_at)}</td>
           </tr>`;
       }).join("");
       document.getElementById("erroredFilesList").innerHTML = `
-        <table class="model-table">
+        <table class="model-table error-table">
+          <colgroup>
+            <col class="check-col">
+            <col class="track-col">
+            <col class="path-col">
+            <col class="model-col">
+            <col class="error-col">
+            <col class="updated-col">
+          </colgroup>
           <thead><tr><th><input type="checkbox" onchange="toggleErroredFilesSelection(this.checked)"></th><th>Track</th><th>Path</th><th>Model</th><th>Error</th><th>Updated</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
@@ -4510,14 +6994,14 @@ UI_HTML = r"""
     }
     function readExtraBlendIds() {
       try {
-        const parsed = JSON.parse(localStorage.getItem(LIKED_EXTRA_KEY) || "[]");
+        const parsed = JSON.parse(localStorage.getItem(BLEND_EXTRA_KEY) || "[]");
         return Array.isArray(parsed) ? parsed.map(Number).filter(id => Number.isInteger(id) && id > 0) : [];
       } catch (err) {
         return [];
       }
     }
     function saveExtraBlendIds() {
-      localStorage.setItem(LIKED_EXTRA_KEY, JSON.stringify(extraBlendIds));
+      localStorage.setItem(BLEND_EXTRA_KEY, JSON.stringify(extraBlendIds));
     }
     function loadExtraBlendIds() {
       extraBlendIds = readExtraBlendIds();
@@ -4586,11 +7070,13 @@ UI_HTML = r"""
         const playButton = track.id
           ? `<button onclick="playTrack(${track.id}, '${encodedArg(label(track))}')">Play</button>`
           : "";
+        const likeButton = track.id ? navidromeLikeButton({...track, navidrome_item_id: item.item_id}) : "";
         return `<div class="track">
           <div class="row" style="justify-content:space-between">
             <div class="title">${title}</div>
             <div class="row">
               <span class="pill">${likedStatusLabel(item.status)}</span>
+              ${likeButton}
               ${playButton}
             </div>
           </div>
@@ -4613,6 +7099,7 @@ UI_HTML = r"""
               <div class="row" style="justify-content:space-between">
                 <div class="title"><span class="score">${t.similarity.toFixed(3)}</span> #${t.id} ${label(t)}</div>
                 <div class="row">
+                  ${navidromeLikeButton(t)}
                   <button onclick="playTrack(${t.id}, '${encodedArg(label(t))}')">Play</button>
                   <button onclick="setSeed(${t.id})">Seed</button>
                 </div>
@@ -4631,6 +7118,7 @@ UI_HTML = r"""
         likedCatalog = await json(`/navidrome/starred?model=${encodeURIComponent(model())}`);
         renderLikedStatus();
         renderLikedTracks();
+        await fetchAndApplyNavidromeLikeIds({silent: true});
         if (updateUrl && !applyingRoute) {
           writeRoutePatch({
             view: "navidromeLikes",
@@ -4740,6 +7228,288 @@ UI_HTML = r"""
         target.innerHTML = "";
       }
     }
+    function metricFilterFromInputs(name) {
+      const summary = metricSummaries.find(item => item.name === name);
+      const filter = {name};
+      if (summary && summary.value_count) {
+        const min = document.getElementById(`metricMin_${name}`)?.value;
+        const max = document.getElementById(`metricMax_${name}`)?.value;
+        if (min !== "") filter.min_value = Number(min);
+        if (max !== "") filter.max_value = Number(max);
+      }
+      const checked = Array.from(document.querySelectorAll(`[data-metric-value="${name}"]:checked`)).map(input => input.value);
+      if (checked.length) filter.text_values = checked;
+      return filter;
+    }
+    function metricsSource() {
+      return document.getElementById("metricsSource").value;
+    }
+    function syncMetricsSourceControls() {
+      document.getElementById("metricsExtractor").disabled = metricsSource() === "heads";
+    }
+    function metricRangeBounds(summary) {
+      const min = metricsSource() === "heads" ? 0 : Number(summary.min_value ?? 0);
+      const max = metricsSource() === "heads" ? Number(summary.max_value ?? 1) : Number(summary.max_value ?? 1);
+      const span = Math.max(max - min, 0.0001);
+      const step = metricsSource() === "heads" ? 0.01 : Math.max(span / 200, 0.01);
+      return {min, max, step};
+    }
+    function metricInitialRange(summary) {
+      const bounds = metricRangeBounds(summary);
+      if (metricsSource() === "heads") {
+        return {min: Math.min(0.5, bounds.max), max: bounds.max};
+      }
+      return {min: bounds.min, max: bounds.max};
+    }
+    function updateMetricRangeTrack(name) {
+      const summary = metricSummaries.find(item => item.name === name);
+      if (!summary) return;
+      const bounds = metricRangeBounds(summary);
+      const minInput = document.getElementById(`metricMin_${name}`);
+      const maxInput = document.getElementById(`metricMax_${name}`);
+      const track = document.getElementById(`metricTrack_${name}`);
+      if (!minInput || !maxInput || !track) return;
+      const left = ((Number(minInput.value) - bounds.min) / (bounds.max - bounds.min || 1)) * 100;
+      const right = ((Number(maxInput.value) - bounds.min) / (bounds.max - bounds.min || 1)) * 100;
+      track.style.background = `linear-gradient(to right, var(--line) 0%, var(--line) ${left}%, var(--accent) ${left}%, var(--accent) ${right}%, var(--line) ${right}%, var(--line) 100%)`;
+    }
+    function syncMetricRange(encodedName, side, rawValue, {runSearch = false} = {}) {
+      const name = decodeURIComponent(encodedName);
+      const summary = metricSummaries.find(item => item.name === name);
+      if (!summary) return;
+      const bounds = metricRangeBounds(summary);
+      const minInput = document.getElementById(`metricMin_${name}`);
+      const maxInput = document.getElementById(`metricMax_${name}`);
+      const minRange = document.getElementById(`metricMinRange_${name}`);
+      const maxRange = document.getElementById(`metricMaxRange_${name}`);
+      let minValue = minInput.value === "" ? bounds.min : Number(minInput.value);
+      let maxValue = maxInput.value === "" ? bounds.max : Number(maxInput.value);
+      if (side === "min") minValue = Number(rawValue);
+      if (side === "max") maxValue = Number(rawValue);
+      if (minValue > maxValue) {
+        if (side === "min") maxValue = minValue;
+        else minValue = maxValue;
+      }
+      minInput.value = Number(minValue.toFixed(4));
+      maxInput.value = Number(maxValue.toFixed(4));
+      minRange.value = minInput.value;
+      maxRange.value = maxInput.value;
+      updateMetricRangeTrack(name);
+      if (runSearch) searchMetrics();
+    }
+    function activeMetricFilters() {
+      return Object.keys(metricFilters)
+        .filter(name => metricFilters[name])
+        .map(metricFilterFromInputs)
+        .filter(filter => filter.name);
+    }
+    function renderMetricSummary(features) {
+      const target = document.getElementById("metricsSummary");
+      target.innerHTML = features.map(item => {
+        const isHeads = metricsSource() === "heads";
+        const range = isHeads
+          ? `labels load on select`
+          : (item.value_count
+            ? `${Number(item.min_value).toFixed(2)}-${Number(item.max_value).toFixed(2)}${item.unit ? ` ${text(item.unit)}` : ""}`
+            : `${item.text_count} text values`);
+        return `<div class="metric-card ${metricFilters[item.name] ? "active" : ""}" onclick="toggleMetricFilter('${encodedArg(item.name)}')">
+          <strong>${text(item.name)}</strong>
+          <div class="meta">${range}</div>
+          <div class="meta">${item.track_count} tracks</div>
+        </div>`;
+      }).join("") || `<div class="meta">No metrics yet. Run audio feature analysis first.</div>`;
+      const sort = document.getElementById("metricsSort");
+      const current = sort.value;
+      sort.innerHTML = `<option value="">artist/title</option>` + features
+        .filter(item => item.value_count)
+        .map(item => `<option value="${text(item.name)}">${text(item.name)}</option>`)
+        .join("");
+      if (current && features.some(item => item.name === current)) sort.value = current;
+    }
+    async function renderMetricFilters({signal = null} = {}) {
+      const target = document.getElementById("metricFilterList");
+      const names = Object.keys(metricFilters).filter(name => metricFilters[name]);
+      if (!names.length) {
+        target.innerHTML = `<div class="meta">Select metrics above to build filters.</div>`;
+        return;
+      }
+      const valueLists = new Map();
+      await Promise.all(names.map(async name => {
+        const summary = metricSummaries.find(item => item.name === name);
+        if (!summary || !summary.text_count) return;
+        const values = await json(`/metrics/features/${encodeURIComponent(name)}/values?source=${encodeURIComponent(metricsSource())}&extractor=${encodeURIComponent(document.getElementById("metricsExtractor").value)}`, {signal, timeoutMs: 30000});
+        valueLists.set(name, values.values || []);
+      }));
+      const blocks = [];
+      for (const name of names) {
+        const summary = metricSummaries.find(item => item.name === name);
+        if (!summary) continue;
+        let controls = "";
+        if (summary.value_count) {
+          const bounds = metricRangeBounds(summary);
+          const initial = metricInitialRange(summary);
+          const initialMin = Number(initial.min.toFixed(4));
+          const initialMax = Number(initial.max.toFixed(4));
+          controls += `<div class="range-pair">
+            <div class="range-values">
+              <input id="metricMin_${text(name)}" type="number" step="${bounds.step}" min="${bounds.min}" max="${bounds.max}" value="${initialMin}" onchange="syncMetricRange('${encodedArg(name)}', 'min', this.value, {runSearch: true})">
+              <input id="metricMax_${text(name)}" type="number" step="${bounds.step}" min="${bounds.min}" max="${bounds.max}" value="${initialMax}" onchange="syncMetricRange('${encodedArg(name)}', 'max', this.value, {runSearch: true})">
+            </div>
+            <div class="range-slider">
+              <div id="metricTrack_${text(name)}" class="range-track"></div>
+              <input id="metricMinRange_${text(name)}" type="range" min="${bounds.min}" max="${bounds.max}" step="${bounds.step}" value="${initialMin}" oninput="syncMetricRange('${encodedArg(name)}', 'min', this.value)" onchange="syncMetricRange('${encodedArg(name)}', 'min', this.value, {runSearch: true})">
+              <input id="metricMaxRange_${text(name)}" type="range" min="${bounds.min}" max="${bounds.max}" step="${bounds.step}" value="${initialMax}" oninput="syncMetricRange('${encodedArg(name)}', 'max', this.value)" onchange="syncMetricRange('${encodedArg(name)}', 'max', this.value, {runSearch: true})">
+            </div>
+          </div>`;
+        }
+        if (summary.text_count) {
+          const values = valueLists.get(name) || [];
+          controls += `<div class="metric-value-list">${values.map(item => `
+            <label><input type="checkbox" data-metric-value="${text(name)}" value="${text(item.value)}" onchange="searchMetrics()"><span>${text(item.value)} (${item.track_count})</span></label>
+          `).join("")}</div>`;
+        }
+        blocks.push(`<div class="metric-filter">
+          <div class="row" style="justify-content:space-between">
+            <strong>${text(name)}</strong>
+            <button onclick="toggleMetricFilter('${encodedArg(name)}')">Remove</button>
+          </div>
+          ${controls}
+        </div>`);
+      }
+      target.innerHTML = blocks.join("");
+      names.forEach(updateMetricRangeTrack);
+    }
+    async function loadMetricsExplorer({updateUrl = true} = {}) {
+      syncMetricsSourceControls();
+      if (metricsLoadController) metricsLoadController.abort();
+      metricsLoadController = new AbortController();
+      const signal = metricsLoadController.signal;
+      const seq = ++metricsLoadSeq;
+      const extractor = document.getElementById("metricsExtractor").value;
+      document.getElementById("metricsSummary").innerHTML = `<div class="meta">Loading metrics...</div>`;
+      document.getElementById("metricFilterList").innerHTML = `<div class="meta">Loading filters...</div>`;
+      try {
+      const data = await json(`/metrics/features?source=${encodeURIComponent(metricsSource())}&extractor=${encodeURIComponent(extractor)}`, {signal, timeoutMs: 30000});
+      if (seq !== metricsLoadSeq || signal.aborted) return;
+      metricSummaries = data.features || [];
+      const known = new Set(metricSummaries.map(item => item.name));
+      Object.keys(metricFilters).forEach(name => {
+        if (!known.has(name)) delete metricFilters[name];
+      });
+      renderMetricSummary(metricSummaries);
+      await renderMetricFilters({signal});
+      if (seq !== metricsLoadSeq || signal.aborted) return;
+      await searchMetrics({updateUrl});
+      } catch (err) {
+        if (seq !== metricsLoadSeq || signal.aborted) return;
+        document.getElementById("metricsSummary").innerHTML = `<div class="meta">${text(err.message)}</div>`;
+        document.getElementById("metricFilterList").innerHTML = `<div class="meta">Metrics failed to load. Try another source or refresh.</div>`;
+        document.getElementById("metricsResults").innerHTML = "";
+      }
+    }
+    async function toggleMetricFilter(encodedName) {
+      const name = decodeURIComponent(encodedName);
+      metricFilters[name] = !metricFilters[name];
+      if (metricsLoadController) metricsLoadController.abort();
+      metricsLoadController = new AbortController();
+      const signal = metricsLoadController.signal;
+      renderMetricSummary(metricSummaries);
+      try {
+        await renderMetricFilters({signal});
+      } catch (err) {
+        if (signal.aborted) return;
+        document.getElementById("metricFilterList").innerHTML = `<div class="meta">${text(err.message)}</div>`;
+      }
+      await searchMetrics();
+    }
+    function clearMetricFilters() {
+      metricFilters = {};
+      if (metricsLoadController) metricsLoadController.abort();
+      document.getElementById("metricsQuery").value = "";
+      document.getElementById("metricsSort").value = "";
+      renderMetricSummary(metricSummaries);
+      renderMetricFilters();
+      searchMetrics();
+    }
+    function relevantMetricFeatures(features) {
+      const active = activeMetricFilters();
+      const activeNames = new Set(active.map(filter => filter.name));
+      const selectedLabels = new Map(active.map(filter => [filter.name, new Set(filter.text_values || [])]));
+      let relevant = (features || []).filter(feature => {
+        if (!activeNames.size) return false;
+        if (!activeNames.has(feature.name)) return false;
+        const labels = selectedLabels.get(feature.name);
+        return !labels || !labels.size || labels.has(feature.text_value);
+      });
+      if (!relevant.length) {
+        const sortBy = document.getElementById("metricsSort").value;
+        if (sortBy) relevant = (features || []).filter(feature => feature.name === sortBy).slice(0, 3);
+      }
+      return relevant.slice(0, 8);
+    }
+    function renderFeatureChips(features) {
+      const relevant = relevantMetricFeatures(features);
+      if (!relevant.length) return "";
+      return `<div class="feature-chips">${relevant.map(feature => {
+        const value = feature.value !== null && feature.value !== undefined
+          ? `${Number(feature.value).toFixed(2)}${feature.unit ? ` ${text(feature.unit)}` : ""}`
+          : text(feature.text_value);
+        return `<span class="feature-chip">${text(feature.name)}: ${value}</span>`;
+      }).join("")}</div>`;
+    }
+    async function searchMetrics({updateUrl = true} = {}) {
+      if (metricsSearchController) metricsSearchController.abort();
+      metricsSearchController = new AbortController();
+      const signal = metricsSearchController.signal;
+      const seq = ++metricsSearchSeq;
+      const query = document.getElementById("metricsQuery").value;
+      document.getElementById("metricsResultCount").textContent = "searching";
+      document.getElementById("metricsResults").innerHTML = `<div class="meta">Searching...</div>`;
+      try {
+      const data = await json("/metrics/search", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        signal,
+        timeoutMs: 20000,
+        body: JSON.stringify({
+          source: metricsSource(),
+          extractor: document.getElementById("metricsExtractor").value,
+          query,
+          filters: activeMetricFilters(),
+          sort_by: document.getElementById("metricsSort").value || null,
+          sort_direction: metricsSource() === "heads" ? "desc" : "asc",
+          limit: Number(document.getElementById("metricsLimit").value || 50)
+        })
+      });
+      if (seq !== metricsSearchSeq || signal.aborted) return;
+      document.getElementById("metricsResultCount").textContent = `${data.count} tracks`;
+      document.getElementById("metricsResults").innerHTML = data.results.map(t => `
+        <div class="track ${t.id === activeTrackId ? "active-track" : ""}">
+          <div class="track-body">
+            ${coverMarkup(t)}
+            <div class="track-main">
+              <div class="row" style="justify-content:space-between">
+                <div class="title">#${t.id} ${label(t)}</div>
+                <div class="row">
+                  <button onclick="playTrack(${t.id}, '${encodedArg(label(t))}')">Play</button>
+                  <button onclick="setSeed(${t.id})">Seed</button>
+                </div>
+              </div>
+              <div class="meta">${[text(t.genre), t.year || "", text(t.album)].filter(Boolean).join(" / ")}</div>
+              ${renderFeatureChips(t.features)}
+              <div class="path" title="${t.path}">${t.path}</div>
+            </div>
+          </div>
+        </div>`).join("") || `<div class="meta">No tracks match these metric filters.</div>`;
+      if (updateUrl && !applyingRoute) {
+        pushRouteOnly({view: "metrics", source: metricsSource(), query, model: model()}, {replace: true, reset: true});
+      }
+      } catch (err) {
+        if (seq !== metricsSearchSeq || signal.aborted) return;
+        document.getElementById("metricsResultCount").textContent = "search failed";
+        document.getElementById("metricsResults").innerHTML = `<div class="meta">${text(err.message)}</div>`;
+      }
+    }
     async function setSeed(id) {
       routeTo({
         view: "recommendations",
@@ -4755,32 +7525,86 @@ UI_HTML = r"""
       const exclude = document.getElementById("excludeSameAlbum").checked;
       const data = await json(`/tracks/${id}/similar?model=${encodeURIComponent(model())}&k=${k}&max_per_artist=${max}&exclude_same_album=${exclude}`);
       currentSimilarTracks = data.results.map(t => ({id: t.id, label: label(t)}));
-      const html = data.results.map(t => `
-        <div class="track ${t.id === activeTrackId ? "active-track" : ""}">
-          <div class="track-body">
-            ${coverMarkup(t)}
-            <div class="track-main">
-              <div class="row" style="justify-content:space-between">
-                <div class="title"><span class="score">${t.similarity.toFixed(3)}</span> #${t.id} ${label(t)}</div>
-                <div class="row">
-                  <button onclick="playTrack(${t.id}, '${encodedArg(label(t))}')">Play</button>
-                  <button onclick="setSeed(${t.id})">Seed</button>
-                </div>
-              </div>
-              <div class="meta">${[text(t.genre), t.year || "", text(t.album)].filter(Boolean).join(" / ")}</div>
-              <div class="path" title="${t.path}">${t.path}</div>
-              <div class="row">
-                <button class="${t.rating === 3 ? "rating-active" : ""}" onclick="rate(${t.id}, 3)">good</button>
-                <button class="${t.rating === 2 ? "rating-active" : ""}" onclick="rate(${t.id}, 2)">okay</button>
-                <button class="${t.rating === 0 ? "rating-active" : ""}" onclick="rate(${t.id}, 0)">bad</button>
-              </div>
-            </div>
-          </div>
-        </div>`).join("");
+      const html = data.results.map(t => renderRecommendationTrack(t, {seedTrackId: id})).join("");
       document.getElementById("similarList").innerHTML = html;
       document.getElementById("evaluationSimilarList").innerHTML = html;
       if (updateUrl && !applyingRoute && paramsFromSearch().view === "recommendations" && seedId) {
         syncRecommendationRoute();
+      }
+    }
+    function setTextSearchQuery(query) {
+      document.getElementById("textSearchQuery").value = decodeURIComponent(query);
+      saveSettings();
+    }
+    function renderTextSearchRecent() {
+      const target = document.getElementById("textSearchRecent");
+      if (!target) return;
+      target.innerHTML = textSearchRecentQueries.map(query => `
+        <div class="track">
+          <div class="track-body">
+            <div class="track-main">
+              <div class="title">${esc(query)}</div>
+            </div>
+          </div>
+          <div class="track-actions">
+            <button onclick="setTextSearchQuery('${encodedArg(query)}'); runTextSearch()">Run</button>
+          </div>
+        </div>
+      `).join("") || `<div class="meta">No recent text searches yet.</div>`;
+    }
+    function rememberTextSearchQuery(query) {
+      textSearchRecentQueries = [query, ...textSearchRecentQueries.filter(item => item !== query)].slice(0, 10);
+      renderTextSearchRecent();
+    }
+    function clearTextSearch() {
+      document.getElementById("textSearchQuery").value = "";
+      document.getElementById("textSearchResults").innerHTML = `<div class="meta">Describe the music you want to find.</div>`;
+      document.getElementById("textSearchStatus").textContent = "Model: muq_mulan";
+      pushRouteOnly({view: "textSearch", model: model()}, {replace: true, reset: true});
+      saveSettings();
+    }
+    async function runTextSearch({updateUrl = true} = {}) {
+      const query = document.getElementById("textSearchQuery").value.trim();
+      const target = document.getElementById("textSearchResults");
+      const status = document.getElementById("textSearchStatus");
+      if (!query) {
+        target.innerHTML = `<div class="error">Enter a text query.</div>`;
+        return;
+      }
+      const minSimilarityRaw = document.getElementById("textSearchMinSimilarity").value;
+      const payload = {
+        query,
+        count: Number(document.getElementById("textSearchCount").value || 50),
+        min_similarity: minSimilarityRaw === "" ? null : Number(minSimilarityRaw),
+        max_per_artist: Number(document.getElementById("textSearchMaxPerArtist").value || 2),
+        exclude_same_album: document.getElementById("textSearchExcludeSameAlbum").checked,
+      };
+      status.textContent = "Searching muq_mulan...";
+      target.innerHTML = `<div class="meta">Searching...</div>`;
+      try {
+        const started = performance.now();
+        const data = await json("/text-search", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload),
+          timeoutMs: 120000,
+        });
+        const seconds = ((performance.now() - started) / 1000).toFixed(1);
+        rememberTextSearchQuery(query);
+        currentSimilarTracks = data.results.map(t => ({id: t.id, label: label(t)}));
+        target.innerHTML = data.results.map((track, index) => (
+          renderRecommendationTrack(track, {rank: index, allowRating: false})
+        )).join("") || `<div class="meta">No tracks matched this query.</div>`;
+        const simRange = data.similarity_min === null || data.similarity_min === undefined
+          ? "similarity n/a"
+          : `similarity ${formatScore(data.similarity_min)}-${formatScore(data.similarity_max)} avg ${formatScore(data.similarity_avg)}`;
+        status.textContent = `Model: ${data.model} - returned ${data.results.length}/${payload.count} in ${seconds}s - ${simRange} - norm ${formatScore(data.vector_norm)}`;
+        if (updateUrl && !applyingRoute) {
+          pushRouteOnly({view: "textSearch", model: model(), ...textSearchParams()}, {replace: true, reset: true});
+        }
+      } catch (err) {
+        status.textContent = "Text search failed";
+        target.innerHTML = `<div class="error">${esc(err.message)}</div>`;
       }
     }
     async function playTrack(id, encodedLabel) {
@@ -4808,14 +7632,21 @@ UI_HTML = r"""
     }
     async function rate(resultId, rating) {
       if (!seedId) return;
+      await rateForSeed(seedId, resultId, rating);
+    }
+    async function rateForSeed(seedTrackId, resultId, rating) {
+      if (!seedTrackId) return;
       await json("/feedback", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({seed_track_id: seedId, result_track_id: resultId, model: model(), rating})
+        body: JSON.stringify({seed_track_id: seedTrackId, result_track_id: resultId, model: model(), rating})
       });
-      await loadSimilar(seedId);
+      if (seedId && Number(seedTrackId) === Number(seedId)) await loadSimilar(seedId);
+      if (currentInstantMixRequestId && paramsFromSearch().view === "instantMix") {
+        await loadInstantMixRequestDetail(currentInstantMixRequestId, {updateUrl: false});
+      }
     }
-    async function startAnalyze() {
+    async function startAnalyze(modelName = model()) {
       const rawLimit = document.getElementById("limit").value;
       const rawWorkers = document.getElementById("workers").value;
       const rawTfThreads = document.getElementById("tfThreads").value;
@@ -4824,7 +7655,7 @@ UI_HTML = r"""
       await json("/jobs/analyze", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
-          model: model(),
+          model: modelName,
           limit: parsedLimit && parsedLimit > 0 ? parsedLimit : null,
           workers: rawWorkers ? Number(rawWorkers) : 4,
           tf_threads: rawTfThreads ? Number(rawTfThreads) : 4,
@@ -4866,10 +7697,41 @@ UI_HTML = r"""
       });
       await refreshJobs();
     }
-    async function startIndex() {
+    async function rescanAudioFeatures() {
+      const rawLimit = document.getElementById("limit").value;
+      const executionMode = document.getElementById("analyzeExecutionMode").value;
+      const extractor = audioFeaturesExtractor();
+      const parsedLimit = rawLimit ? Number(rawLimit) : null;
+      const limit = parsedLimit && parsedLimit > 0 ? parsedLimit : null;
+      const scope = limit ? `${limit} active track(s)` : "all active tracks";
+      const statusTarget = document.getElementById("audioFeaturesRescanStatus");
+      if (!confirm(`Delete existing ${extractor} features for ${scope} and queue them for re-analysis?`)) return;
+      try {
+        const data = await json("/jobs/analyze-audio-features", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            limit,
+            execution_mode: executionMode,
+            local_executor_enabled: executionMode !== "remote",
+            reset_existing: true,
+            extractor
+          })
+        });
+        if (statusTarget) {
+          statusTarget.textContent =
+            `Queued rescan for ${extractor}. Deleted ${data.deleted_features || 0} stored feature row(s).`;
+        }
+        await refreshStats();
+        await loadAudioFeaturesSettings();
+        await refreshJobs();
+      } catch (err) {
+        if (statusTarget) statusTarget.textContent = `Rescan failed: ${err.message}`;
+      }
+    }
+    async function startIndex(modelName = model()) {
       await json("/jobs/index", {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({model: model()})
+        body: JSON.stringify({model: modelName})
       });
       await refreshJobs();
     }
@@ -4912,24 +7774,91 @@ UI_HTML = r"""
         pushRouteOnly({view: "jobs", job: jobId, model: model()}, {reset: true});
       }
     }
+    function renderWorkers(workers) {
+      const workerList = document.getElementById("workersList");
+      const workerSummary = document.getElementById("workersSummary");
+      if (!workerList || !workerSummary) return;
+      const connectedWorkers = workers.filter(worker => worker.connected);
+      const staleWorkers = workers.filter(worker => !worker.connected);
+      const available = connectedWorkers.filter(worker => !worker.current_task_id).length;
+      const claimed = connectedWorkers.reduce((sum, worker) => sum + Number(worker.claimed_count || 0), 0);
+      const completed = connectedWorkers.reduce((sum, worker) => sum + Number(worker.completed_count || 0), 0);
+      const failed = connectedWorkers.reduce((sum, worker) => sum + Number(worker.failed_count || 0), 0);
+      workerSummary.innerHTML = `
+        <div class="stat"><strong>${connectedWorkers.length}</strong><span>connected</span></div>
+        <div class="stat"><strong>${available}</strong><span>available</span></div>
+        <div class="stat"><strong>${claimed}</strong><span>claimed tasks</span></div>
+        <div class="stat"><strong>${completed}</strong><span>completed tasks</span></div>
+        <div class="stat"><strong>${failed}</strong><span>failed tasks</span></div>
+        <div class="stat"><strong>${staleWorkers.length}</strong><span>stale hidden</span></div>`;
+      const workerHtml = connectedWorkers.map(worker => {
+        const models = (worker.models || []).length ? (worker.models || []).join(", ") : "no advertised models";
+        const stage = worker.stage || "idle";
+        const status = worker.display_status || worker.status || "unknown";
+        const lastSeen = worker.last_seen_at || "";
+        const created = worker.created_at || "";
+        const updated = worker.updated_at || "";
+        return `<div class="job status-${text(status)}">
+          <div class="row" style="justify-content:space-between">
+            <strong>${text(worker.worker_id)}</strong><span class="pill">${text(status)}</span>
+          </div>
+          <div class="meta">models: ${text(models)}</div>
+          <div class="meta">stage: ${text(stage)}${worker.message ? ` - ${text(worker.message)}` : ""}</div>
+          <div class="meta">claimed ${worker.claimed_count || 0}, completed ${worker.completed_count || 0}, failed ${worker.failed_count || 0}, released ${worker.released_count || 0}</div>
+          ${worker.current_task_id ? `<div class="meta">current task: ${text(worker.current_task_id)}</div>` : ""}
+          <div class="meta">last seen: ${text(lastSeen)}${updated ? `, updated: ${text(updated)}` : ""}${created ? `, created: ${text(created)}` : ""}</div>
+        </div>`;
+      }).join("");
+      const staleNote = staleWorkers.length
+        ? `<div class="meta">${staleWorkers.length} stale worker record(s) hidden; TTL is ${workers[0]?.connected_ttl_seconds || 180}s.</div>`
+        : "";
+      workerList.innerHTML = workerHtml || `<div class="meta">No connected workers right now.</div>`;
+      workerList.innerHTML += staleNote;
+    }
+    async function refreshWorkers() {
+      try {
+        const data = await json("/workers", {timeoutMs: 8000});
+        renderWorkers(data.workers || []);
+      } catch (err) {
+        const workerList = document.getElementById("workersList");
+        const workerSummary = document.getElementById("workersSummary");
+        if (workerSummary) workerSummary.innerHTML = "";
+        if (workerList) workerList.innerHTML = `<div class="meta">Workers unavailable: ${text(err.message)}</div>`;
+      }
+    }
     async function refreshJobs() {
-      const data = await json("/jobs");
+      if (jobsInFlight) return;
+      jobsInFlight = true;
+      try {
+      const data = await json("/jobs", {timeoutMs: 8000});
       lastJobs = data.jobs;
-      const running = new Set(data.jobs.filter(job => ["queued", "running"].includes(job.status)).map(job => job.kind));
-      document.getElementById("navidromeSyncBtn").disabled = running.has("navidrome-sync");
-      document.getElementById("analyzeBtn").disabled = running.has("analyze");
-      document.getElementById("analyzeHeadsBtn").disabled = running.has("analyze-heads");
-      document.getElementById("downloadHeadsBtn").disabled = running.has("download-head-models");
-      document.getElementById("analyzeAudioFeaturesBtn").disabled = running.has("analyze-audio-features");
-      document.getElementById("checkMissingBtn").disabled = running.has("check-missing-files");
-      document.getElementById("indexBtn").disabled = running.has("index");
+      const setDisabled = (id, disabled) => {
+        const element = document.getElementById(id);
+        if (element) element.disabled = disabled;
+      };
+      setDisabled("navidromeSyncBtn", false);
+      setDisabled("analyzeHeadsBtn", false);
+      setDisabled("downloadHeadsBtn", false);
+      setDisabled("analyzeAudioFeaturesBtn", false);
+      setDisabled("rescanAudioFeaturesBtn", false);
+      setDisabled("checkMissingBtn", false);
+      document.querySelectorAll(".dashboard-analyze-btn").forEach(button => {
+        button.disabled = false;
+      });
+      document.querySelectorAll(".dashboard-index-btn").forEach(button => {
+        button.disabled = false;
+      });
       const html = data.jobs.map(job => {
         const total = job.total || 0;
         const percent = total ? Math.round(((job.done + job.failed) / total) * 100) : (job.status === "completed" ? 100 : 0);
-        const terminal = !["queued", "running"].includes(job.status);
-        const elapsed = job.elapsed_seconds ? `${Math.round(job.elapsed_seconds)}s ${terminal ? "duration" : "elapsed"}` : "";
-        const rate = job.tracks_per_min ? `${job.tracks_per_min.toFixed(1)} tracks/min` : "";
-        const eta = job.eta_seconds ? `${Math.round(job.eta_seconds)}s ETA` : "";
+        const waiting = job.status === "deferred";
+        const terminal = !["queued", "running", "deferred"].includes(job.status);
+        const elapsed = !waiting && job.elapsed_seconds ? `${formatDuration(job.elapsed_seconds)} ${terminal ? "duration" : "elapsed"}` : "";
+        const recentWindow = job.recent_rate_window_seconds ? Math.round(job.recent_rate_window_seconds / 60) : 5;
+        const currentRate = job.recent_tracks_per_min ? `current ${job.recent_tracks_per_min.toFixed(1)} tracks/min (${recentWindow}m)` : "";
+        const avgRate = job.tracks_per_min ? `avg ${job.tracks_per_min.toFixed(1)} tracks/min` : "";
+        const rate = [currentRate, avgRate].filter(Boolean).join(" / ");
+        const eta = job.eta_seconds ? `${formatDuration(job.eta_seconds)} ETA` : "";
         const timing = [elapsed, rate, eta].filter(Boolean).join(" - ");
         const startedAt = job.created_at || (job.started_at ? new Date(job.started_at * 1000).toLocaleString() : "");
         const updatedAt = job.updated_at || "";
@@ -4938,15 +7867,16 @@ UI_HTML = r"""
           ? `workers: ${(job.leased_workers || []).map(item => `${text(item.worker_id)}(${item.count})`).join(", ")}`
           : "";
         const breakdown = (job.status_breakdown || []).map(item => `${text(item.status)}${item.stage ? `/${text(item.stage)}` : ""}: ${item.count}`).join(", ");
-        const oldestLease = job.oldest_lease ? `oldest lease: ${text(job.oldest_lease.worker_id || "")}, ${Math.round(job.oldest_lease_age || 0)}s, ${text(job.oldest_lease.stage || "")}` : "";
-        const canCancel = ["queued", "running"].includes(job.status);
+        const oldestLease = job.oldest_lease ? `oldest lease: ${text(job.oldest_lease.worker_id || "")}, ${formatDuration(job.oldest_lease_age || 0)}, ${text(job.oldest_lease.stage || "")}` : "";
+        const canCancel = ["queued", "running", "deferred"].includes(job.status);
+        const queueLabel = waiting && job.queue_position ? `#${job.queue_position} waiting` : job.status;
         return `<div class="job status-${job.status}">
           <div class="row" style="justify-content:space-between">
             <strong>${job.kind}</strong>
             <div class="row">
               <button onclick="loadJobDetail('${job.id}')">Details</button>
               ${canCancel ? `<button onclick="cancelJob('${job.id}')">Cancel</button>` : ""}
-              <span class="pill">${job.status}</span>
+              <span class="pill">${queueLabel}</span>
             </div>
           </div>
           <div class="meta">${job.message}</div>
@@ -4965,29 +7895,32 @@ UI_HTML = r"""
       }).join("");
       document.getElementById("jobs").innerHTML = html;
       document.getElementById("dashboardJobs").innerHTML = html || `<div class="meta">No jobs yet</div>`;
-      const workerHtml = (data.workers || []).map(worker => `
-        <div class="job status-${worker.status}">
-          <div class="row" style="justify-content:space-between">
-            <strong>${text(worker.worker_id)}</strong><span class="pill">${text(worker.status)}</span>
-          </div>
-          <div class="meta">${text((worker.models || []).join(", "))}</div>
-          <div class="meta">${text(worker.stage || "idle")}${worker.message ? ` - ${text(worker.message)}` : ""}</div>
-          <div class="meta">claimed ${worker.claimed_count || 0}, completed ${worker.completed_count || 0}, failed ${worker.failed_count || 0}, released ${worker.released_count || 0}</div>
-          ${worker.current_task_id ? `<div class="meta">current: ${text(worker.current_task_id)}</div>` : ""}
-          <div class="meta">last seen: ${text(worker.last_seen_at || "")}</div>
-        </div>`).join("");
-      document.getElementById("workers").innerHTML = workerHtml || `<div class="meta">No workers seen yet</div>`;
+      renderWorkers(data.workers || []);
+      } catch (err) {
+        document.getElementById("dashboardJobs").innerHTML = `<div class="meta">Jobs unavailable: ${text(err.message)}</div>`;
+      } finally {
+        jobsInFlight = false;
+      }
     }
     async function refreshAll() {
       await refreshStats();
       await refreshJobs();
       await loadNavidromeSettings();
+      await loadAudioFeaturesSettings();
+      await fetchAndApplyNavidromeLikeIds({silent: true});
+      await loadInstantMixSettings();
       renderSeedBasket();
       loadExtraBlendIds();
       renderLikedExtraSummary();
       renderLikedStatus();
       renderLikedTracks();
       await applyRoute(paramsFromSearch());
+    }
+    async function onModelChange() {
+      saveSettings();
+      syncModelRoute();
+      refreshWorkerCommand();
+      await refreshAll();
     }
     async function initFromUrl() {
       const params = paramsFromSearch();
@@ -4997,6 +7930,9 @@ UI_HTML = r"""
         await refreshStats();
         await refreshJobs();
         await loadNavidromeSettings();
+        await loadAudioFeaturesSettings();
+        await fetchAndApplyNavidromeLikeIds({silent: true});
+        await loadInstantMixSettings();
         loadExtraBlendIds();
         renderLikedExtraSummary();
         return;
@@ -5005,12 +7941,14 @@ UI_HTML = r"""
       await refreshStats();
       await refreshJobs();
       await loadNavidromeSettings();
+      await loadAudioFeaturesSettings();
+      await fetchAndApplyNavidromeLikeIds({silent: true});
+      await loadInstantMixSettings();
       loadExtraBlendIds();
       renderLikedExtraSummary();
       renderLikedStatus();
     }
-    document.getElementById("model").addEventListener("change", refreshAll);
-    document.getElementById("model").addEventListener("change", refreshWorkerCommand);
+    document.getElementById("model").addEventListener("change", onModelChange);
     document.getElementById("query").addEventListener("keydown", event => {
       if (event.key === "Enter") searchTracks();
     });
@@ -5026,6 +7964,12 @@ UI_HTML = r"""
     document.getElementById("browseQuery").addEventListener("keydown", event => {
       if (event.key === "Enter") refreshBrowse();
     });
+    document.getElementById("metricsQuery").addEventListener("keydown", event => {
+      if (event.key === "Enter") searchMetrics();
+    });
+    document.getElementById("textSearchQuery").addEventListener("keydown", event => {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) runTextSearch();
+    });
     document.getElementById("k").addEventListener("change", syncRecommendationRoute);
     document.getElementById("maxPerArtist").addEventListener("change", syncRecommendationRoute);
     document.getElementById("excludeSameAlbum").addEventListener("change", syncRecommendationRoute);
@@ -5038,9 +7982,14 @@ UI_HTML = r"""
     document.getElementById("audioPlayer").addEventListener("ended", playNextSimilarTrack);
     loadSettings();
     bindSettingsAutosave();
+    renderTextSearchRecent();
     refreshWorkerCommand();
     initFromUrl();
-    setInterval(() => { refreshStats(); refreshJobs(); }, 2500);
+    setInterval(() => {
+      if (document.hidden) return;
+      refreshStats();
+      refreshJobs();
+    }, 5000);
   </script>
 </body>
 </html>

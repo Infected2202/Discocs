@@ -6,9 +6,11 @@ import json
 import logging
 import os
 from pathlib import Path
+import random
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -23,8 +25,14 @@ import numpy as np
 
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR, AudioFeatureAnalyzer
 from app.audio_source import track_audio_path
-from app.config import Settings
-from app.embedder import DiscogsEffnetEmbedder, pool_and_normalize
+from app.config import MUQ_MULAN_MODEL, Settings
+from app.embedder import (
+    DiscogsEffnetEmbedder,
+    MuqMulanEmbedder,
+    create_track_embedder,
+    download_muq_mulan_model,
+    pool_and_normalize,
+)
 from app.head_pack import (
     DISCOGS_EFFNET_HEADS,
     DiscogsEffnetHeadPackAnalyzer,
@@ -45,12 +53,67 @@ cli = typer.Typer(no_args_is_help=True)
 logger = logging.getLogger(__name__)
 analysis_logger = get_analysis_logger()
 
+DISCOGS_EMBEDDING_MODELS = [
+    "discogs_multi",
+    "discogs_track",
+    "discogs_release",
+    "discogs_label",
+]
+EMBEDDING_MODELS = [
+    *DISCOGS_EMBEDDING_MODELS,
+    MUQ_MULAN_MODEL,
+]
+
 
 def get_store_and_settings() -> tuple[Store, Settings]:
     settings = Settings.from_env()
     store = Store(settings.db_path)
     store.init()
     return store, settings
+
+
+@cli.command("db-check")
+def db_check(
+    full: Annotated[
+        bool,
+        typer.Option("--full", help="Run PRAGMA integrity_check instead of quick_check."),
+    ] = False,
+) -> None:
+    """Check the SQLite database from the application runtime host."""
+    store, settings = get_store_and_settings()
+    pragma = "integrity_check" if full else "quick_check"
+    typer.echo(f"db_path={settings.db_path}")
+    with store.connect() as conn:
+        check_rows = conn.execute(f"PRAGMA {pragma}").fetchall()
+        ok = len(check_rows) == 1 and str(check_rows[0][0]).lower() == "ok"
+        typer.echo(f"{pragma}={check_rows[0][0] if check_rows else '<no rows>'}")
+        if not ok:
+            for row in check_rows[1:20]:
+                typer.echo(str(row[0]))
+            raise typer.Exit(1)
+
+        table_checks = [
+            ("tracks", "SELECT COUNT(*) FROM tracks"),
+            ("embeddings", "SELECT COUNT(*) FROM embeddings"),
+            ("track_features", "SELECT COUNT(*) FROM track_features"),
+            ("analysis_jobs", "SELECT COUNT(*) FROM analysis_jobs"),
+            ("analysis_tasks", "SELECT COUNT(*) FROM analysis_tasks"),
+            ("analysis_tasks_not_indexed", "SELECT COUNT(*) FROM analysis_tasks NOT INDEXED"),
+            ("external_tracks", "SELECT COUNT(*) FROM external_tracks"),
+            ("external_tracks_not_indexed", "SELECT COUNT(*) FROM external_tracks NOT INDEXED"),
+        ]
+        counts: dict[str, int] = {}
+        for label, sql in table_checks:
+            counts[label] = int(conn.execute(sql).fetchone()[0])
+            typer.echo(f"{label}={counts[label]}")
+
+    if counts["analysis_tasks"] != counts["analysis_tasks_not_indexed"]:
+        typer.echo("analysis_tasks index/table count mismatch", err=True)
+        raise typer.Exit(1)
+    if counts["external_tracks"] != counts["external_tracks_not_indexed"]:
+        typer.echo("external_tracks index/table count mismatch", err=True)
+        raise typer.Exit(1)
+    typer.echo("db_check=ok")
 
 
 def get_navidrome_client() -> NavidromeClient:
@@ -154,7 +217,7 @@ def navidrome_download(
 
 @cli.command("navidrome-sync")
 def navidrome_sync(
-    page_size: Annotated[int, typer.Option("--page-size", min=1, max=2000)] = 500,
+    page_size: Annotated[int, typer.Option("--page-size", min=1, max=2000)] = 2000,
     limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
     mark_stale: Annotated[
         bool,
@@ -217,7 +280,7 @@ def extract_one(
 ) -> None:
     """Run the embedding spike for one audio file."""
     _store, settings = get_store_and_settings()
-    embedder = DiscogsEffnetEmbedder(settings, model)
+    embedder = create_track_embedder(settings, model)
     analysis_logger.info("Extracting one track path=%s model=%s", path, model)
     vector = embedder.extract_track_vector(path)
     typer.echo(f"pooled vector shape: {tuple(vector.shape)}")
@@ -231,7 +294,7 @@ def analyze(
 ) -> None:
     """Extract embeddings for tracks missing the selected model."""
     store, settings = get_store_and_settings()
-    embedder = DiscogsEffnetEmbedder(settings, model)
+    embedder = create_track_embedder(settings, model)
     tracks = store.list_tracks_missing_embedding(model, limit=limit)
     total = len(tracks)
     failed = 0
@@ -395,6 +458,10 @@ def worker_failure_retryable(exc: Exception) -> bool:
         "invalid data found when processing input",
         "output file #0 does not contain any stream",
         "embedding vector has zero norm",
+        "torch is required for muq-mulan",
+        "muq is required for muq-mulan",
+        "muq-mulan model could not be loaded",
+        "duplicate dispatch rule",
     )
     return not any(fragment in text for fragment in terminal_fragments)
 
@@ -406,6 +473,23 @@ def resolve_cpu_workers(cpu_workers: int) -> tuple[int, str]:
     if cpu_count <= 2:
         return 1, f"auto_from={cpu_count}"
     return max(1, min(8, cpu_count - 2)), f"auto_from={cpu_count}"
+
+
+def torch_cuda_memory_summary() -> str:
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return "torch_cuda=not_loaded"
+    try:
+        if not torch.cuda.is_available():
+            return "torch_cuda=unavailable"
+        return (
+            f"torch_cuda_allocated_mb={torch.cuda.memory_allocated() / 1024 / 1024:.1f} "
+            f"torch_cuda_reserved_mb={torch.cuda.memory_reserved() / 1024 / 1024:.1f} "
+            f"torch_cuda_max_allocated_mb={torch.cuda.max_memory_allocated() / 1024 / 1024:.1f} "
+            f"torch_cuda_max_reserved_mb={torch.cuda.max_memory_reserved() / 1024 / 1024:.1f}"
+        )
+    except Exception as exc:
+        return f"torch_cuda_probe_failed={type(exc).__name__}:{exc}"
 
 
 @cli.command("gpu-info")
@@ -438,6 +522,16 @@ def gpu_info() -> None:
         typer.echo(f"tf physical GPUs={tf.config.list_physical_devices('GPU')}")
     except Exception as exc:
         typer.echo(f"tensorflow probe failed: {type(exc).__name__}: {exc}", err=True)
+    try:
+        import torch
+
+        typer.echo(f"torch={torch.__version__}")
+        typer.echo(f"torch cuda_available={torch.cuda.is_available()}")
+        typer.echo(f"torch cuda_version={torch.version.cuda}")
+        if torch.cuda.is_available():
+            typer.echo(f"torch cuda_device={torch.cuda.get_device_name(0)}")
+    except Exception as exc:
+        typer.echo(f"torch probe failed: {type(exc).__name__}: {exc}", err=True)
     try:
         import essentia  # noqa: F401
         import essentia.standard  # noqa: F401
@@ -474,13 +568,28 @@ def gpu_smoke(
 @cli.command("embedding-smoke")
 def embedding_smoke(
     model: Annotated[str, typer.Option("--model")] = "discogs_multi",
+    path: Annotated[Path | None, typer.Option("--path", exists=True, dir_okay=False)] = None,
     seconds: Annotated[int, typer.Option("--seconds")] = 180,
     repeat: Annotated[int, typer.Option("--repeat")] = 10,
     batch_size: Annotated[int, typer.Option("--batch-size")] = 64,
     backend: Annotated[str, typer.Option("--backend")] = "auto",
 ) -> None:
-    """Run the real Discogs-EffNet embedding path and sample nvidia-smi while it runs."""
+    """Run a real embedding path and sample nvidia-smi while it runs."""
     _store, settings = get_store_and_settings()
+    if model == MUQ_MULAN_MODEL:
+        embedder = MuqMulanEmbedder(settings)
+        started = perf_counter()
+        if path is not None:
+            vector = embedder.extract_track_vector(path)
+        else:
+            audio = (np.random.random(max(seconds, 1) * embedder.sample_rate).astype(np.float32) * 0.01) - 0.005
+            vector = pool_and_normalize(embedder._predict(audio))
+        elapsed = perf_counter() - started
+        typer.echo(
+            f"embedding smoke ok model={model} seconds={seconds} elapsed={elapsed:.3f} "
+            f"shape={tuple(vector.shape)} norm={float(np.linalg.norm(vector)):.6f}"
+        )
+        return
     typer.echo(f"CUDA_VISIBLE_DEVICES={os.getenv('CUDA_VISIBLE_DEVICES', '<unset>')}")
     try:
         import tensorflow as tf
@@ -695,12 +804,19 @@ def append_worker_failure(
     )
 
 
+def normalize_worker_models(models: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for model in models:
+        normalized.extend(part.strip() for part in model.replace(",", " ").split())
+    return list(dict.fromkeys(model for model in normalized if model))
+
+
 @cli.command("worker")
 def worker(
     server: Annotated[str, typer.Option("--server")] = "http://127.0.0.1:8711",
     worker_id: Annotated[str, typer.Option("--worker-id")] = "discocs-worker",
     models: Annotated[list[str], typer.Option("--models")] = [
-        "discogs_multi",
+        *EMBEDDING_MODELS,
         AUDIO_FEATURE_EXTRACTOR,
         "discogs-effnet-heads",
     ],
@@ -717,12 +833,16 @@ def worker(
     ready_batches: Annotated[int, typer.Option("--ready-batches")] = 1,
     cpu_workers: Annotated[int, typer.Option("--cpu-workers")] = 0,
     max_tasks_before_exit: Annotated[int, typer.Option("--max-tasks-before-exit")] = 0,
+    startup_jitter_seconds: Annotated[float, typer.Option("--startup-jitter-seconds")] = 0.0,
 ) -> None:
     """Run a trusted HTTP pull worker for analysis tasks."""
     _store, settings = get_store_and_settings()
     if worker_id == "auto":
         worker_id = socket.gethostname()
-    models = list(dict.fromkeys(models))
+    models = normalize_worker_models(models)
+    if AUDIO_FEATURE_EXTRACTOR in models:
+        os.environ.setdefault("DISCOCS_FFMPEG_THREADS", "1")
+        os.environ.setdefault("OMP_NUM_THREADS", "1")
     if AUDIO_FEATURE_EXTRACTOR in models and not audio_features_available():
         models = [model for model in models if model != AUDIO_FEATURE_EXTRACTOR]
         typer.echo(
@@ -731,8 +851,12 @@ def worker(
         )
     if not models:
         raise typer.BadParameter("No usable models/capabilities remain after dependency checks")
+    if startup_jitter_seconds > 0:
+        delay = random.uniform(0.0, startup_jitter_seconds)
+        typer.echo(f"startup jitter: waiting {delay:.1f}s before worker registration")
+        time.sleep(delay)
     embedders = {
-        model: DiscogsEffnetEmbedder(
+        model: create_track_embedder(
             settings,
             model,
             batch_size=gpu_batch_size,
@@ -741,7 +865,11 @@ def worker(
         for model in models
         if model not in {AUDIO_FEATURE_EXTRACTOR, "discogs-effnet-heads"}
     }
-    missing_model_paths = [embedder.model_path for embedder in embedders.values() if not embedder.model_path.exists()]
+    missing_model_paths = [
+        embedder.model_path
+        for embedder in embedders.values()
+        if isinstance(embedder, DiscogsEffnetEmbedder) and not embedder.model_path.exists()
+    ]
     if missing_model_paths:
         typer.echo("worker model preflight failed: missing embedding model file(s)", err=True)
         for model_path in missing_model_paths:
@@ -757,7 +885,8 @@ def worker(
         f"claim_batch_size={claim_batch_size} max_inflight_tasks={max_inflight_tasks} "
         f"submit_batch_size={submit_batch_size} download_concurrency={download_concurrency} "
         f"decode_workers={decode_workers} gpu_batch_size={gpu_batch_size} ready_batches={ready_batches} "
-        f"embedding_backend={embedding_backend} cpu_workers={resolved_cpu_workers} {cpu_workers_source}"
+        f"embedding_backend={embedding_backend} cpu_workers={resolved_cpu_workers} {cpu_workers_source} "
+        f"startup_jitter_seconds={startup_jitter_seconds}"
     )
     register_worker_with_retry(server, worker_id, models, poll_seconds, once)
     draining = False
@@ -792,7 +921,10 @@ def worker(
                 ready_embedding_tasks: list[dict[str, object]] = []
                 ready_head_tasks: list[dict[str, object]] = []
                 last_metrics_at = perf_counter()
-                direct_embedding_pipeline = embedding_backend in {"auto", "tensorflow"} and bool(embedders)
+                direct_embedding_pipeline = (
+                    embedding_backend in {"auto", "tensorflow"}
+                    and any(isinstance(embedder, DiscogsEffnetEmbedder) for embedder in embedders.values())
+                )
 
                 def flush_worker_buffers() -> None:
                     nonlocal draining
@@ -920,7 +1052,8 @@ def worker(
                         f"ready_embeddings={len(ready_embedding_tasks)} "
                         f"ready_heads={len(ready_head_tasks)} "
                         f"leased={len(leased_task_ids - acknowledged_task_ids)} "
-                        f"rss_mb={process_rss_mb()}"
+                        f"rss_mb={process_rss_mb()} "
+                        f"{torch_cuda_memory_summary()}"
                     )
 
                 def process_ready_embedding_batches(*, flush: bool = False) -> None:
@@ -1197,8 +1330,7 @@ def worker(
                             model_name = str(task["model_name"])
                             try:
                                 features = future.result()
-                                if draining or not task_is_active(server, worker_id, task_id):
-                                    close_inactive_task(task_id, model_name, audio_path)
+                                if draining:
                                     continue
                                 feature_results.append(
                                     {
@@ -1249,8 +1381,7 @@ def worker(
                         model_name = str(task["model_name"])
                         try:
                             future.result()
-                            if draining or not task_is_active(server, worker_id, task_id):
-                                close_inactive_task(task_id, model_name, audio_path)
+                            if draining:
                                 continue
                             if model_name == AUDIO_FEATURE_EXTRACTOR:
                                 if audio_feature_analyzer is None:
@@ -1272,7 +1403,11 @@ def worker(
                                 process_ready_head_batches()
                                 continue
                             else:
-                                if direct_embedding_pipeline and model_name in embedders:
+                                if (
+                                    direct_embedding_pipeline
+                                    and model_name in embedders
+                                    and isinstance(embedders[model_name], DiscogsEffnetEmbedder)
+                                ):
                                     embedding_future = cpu_pool.submit(
                                         embedders[model_name].extract_direct_patches,
                                         audio_path,
@@ -1363,10 +1498,19 @@ def download_models(
     pack: Annotated[str, typer.Option("--pack")] = "discogs-effnet-heads",
 ) -> None:
     """Download model files required for a model pack."""
-    if pack != "discogs-effnet-heads":
-        raise typer.BadParameter("Only --pack discogs-effnet-heads is supported")
     _store, settings = get_store_and_settings()
     logger.info("Downloading model pack pack=%s", pack)
+    if pack in {"muq-mulan", MUQ_MULAN_MODEL}:
+        try:
+            typer.echo("downloading muq_mulan snapshots into the Hugging Face cache...")
+            cache_dir = download_muq_mulan_model(settings)
+        except RuntimeError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from exc
+        typer.echo(f"ready muq_mulan cache_dir={cache_dir}")
+        return
+    if pack != "discogs-effnet-heads":
+        raise typer.BadParameter("Supported packs: discogs-effnet-heads, muq-mulan")
     results = download_head_pack_models(settings)
     downloaded = sum(1 for result in results if result.downloaded)
     typer.echo(f"downloaded={downloaded} already_present={len(results) - downloaded}")

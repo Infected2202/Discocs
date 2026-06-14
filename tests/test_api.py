@@ -1,14 +1,17 @@
 from pathlib import Path
 import base64
+import json
 import sqlite3
 import socket
+from threading import Event
 from urllib.error import URLError
 
 import numpy as np
 from fastapi.testclient import TestClient
 
 import app.main as main_module
-from app.cli import worker_failure_retryable
+import app.store as store_module
+from app.cli import normalize_worker_models, worker_failure_retryable
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR
 from app.config import Settings
 from app.head_pack import HeadOutput, Prediction
@@ -16,10 +19,11 @@ from app.main import app
 from app.navidrome import DownloadedTrack
 from app.navidrome import NavidromeSong
 from app.scanner import ScannedTrack
-from app.store import INITIALIZED_DB_PATHS, Store, Track, TrackFeature
+from app.store import INITIALIZED_DB_PATHS, Store, Track, TrackFeature, TrackPrediction
 
 
 def init_api_store(tmp_path: Path, monkeypatch) -> Store:
+    clear_runtime_jobs()
     db_path = tmp_path / "app.db"
     INITIALIZED_DB_PATHS.discard(db_path.resolve())
     monkeypatch.setenv("DISCOCS_DB_PATH", str(db_path))
@@ -33,6 +37,14 @@ def init_api_store(tmp_path: Path, monkeypatch) -> Store:
     store = Store(db_path)
     store.init()
     return store
+
+
+def clear_runtime_jobs() -> None:
+    with main_module.JOBS_LOCK:
+        main_module.JOBS.clear()
+    with main_module.DEFERRED_JOBS_LOCK:
+        main_module.DEFERRED_JOB_ORDER.clear()
+        main_module.DEFERRED_JOB_STARTERS.clear()
 
 
 def add_track(
@@ -150,6 +162,11 @@ def test_test_ui_loads():
     assert "Dashboard" in response.text
     assert "Library" in response.text
     assert "Browse" in response.text
+    assert "Metrics" in response.text
+    assert "metricsSummary" in response.text
+    assert "Discogs-EffNet heads" in response.text
+    assert "/metrics/search" in response.text
+    assert "coverMarkup(t)" in response.text
     assert "Lost files" in response.text
     assert "Errored files" in response.text
     assert "Recommendations" in response.text
@@ -158,7 +175,7 @@ def test_test_ui_loads():
     assert "Load Navidrome likes" in response.text
     assert "Recommendations from liked blend" in response.text
     assert "addToBlendExtra" in response.text
-    assert "discocs.likedExtra.v1" in response.text
+    assert "discocs.blendExtra.v1" in response.text
     assert "/navidrome/starred" in response.text
     assert "Evaluation" in response.text
     assert "Jobs" in response.text
@@ -193,6 +210,8 @@ def test_test_ui_loads():
     assert "data-tooltip=\"TensorFlow/OMP threads per analyzer process." in response.text
     assert "discocs.settings.v1" in response.text
     assert "bindSettingsAutosave" in response.text
+    assert "function syncModelRoute()" in response.text
+    assert 'addEventListener("change", onModelChange)' in response.text
     assert "Analyze execution" in response.text
     assert "Local + remote" in response.text
     assert "Remote only" in response.text
@@ -208,6 +227,7 @@ def test_test_ui_loads():
     assert "list-region" in response.text
     assert "max-height: 58vh" not in response.text
     assert "Add seed" in response.text
+    assert "instantMixCountCollaborationArtists" in response.text
     assert "openAnalysis" in response.text
     assert "analysisModal" in response.text
     assert "icon-tablet" in response.text
@@ -291,6 +311,23 @@ def test_worker_media_failures_are_not_retryable():
         assert worker_failure_retryable(error) is False
 
 
+def test_normalize_worker_models_splits_compact_model_lists():
+    assert normalize_worker_models(
+        [
+            "discogs_multi,discogs_track",
+            "discogs_release discogs_label",
+            "audio_features_v1",
+            "discogs_multi",
+        ]
+    ) == [
+        "discogs_multi",
+        "discogs_track",
+        "discogs_release",
+        "discogs_label",
+        "audio_features_v1",
+    ]
+
+
 def test_stats_includes_pipeline_fields(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
@@ -311,6 +348,182 @@ def test_stats_includes_pipeline_fields(tmp_path: Path, monkeypatch):
     assert "audio_features_complete_tracks" in data
     assert "audio_features_missing_tracks" in data
     assert "missing_files" in data
+    assert "index_status" in data
+    assert "index_count" in data
+    assert "index_embedding_count" in data
+
+
+def test_audio_feature_missing_count_ignores_missing_files(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    ready_id = add_track(store, tmp_path / "ready.flac", title="Ready")
+    missing_feature_id = add_track(store, tmp_path / "missing-feature.flac", title="Missing Feature")
+    missing_file_id = add_track(store, tmp_path / "missing-file.flac", title="Missing File")
+    store.save_features(
+        ready_id,
+        [TrackFeature("bpm", value=128.0, unit="bpm", extractor=AUDIO_FEATURE_EXTRACTOR)],
+    )
+    store.save_features(
+        missing_file_id,
+        [TrackFeature("bpm", value=130.0, unit="bpm", extractor=AUDIO_FEATURE_EXTRACTOR)],
+    )
+    store.mark_track_missing(missing_file_id, "2026-05-29T20:00:00+00:00")
+    with main_module.STATS_CACHE_LOCK:
+        main_module.STATS_CACHE.clear()
+    client = TestClient(app)
+
+    data = client.get("/stats").json()
+
+    assert data["audio_features_missing_tracks"] == 1
+    assert missing_feature_id != missing_file_id
+
+
+def test_stats_reports_stale_index_counts(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    first_path = tmp_path / "first.flac"
+    second_path = tmp_path / "second.flac"
+    for path in [first_path, second_path]:
+        path.write_bytes(b"fake")
+    first_id = add_track(store, first_path, title="First")
+    second_id = add_track(store, second_path, title="Second")
+    store.save_embedding(first_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
+    client = TestClient(app)
+
+    with main_module.STATS_CACHE_LOCK:
+        main_module.STATS_CACHE.clear()
+    ready = client.get("/stats?model=discogs_multi").json()
+    assert ready["index_status"] == "ready"
+    assert ready["index_count"] == 1
+    assert ready["index_embedding_count"] == 1
+
+    store.save_embedding(second_id, "discogs_multi", np.array([0.0, 1.0], dtype=np.float32))
+    with main_module.STATS_CACHE_LOCK:
+        main_module.STATS_CACHE.clear()
+    stale = client.get("/stats?model=discogs_multi").json()
+    assert stale["index_status"] == "stale"
+    assert stale["index_count"] == 1
+    assert stale["index_embedding_count"] == 2
+
+
+def test_metrics_features_summary_and_search(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    first_id = add_track(store, tmp_path / "first.flac", title="First", artist="A")
+    second_id = add_track(store, tmp_path / "second.flac", title="Second", artist="B")
+    store.save_features(
+        first_id,
+        [
+            TrackFeature("bpm", value=128.0, unit="bpm", extractor=AUDIO_FEATURE_EXTRACTOR),
+            TrackFeature("key", text_value="A", extractor=AUDIO_FEATURE_EXTRACTOR),
+            TrackFeature("scale", text_value="minor", extractor=AUDIO_FEATURE_EXTRACTOR),
+        ],
+    )
+    store.save_features(
+        second_id,
+        [
+            TrackFeature("bpm", value=142.0, unit="bpm", extractor=AUDIO_FEATURE_EXTRACTOR),
+            TrackFeature("key", text_value="C", extractor=AUDIO_FEATURE_EXTRACTOR),
+            TrackFeature("scale", text_value="major", extractor=AUDIO_FEATURE_EXTRACTOR),
+        ],
+    )
+    client = TestClient(app)
+
+    summary = client.get("/metrics/features").json()
+    bpm = next(item for item in summary["features"] if item["name"] == "bpm")
+    assert bpm["track_count"] == 2
+    assert bpm["min_value"] == 128.0
+    assert bpm["max_value"] == 142.0
+    values = client.get("/metrics/features/key/values").json()["values"]
+    assert values == [{"value": "A", "track_count": 1}, {"value": "C", "track_count": 1}]
+
+    response = client.post(
+        "/metrics/search",
+        json={
+            "filters": [
+                {"name": "bpm", "min_value": 120, "max_value": 130},
+                {"name": "scale", "text_values": ["minor"]},
+            ],
+            "sort_by": "bpm",
+            "limit": 20,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 1
+    assert data["results"][0]["id"] == first_id
+    assert {feature["name"] for feature in data["results"][0]["features"]} == {
+        "bpm",
+        "key",
+        "scale",
+    }
+
+
+def test_metrics_heads_summary_and_search(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    first_id = add_track(store, tmp_path / "first.flac", title="First", artist="A")
+    second_id = add_track(store, tmp_path / "second.flac", title="Second", artist="B")
+    store.save_model_output(
+        first_id,
+        "genre_discogs400",
+        np.array([0.85, 0.15], dtype=np.float32),
+        "mean_patches",
+    )
+    store.save_model_output(
+        second_id,
+        "genre_discogs400",
+        np.array([0.25, 0.75], dtype=np.float32),
+        "mean_patches",
+    )
+    store.save_predictions(
+        first_id,
+        "genre_discogs400",
+        [
+            TrackPrediction(label="Electronic---Techno", score=0.85, rank=1),
+            TrackPrediction(label="Electronic---House", score=0.15, rank=2),
+        ],
+    )
+    store.save_predictions(
+        second_id,
+        "genre_discogs400",
+        [
+            TrackPrediction(label="Electronic---House", score=0.75, rank=1),
+            TrackPrediction(label="Electronic---Techno", score=0.25, rank=2),
+        ],
+    )
+    client = TestClient(app)
+
+    summary = client.get("/metrics/features?source=heads").json()
+    genre = next(item for item in summary["features"] if item["name"] == "genre_discogs400")
+    assert genre["track_count"] == 2
+    assert genre["text_count"] == 0
+    assert genre["max_value"] == 1.0
+    labels = client.get(
+        "/metrics/features/genre_discogs400/values?source=heads"
+    ).json()["values"]
+    assert labels[0]["value"] in {"Electronic---House", "Electronic---Techno"}
+
+    response = client.post(
+        "/metrics/search",
+        json={
+            "source": "heads",
+            "filters": [
+                {
+                    "name": "genre_discogs400",
+                    "min_value": 0.8,
+                    "text_values": ["Electronic---Techno"],
+                },
+            ],
+            "sort_by": "genre_discogs400",
+            "sort_direction": "desc",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 1
+    assert data["results"][0]["id"] == first_id
+    assert data["results"][0]["features"][0]["name"] == "genre_discogs400"
+    assert data["results"][0]["features"][0]["text_value"] == "Electronic---Techno"
 
 
 def test_worker_claim_audio_and_submit_embedding(tmp_path: Path, monkeypatch):
@@ -361,6 +574,45 @@ def test_worker_claim_audio_and_submit_embedding(tmp_path: Path, monkeypatch):
     assert submit.json()["accepted"] == [task["task_id"]]
     assert np.allclose(store.load_embedding(track_id, "discogs_multi"), vector)
     assert store.get_analysis_job(job.id).done == 1
+
+
+def test_worker_heartbeat_skips_fresh_write(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+    register = client.post(
+        "/workers/register",
+        json={"worker_id": "gpu-1", "models": ["discogs_multi"]},
+    )
+    initial = store.list_analysis_workers()[0]
+
+    heartbeat = client.post(
+        "/workers/heartbeat",
+        json={"worker_id": "gpu-1", "models": ["discogs_multi"]},
+    )
+
+    refreshed = store.list_analysis_workers()[0]
+    assert register.status_code == 200
+    assert heartbeat.status_code == 200
+    assert heartbeat.json()["heartbeat_written"] is False
+    assert refreshed.last_seen_at == initial.last_seen_at
+
+
+def test_worker_register_reports_sqlite_disk_io_error(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+
+    def fail_register(self, worker_id, models):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(store_module.Store, "register_analysis_worker", fail_register)
+    client = TestClient(app)
+
+    response = client.post(
+        "/workers/register",
+        json={"worker_id": "gpu-1", "models": ["discogs_multi"]},
+    )
+
+    assert response.status_code == 503
+    assert "SQLite disk I/O error" in response.json()["detail"]
 
 
 def test_worker_audio_endpoint_downloads_navidrome_track(tmp_path: Path, monkeypatch):
@@ -776,6 +1028,121 @@ def test_jobs_list_endpoint():
     assert "jobs" in response.json()
 
 
+def test_job_created_while_memory_job_runs_is_deferred(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    clear_runtime_jobs()
+    active_id = main_module.create_job("check-missing-files", "active")
+    main_module.update_job(active_id, status="running", message="active")
+    ran = Event()
+    started: list[tuple[str, str]] = []
+
+    def fake_index_job(job_id: str, model: str) -> None:
+        started.append((job_id, model))
+        main_module.finish_job(job_id, "completed", "fake index done")
+        ran.set()
+
+    monkeypatch.setattr(main_module, "_index_job", fake_index_job)
+    client = TestClient(app)
+
+    response = client.post("/jobs/index", json={"model": "discogs_multi"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "deferred"
+    assert not ran.is_set()
+    jobs = client.get("/jobs").json()["jobs"]
+    deferred = next(job for job in jobs if job["id"] == body["job_id"])
+    assert deferred["status"] == "deferred"
+    assert deferred["queue_position"] == 1
+
+    main_module.finish_job(active_id, "completed", "active done")
+
+    assert ran.wait(2)
+    assert started == [(body["job_id"], "discogs_multi")]
+
+
+def test_deferred_job_starts_after_remote_analysis_completes(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    clear_runtime_jobs()
+    path = tmp_path / "track.flac"
+    path.write_bytes(b"fake-audio")
+    add_track(store, path)
+    ran = Event()
+    started: list[tuple[str, str]] = []
+
+    def fake_index_job(job_id: str, model: str) -> None:
+        started.append((job_id, model))
+        main_module.finish_job(job_id, "completed", "fake index done")
+        ran.set()
+
+    monkeypatch.setattr(main_module, "_index_job", fake_index_job)
+    client = TestClient(app)
+    analysis_response = client.post(
+        "/jobs/analyze",
+        json={"model": "discogs_multi", "limit": 1, "execution_mode": "remote"},
+    )
+    index_response = client.post("/jobs/index", json={"model": "discogs_multi"})
+
+    assert analysis_response.status_code == 200
+    assert index_response.status_code == 200
+    assert index_response.json()["status"] == "deferred"
+    assert not ran.is_set()
+    with store.connect() as conn:
+        conn.execute(
+            "UPDATE analysis_tasks SET status = 'completed' WHERE job_id = ?",
+            (analysis_response.json()["job_id"],),
+        )
+
+    jobs = client.get("/jobs").json()["jobs"]
+
+    assert ran.wait(2)
+    assert started == [(index_response.json()["job_id"], "discogs_multi")]
+    assert any(job["id"] == analysis_response.json()["job_id"] and job["status"] == "completed" for job in jobs)
+
+
+def test_finished_transient_job_elapsed_is_frozen(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    clear_runtime_jobs()
+    times = iter([100.0, 130.0])
+    monkeypatch.setattr(main_module, "perf_counter", lambda: next(times))
+    job_id = main_module.create_job("download-head-models", "test")
+    main_module.finish_job(job_id, "completed", "done")
+    monkeypatch.setattr(main_module, "perf_counter", lambda: 999.0)
+    client = TestClient(app)
+
+    jobs = client.get("/jobs").json()["jobs"]
+
+    job = next(item for item in jobs if item["id"] == job_id)
+    assert job["status"] == "completed"
+    assert job["elapsed_seconds"] == 30.0
+    assert job["eta_seconds"] is None
+
+
+def test_finished_durable_job_elapsed_is_frozen(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    path = tmp_path / "track.flac"
+    path.write_bytes(b"fake-audio")
+    add_track(store, path)
+    monkeypatch.setattr(store_module, "utc_now", lambda: "2026-01-01T00:00:00+00:00")
+    job = store.create_analysis_job("discogs_multi", None)
+    with store.connect() as conn:
+        conn.execute(
+            "UPDATE analysis_tasks SET status = 'completed' WHERE job_id = ?",
+            (job.id,),
+        )
+    monkeypatch.setattr(store_module, "utc_now", lambda: "2026-01-01T00:00:30+00:00")
+    client = TestClient(app)
+
+    first = next(item for item in client.get("/jobs").json()["jobs"] if item["id"] == job.id)
+    monkeypatch.setattr(store_module, "utc_now", lambda: "2026-01-01T00:10:00+00:00")
+    second = next(item for item in client.get("/jobs").json()["jobs"] if item["id"] == job.id)
+
+    assert first["status"] == "completed"
+    assert first["elapsed_seconds"] == 30.0
+    assert second["elapsed_seconds"] == 30.0
+    assert second["finished_at_iso"] == "2026-01-01T00:00:30+00:00"
+
+
 def test_analyze_job_accepts_limit(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
@@ -868,6 +1235,55 @@ def test_analyze_audio_features_remote_mode_queues_worker_task(tmp_path: Path, m
     tasks = claim.json()["tasks"]
     assert len(tasks) == 1
     assert tasks[0]["track_id"] == track_id
+
+
+def test_analyze_audio_features_reset_existing_requeues_processed_track(
+    tmp_path: Path,
+    monkeypatch,
+):
+    store = init_api_store(tmp_path, monkeypatch)
+    path = tmp_path / "track.flac"
+    path.write_bytes(b"fake-audio")
+    track_id = add_track(store, path)
+    store.save_features(
+        track_id,
+        [
+            TrackFeature(
+                "bpm",
+                value=172.265,
+                unit="bpm",
+                extractor=AUDIO_FEATURE_EXTRACTOR,
+            )
+        ],
+    )
+    client = TestClient(app)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("remote-only must not start local audio feature executor")
+
+    monkeypatch.setattr(main_module, "_analyze_audio_features_job", fail_if_called)
+    response = client.post(
+        "/jobs/analyze-audio-features",
+        json={
+            "execution_mode": "remote",
+            "local_executor_enabled": False,
+            "reset_existing": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reset_existing"] is True
+    assert response.json()["deleted_features"] == 1
+    assert store.load_features(track_id, AUDIO_FEATURE_EXTRACTOR) == []
+    job = store.get_analysis_job(response.json()["job_id"])
+    assert job is not None
+    assert job.queued == 1
+    claim = client.post(
+        "/workers/claim",
+        json={"worker_id": "gpu-1", "models": [AUDIO_FEATURE_EXTRACTOR], "limit": 1},
+    )
+    assert claim.status_code == 200
+    assert claim.json()["tasks"][0]["track_id"] == track_id
 
 
 def test_analyze_heads_remote_mode_queues_worker_task(tmp_path: Path, monkeypatch):
@@ -1349,6 +1765,25 @@ def test_similar_mix_reports_missing_index(tmp_path: Path, monkeypatch):
     assert "Index not found" in response.json()["detail"]
 
 
+def test_similar_reports_stale_index(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    seed_path = tmp_path / "seed.flac"
+    result_path = tmp_path / "result.flac"
+    for path in [seed_path, result_path]:
+        path.write_bytes(b"fake")
+    seed_id = add_track(store, seed_path, title="Seed")
+    result_id = add_track(store, result_path, title="Result", album="Two")
+    store.save_embedding(seed_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
+    store.save_embedding(result_id, "discogs_multi", np.array([0.9, 0.1], dtype=np.float32))
+    client = TestClient(app)
+
+    response = client.get(f"/tracks/{seed_id}/similar?model=discogs_multi&k=1")
+
+    assert response.status_code == 503
+    assert "Index is stale" in response.json()["detail"]
+
+
 def test_similar_mix_reports_missing_embeddings(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     seed_path = tmp_path / "seed.flac"
@@ -1398,13 +1833,59 @@ def test_similar_tracks_include_saved_rating(tmp_path: Path, monkeypatch):
     store.save_embedding(seed_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
     store.save_embedding(result_id, "discogs_multi", np.array([0.9, 0.1], dtype=np.float32))
     store.save_feedback(seed_id, result_id, "discogs_multi", 3)
+    store.save_features(
+        result_id,
+        [
+            TrackFeature("bpm", value=128.0, unit="bpm", extractor=AUDIO_FEATURE_EXTRACTOR),
+            TrackFeature("key", text_value="C#", extractor=AUDIO_FEATURE_EXTRACTOR),
+            TrackFeature("scale", text_value="minor", extractor=AUDIO_FEATURE_EXTRACTOR),
+        ],
+    )
+    store.save_predictions(
+        result_id,
+        "genre_discogs400",
+        [
+            TrackPrediction(label="Electronic---Techno", score=0.7, rank=1),
+            TrackPrediction(label="Electronic---Minimal", score=0.2, rank=2),
+            TrackPrediction(label="Electronic---Tech House", score=0.1, rank=3),
+        ],
+    )
+    store.save_predictions(
+        result_id,
+        "approachability_3c",
+        [TrackPrediction(label="approachable", score=0.8231, rank=1)],
+    )
+    store.save_predictions(
+        result_id,
+        "engagement_3c",
+        [TrackPrediction(label="engaging", score=0.74, rank=1)],
+    )
+    store.upsert_external_track(
+        "navidrome",
+        "result-song",
+        result_id,
+        raw_json=json.dumps({"suffix": "flac", "bitRate": 914}),
+    )
     main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
     client = TestClient(app)
 
     response = client.get(f"/tracks/{seed_id}/similar?model=discogs_multi&k=1")
 
     assert response.status_code == 200
-    assert response.json()["results"][0]["rating"] == 3
+    result = response.json()["results"][0]
+    assert result["rating"] == 3
+    assert result["card_features"]["bpm"]["value"] == 128.0
+    assert result["card_features"]["key"]["text_value"] == "C#"
+    assert result["card_features"]["scale"]["text_value"] == "minor"
+    assert [item["label"] for item in result["genre_discogs400"]] == [
+        "Electronic---Techno",
+        "Electronic---Minimal",
+        "Electronic---Tech House",
+    ]
+    assert result["approachability_3c"]["score"] == 0.8231
+    assert result["engagement_3c"]["score"] == 0.74
+    assert result["audio_format"] == "FLAC"
+    assert result["bitrate"] == 914
 
 
 def _configure_navidrome_env(monkeypatch) -> None:
@@ -1451,6 +1932,85 @@ def test_navidrome_starred_catalog(tmp_path: Path, monkeypatch):
     assert statuses["like-1"] == "ready"
     assert statuses["like-2"] == "missing_embedding"
     assert statuses["ghost"] == "not_synced"
+
+
+def test_navidrome_starred_ids_maps_current_user_likes(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    _configure_navidrome_env(monkeypatch)
+
+    class FakeNavidromeClient:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def get_starred_songs(self):
+            return [
+                NavidromeSong(id="like-1", title="Like One", artist="A"),
+                NavidromeSong(id="ghost", title="Ghost", artist="C"),
+            ]
+
+    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    track_id = add_navidrome_track(store, "like-1", title="Like One", artist="A")
+    store.upsert_external_track("navidrome", "like-1", track_id)
+    client = TestClient(app)
+
+    response = client.get("/navidrome/starred/ids")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "user": "alice",
+        "count": 2,
+        "mapped_count": 1,
+        "track_ids": [track_id],
+        "item_ids": ["like-1", "ghost"],
+        "not_synced_item_ids": ["ghost"],
+    }
+
+
+def test_set_track_navidrome_star_uses_configured_client(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    _configure_navidrome_env(monkeypatch)
+    calls: list[tuple[str, str, str]] = []
+
+    class FakeNavidromeClient:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def star_song(self, item_id: str):
+            calls.append(("star", item_id, self.settings.user))
+
+        def unstar_song(self, item_id: str):
+            calls.append(("unstar", item_id, self.settings.user))
+
+    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    track_id = add_navidrome_track(store, "song-1", title="Song One")
+    store.upsert_external_track("navidrome", "song-1", track_id)
+    client = TestClient(app)
+
+    starred = client.put(f"/tracks/{track_id}/navidrome-star", json={"starred": True})
+    unstarred = client.put(f"/tracks/{track_id}/navidrome-star", json={"starred": False})
+
+    assert starred.status_code == 200
+    assert starred.json() == {
+        "track_id": track_id,
+        "item_id": "song-1",
+        "starred": True,
+        "user": "alice",
+    }
+    assert unstarred.status_code == 200
+    assert unstarred.json()["starred"] is False
+    assert calls == [("star", "song-1", "alice"), ("unstar", "song-1", "alice")]
+
+
+def test_set_track_navidrome_star_requires_mapping(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    _configure_navidrome_env(monkeypatch)
+    track_id = add_track(store, tmp_path / "local.flac")
+    client = TestClient(app)
+
+    response = client.put(f"/tracks/{track_id}/navidrome-star", json={"starred": True})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Track has no Navidrome mapping"
 
 
 def test_navidrome_starred_similar_blends_ready_likes(tmp_path: Path, monkeypatch):
@@ -1535,6 +2095,140 @@ def test_navidrome_similar_returns_external_ids(tmp_path: Path, monkeypatch):
     assert data["results"][0]["track_id"] == result_id
     assert data["results"][0]["title"] == "Result"
     assert data["results"][0]["similarity"] > 0
+
+
+def test_navidrome_similar_uses_instant_mix_settings_for_count_and_history(
+    tmp_path: Path,
+    monkeypatch,
+):
+    store = init_api_store(tmp_path, monkeypatch)
+    seed_id = add_navidrome_track(store, "seed", title="Seed", album="One")
+    first_id = add_navidrome_track(store, "first", title="First", album="Two")
+    second_id = add_navidrome_track(store, "second", title="Second", album="Three")
+    third_id = add_navidrome_track(store, "third", title="Third", album="Four")
+    for external_id, track_id in [
+        ("seed", seed_id),
+        ("first", first_id),
+        ("second", second_id),
+        ("third", third_id),
+    ]:
+        store.upsert_external_track("navidrome", external_id, track_id)
+    store.save_embedding(seed_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    store.save_embedding(first_id, "discogs_multi", np.array([0.99, 0.01], dtype=np.float32))
+    store.save_embedding(second_id, "discogs_multi", np.array([0.98, 0.02], dtype=np.float32))
+    store.save_embedding(third_id, "discogs_multi", np.array([0.7, 0.3], dtype=np.float32))
+    main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
+    client = TestClient(app)
+    settings_response = client.put(
+        "/instant-mix/settings",
+        json={
+            "count": 2,
+            "min_similarity": 0.0,
+            "max_per_artist": 10,
+            "exclude_same_album": False,
+            "count_collaboration_artists": False,
+        },
+    )
+    assert settings_response.status_code == 200
+    assert settings_response.json()["count_collaboration_artists"] is False
+
+    response = client.get("/navidrome/similar?item_id=seed&model=discogs_multi&count=100")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["requested_count"] == 100
+    assert data["effective_count"] == 2
+    assert [item["item_id"] for item in data["results"]] == ["first", "second"]
+    assert data["results"][0]["similarity"] >= data["results"][1]["similarity"]
+    web_response = client.get(
+        f"/tracks/{seed_id}/similar?model=discogs_multi&k=2&max_per_artist=10&exclude_same_album=false"
+    )
+    assert web_response.status_code == 200
+    assert [item["track_id"] for item in data["results"]] == [
+        item["id"] for item in web_response.json()["results"]
+    ]
+    history_response = client.get("/instant-mix/requests")
+    assert history_response.status_code == 200
+    history = history_response.json()["results"]
+    assert history[0]["id"] == data["request_id"]
+    assert history[0]["requested_count"] == 100
+    assert history[0]["effective_count"] == 2
+    detail_response = client.get(f"/instant-mix/requests/{data['request_id']}")
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert detail["params"]["count_collaboration_artists"] is False
+    assert [item["item_id"] for item in detail["results"]] == ["first", "second"]
+
+
+def test_navidrome_similar_uses_saved_instant_mix_model(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    seed_id = add_navidrome_track(store, "seed", title="Seed", album="One")
+    result_id = add_navidrome_track(store, "result", title="Result", album="Two")
+    store.upsert_external_track("navidrome", "seed", seed_id)
+    store.upsert_external_track("navidrome", "result", result_id)
+    store.save_embedding(seed_id, "muq_mulan", np.array([1.0, 0.0], dtype=np.float32))
+    store.save_embedding(result_id, "muq_mulan", np.array([0.9, 0.1], dtype=np.float32))
+    main_module.build_index(store, main_module.Settings.from_env(), "muq_mulan")
+    client = TestClient(app)
+    settings_response = client.put(
+        "/instant-mix/settings",
+        json={
+            "model": "muq_mulan",
+            "count": 1,
+            "min_similarity": 0.0,
+            "max_per_artist": 10,
+            "exclude_same_album": False,
+            "count_collaboration_artists": True,
+        },
+    )
+    assert settings_response.status_code == 200
+
+    response = client.get("/navidrome/similar?item_id=seed&model=discogs_multi")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["model"] == "muq_mulan"
+    assert [item["item_id"] for item in data["results"]] == ["result"]
+    detail_response = client.get(f"/instant-mix/requests/{data['request_id']}")
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert detail["params"]["requested_model"] == "discogs_multi"
+    assert detail["params"]["effective_model"] == "muq_mulan"
+
+
+def test_navidrome_similar_filters_by_instant_mix_similarity_threshold(
+    tmp_path: Path,
+    monkeypatch,
+):
+    store = init_api_store(tmp_path, monkeypatch)
+    seed_id = add_navidrome_track(store, "seed", title="Seed", album="One")
+    close_id = add_navidrome_track(store, "close", title="Close", album="Two")
+    far_id = add_navidrome_track(store, "far", title="Far", album="Three")
+    store.upsert_external_track("navidrome", "seed", seed_id)
+    store.upsert_external_track("navidrome", "close", close_id)
+    store.upsert_external_track("navidrome", "far", far_id)
+    store.save_embedding(seed_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    store.save_embedding(close_id, "discogs_multi", np.array([0.99, 0.01], dtype=np.float32))
+    store.save_embedding(far_id, "discogs_multi", np.array([0.4, 0.6], dtype=np.float32))
+    main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
+    client = TestClient(app)
+    settings_response = client.put(
+        "/instant-mix/settings",
+        json={
+            "count": 50,
+            "min_similarity": 0.9,
+            "max_per_artist": 10,
+            "exclude_same_album": False,
+        },
+    )
+    assert settings_response.status_code == 200
+
+    response = client.get("/navidrome/similar?item_id=seed&model=discogs_multi")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert [item["item_id"] for item in data["results"]] == ["close"]
+    assert data["min_similarity"] == 0.9
 
 
 def test_navidrome_similar_rejects_unsynced_seed(tmp_path: Path, monkeypatch):
@@ -1647,6 +2341,10 @@ def test_analyze_job_saves_successes_and_counts_failures_with_one_worker(tmp_pat
     assert job.done == 2
     assert job.failed == 1
     assert job.tracks_per_min is not None
+    settings = main_module.Settings.from_env()
+    metadata_path = main_module.index_metadata_path(settings.index_path("discogs_multi"))
+    assert settings.index_path("discogs_multi").exists()
+    assert json.loads(metadata_path.read_text(encoding="utf-8"))["count"] == 2
 
 
 def test_analyze_heads_job_saves_successes_and_counts_failures(tmp_path: Path, monkeypatch):

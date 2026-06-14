@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from threading import Lock
 
 import numpy as np
 
@@ -19,6 +20,7 @@ class HnswIndex:
         self.dim = dim
         self.space = space
         self.index = hnswlib.Index(space=space, dim=dim)
+        self._query_lock = Lock()
 
     @classmethod
     def build(
@@ -63,9 +65,18 @@ class HnswIndex:
         logger.info("Saving HNSW index path=%s dim=%s space=%s", path, self.dim, self.space)
         self.index.save_index(str(path))
 
+    def count(self) -> int:
+        return int(self.index.get_current_count())
+
     def query(self, vector: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
-        labels, distances = self.index.knn_query(
-            np.asarray(vector, dtype=np.float32).reshape(1, -1),
-            k=k,
-        )
+        indexed_count = self.count()
+        if indexed_count < 1:
+            return np.array([], dtype=np.int64), np.array([], dtype=np.float32)
+        k = min(k, indexed_count)
+        with self._query_lock:
+            self.index.set_ef(max(50, k))
+            labels, distances = self.index.knn_query(
+                np.asarray(vector, dtype=np.float32).reshape(1, -1),
+                k=k,
+            )
         return labels[0], distances[0]

@@ -7,10 +7,20 @@ from app.audio_features import AUDIO_FEATURE_EXTRACTOR, AudioFeatureAnalyzer
 
 
 def test_audio_feature_analyzer_uses_feature_extractors(monkeypatch, tmp_path):
+    audio_16k = np.ones(16000, dtype=np.float32)
+    audio_44k = np.ones(44100, dtype=np.float32) * 2
+    calls = []
+
+    def fake_load_audio(path, sample_rate=16000):
+        calls.append(sample_rate)
+        if sample_rate == audio_features.ESSENTIA_RHYTHM_SAMPLE_RATE:
+            return audio_44k
+        return audio_16k
+
     monkeypatch.setattr(
         audio_features,
         "load_audio_with_ffmpeg",
-        lambda path: np.ones(16000, dtype=np.float32),
+        fake_load_audio,
     )
     monkeypatch.setattr(
         audio_features,
@@ -23,7 +33,7 @@ def test_audio_feature_analyzer_uses_feature_extractors(monkeypatch, tmp_path):
                 confidence=0.9,
                 extractor=AUDIO_FEATURE_EXTRACTOR,
             )
-        ],
+        ] if audio is audio_44k else [],
     )
     monkeypatch.setattr(
         audio_features,
@@ -35,13 +45,27 @@ def test_audio_feature_analyzer_uses_feature_extractors(monkeypatch, tmp_path):
                 confidence=0.7,
                 extractor=AUDIO_FEATURE_EXTRACTOR,
             )
-        ],
+        ] if audio is audio_16k else [],
     )
     monkeypatch.setattr(audio_features, "extract_loudness_features", lambda audio: [])
-    monkeypatch.setattr(audio_features, "extract_dynamic_features", lambda audio: [])
+    monkeypatch.setattr(
+        audio_features,
+        "extract_dynamic_features",
+        lambda audio: [] if audio is audio_44k else [
+            audio_features.TrackFeature(
+                name="unexpected",
+                value=1.0,
+                extractor=AUDIO_FEATURE_EXTRACTOR,
+            )
+        ],
+    )
 
     features = AudioFeatureAnalyzer().analyze_track(tmp_path / "track.flac")
 
+    assert calls == [
+        audio_features.EMBEDDING_SAMPLE_RATE,
+        audio_features.ESSENTIA_RHYTHM_SAMPLE_RATE,
+    ]
     assert [feature.name for feature in features] == ["bpm", "key"]
     assert features[0].value == 128.0
     assert features[1].text_value == "F#"
@@ -74,3 +98,29 @@ def test_loudness_extractor_converts_mono_audio_to_stereo(monkeypatch):
         "loudness_integrated",
         "loudness_range",
     ]
+
+
+def test_dynamic_extractor_uses_essentia_rhythm_sample_rate(monkeypatch):
+    calls = []
+
+    class FakeDynamicComplexity:
+        def __init__(self, sampleRate, frameSize):
+            calls.append((sampleRate, frameSize))
+
+        def __call__(self, audio):
+            return (12.5, -18.0)
+
+    essentia_module = types.ModuleType("essentia")
+    standard_module = types.ModuleType("essentia.standard")
+    standard_module.DynamicComplexity = FakeDynamicComplexity
+    monkeypatch.setitem(sys.modules, "essentia", essentia_module)
+    monkeypatch.setitem(sys.modules, "essentia.standard", standard_module)
+
+    features = audio_features.extract_dynamic_features(np.array([0.1, -0.2], dtype=np.float32))
+
+    assert calls == [(audio_features.ESSENTIA_RHYTHM_SAMPLE_RATE, 0.2)]
+    assert [feature.name for feature in features] == [
+        "dynamic_complexity",
+        "dynamic_loudness",
+    ]
+    assert features[0].value == 12.5

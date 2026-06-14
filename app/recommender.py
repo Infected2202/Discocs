@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
+from threading import Lock
 from pathlib import Path
 from time import perf_counter
 
@@ -13,6 +16,14 @@ from app.store import SimilarTrack, Store, Track
 
 
 logger = logging.getLogger(__name__)
+
+MAX_HNSW_CANDIDATES = 500
+_INDEX_CACHE_LOCK = Lock()
+_INDEX_CACHE: dict[tuple[str, Path, int], tuple[int, int, HnswIndex]] = {}
+
+
+class StaleIndexError(FileNotFoundError):
+    pass
 
 
 class Recommender:
@@ -27,6 +38,7 @@ class Recommender:
         k: int = 30,
         max_per_artist: int = 2,
         exclude_same_album: bool = True,
+        count_collaboration_artists: bool = True,
         candidate_multiplier: int = 5,
     ) -> list[SimilarTrack]:
         started = perf_counter()
@@ -50,6 +62,7 @@ class Recommender:
             k=k,
             max_per_artist=max_per_artist,
             exclude_same_album=exclude_same_album,
+            count_collaboration_artists=count_collaboration_artists,
             candidate_multiplier=candidate_multiplier,
         )
         logger.info(
@@ -67,6 +80,7 @@ class Recommender:
         k: int = 30,
         max_per_artist: int = 2,
         exclude_same_album: bool = True,
+        count_collaboration_artists: bool = True,
         candidate_multiplier: int = 5,
     ) -> tuple[list[SimilarTrack], list[int]]:
         started = perf_counter()
@@ -108,6 +122,7 @@ class Recommender:
             k=k,
             max_per_artist=max_per_artist,
             exclude_same_album=exclude_same_album,
+            count_collaboration_artists=count_collaboration_artists,
             candidate_multiplier=candidate_multiplier,
         )
         logger.info(
@@ -128,6 +143,7 @@ class Recommender:
         k: int = 30,
         max_per_artist: int = 2,
         exclude_same_album: bool = True,
+        count_collaboration_artists: bool = True,
         candidate_multiplier: int = 5,
     ) -> list[SimilarTrack]:
         exclude_ids = set(exclude_track_ids)
@@ -136,9 +152,25 @@ class Recommender:
             logger.warning("Index not found model=%s path=%s", self.model_name, index_path)
             raise FileNotFoundError(f"Index not found: {index_path}")
 
-        index = HnswIndex.load(index_path, dim=int(seed_vector.shape[0]))
+        load_started = perf_counter()
+        index = _load_cached_index(index_path, dim=int(seed_vector.shape[0]), model_name=self.model_name)
+        load_seconds = perf_counter() - load_started
         indexed_count = self.store.count_embeddings(self.model_name)
-        raw_k = min(max(k * candidate_multiplier, k + len(exclude_ids)), indexed_count)
+        index_count = index.count()
+        if index_count != indexed_count:
+            logger.warning(
+                "Index is stale model=%s path=%s index_count=%s db_embeddings=%s",
+                self.model_name,
+                index_path,
+                index_count,
+                indexed_count,
+            )
+            raise StaleIndexError(
+                f"Index is stale for {self.model_name}: index has {index_count} vectors "
+                f"but database has {indexed_count} embeddings. Rebuild the index."
+            )
+        requested_raw_k = max(k * candidate_multiplier, k + len(exclude_ids))
+        raw_k = min(requested_raw_k, indexed_count, max(k, MAX_HNSW_CANDIDATES))
         if raw_k < 1:
             logger.info(
                 "Similar vector query has no indexed tracks model=%s indexed_count=%s",
@@ -146,27 +178,68 @@ class Recommender:
                 indexed_count,
             )
             return []
+        logger.info(
+            "Similar vector prepared model=%s k=%s raw_k=%s requested_raw_k=%s indexed_count=%s "
+            "candidate_multiplier=%s index_load_seconds=%.3f",
+            self.model_name,
+            k,
+            raw_k,
+            requested_raw_k,
+            indexed_count,
+            candidate_multiplier,
+            load_seconds,
+        )
+        query_started = perf_counter()
         labels, distances = index.query(seed_vector, raw_k)
+        query_seconds = perf_counter() - query_started
 
+        filter_started = perf_counter()
+        track_by_id = self.store.get_tracks([int(label) for label in labels])
+        track_load_seconds = perf_counter() - filter_started
         results: list[SimilarTrack] = []
+        seen_track_keys: set[tuple[str, str]] = set()
         per_artist: dict[str, int] = {}
+        skipped_excluded = 0
+        skipped_missing = 0
+        skipped_short = 0
+        skipped_duplicate_track = 0
+        skipped_duplicate_result = 0
+        skipped_album = 0
+        skipped_artist_cap = 0
         for label, distance in zip(labels, distances, strict=False):
             track_id = int(label)
             if track_id in exclude_ids:
+                skipped_excluded += 1
                 continue
-            track = self.store.get_track(track_id)
+            track = track_by_id.get(track_id)
             if track is None:
+                skipped_missing += 1
                 continue
             if _is_too_short(track):
+                skipped_short += 1
+                continue
+            if _same_track_any(album_seeds, track):
+                skipped_duplicate_track += 1
                 continue
             if exclude_same_album and _same_album_any(album_seeds, track):
+                skipped_album += 1
                 continue
-            artist_key = (track.artist or "").strip().lower()
-            if artist_key:
-                count = per_artist.get(artist_key, 0)
-                if count >= max_per_artist:
+            track_key = _track_metadata_key(track)
+            if track_key is not None and track_key in seen_track_keys:
+                skipped_duplicate_result += 1
+                continue
+            artist_keys = _artist_credit_keys(
+                track.artist,
+                count_collaboration_artists=count_collaboration_artists,
+            )
+            if artist_keys:
+                if any(per_artist.get(artist_key, 0) >= max_per_artist for artist_key in artist_keys):
+                    skipped_artist_cap += 1
                     continue
-                per_artist[artist_key] = count + 1
+                for artist_key in artist_keys:
+                    per_artist[artist_key] = per_artist.get(artist_key, 0) + 1
+            if track_key is not None:
+                seen_track_keys.add(track_key)
             distance_float = float(distance)
             results.append(
                 SimilarTrack(
@@ -177,6 +250,25 @@ class Recommender:
             )
             if len(results) >= k:
                 break
+        logger.info(
+            "Similar vector finished model=%s results=%s labels=%s hnsw_seconds=%.3f "
+            "track_load_seconds=%.3f filter_seconds=%.3f skipped_excluded=%s skipped_missing=%s "
+            "skipped_short=%s skipped_duplicate_track=%s skipped_duplicate_result=%s "
+            "skipped_album=%s skipped_artist_cap=%s",
+            self.model_name,
+            len(results),
+            len(labels),
+            query_seconds,
+            track_load_seconds,
+            perf_counter() - filter_started,
+            skipped_excluded,
+            skipped_missing,
+            skipped_short,
+            skipped_duplicate_track,
+            skipped_duplicate_result,
+            skipped_album,
+            skipped_artist_cap,
+        )
         return results
 
 
@@ -190,6 +282,20 @@ def build_index(store: Store, settings: Settings, model_name: str) -> Path:
     index = HnswIndex.build(ids, vectors)
     path = settings.index_path(model_name)
     index.save(path)
+    index_metadata_path(path).write_text(
+        json.dumps(
+            {
+                "model_name": model_name,
+                "count": int(len(ids)),
+                "dim": int(vectors.shape[1]),
+                "space": index.space,
+                "path": str(path),
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
     logger.info(
         "Finished recommender index model=%s vectors=%s path=%s seconds=%.3f",
         model_name,
@@ -198,6 +304,53 @@ def build_index(store: Store, settings: Settings, model_name: str) -> Path:
         perf_counter() - started,
     )
     return path
+
+
+def index_metadata_path(index_path: Path) -> Path:
+    return index_path.with_suffix(f"{index_path.suffix}.json")
+
+
+def _load_cached_index(index_path: Path, dim: int, model_name: str) -> HnswIndex:
+    stat = index_path.stat()
+    cache_key = (model_name, index_path.resolve(), dim)
+    cached = _INDEX_CACHE.get(cache_key)
+    if cached is not None:
+        cached_mtime_ns, cached_size, cached_index = cached
+        if cached_mtime_ns == stat.st_mtime_ns and cached_size == stat.st_size:
+            logger.info(
+                "Using cached HNSW index model=%s path=%s dim=%s size=%s",
+                model_name,
+                index_path,
+                dim,
+                stat.st_size,
+            )
+            return cached_index
+
+    with _INDEX_CACHE_LOCK:
+        cached = _INDEX_CACHE.get(cache_key)
+        if cached is not None:
+            cached_mtime_ns, cached_size, cached_index = cached
+            if cached_mtime_ns == stat.st_mtime_ns and cached_size == stat.st_size:
+                logger.info(
+                    "Using cached HNSW index model=%s path=%s dim=%s size=%s",
+                    model_name,
+                    index_path,
+                    dim,
+                    stat.st_size,
+                )
+                return cached_index
+        started = perf_counter()
+        index = HnswIndex.load(index_path, dim=dim)
+        logger.info(
+            "Loaded HNSW index model=%s path=%s dim=%s size=%s seconds=%.3f",
+            model_name,
+            index_path,
+            dim,
+            stat.st_size,
+            perf_counter() - started,
+        )
+        _INDEX_CACHE[cache_key] = (stat.st_mtime_ns, stat.st_size, index)
+        return index
 
 
 def _same_album(seed: Track, result: Track) -> bool:
@@ -210,6 +363,47 @@ def _same_album(seed: Track, result: Track) -> bool:
 
 def _same_album_any(seeds: list[Track], result: Track) -> bool:
     return any(_same_album(seed, result) for seed in seeds)
+
+
+def _same_track(seed: Track, result: Track) -> bool:
+    return _track_metadata_key(seed) is not None and _track_metadata_key(seed) == _track_metadata_key(result)
+
+
+def _same_track_any(seeds: list[Track], result: Track) -> bool:
+    return any(_same_track(seed, result) for seed in seeds)
+
+
+def _track_metadata_key(track: Track) -> tuple[str, str] | None:
+    artist = _metadata_key(track.artist)
+    title = _metadata_key(track.title)
+    if artist is None or title is None:
+        return None
+    return artist, title
+
+
+def _artist_credit_keys(
+    artist: str | None,
+    *,
+    count_collaboration_artists: bool = True,
+) -> tuple[str, ...]:
+    key = _metadata_key(artist)
+    if key is None:
+        return ()
+    if not count_collaboration_artists:
+        return (key,)
+    parts = re.split(
+        r"\s+\u2022\s+|\s+(?:feat\.?|ft\.?|featuring|with|vs\.?|x)\s+|\s*[;&+]\s*",
+        key,
+    )
+    keys = tuple(dict.fromkeys(part for part in parts if part))
+    return keys or (key,)
+
+
+def _metadata_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(value.strip().lower().split())
+    return normalized or None
 
 
 def _is_too_short(track: Track) -> bool:

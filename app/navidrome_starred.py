@@ -40,6 +40,7 @@ def build_starred_catalog(
                 status = "missing_embedding"
                 missing_embedding_count += 1
             track_payload = _mapped_track_dict(track, has_embedding=has_embedding)
+            track_payload["navidrome_item_id"] = song.id
         results.append(
             {
                 "item_id": song.id,
@@ -75,6 +76,37 @@ def ready_tracks_from_starred_catalog(catalog: dict[str, Any], store: Store, mod
             continue
         tracks.append(track)
     return tracks
+
+
+def build_starred_track_ids(
+    store: Store,
+    client: NavidromeClient,
+    *,
+    user: str,
+) -> dict[str, Any]:
+    songs = client.get_starred_songs()
+    track_ids: list[int] = []
+    item_ids: list[str] = []
+    not_synced_item_ids: list[str] = []
+
+    for song in songs:
+        if not song.id:
+            continue
+        item_ids.append(song.id)
+        track = store.get_track_by_external_id(NAVIDROME_PROVIDER, song.id)
+        if track is None:
+            not_synced_item_ids.append(song.id)
+            continue
+        track_ids.append(track.id)
+
+    return {
+        "user": user,
+        "count": len(item_ids),
+        "mapped_count": len(track_ids),
+        "track_ids": track_ids,
+        "item_ids": item_ids,
+        "not_synced_item_ids": not_synced_item_ids,
+    }
 
 
 def _mapped_track_dict(track: Track, *, has_embedding: bool) -> dict[str, Any]:

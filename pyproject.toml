@@ -12,7 +12,7 @@ dependencies = [
   "fastapi>=0.111",
   "hnswlib>=0.8",
   "mutagen>=1.47",
-  "numpy>=1.26",
+  "numpy>=1.26,<2",
   "pydantic>=2.7",
   "typer>=0.12",
   "uvicorn[standard]>=0.29",
@@ -21,6 +21,11 @@ dependencies = [
 [project.optional-dependencies]
 essentia = [
   "essentia-tensorflow>=2.1b6.dev1110; platform_system == 'Linux'",
+]
+muq = [
+  "muq",
+  "torch>=2.1",
+  "torchaudio>=2.1",
 ]
 dev = [
   "pytest>=8.2",

@@ -254,3 +254,29 @@ def test_get_starred_songs_calls_get_starred2():
 
     assert seen_paths == ["/rest/getStarred2.view"]
     assert songs[0].id == "song-1"
+
+
+def test_star_and_unstar_song_call_subsonic_endpoints():
+    seen: list[tuple[str, dict[str, list[str]]]] = []
+
+    def opener(request, timeout):
+        parsed = urlparse(request.full_url)
+        seen.append((parsed.path, parse_qs(parsed.query)))
+        return FakeResponse(
+            b"""
+            {
+              "subsonic-response": {
+                "status": "ok"
+              }
+            }
+            """
+        )
+
+    client = NavidromeClient(settings(auth_mode="plain"), opener=opener)
+
+    client.star_song("song-1")
+    client.unstar_song("song-1")
+
+    assert [path for path, _query in seen] == ["/rest/star.view", "/rest/unstar.view"]
+    assert [query["id"] for _path, query in seen] == [["song-1"], ["song-1"]]
+    assert [query["p"] for _path, query in seen] == [["secret"], ["secret"]]

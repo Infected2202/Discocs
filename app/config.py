@@ -10,6 +10,7 @@ MODEL_FILES = {
     "discogs_effnet": "discogs-effnet-bs64-1.pb",
     "discogs_multi": "discogs_multi_embeddings-effnet-bs64-1.pb",
     "discogs_track": "discogs_track_embeddings-effnet-bs64-1.pb",
+    "discogs_release": "discogs_release_embeddings-effnet-bs64-1.pb",
     "discogs_label": "discogs_label_embeddings-effnet-bs64-1.pb",
 }
 
@@ -17,10 +18,12 @@ MODEL_OUTPUTS = {
     "discogs_effnet": "PartitionedCall:1",
     "discogs_multi": "PartitionedCall:1",
     "discogs_track": "PartitionedCall:1",
+    "discogs_release": "PartitionedCall:1",
     "discogs_label": "PartitionedCall:1",
 }
 
 DISCOGS_EFFNET_MODEL = "discogs_effnet"
+MUQ_MULAN_MODEL = "muq_mulan"
 
 
 @dataclass(frozen=True)

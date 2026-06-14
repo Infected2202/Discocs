@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 *.log
 .pytest_cache/
+.pytest-tmp/
 .pt/
 .ruff_cache/
 .mypy_cache/
@@ -11,12 +12,22 @@ dist/
 build/
 *.egg-info/
 plugins/navidrome-instant-mix/tools/binaryen/
+NDH6SA~M/
 
 data/
+*.flac
+*.mp3
+*.wav
+*.aif
+*.aiff
+*.m4a
+*.ogg
+*.opus
 *.db
 *.db-shm
 *.db-wal
 models/*.pb
 models/*.onnx
 models/*.json
+models/muq/
 eval/results/

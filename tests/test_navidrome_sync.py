@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.navidrome import NavidromeSong
-from app.navidrome_sync import NAVIDROME_PROVIDER, sync_navidrome_catalog
+from app.navidrome_sync import NAVIDROME_PROVIDER, _song_raw_json, sync_navidrome_catalog
 from app.scanner import ScannedTrack
 from app.store import Store
 
@@ -119,6 +119,30 @@ def test_sync_navidrome_catalog_is_idempotent_and_updates_metadata(tmp_path):
     assert store.count_external_tracks(NAVIDROME_PROVIDER) == 1
 
 
+def test_sync_navidrome_catalog_skips_unchanged_existing_tracks(tmp_path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    first_result = sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([song("song-1", "One")]),  # type: ignore[arg-type]
+    )
+    track = store.get_track_by_external_id(NAVIDROME_PROVIDER, "song-1")
+
+    second_result = sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([song("song-1", "One")]),  # type: ignore[arg-type]
+    )
+    refreshed = store.get_track_by_external_id(NAVIDROME_PROVIDER, "song-1")
+
+    assert first_result.imported_count == 1
+    assert second_result.imported_count == 0
+    assert second_result.updated_count == 0
+    assert refreshed.id == track.id
+    assert refreshed.title == "One"
+    assert store.count_tracks() == 1
+    assert store.count_external_tracks(NAVIDROME_PROVIDER) == 1
+
+
 def test_sync_navidrome_catalog_preserves_migrated_external_mapping(tmp_path):
     store = Store(tmp_path / "app.db")
     store.init()
@@ -139,6 +163,26 @@ def test_sync_navidrome_catalog_preserves_migrated_external_mapping(tmp_path):
     assert not mapped.path.startswith("navidrome://")
     assert result.imported_count == 0
     assert result.updated_count == 1
+    assert store.count_tracks() == 1
+
+
+def test_sync_navidrome_catalog_skips_unchanged_migrated_mapping(tmp_path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    local_path = tmp_path / "music" / "Artist" / "Album" / "01 - One.flac"
+    local_path.parent.mkdir(parents=True)
+    local_path.write_bytes(b"fake")
+    local_id = add_local_track(store, local_path)
+    item = song_with_path("song-1", "One", "/container/music/Artist/Album/01 - One.flac")
+    store.upsert_external_track(NAVIDROME_PROVIDER, "song-1", local_id, raw_json=_song_raw_json(item))
+
+    result = sync_navidrome_catalog(store, FakeNavidromeClient([item]))  # type: ignore[arg-type]
+
+    mapped = store.get_track_by_external_id(NAVIDROME_PROVIDER, "song-1")
+    assert mapped is not None
+    assert mapped.id == local_id
+    assert result.imported_count == 0
+    assert result.updated_count == 0
     assert store.count_tracks() == 1
 
 

@@ -10,6 +10,8 @@ from app.store import TrackFeature
 
 
 AUDIO_FEATURE_EXTRACTOR = "audio_features_v1"
+EMBEDDING_SAMPLE_RATE = 16000
+ESSENTIA_RHYTHM_SAMPLE_RATE = 44100
 logger = logging.getLogger(__name__)
 
 
@@ -17,12 +19,13 @@ class AudioFeatureAnalyzer:
     def analyze_track(self, path: Path) -> list[TrackFeature]:
         configure_tensorflow_logging()
         logger.info("Analyzing audio features path=%s extractor=%s", path, AUDIO_FEATURE_EXTRACTOR)
-        audio = load_audio_with_ffmpeg(path)
+        audio = load_audio_with_ffmpeg(path, sample_rate=EMBEDDING_SAMPLE_RATE)
+        rhythm_audio = load_audio_with_ffmpeg(path, sample_rate=ESSENTIA_RHYTHM_SAMPLE_RATE)
         features: list[TrackFeature] = []
-        features.extend(extract_rhythm_features(audio))
+        features.extend(extract_rhythm_features(rhythm_audio))
         features.extend(extract_key_features(audio))
         features.extend(extract_loudness_features(audio))
-        features.extend(extract_dynamic_features(audio))
+        features.extend(extract_dynamic_features(rhythm_audio))
         return features
 
 
@@ -111,7 +114,10 @@ def extract_dynamic_features(audio: np.ndarray) -> list[TrackFeature]:
         from essentia.standard import DynamicComplexity
     except ImportError as exc:
         raise RuntimeError("essentia-tensorflow is required for dynamic extraction") from exc
-    dynamic_complexity, loudness = DynamicComplexity()(audio)
+    dynamic_complexity, loudness = DynamicComplexity(
+        sampleRate=ESSENTIA_RHYTHM_SAMPLE_RATE,
+        frameSize=0.2,
+    )(audio)
     return [
         TrackFeature(
             name="dynamic_complexity",

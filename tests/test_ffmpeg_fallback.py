@@ -40,6 +40,21 @@ def test_load_audio_with_ffmpeg_accepts_thread_override(tmp_path: Path, monkeypa
     assert command[:6] == ["ffmpeg", "-hide_banner", "-loglevel", "error", "-threads", "1"]
 
 
+def test_load_audio_with_ffmpeg_accepts_sample_rate(tmp_path: Path):
+    payload = np.array([0.1], dtype=np.float32).tobytes()
+    path = tmp_path / "track.flac"
+    path.write_bytes(b"fake")
+
+    with patch("app.embedder.subprocess.run") as run:
+        run.return_value = Mock(stdout=payload)
+
+        audio = load_audio_with_ffmpeg(path, sample_rate=44100)
+
+    assert np.allclose(audio, np.array([0.1], dtype=np.float32))
+    command = run.call_args.args[0]
+    assert command[command.index("-ar") + 1] == "44100"
+
+
 def test_load_audio_with_ffmpeg_includes_ffmpeg_stderr(tmp_path: Path):
     path = tmp_path / "broken.mp3"
     path.write_bytes(b"not audio")

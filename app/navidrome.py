@@ -95,6 +95,12 @@ class NavidromeClient:
             payload = self.request("getStarred")
         return songs_from_starred_payload(payload)
 
+    def star_song(self, item_id: str) -> dict[str, Any]:
+        return self.request("star", {"id": item_id})
+
+    def unstar_song(self, item_id: str) -> dict[str, Any]:
+        return self.request("unstar", {"id": item_id})
+
     def iter_songs(
         self,
         *,

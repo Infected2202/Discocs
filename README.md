@@ -17,6 +17,7 @@ The app also has optional analysis packs:
 
 - Discogs-EffNet classification heads for tags, genres, moods, instruments, and
   related model outputs.
+- MuQ-MuLan audio embeddings for a separate audio-to-audio similarity space.
 - Audio features for BPM, key/scale, loudness, and dynamics.
 - Lost-file tracking for scanned tracks whose audio files disappeared.
 - Per-track analysis inspector in the web UI.
@@ -38,6 +39,13 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev,essentia]"
 ```
 
+For MuQ-MuLan inference on the same worker, install the optional PyTorch/MuQ
+dependencies too:
+
+```bash
+python -m pip install -e ".[dev,essentia,muq]"
+```
+
 Put the default model file here:
 
 ```text
@@ -55,6 +63,19 @@ fallback downloader:
 
 ```bash
 python scripts/download_head_models.py --out-dir models
+```
+
+For MuQ-MuLan, use the CLI downloader. It calls Hugging Face through `muq` and
+stores the model cache under `models/muq` by default:
+
+```bash
+recs download-models --pack muq-mulan
+```
+
+You can verify a single file before queueing the whole library:
+
+```bash
+recs embedding-smoke --model muq_mulan --path /path/to/track.flac
 ```
 
 Run the API/UI:
@@ -131,6 +152,19 @@ set DISCOCS_WORKER_DOWNLOAD_CONCURRENCY=8
 run_worker.bat
 ```
 
+Docker GPU worker launch:
+
+```bash
+docker compose -f docker-compose.worker.yml up -d --build
+```
+
+The worker image installs the heavy Essentia and MuQ dependencies in a cached
+Docker layer. After the first build, normal `app/` code changes should only
+rebuild the small editable-install layer. For MuQ-MuLan on a single GPU, start
+with one worker container; scaling the same service to many containers can make
+throughput worse because each container loads its own PyTorch model and
+competes for the same CUDA device.
+
 ## Basic Workflow
 
 From the browser UI:
@@ -157,6 +191,9 @@ recs analyze --limit 500
 recs download-models --pack discogs-effnet-heads
 recs analyze-heads --limit 20
 recs analyze-audio-features --limit 20
+recs download-models --pack muq-mulan
+recs analyze --model muq_mulan --limit 20
+recs build-index --model muq_mulan
 recs build-index
 recs similar --track-id 1 --k 30
 ```
@@ -205,7 +242,17 @@ Supported model aliases:
 ```text
 discogs_multi -> discogs_multi_embeddings-effnet-bs64-1.pb
 discogs_track -> discogs_track_embeddings-effnet-bs64-1.pb
+discogs_release -> discogs_release_embeddings-effnet-bs64-1.pb
 discogs_label -> discogs_label_embeddings-effnet-bs64-1.pb
+muq_mulan -> OpenMuQ/MuQ-MuLan-large cached in models/muq
+```
+
+MuQ-MuLan settings:
+
+```text
+DISCOCS_MUQ_MODEL_NAME=OpenMuQ/MuQ-MuLan-large
+DISCOCS_MUQ_CACHE_DIR=models/muq
+DISCOCS_MUQ_DEVICE=auto
 ```
 
 Runtime artifacts are intentionally ignored by git:
@@ -215,6 +262,7 @@ data/
 models/*.pb
 models/*.json
 models/*.onnx
+models/muq/
 eval/results/
 ```
 
