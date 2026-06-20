@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 
@@ -19,13 +20,50 @@ class AudioFeatureAnalyzer:
     def analyze_track(self, path: Path) -> list[TrackFeature]:
         configure_tensorflow_logging()
         logger.info("Analyzing audio features path=%s extractor=%s", path, AUDIO_FEATURE_EXTRACTOR)
+        total_started = perf_counter()
+        stage_started = perf_counter()
         audio = load_audio_with_ffmpeg(path, sample_rate=EMBEDDING_SAMPLE_RATE)
+        decode_16k_seconds = perf_counter() - stage_started
+
+        stage_started = perf_counter()
         rhythm_audio = load_audio_with_ffmpeg(path, sample_rate=ESSENTIA_RHYTHM_SAMPLE_RATE)
+        decode_44k_seconds = perf_counter() - stage_started
+
         features: list[TrackFeature] = []
+        stage_started = perf_counter()
         features.extend(extract_rhythm_features(rhythm_audio))
+        rhythm_seconds = perf_counter() - stage_started
+
+        stage_started = perf_counter()
         features.extend(extract_key_features(audio))
+        key_seconds = perf_counter() - stage_started
+
+        stage_started = perf_counter()
         features.extend(extract_loudness_features(audio))
+        loudness_seconds = perf_counter() - stage_started
+
+        stage_started = perf_counter()
         features.extend(extract_dynamic_features(rhythm_audio))
+        dynamic_seconds = perf_counter() - stage_started
+
+        total_seconds = perf_counter() - total_started
+        logger.info(
+            "Audio feature timing path=%s extractor=%s total_seconds=%.3f "
+            "decode_16k_seconds=%.3f decode_44k_seconds=%.3f rhythm_seconds=%.3f "
+            "key_seconds=%.3f loudness_seconds=%.3f dynamic_seconds=%.3f "
+            "audio_16k_samples=%s audio_44k_samples=%s",
+            path,
+            AUDIO_FEATURE_EXTRACTOR,
+            total_seconds,
+            decode_16k_seconds,
+            decode_44k_seconds,
+            rhythm_seconds,
+            key_seconds,
+            loudness_seconds,
+            dynamic_seconds,
+            int(audio.size),
+            int(rhythm_audio.size),
+        )
         return features
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 import random
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -114,6 +115,290 @@ def db_check(
         typer.echo("external_tracks index/table count mismatch", err=True)
         raise typer.Exit(1)
     typer.echo("db_check=ok")
+
+
+@cli.command("db-diagnose-instant-mix")
+def db_diagnose_instant_mix(
+    root_pages: Annotated[
+        str,
+        typer.Option(
+            "--root-pages",
+            help="Comma-separated rootpage numbers from PRAGMA integrity_check, e.g. 695446,57842.",
+        ),
+    ] = "",
+    limit: Annotated[int, typer.Option("--limit", min=1, max=200)] = 50,
+) -> None:
+    """Read-only diagnostics for Instant Mix history and SQLite b-tree objects."""
+    settings = Settings.from_env()
+    db_path = settings.db_path
+    typer.echo(f"db_path={db_path}")
+    for suffix in ("", "-wal", "-shm"):
+        path = Path(f"{db_path}{suffix}")
+        typer.echo(f"{path.name}_exists={path.exists()} size={path.stat().st_size if path.exists() else 0}")
+
+    rootpage_values = [
+        int(part.strip())
+        for part in root_pages.split(",")
+        if part.strip()
+    ]
+    uri = f"file:{db_path}?mode=ro"
+    with sqlite3.connect(uri, uri=True, timeout=30) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA query_only = ON")
+        typer.echo(f"journal_mode={conn.execute('PRAGMA journal_mode').fetchone()[0]}")
+        typer.echo(f"page_count={conn.execute('PRAGMA page_count').fetchone()[0]}")
+        typer.echo(f"freelist_count={conn.execute('PRAGMA freelist_count').fetchone()[0]}")
+        typer.echo("instant_mix_schema_objects:")
+        for row in conn.execute(
+            """
+            SELECT type, name, tbl_name, rootpage, sql
+            FROM sqlite_master
+            WHERE tbl_name = 'instant_mix_requests' OR name LIKE '%instant_mix%'
+            ORDER BY type, name
+            """
+        ):
+            typer.echo(
+                f"  rootpage={row['rootpage']} type={row['type']} name={row['name']} tbl={row['tbl_name']}"
+            )
+
+        if rootpage_values:
+            placeholders = ",".join("?" for _ in rootpage_values)
+            typer.echo("rootpage_lookup:")
+            rows = conn.execute(
+                f"""
+                SELECT type, name, tbl_name, rootpage, sql
+                FROM sqlite_master
+                WHERE rootpage IN ({placeholders})
+                ORDER BY rootpage
+                """,
+                rootpage_values,
+            ).fetchall()
+            if rows:
+                for row in rows:
+                    typer.echo(
+                        f"  rootpage={row['rootpage']} type={row['type']} name={row['name']} tbl={row['tbl_name']}"
+                    )
+            else:
+                typer.echo("  <no sqlite_master object matched these rootpages>")
+
+        for label, sql in (
+            ("instant_mix_count_indexed", "SELECT COUNT(*) FROM instant_mix_requests"),
+            ("instant_mix_count_not_indexed", "SELECT COUNT(*) FROM instant_mix_requests NOT INDEXED"),
+        ):
+            try:
+                typer.echo(f"{label}={conn.execute(sql).fetchone()[0]}")
+            except sqlite3.DatabaseError as exc:
+                typer.echo(f"{label}_error={exc}")
+
+        typer.echo("instant_mix_recent_not_indexed:")
+        try:
+            rows = conn.execute(
+                """
+                SELECT rowid, id, created_at, model_name, seed_item_id, seed_track_id, status,
+                       result_count, requested_count, effective_count, params_json
+                FROM instant_mix_requests NOT INDEXED
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            _echo_instant_mix_rows(rows)
+        except sqlite3.DatabaseError as exc:
+            typer.echo(f"instant_mix_recent_not_indexed_error={exc}")
+
+        typer.echo("instant_mix_rowid_probe:")
+        try:
+            min_rowid, max_rowid = conn.execute(
+                "SELECT MIN(rowid), MAX(rowid) FROM instant_mix_requests NOT INDEXED"
+            ).fetchone()
+            typer.echo(f"  min_rowid={min_rowid} max_rowid={max_rowid}")
+        except sqlite3.DatabaseError as exc:
+            typer.echo(f"  rowid_bounds_error={exc}")
+            min_rowid = max_rowid = None
+
+        if min_rowid is not None and max_rowid is not None:
+            printed = 0
+            bad_rowids: list[int] = []
+            for rowid in range(int(min_rowid), int(max_rowid) + 1):
+                try:
+                    rows = conn.execute(
+                        """
+                        SELECT rowid, id, created_at, model_name, seed_item_id, seed_track_id, status,
+                               result_count, requested_count, effective_count, params_json
+                        FROM instant_mix_requests NOT INDEXED
+                        WHERE rowid = ?
+                        """,
+                        (rowid,),
+                    ).fetchall()
+                except sqlite3.DatabaseError:
+                    bad_rowids.append(rowid)
+                    continue
+                if rows and printed < limit:
+                    _echo_instant_mix_rows(rows)
+                    printed += len(rows)
+            typer.echo(f"  readable_rows_printed={printed} bad_rowids={bad_rowids}")
+
+
+def _echo_instant_mix_rows(rows: list[sqlite3.Row]) -> None:
+    for row in rows:
+        try:
+            params = json.loads(row["params_json"] or "{}")
+        except json.JSONDecodeError:
+            params = {"<invalid_params_json>": row["params_json"]}
+        typer.echo(
+            "  "
+            f"rowid={row['rowid']} created_at={row['created_at']} id={row['id']} "
+            f"model={row['model_name']} requested_model={params.get('requested_model')} "
+            f"effective_model={params.get('effective_model')} seed_item_id={row['seed_item_id']} "
+            f"seed_track_id={row['seed_track_id']} status={row['status']} results={row['result_count']} "
+            f"requested_count={row['requested_count']} effective_count={row['effective_count']}"
+        )
+
+
+@cli.command("db-rebuild-clean")
+def db_rebuild_clean(
+    output: Annotated[
+        Path,
+        typer.Option("--output", help="Path for the rebuilt SQLite database."),
+    ],
+    drop_track_features: Annotated[
+        bool,
+        typer.Option(
+            "--drop-track-features/--keep-track-features",
+            help="Skip copying derived audio feature rows; they can be re-analyzed.",
+        ),
+    ] = True,
+    drop_instant_mix_history: Annotated[
+        bool,
+        typer.Option(
+            "--drop-instant-mix-history/--keep-instant-mix-history",
+            help="Skip copying Instant Mix history.",
+        ),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite output if it already exists."),
+    ] = False,
+) -> None:
+    """Build a fresh SQLite DB by copying readable rows from the current DB."""
+    settings = Settings.from_env()
+    source = settings.db_path
+    if output.exists():
+        if not force:
+            typer.echo(f"Output already exists: {output}", err=True)
+            raise typer.Exit(1)
+        output.unlink()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    typer.echo(f"source={source}")
+    typer.echo(f"output={output}")
+
+    destination_store = Store(output)
+    destination_store.init()
+
+    source_uri = f"file:{source}?mode=ro"
+    with sqlite3.connect(source_uri, uri=True, timeout=30) as src, sqlite3.connect(
+        output,
+        timeout=30,
+        isolation_level="IMMEDIATE",
+    ) as dst:
+        src.row_factory = sqlite3.Row
+        dst.row_factory = sqlite3.Row
+        src.execute("PRAGMA query_only = ON")
+        dst.execute("PRAGMA foreign_keys = OFF")
+        dst.execute("PRAGMA synchronous = FULL")
+        tables = [
+            str(row["name"])
+            for row in src.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table'
+                  AND name NOT LIKE 'sqlite_%'
+                ORDER BY name
+                """
+            ).fetchall()
+        ]
+        skipped_tables: list[str] = []
+        copied_counts: dict[str, int] = {}
+        skipped_rows: dict[str, list[int]] = {}
+        for table in tables:
+            if drop_track_features and table == "track_features":
+                skipped_tables.append(table)
+                typer.echo(f"skip table={table} reason=drop_track_features")
+                continue
+            if drop_instant_mix_history and table == "instant_mix_requests":
+                skipped_tables.append(table)
+                typer.echo(f"skip table={table} reason=drop_instant_mix_history")
+                continue
+            try:
+                count, bad_rowids = _copy_table_readable_rows(src, dst, table)
+            except sqlite3.DatabaseError as exc:
+                typer.echo(f"copy_error table={table} error={exc}", err=True)
+                skipped_tables.append(table)
+                continue
+            copied_counts[table] = count
+            if bad_rowids:
+                skipped_rows[table] = bad_rowids
+            typer.echo(
+                f"copied table={table} rows={count}"
+                + (f" skipped_rowids={bad_rowids}" if bad_rowids else "")
+            )
+        dst.commit()
+        dst.execute("PRAGMA foreign_keys = ON")
+        quick_check = dst.execute("PRAGMA quick_check").fetchall()
+
+    typer.echo(f"skipped_tables={skipped_tables}")
+    typer.echo(f"skipped_rows={skipped_rows}")
+    typer.echo(f"quick_check={quick_check[0][0] if quick_check else '<no rows>'}")
+    if not quick_check or str(quick_check[0][0]).lower() != "ok":
+        raise typer.Exit(1)
+    typer.echo("db_rebuild_clean=ok")
+
+
+def _copy_table_readable_rows(
+    src: sqlite3.Connection,
+    dst: sqlite3.Connection,
+    table: str,
+) -> tuple[int, list[int]]:
+    columns = [
+        str(row["name"])
+        for row in src.execute(f"PRAGMA table_info({_quote_identifier(table)})").fetchall()
+    ]
+    if not columns:
+        return 0, []
+    quoted_table = _quote_identifier(table)
+    quoted_columns = ", ".join(_quote_identifier(column) for column in columns)
+    placeholders = ", ".join("?" for _ in columns)
+    insert_sql = f"INSERT INTO {quoted_table} ({quoted_columns}) VALUES ({placeholders})"
+    select_sql = f"SELECT rowid, {quoted_columns} FROM {quoted_table} NOT INDEXED ORDER BY rowid"
+    try:
+        rows = src.execute(select_sql).fetchall()
+        dst.executemany(insert_sql, [[row[column] for column in columns] for row in rows])
+        return len(rows), []
+    except sqlite3.DatabaseError:
+        bounds = src.execute(f"SELECT MIN(rowid), MAX(rowid) FROM {quoted_table} NOT INDEXED").fetchone()
+        if bounds is None or bounds[0] is None or bounds[1] is None:
+            return 0, []
+        copied = 0
+        bad_rowids: list[int] = []
+        for rowid in range(int(bounds[0]), int(bounds[1]) + 1):
+            try:
+                row = src.execute(
+                    f"SELECT rowid, {quoted_columns} FROM {quoted_table} NOT INDEXED WHERE rowid = ?",
+                    (rowid,),
+                ).fetchone()
+            except sqlite3.DatabaseError:
+                bad_rowids.append(rowid)
+                continue
+            if row is None:
+                continue
+            dst.execute(insert_sql, [row[column] for column in columns])
+            copied += 1
+        return copied, bad_rowids
+
+
+def _quote_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
 
 
 def get_navidrome_client() -> NavidromeClient:

@@ -146,7 +146,7 @@ def test_navidrome_sync_job_imports_catalog(tmp_path: Path, monkeypatch):
     imported = store.get_track_by_external_id("navidrome", "song-1")
     assert imported is not None
     assert imported.path == "navidrome://song-1"
-    jobs = client.get("/jobs").json()["jobs"]
+    jobs = client.get("/jobs?include_completed=true").json()["jobs"]
     sync_job = next(job for job in jobs if job["id"] == body["job_id"])
     assert sync_job["status"] == "completed"
     assert "seen=1 imported=1" in sync_job["message"]
@@ -185,6 +185,8 @@ def test_test_ui_loads():
     assert "Download head models" in response.text
     assert "Analyze Discogs-EffNet heads" in response.text
     assert "Analyze audio features" in response.text
+    assert "Audio feature workers" in response.text
+    assert 'id="audioFeatureWorkers"' in response.text
     assert "Navidrome" in response.text
     assert "Save Navidrome" in response.text
     assert "Sync catalog" in response.text
@@ -915,10 +917,10 @@ def test_workers_endpoint_and_jobs_include_worker_status(tmp_path: Path, monkeyp
     assert worker["claimed_count"] == 1
     assert worker["stage"] == "claimed"
 
-    jobs = client.get("/jobs")
+    jobs = client.get("/jobs?detail=true")
     assert jobs.status_code == 200
+    assert "workers" not in jobs.json()
     first_job = jobs.json()["jobs"][0]
-    assert jobs.json()["workers"][0]["worker_id"] == "gpu-1"
     assert first_job["leased"] == 1
     assert first_job["oldest_lease"]["worker_id"] == "gpu-1"
 
@@ -950,7 +952,7 @@ def test_cancel_analysis_job_endpoint_marks_zombie_cancelled(tmp_path: Path, mon
     assert cancelled is not None
     assert cancelled.status == "cancelled"
     assert cancelled.failed == 1
-    jobs = client.get("/jobs").json()["jobs"]
+    jobs = client.get("/jobs?include_completed=true").json()["jobs"]
     assert jobs[0]["status"] == "cancelled"
 
 
@@ -1050,8 +1052,9 @@ def test_job_created_while_memory_job_runs_is_deferred(tmp_path: Path, monkeypat
     body = response.json()
     assert body["status"] == "deferred"
     assert not ran.is_set()
-    jobs = client.get("/jobs").json()["jobs"]
+    jobs = client.get("/jobs?include_completed=true").json()["jobs"]
     deferred = next(job for job in jobs if job["id"] == body["job_id"])
+    assert jobs[0]["id"] == body["job_id"]
     assert deferred["status"] == "deferred"
     assert deferred["queue_position"] == 1
 
@@ -1092,8 +1095,9 @@ def test_deferred_job_starts_after_remote_analysis_completes(tmp_path: Path, mon
             "UPDATE analysis_tasks SET status = 'completed' WHERE job_id = ?",
             (analysis_response.json()["job_id"],),
         )
+    main_module.run_maintenance_tick(store)
 
-    jobs = client.get("/jobs").json()["jobs"]
+    jobs = client.get("/jobs?include_completed=true").json()["jobs"]
 
     assert ran.wait(2)
     assert started == [(index_response.json()["job_id"], "discogs_multi")]
@@ -1110,7 +1114,7 @@ def test_finished_transient_job_elapsed_is_frozen(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(main_module, "perf_counter", lambda: 999.0)
     client = TestClient(app)
 
-    jobs = client.get("/jobs").json()["jobs"]
+    jobs = client.get("/jobs?include_completed=true").json()["jobs"]
 
     job = next(item for item in jobs if item["id"] == job_id)
     assert job["status"] == "completed"
@@ -1131,11 +1135,16 @@ def test_finished_durable_job_elapsed_is_frozen(tmp_path: Path, monkeypatch):
             (job.id,),
         )
     monkeypatch.setattr(store_module, "utc_now", lambda: "2026-01-01T00:00:30+00:00")
+    store.refresh_active_analysis_jobs()
     client = TestClient(app)
 
-    first = next(item for item in client.get("/jobs").json()["jobs"] if item["id"] == job.id)
+    first = next(
+        item for item in client.get("/jobs?include_completed=true").json()["jobs"] if item["id"] == job.id
+    )
     monkeypatch.setattr(store_module, "utc_now", lambda: "2026-01-01T00:10:00+00:00")
-    second = next(item for item in client.get("/jobs").json()["jobs"] if item["id"] == job.id)
+    second = next(
+        item for item in client.get("/jobs?include_completed=true").json()["jobs"] if item["id"] == job.id
+    )
 
     assert first["status"] == "completed"
     assert first["elapsed_seconds"] == 30.0
@@ -1225,7 +1234,7 @@ def test_analyze_audio_features_remote_mode_queues_worker_task(tmp_path: Path, m
     assert job.kind == "analyze-audio-features"
     assert job.model_name == AUDIO_FEATURE_EXTRACTOR
     assert job.queued == 1
-    jobs = client.get("/jobs").json()["jobs"]
+    jobs = client.get("/jobs?detail=true").json()["jobs"]
     assert "Waiting for worker supporting audio_features_v1" in jobs[0]["status_hint"]
     claim = client.post(
         "/workers/claim",
@@ -1308,7 +1317,7 @@ def test_analyze_heads_remote_mode_queues_worker_task(tmp_path: Path, monkeypatc
     assert job.kind == "analyze-heads"
     assert job.model_name == "discogs-effnet-heads"
     assert job.queued == 1
-    jobs = client.get("/jobs").json()["jobs"]
+    jobs = client.get("/jobs?detail=true").json()["jobs"]
     assert "Waiting for worker supporting discogs-effnet-heads" in jobs[0]["status_hint"]
     claim = client.post(
         "/workers/claim",
@@ -2196,6 +2205,22 @@ def test_navidrome_similar_uses_saved_instant_mix_model(tmp_path: Path, monkeypa
     assert detail["params"]["effective_model"] == "muq_mulan"
 
 
+def test_instant_mix_requests_database_error_returns_json(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+
+    def fail_list(self, limit=50, offset=0):
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    monkeypatch.setattr(store_module.Store, "list_instant_mix_requests", fail_list)
+    client = TestClient(app)
+
+    response = client.get("/instant-mix/requests?limit=100")
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/json")
+    assert "Instant mix history could not be read" in response.json()["detail"]
+
+
 def test_navidrome_similar_filters_by_instant_mix_similarity_threshold(
     tmp_path: Path,
     monkeypatch,
@@ -2437,6 +2462,80 @@ def test_analyze_audio_features_job_saves_successes_and_counts_failures(tmp_path
     assert job.status == "completed"
     assert job.done == 1
     assert job.failed == 1
+
+
+def test_analyze_audio_features_job_accepts_workers(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.post(
+        "/jobs/analyze-audio-features",
+        json={"limit": 1, "workers": 2},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["limit"] == 1
+    assert response.json()["workers"] == 2
+
+
+def test_analyze_audio_features_job_saves_successes_with_multiple_workers(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    first_path = tmp_path / "first.flac"
+    second_path = tmp_path / "second.flac"
+    for path in [first_path, second_path]:
+        path.write_bytes(b"fake")
+    first_id = add_track(store, first_path, title="First")
+    second_id = add_track(store, second_path, title="Second")
+
+    class FakeAudioFeatureAnalyzer:
+        def analyze_track(self, path: Path):
+            return [
+                TrackFeature(
+                    name="bpm",
+                    value=128.0 if path.stem == "first" else 129.0,
+                    unit="bpm",
+                    confidence=0.9,
+                    extractor=AUDIO_FEATURE_EXTRACTOR,
+                )
+            ]
+
+    class FakeFuture:
+        def __init__(self, result):
+            self._result = result
+
+        def result(self):
+            return self._result
+
+    class FakeExecutor:
+        max_workers = None
+
+        def __init__(self, max_workers, initializer, mp_context):
+            self.max_workers = max_workers
+            self.mp_context = mp_context
+            initializer()
+            FakeExecutor.max_workers = max_workers
+
+        def submit(self, fn, *args):
+            return FakeFuture(fn(*args))
+
+        def shutdown(self, wait=True, cancel_futures=False):
+            pass
+
+    monkeypatch.setattr(main_module, "AudioFeatureAnalyzer", FakeAudioFeatureAnalyzer)
+    monkeypatch.setattr(main_module, "ProcessPoolExecutor", FakeExecutor)
+    monkeypatch.setattr(main_module, "as_completed", lambda futures: futures)
+    job_id = main_module.create_job("analyze-audio-features", "test")
+
+    main_module._analyze_audio_features_job(job_id, None, workers=2)
+
+    assert FakeExecutor.max_workers == 2
+    assert store.count_feature_tracks(AUDIO_FEATURE_EXTRACTOR) == 2
+    assert store.load_features(first_id, AUDIO_FEATURE_EXTRACTOR)[0].value == 128.0
+    assert store.load_features(second_id, AUDIO_FEATURE_EXTRACTOR)[0].value == 129.0
+    job = main_module.JOBS[job_id]
+    assert job.status == "completed"
+    assert job.done == 2
+    assert job.failed == 0
 
 
 def test_analyze_job_saves_successes_with_multiple_workers(tmp_path: Path, monkeypatch):

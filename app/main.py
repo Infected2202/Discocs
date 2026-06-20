@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import socket
 import sqlite3
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 import time
 from time import perf_counter
 from datetime import UTC, datetime
@@ -76,6 +76,7 @@ analysis_logger = get_analysis_logger()
 navidrome_logger = logging.getLogger("discocs.navidrome")
 navidrome_plugin_logger = get_navidrome_plugin_logger()
 app = FastAPI(title="discocs", version="0.1.0")
+MAINTENANCE_STOP = Event()
 JOBS_LOCK = Lock()
 JOBS: dict[str, "JobStatus"] = {}
 DEFERRED_JOBS_LOCK = Lock()
@@ -89,6 +90,8 @@ MAX_ANALYZE_WORKERS = max(1, os.cpu_count() or 1)
 DEFAULT_ANALYZE_WORKERS = min(4, MAX_ANALYZE_WORKERS)
 MAX_ANALYZE_TF_THREADS = MAX_ANALYZE_WORKERS
 DEFAULT_ANALYZE_TF_THREADS = min(4, MAX_ANALYZE_TF_THREADS)
+MAX_AUDIO_FEATURE_WORKERS = max(32, MAX_ANALYZE_WORKERS)
+DEFAULT_AUDIO_FEATURE_WORKERS = min(8, MAX_AUDIO_FEATURE_WORKERS)
 COVER_TIMEOUT_SECONDS = 5
 WORKER_HEARTBEAT_WRITE_INTERVAL_SECONDS = 60
 WORKER_CONNECTED_TTL_SECONDS = WORKER_HEARTBEAT_WRITE_INTERVAL_SECONDS * 3
@@ -103,6 +106,7 @@ STATS_CACHE_LOCK = Lock()
 STATS_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
 AUTO_INDEX_LOCK = Lock()
 AUTO_INDEX_ANALYSIS_JOBS: set[str] = set()
+ACTIVE_JOB_STATUSES = {"queued", "running"}
 TEXT_SEARCH_EMBEDDER_LOCK = Lock()
 TEXT_SEARCH_EMBEDDER: MuqMulanEmbedder | None = None
 UI_BUILD_ID = "likes-remote-only-20260611-1918"
@@ -170,6 +174,7 @@ class JobStatus:
     eta_seconds: float | None = None
     error_detail: str | None = None
     started_at: float = 0.0
+    created_at_epoch: float = 0.0
     finished_at: float | None = None
 
 
@@ -290,6 +295,7 @@ class AnalyzeHeadsRequest(BaseModel):
 
 class AnalyzeAudioFeaturesRequest(BaseModel):
     limit: int | None = Field(default=None, ge=1)
+    workers: int = Field(default=DEFAULT_AUDIO_FEATURE_WORKERS, ge=1, le=MAX_AUDIO_FEATURE_WORKERS)
     local_executor_enabled: bool = True
     max_attempts: int = Field(default=3, ge=1, le=20)
     execution_mode: str = Field(default="both", pattern="^(both|local|remote)$")
@@ -593,6 +599,7 @@ def model_to_dict(model: BaseModel) -> dict[str, object]:
 
 def create_job(kind: str, message: str) -> str:
     job_id = str(uuid4())
+    now_epoch = time.time()
     with JOBS_LOCK:
         JOBS[job_id] = JobStatus(
             id=job_id,
@@ -600,6 +607,7 @@ def create_job(kind: str, message: str) -> str:
             status="queued",
             message=message,
             started_at=perf_counter(),
+            created_at_epoch=now_epoch,
         )
     logger.info("Created job job_id=%s kind=%s message=%s", job_id, kind, message)
     return job_id
@@ -1124,7 +1132,13 @@ def analysis_worker_connected(worker, now: datetime | None = None) -> bool:
     return worker.status == "online" and age is not None and age <= WORKER_CONNECTED_TTL_SECONDS
 
 
-def analysis_job_status_dict(job, store: Store | None = None) -> dict[str, object]:
+def analysis_job_status_dict(
+    job,
+    store: Store | None = None,
+    *,
+    detail: bool = True,
+    workers: list[object] | None = None,
+) -> dict[str, object]:
     completed = job.done + job.failed
     started_at = timestamp_from_iso(job.created_at)
     now_ts = datetime.now().timestamp()
@@ -1140,7 +1154,7 @@ def analysis_job_status_dict(job, store: Store | None = None) -> dict[str, objec
     recent_tracks_per_min = None
     recent_window_seconds = None
     recent_completed = None
-    if store is not None and job.status == "running" and started_at:
+    if detail and store is not None and job.status == "running" and started_at:
         recent_window_seconds = min(300.0, max(1.0, now_ts - started_at))
         recent_since = datetime.fromtimestamp(now_ts - recent_window_seconds, UTC).isoformat()
         recent_completed = store.count_recent_finished_analysis_tasks(job.id, recent_since)
@@ -1150,8 +1164,10 @@ def analysis_job_status_dict(job, store: Store | None = None) -> dict[str, objec
     eta_rate = recent_tracks_per_min or tracks_per_min
     if eta_rate and job.total > completed and job.status == "running":
         eta_seconds = ((job.total - completed) / eta_rate) * 60
-    task_summary = store.analysis_job_task_summary(job.id) if store is not None else {}
-    workers = store.list_analysis_workers() if store is not None else []
+    task_summary = store.analysis_job_task_summary(job.id) if detail and store is not None else {}
+    if detail and workers is None and store is not None:
+        workers = store.list_analysis_workers()
+    workers = workers or []
     connected_workers = [worker for worker in workers if analysis_worker_connected(worker)]
     supporting_workers = [
         worker.worker_id
@@ -1169,7 +1185,7 @@ def analysis_job_status_dict(job, store: Store | None = None) -> dict[str, objec
         for worker in connected_workers
     ]
     status_hint = ""
-    if job.status == "running":
+    if detail and job.status == "running":
         leased_workers = task_summary.get("leased_workers", [])
         if job.leased and leased_workers:
             labels = ", ".join(
@@ -1350,11 +1366,37 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def run_maintenance_tick(store: Store | None = None) -> None:
+    if store is None:
+        store, _settings = context()
+    store.expire_analysis_leases()
+    store.refresh_active_analysis_jobs()
+    sync_memory_jobs_from_durable_jobs(store.recent_analysis_jobs(limit=100))
+    maybe_start_next_deferred_job()
+
+
+def maintenance_loop() -> None:
+    while not MAINTENANCE_STOP.wait(15):
+        if SHUTDOWN_REQUESTED:
+            return
+        try:
+            run_maintenance_tick()
+        except Exception:
+            logger.exception("Background maintenance tick failed")
+
+
+@app.on_event("startup")
+def start_maintenance_loop() -> None:
+    MAINTENANCE_STOP.clear()
+    Thread(target=maintenance_loop, name="discocs-maintenance", daemon=True).start()
+
+
 @app.on_event("shutdown")
 def shutdown_analyze_workers() -> None:
     global SHUTDOWN_REQUESTED
     logger.info("Application shutdown requested; terminating analyze workers")
     SHUTDOWN_REQUESTED = True
+    MAINTENANCE_STOP.set()
     with ANALYZE_EXECUTORS_LOCK:
         executors = list(ANALYZE_EXECUTORS)
     for executor in executors:
@@ -1723,7 +1765,14 @@ def list_instant_mix_requests(
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, object]:
     store, _settings = context()
-    requests = store.list_instant_mix_requests(limit=limit, offset=offset)
+    try:
+        requests = store.list_instant_mix_requests(limit=limit, offset=offset)
+    except sqlite3.DatabaseError as exc:
+        logger.exception("Failed to list instant mix requests")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Instant mix history could not be read from SQLite: {exc}",
+        ) from exc
     return {
         "count": len(requests),
         "limit": limit,
@@ -1738,7 +1787,14 @@ def list_instant_mix_requests(
 @app.get("/instant-mix/requests/{request_id}")
 def get_instant_mix_request(request_id: str) -> dict[str, object]:
     store, _settings = context()
-    request = store.get_instant_mix_request(request_id)
+    try:
+        request = store.get_instant_mix_request(request_id)
+    except sqlite3.DatabaseError as exc:
+        logger.exception("Failed to read instant mix request request_id=%s", request_id)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Instant mix request could not be read from SQLite: {exc}",
+        ) from exc
     if request is None:
         raise HTTPException(status_code=404, detail="Instant mix request not found")
     return instant_mix_request_dict(request, include_results=True, store=store)
@@ -2877,7 +2933,6 @@ def heartbeat_worker(request: WorkerRegisterRequest) -> dict[str, object]:
 @app.get("/workers")
 def list_workers() -> dict[str, object]:
     store, _settings = context()
-    store.expire_analysis_leases()
     return {"workers": [analysis_worker_dict(worker) for worker in store.list_analysis_workers()]}
 
 
@@ -3455,7 +3510,7 @@ def start_analyze_audio_features(
             ),
         )
         if local_enabled and durable_job.total:
-            args = (job_id, request.limit, True, request.max_attempts, False)
+            args = (job_id, request.limit, request.workers, True, request.max_attempts, False)
             if tasks is None:
                 _analyze_audio_features_job(*args)
             else:
@@ -3466,6 +3521,7 @@ def start_analyze_audio_features(
             "status": "accepted",
             "job_id": job_id,
             "limit": request.limit,
+            "workers": request.workers,
             "execution_mode": request.execution_mode,
             "local_executor_enabled": local_enabled,
             "reset_existing": request.reset_existing,
@@ -3485,6 +3541,7 @@ def start_analyze_audio_features(
             "status": "deferred",
             "job_id": deferred_job_id,
             "limit": request.limit,
+            "workers": request.workers,
             "execution_mode": request.execution_mode,
             "local_executor_enabled": request.execution_mode != "remote" and request.local_executor_enabled,
             "reset_existing": request.reset_existing,
@@ -3579,20 +3636,28 @@ def start_navidrome_sync(
 
 
 @app.get("/jobs")
-def list_jobs() -> dict[str, object]:
+def list_jobs(
+    include_completed: bool = False,
+    detail: bool = False,
+    include_workers: bool = False,
+) -> dict[str, object]:
     store, _settings = context()
-    store.expire_analysis_leases()
-    store.refresh_active_analysis_jobs()
-    sync_memory_jobs_from_durable_jobs(store.recent_analysis_jobs(limit=100))
-    maybe_start_next_deferred_job()
-    store.refresh_active_analysis_jobs()
-    durable_jobs = {job.id: analysis_job_status_dict(job, store) for job in store.recent_analysis_jobs(limit=20)}
+    statuses = None if include_completed else sorted(ACTIVE_JOB_STATUSES)
+    recent_jobs = store.recent_analysis_jobs(limit=100 if include_completed else 20, statuses=statuses)
+    sync_memory_jobs_from_durable_jobs(recent_jobs)
+    workers = store.list_analysis_workers() if detail else []
+    durable_jobs = {
+        job.id: analysis_job_status_dict(job, store, detail=detail, workers=workers)
+        for job in recent_jobs[:20]
+    }
     with JOBS_LOCK:
         now = perf_counter()
         queue_positions = {job_id: index + 1 for index, job_id in enumerate(DEFERRED_JOB_ORDER)}
         jobs = []
         for job in JOBS.values():
             if job.id in durable_jobs:
+                continue
+            if not include_completed and job.status not in {"queued", "running", "deferred"}:
                 continue
             data = asdict(job)
             if job.status in {"queued", "running"}:
@@ -3605,25 +3670,19 @@ def list_jobs() -> dict[str, object]:
                 data["status_hint"] = "Waiting for previous job to finish"
             jobs.append(data)
     jobs.extend(durable_jobs.values())
-    def job_sort_key(job: dict[str, object]) -> tuple[int, float]:
-        status = str(job.get("status") or "")
-        if status in {"queued", "running"}:
-            return (0, -float(job.get("started_at") or 0.0))
-        if status == "deferred":
-            return (1, float(job.get("queue_position") or 999999))
-        return (2, -float(job.get("started_at") or 0.0))
-
-    jobs.sort(key=job_sort_key)
-    return {
-        "jobs": jobs[:20],
-        "workers": [analysis_worker_dict(worker) for worker in store.list_analysis_workers()],
-    }
+    jobs.sort(
+        key=lambda job: float(job.get("created_at_epoch") or job.get("started_at") or 0.0),
+        reverse=True,
+    )
+    response: dict[str, object] = {"jobs": jobs[:20]}
+    if include_workers:
+        response["workers"] = [analysis_worker_dict(worker) for worker in store.list_analysis_workers()]
+    return response
 
 
 @app.get("/jobs/{job_id}")
 def get_job_detail(job_id: str) -> dict[str, object]:
     store, _settings = context()
-    store.expire_analysis_leases()
     job = store.get_analysis_job(job_id)
     if job is None:
         with JOBS_LOCK:
@@ -3634,7 +3693,7 @@ def get_job_detail(job_id: str) -> dict[str, object]:
     statuses = ["leased", "queued", "failed_retryable", "final_failed"]
     tasks = store.list_analysis_job_tasks(job_id, statuses=statuses, limit=200)
     return {
-        "job": analysis_job_status_dict(job, store),
+        "job": analysis_job_status_dict(job, store, detail=True),
         "tasks": [analysis_task_dict(task) for task in tasks],
     }
 
@@ -3876,6 +3935,7 @@ def create_analyze_embedder(settings: Settings, model: str) -> object:
 
 
 _WORKER_EMBEDDER: object | None = None
+_WORKER_AUDIO_FEATURE_ANALYZER: AudioFeatureAnalyzer | None = None
 
 
 def configure_analyze_runtime(tf_threads: int) -> None:
@@ -3904,6 +3964,34 @@ def _extract_embedding_worker(task_id: str | None, track_id: int, path: str) -> 
             path=path,
             status="failed",
             **analyze_failure_fields(exc, embedding_failure_stage(exc)),
+        )
+
+
+def _init_audio_feature_worker() -> None:
+    global _WORKER_AUDIO_FEATURE_ANALYZER
+    os.environ.setdefault("DISCOCS_FFMPEG_THREADS", "1")
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    _WORKER_AUDIO_FEATURE_ANALYZER = AudioFeatureAnalyzer()
+    analysis_logger.info("Initialized audio feature worker extractor=%s", AUDIO_FEATURE_EXTRACTOR)
+
+
+def _extract_audio_features_worker(track_id: int, path: str) -> AudioFeaturesResult:
+    if _WORKER_AUDIO_FEATURE_ANALYZER is None:
+        raise RuntimeError("Audio feature worker was not initialized")
+    try:
+        features = _WORKER_AUDIO_FEATURE_ANALYZER.analyze_track(Path(path))
+        return AudioFeaturesResult(
+            track_id=track_id,
+            path=path,
+            status="ok",
+            features=features,
+        )
+    except Exception as exc:
+        return AudioFeaturesResult(
+            track_id=track_id,
+            path=path,
+            status="failed",
+            **analyze_failure_fields(exc, "audio_features"),
         )
 
 
@@ -4214,7 +4302,7 @@ def _analyze_job(
             )
             if not tasks:
                 durable_job = store.get_analysis_job(job_id)
-                if durable_job is None or durable_job.status == "completed":
+                if durable_job is None or durable_job.status not in ACTIVE_JOB_STATUSES:
                     break
                 update_job(
                     job_id,
@@ -4223,7 +4311,8 @@ def _analyze_job(
                     message=durable_job.message,
                     **analyze_progress(started_at, total, durable_job.done, durable_job.failed),
                 )
-                return
+                time.sleep(2)
+                continue
             for result in _iter_analyze_task_results(tasks, store, settings, model, workers, tf_threads):
                 if SHUTDOWN_REQUESTED:
                     finish_job(job_id, "failed", "Analyze cancelled during application shutdown")
@@ -4419,7 +4508,7 @@ def _analyze_heads_job(
             )
             if not tasks:
                 durable_job = store.get_analysis_job(job_id)
-                if durable_job is None or durable_job.status == "completed":
+                if durable_job is None or durable_job.status not in ACTIVE_JOB_STATUSES:
                     break
                 update_job(
                     job_id,
@@ -4428,7 +4517,8 @@ def _analyze_heads_job(
                     message=durable_job.message,
                     **analyze_progress(started_at, total, durable_job.done, durable_job.failed),
                 )
-                return
+                time.sleep(2)
+                continue
             task = tasks[0]
             track = store.get_track(task.track_id)
             if track is None:
@@ -4624,9 +4714,79 @@ def _extract_audio_features_local(
         _cleanup_audio_manager(manager)
 
 
+def _iter_audio_feature_task_results(
+    tasks: list[AnalysisTask],
+    store: Store,
+    settings: Settings,
+    workers: int,
+):
+    if SHUTDOWN_REQUESTED:
+        return
+    if workers <= 1:
+        analyzer = AudioFeatureAnalyzer()
+        for task in tasks:
+            if SHUTDOWN_REQUESTED:
+                return
+            result = _extract_audio_features_local(analyzer, store, settings, task_to_track(task))
+            yield task, result
+        return
+
+    executor = ProcessPoolExecutor(
+        max_workers=workers,
+        initializer=_init_audio_feature_worker,
+        mp_context=multiprocessing.get_context("spawn"),
+    )
+    register_analyze_executor(executor)
+    audio_managers: list[object] = []
+    try:
+        future_to_task = {}
+        for task in tasks:
+            track = task_to_track(task)
+            audio_path, manager, failure = _prepare_analyze_audio_path(store, settings, track)
+            if failure is not None:
+                yield task, AudioFeaturesResult(
+                    track_id=track.id,
+                    path=track.path,
+                    status="failed",
+                    error=failure.error,
+                    error_type=failure.error_type,
+                    traceback=failure.traceback,
+                    stage=failure.stage,
+                )
+                continue
+            audio_managers.append(manager)
+            future = executor.submit(_extract_audio_features_worker, task.track_id, str(audio_path))
+            future_to_task[future] = task
+        for future in as_completed(future_to_task):
+            if SHUTDOWN_REQUESTED:
+                break
+            task = future_to_task[future]
+            try:
+                yield task, future.result()
+            except Exception as exc:
+                yield task, AudioFeaturesResult(
+                    track_id=task.track_id,
+                    path=task.path,
+                    status="failed",
+                    **analyze_failure_fields(exc, "audio_features"),
+                )
+    finally:
+        for manager in audio_managers:
+            _cleanup_audio_manager(manager)
+        unregister_analyze_executor(executor)
+        if SHUTDOWN_REQUESTED:
+            terminate_process_pool(executor)
+        else:
+            try:
+                executor.shutdown(wait=True, cancel_futures=False)
+            except Exception:
+                pass
+
+
 def _analyze_audio_features_job(
     job_id: str,
     limit: int | None,
+    workers: int = 1,
     local_executor_enabled: bool = True,
     max_attempts: int = 3,
     enqueue: bool = True,
@@ -4652,13 +4812,15 @@ def _analyze_audio_features_job(
             if durable_job is None:
                 raise ValueError(f"Audio feature analysis job not found: {job_id}")
         total = durable_job.total
+        workers = max(1, min(int(workers), MAX_AUDIO_FEATURE_WORKERS))
         started_at = perf_counter()
         analysis_logger.info(
-            "Starting analyze-audio-features job job_id=%s limit=%s total=%s extractor=%s",
+            "Starting analyze-audio-features job job_id=%s limit=%s total=%s extractor=%s workers=%s",
             job_id,
             limit,
             total,
             AUDIO_FEATURE_EXTRACTOR,
+            workers,
         )
         update_job(
             job_id,
@@ -4675,8 +4837,8 @@ def _analyze_audio_features_job(
             else:
                 update_job(job_id, status="running", message=f"Queued {total} audio feature tasks for remote workers")
             return
-        analyzer = AudioFeatureAnalyzer()
         local_worker_id = f"local-{job_id}"
+        local_claim_batch_size = max(workers * 4, 16)
         while True:
             if SHUTDOWN_REQUESTED:
                 finish_job(job_id, "failed", "Audio feature analysis cancelled during application shutdown")
@@ -4684,12 +4846,12 @@ def _analyze_audio_features_job(
             tasks = store.claim_analysis_tasks(
                 local_worker_id,
                 [AUDIO_FEATURE_EXTRACTOR],
-                limit=1,
+                limit=local_claim_batch_size,
                 lease_seconds=3600,
             )
             if not tasks:
                 durable_job = store.get_analysis_job(job_id)
-                if durable_job is None or durable_job.status == "completed":
+                if durable_job is None or durable_job.status not in ACTIVE_JOB_STATUSES:
                     break
                 update_job(
                     job_id,
@@ -4698,88 +4860,78 @@ def _analyze_audio_features_job(
                     message=durable_job.message,
                     **analyze_progress(started_at, total, durable_job.done, durable_job.failed),
                 )
-                return
-            task = tasks[0]
-            track = store.get_track(task.track_id)
-            if track is None:
-                store.fail_analysis_task(
-                    task.id,
-                    error="Track not found",
-                    error_type="ValueError",
-                    stage="load_track",
-                    worker_id=local_worker_id,
-                    retryable=False,
-                )
+                time.sleep(2)
                 continue
-            update_job(job_id, current=track.path, message=f"Analyzing audio features for {track.path}")
-            result = _extract_audio_features_local(analyzer, store, settings, track)
-            if result.status == "ok" and result.features is not None:
-                try:
-                    store.save_features(result.track_id, result.features)
-                    store.mark_track_available(result.track_id)
-                    store.complete_analysis_task(task.id, local_worker_id)
-                except Exception as exc:
+            for task, result in _iter_audio_feature_task_results(tasks, store, settings, workers):
+                update_job(job_id, current=result.path, message=f"Analyzing audio features for {result.path}")
+                if result.status == "ok" and result.features is not None:
+                    try:
+                        store.save_features(result.track_id, result.features)
+                        store.mark_track_available(result.track_id)
+                        store.complete_analysis_task(task.id, local_worker_id)
+                    except Exception as exc:
+                        store.fail_analysis_task(
+                            task.id,
+                            error=str(exc),
+                            error_type=type(exc).__name__,
+                            stage="save",
+                            worker_id=local_worker_id,
+                            retryable=False,
+                        )
+                        analysis_logger.exception(
+                            "Audio feature save failed job_id=%s track_id=%s path=%s extractor=%s stage=save",
+                            job_id,
+                            result.track_id,
+                            result.path,
+                            AUDIO_FEATURE_EXTRACTOR,
+                        )
+                else:
+                    mark_missing_after_failure(store, result)
                     store.fail_analysis_task(
                         task.id,
-                        error=str(exc),
-                        error_type=type(exc).__name__,
-                        stage="save",
+                        error=result.error or "Audio feature analysis failed",
+                        error_type=result.error_type or "AudioFeatureError",
+                        stage=result.stage or "extract",
                         worker_id=local_worker_id,
-                        retryable=False,
+                        retryable=result.error_type != "FileNotFoundError",
                     )
-                    analysis_logger.exception(
-                        "Audio feature save failed job_id=%s track_id=%s path=%s extractor=%s stage=save",
+                    analysis_logger.error(
+                        "Audio feature track failed job_id=%s track_id=%s path=%s extractor=%s stage=%s error_type=%s error=%s\n%s",
                         job_id,
                         result.track_id,
                         result.path,
                         AUDIO_FEATURE_EXTRACTOR,
+                        result.stage,
+                        result.error_type,
+                        result.error,
+                        result.traceback or "",
                     )
-            else:
-                mark_missing_after_failure(store, result)
-                store.fail_analysis_task(
-                    task.id,
-                    error=result.error or "Audio feature analysis failed",
-                    error_type=result.error_type or "AudioFeatureError",
-                    stage=result.stage or "extract",
-                    worker_id=local_worker_id,
-                    retryable=result.error_type != "FileNotFoundError",
-                )
-                analysis_logger.error(
-                    "Audio feature track failed job_id=%s track_id=%s path=%s extractor=%s stage=%s error_type=%s error=%s\n%s",
+
+                durable_job = store.get_analysis_job(job_id)
+                if durable_job is None:
+                    continue
+                done = durable_job.done
+                failed = durable_job.failed
+                update_job(
                     job_id,
-                    result.track_id,
-                    result.path,
-                    AUDIO_FEATURE_EXTRACTOR,
-                    result.stage,
-                    result.error_type,
-                    result.error,
-                    result.traceback or "",
+                    done=done,
+                    failed=failed,
+                    current=result.path,
+                    message=durable_job.message,
+                    **analyze_progress(started_at, total, done, failed),
                 )
-            durable_job = store.get_analysis_job(job_id)
-            if durable_job is None:
-                continue
-            done = durable_job.done
-            failed = durable_job.failed
-            update_job(
-                job_id,
-                done=done,
-                failed=failed,
-                current=result.path,
-                message=durable_job.message,
-                **analyze_progress(started_at, total, done, failed),
-            )
-            if (done + failed) % 25 == 0 or done + failed == total:
-                progress = analyze_progress(started_at, total, done, failed)
-                analysis_logger.info(
-                    "Analyze-audio-features progress job_id=%s done=%s failed=%s total=%s elapsed=%.1f tracks_per_min=%s eta_seconds=%s",
-                    job_id,
-                    done,
-                    failed,
-                    total,
-                    progress["elapsed_seconds"],
-                    progress["tracks_per_min"],
-                    progress["eta_seconds"],
-                )
+                if (done + failed) % 25 == 0 or done + failed == total:
+                    progress = analyze_progress(started_at, total, done, failed)
+                    analysis_logger.info(
+                        "Analyze-audio-features progress job_id=%s done=%s failed=%s total=%s elapsed=%.1f tracks_per_min=%s eta_seconds=%s",
+                        job_id,
+                        done,
+                        failed,
+                        total,
+                        progress["elapsed_seconds"],
+                        progress["tracks_per_min"],
+                        progress["eta_seconds"],
+                    )
         analysis_logger.info(
             "Finished analyze-audio-features job job_id=%s done=%s failed=%s total=%s",
             job_id,
@@ -5559,6 +5711,9 @@ UI_HTML = r"""
           <input id="tfThreads" type="number" min="1" value="4">
         </label>
         <h3>Audio features</h3>
+        <label><span class="label-title">Audio feature workers <span class="info" tabindex="0" data-tooltip="Number of local analyzer processes for BPM/key/loudness/dynamics. Separate from Discogs embedding workers so audio feature tuning cannot overload model inference.">(i)</span></span>
+          <input id="audioFeatureWorkers" type="number" min="1" value="8">
+        </label>
         <label><span class="label-title">Feature extractor <span class="info" tabindex="0" data-tooltip="Audio feature pipeline version stored in track_features. Rescan deletes existing values for this extractor and queues tracks for re-analysis.">(i)</span></span>
           <select id="audioFeaturesExtractor">
             <option value="audio_features_v1">audio_features_v1</option>
@@ -5672,7 +5827,7 @@ UI_HTML = r"""
     const SETTINGS_KEY = "discocs.settings.v1";
     const BLEND_EXTRA_KEY = "discocs.blendExtra.v1";
     const SETTINGS_FIELDS = [
-      "model", "limit", "analyzeExecutionMode", "workers", "tfThreads", "audioFeaturesExtractor",
+      "model", "limit", "analyzeExecutionMode", "workers", "tfThreads", "audioFeatureWorkers", "audioFeaturesExtractor",
       "workerServerUrl", "workerId", "workerClaimBatchSize", "workerMaxInflightTasks",
       "workerDownloadConcurrency", "workerSubmitBatchSize", "workerLeaseSeconds",
       "workerMaxTasksBeforeExit",
@@ -6013,6 +6168,7 @@ UI_HTML = r"""
           erroredFilesPage = params.page ? Math.max(1, Number(params.page) || 1) : 1;
           await loadErroredFiles({updateUrl: false});
         } else if (sectionId === "jobsPage") {
+          await refreshJobs({history: true});
           if (params.job) await loadJobDetail(params.job, {updateUrl: false});
         } else if (sectionId === "workersPage") {
           await refreshWorkers();
@@ -6392,7 +6548,11 @@ UI_HTML = r"""
       return Number.isInteger(value) ? String(value) : value.toFixed(1);
     }
     function formatPredictionLabel(label) {
-      return esc(String(label || "").replace(/---/g, " / "));
+      const parts = String(label || "")
+        .split(/---|\//)
+        .map(part => part.trim())
+        .filter(Boolean);
+      return esc(parts.length > 1 ? parts.slice(1).join(" / ") : parts[0] || "");
     }
     function setNavidromeLikeDebug(message, detail = null) {
       const suffix = detail === null || detail === undefined ? "" : ` ${typeof detail === "string" ? detail : JSON.stringify(detail)}`;
@@ -7685,12 +7845,14 @@ UI_HTML = r"""
     }
     async function startAnalyzeAudioFeatures() {
       const rawLimit = document.getElementById("limit").value;
+      const rawWorkers = document.getElementById("audioFeatureWorkers").value;
       const executionMode = document.getElementById("analyzeExecutionMode").value;
       const parsedLimit = rawLimit ? Number(rawLimit) : null;
       await json("/jobs/analyze-audio-features", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
           limit: parsedLimit && parsedLimit > 0 ? parsedLimit : null,
+          workers: rawWorkers ? Number(rawWorkers) : 4,
           execution_mode: executionMode,
           local_executor_enabled: executionMode !== "remote"
         })
@@ -7699,6 +7861,7 @@ UI_HTML = r"""
     }
     async function rescanAudioFeatures() {
       const rawLimit = document.getElementById("limit").value;
+      const rawWorkers = document.getElementById("audioFeatureWorkers").value;
       const executionMode = document.getElementById("analyzeExecutionMode").value;
       const extractor = audioFeaturesExtractor();
       const parsedLimit = rawLimit ? Number(rawLimit) : null;
@@ -7711,6 +7874,7 @@ UI_HTML = r"""
           method: "POST", headers: {"Content-Type": "application/json"},
           body: JSON.stringify({
             limit,
+            workers: rawWorkers ? Number(rawWorkers) : 4,
             execution_mode: executionMode,
             local_executor_enabled: executionMode !== "remote",
             reset_existing: true,
@@ -7826,11 +7990,12 @@ UI_HTML = r"""
         if (workerList) workerList.innerHTML = `<div class="meta">Workers unavailable: ${text(err.message)}</div>`;
       }
     }
-    async function refreshJobs() {
+    async function refreshJobs({history = false} = {}) {
       if (jobsInFlight) return;
       jobsInFlight = true;
       try {
-      const data = await json("/jobs", {timeoutMs: 8000});
+      const jobsUrl = history ? "/jobs?include_completed=true&detail=true" : "/jobs";
+      const data = await json(jobsUrl, {timeoutMs: 8000});
       lastJobs = data.jobs;
       const setDisabled = (id, disabled) => {
         const element = document.getElementById(id);
@@ -7860,7 +8025,7 @@ UI_HTML = r"""
         const rate = [currentRate, avgRate].filter(Boolean).join(" / ");
         const eta = job.eta_seconds ? `${formatDuration(job.eta_seconds)} ETA` : "";
         const timing = [elapsed, rate, eta].filter(Boolean).join(" - ");
-        const startedAt = job.created_at || (job.started_at ? new Date(job.started_at * 1000).toLocaleString() : "");
+        const startedAt = job.created_at || (job.created_at_epoch ? new Date(job.created_at_epoch * 1000).toLocaleString() : "");
         const updatedAt = job.updated_at || "";
         const finishedAt = job.finished_at_iso || "";
         const workerLine = (job.leased_workers || []).length
@@ -7893,11 +8058,17 @@ UI_HTML = r"""
           <div class="bar"><div class="fill" style="width:${percent}%"></div></div>
         </div>`;
       }).join("");
-      document.getElementById("jobs").innerHTML = html;
-      document.getElementById("dashboardJobs").innerHTML = html || `<div class="meta">No jobs yet</div>`;
-      renderWorkers(data.workers || []);
+      if (history) {
+        document.getElementById("jobs").innerHTML = html || `<div class="meta">No jobs yet</div>`;
+      } else {
+        document.getElementById("dashboardJobs").innerHTML = html || `<div class="meta">No active jobs</div>`;
+        if (document.getElementById("jobsPage").classList.contains("active")) {
+          document.getElementById("jobs").innerHTML = html || `<div class="meta">No active jobs</div>`;
+        }
+      }
       } catch (err) {
-        document.getElementById("dashboardJobs").innerHTML = `<div class="meta">Jobs unavailable: ${text(err.message)}</div>`;
+        const target = history ? document.getElementById("jobs") : document.getElementById("dashboardJobs");
+        if (target) target.innerHTML = `<div class="meta">Jobs unavailable: ${text(err.message)}</div>`;
       } finally {
         jobsInFlight = false;
       }

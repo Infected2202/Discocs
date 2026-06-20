@@ -204,10 +204,12 @@ class Store:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=30)
+        conn = sqlite3.connect(self.db_path, timeout=30, isolation_level="IMMEDIATE")
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA synchronous = FULL")
+        conn.execute("PRAGMA wal_autocheckpoint = 1000")
         return conn
 
     def init(self) -> None:
@@ -767,7 +769,7 @@ class Store:
                 ),
             )
             row = conn.execute(
-                "SELECT * FROM instant_mix_requests WHERE id = ?",
+                "SELECT * FROM instant_mix_requests NOT INDEXED WHERE id = ?",
                 (request_id,),
             ).fetchone()
         return row_to_instant_mix_request(row)
@@ -778,20 +780,54 @@ class Store:
         offset: int = 0,
     ) -> list[InstantMixRequest]:
         with self.connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM instant_mix_requests
-                ORDER BY created_at DESC, id DESC
-                LIMIT ? OFFSET ?
-                """,
-                (limit, offset),
-            ).fetchall()
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM instant_mix_requests NOT INDEXED
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (limit, offset),
+                ).fetchall()
+            except sqlite3.DatabaseError:
+                logger.exception("Falling back to rowid scan for instant_mix_requests")
+                rows = self._list_instant_mix_requests_by_rowid(conn, limit=limit, offset=offset)
         return [row_to_instant_mix_request(row) for row in rows]
+
+    def _list_instant_mix_requests_by_rowid(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[sqlite3.Row]:
+        bounds = conn.execute(
+            "SELECT MIN(rowid), MAX(rowid) FROM instant_mix_requests NOT INDEXED"
+        ).fetchone()
+        if bounds is None or bounds[0] is None or bounds[1] is None:
+            return []
+        rows: list[sqlite3.Row] = []
+        bad_rowids: list[int] = []
+        for rowid in range(int(bounds[0]), int(bounds[1]) + 1):
+            try:
+                row = conn.execute(
+                    "SELECT * FROM instant_mix_requests NOT INDEXED WHERE rowid = ?",
+                    (rowid,),
+                ).fetchone()
+            except sqlite3.DatabaseError:
+                bad_rowids.append(rowid)
+                continue
+            if row is not None:
+                rows.append(row)
+        if bad_rowids:
+            logger.warning("Skipped unreadable instant_mix_requests rowids=%s", bad_rowids)
+        rows.sort(key=lambda row: (str(row["created_at"] or ""), str(row["id"] or "")), reverse=True)
+        return rows[offset : offset + limit]
 
     def get_instant_mix_request(self, request_id: str) -> InstantMixRequest | None:
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM instant_mix_requests WHERE id = ?",
+                "SELECT * FROM instant_mix_requests NOT INDEXED WHERE id = ?",
                 (request_id,),
             ).fetchone()
         return row_to_instant_mix_request(row) if row else None
@@ -1871,10 +1907,21 @@ class Store:
         if exists is not None:
             self.refresh_analysis_job(job_id)
 
-    def recent_analysis_jobs(self, limit: int = 20) -> list[AnalysisJob]:
+    def recent_analysis_jobs(
+        self,
+        limit: int = 20,
+        statuses: list[str] | None = None,
+    ) -> list[AnalysisJob]:
+        status_filter = ""
+        params: list[object] = []
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            status_filter = f"WHERE status IN ({placeholders})"
+            params.extend(statuses)
+        params.append(limit)
         with self.connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT j.*,
                     CASE
                         WHEN COUNT(t.id) > 0 THEN SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END)
@@ -1899,6 +1946,7 @@ class Store:
                 FROM (
                     SELECT *
                     FROM analysis_jobs
+                    {status_filter}
                     ORDER BY created_at DESC
                     LIMIT ?
                 ) j
@@ -1906,7 +1954,7 @@ class Store:
                 GROUP BY j.id
                 ORDER BY j.created_at DESC
                 """,
-                (limit,),
+                params,
             ).fetchall()
         return [row_to_analysis_job(row) for row in rows]
 
