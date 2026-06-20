@@ -133,6 +133,16 @@ Do not rely on Navidrome being available for ordinary unit tests.
 If Navidrome is unavailable, document it but continue with local implementation and tests.
 
 
+Local Navidrome test credentials may be provided in .codex/local-secrets.env.
+
+If this file exists, you may load it for safe read-only connectivity checks.
+
+Never print values from .codex/local-secrets.env.
+
+Never commit .codex/local-secrets.env.
+
+The expected local Navidrome URL is http://192.168.1.41:4533/.
+
 
 Before editing:
 
