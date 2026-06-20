@@ -32,3 +32,8 @@ models/*.onnx
 models/*.json
 models/muq/
 eval/results/
+
+# Local Codex/test secrets
+.codex/local-secrets.env
+.env.local
+
