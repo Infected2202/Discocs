@@ -50,9 +50,21 @@
   - event interpretation for queue click, skip strength, threshold, completion, like/dislike, replay, save, and remove;
   - recomputation of aggregate preference counters from raw events.
 - Added store tests for durable sessions/queues, queue-click navigation semantics, early vs late skip strength, explicit preference signals, duplicate event idempotency, and recomputation parity.
+- Implemented `/api/v1/playback` routes:
+  - `POST /api/v1/playback/sessions`;
+  - `GET /api/v1/playback/sessions/{session_id}`;
+  - `PATCH /api/v1/playback/sessions/{session_id}`;
+  - `GET /api/v1/playback/sessions/{session_id}/queue`;
+  - `PATCH /api/v1/playback/sessions/{session_id}/queue`;
+  - `POST /api/v1/playback/events`.
+- Added initial queue builders for track, release, artist, manual, and caller-supplied track lists.
+- Added API tests for release session creation/restoration/update, queue add/move/jump semantics, event ingest/idempotency, and invalid event validation.
 
 ## Latest Test Results
 
 - `python -m pytest tests\test_store.py::test_playback_session_queue_round_trip tests\test_store.py::test_playback_queue_click_is_navigation_not_skip tests\test_store.py::test_playback_skip_strength_and_recompute_from_raw_events tests\test_store.py::test_playback_completion_like_dislike_replay_save_and_duplicate_idempotency --basetemp .pytest-tmp`: passed, `4 passed`.
 - `python -m pytest --basetemp .pytest-tmp`: passed, `205 passed, 4 warnings`.
+- `python -m compileall app tests`: passed.
+- `python -m pytest tests\test_api.py::test_api_v1_playback_create_get_and_patch_release_session tests\test_api.py::test_api_v1_playback_queue_patch_jump_records_navigation_not_skip tests\test_api.py::test_api_v1_playback_event_ingest_updates_preferences_and_is_idempotent tests\test_api.py::test_api_v1_playback_event_rejects_invalid_event_type --basetemp .pytest-tmp`: passed, `4 passed, 4 warnings`.
+- `python -m pytest --basetemp .pytest-tmp`: passed, `209 passed, 4 warnings`.
 - `python -m compileall app tests`: passed.

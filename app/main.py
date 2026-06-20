@@ -417,6 +417,72 @@ class FeatureSearchRequest(BaseModel):
     limit: int = Field(default=50, ge=1, le=500)
 
 
+class PlaybackSessionCreateRequest(BaseModel):
+    source_type: str = Field(pattern="^(release|artist|track|playlist|search|flow|autoplay|manual|generated_mix)$")
+    source_id: int | None = None
+    source_label: str | None = None
+    mode: str = Field(default="linear", pattern="^(linear|shuffle|radio|flow|autoplay)$")
+    track_id: int | None = None
+    track_ids: list[int] = Field(default_factory=list)
+    autoplay_enabled: bool = False
+    shuffle_enabled: bool = False
+    repeat_mode: str = Field(default="off", pattern="^(off|one|all)$")
+    settings: dict[str, object] = Field(default_factory=dict)
+    state: dict[str, object] = Field(default_factory=dict)
+
+
+class PlaybackSessionPatchRequest(BaseModel):
+    status: str | None = Field(default=None, pattern="^(active|paused|ended)$")
+    current_track_id: int | None = None
+    current_queue_item_id: str | None = None
+    autoplay_enabled: bool | None = None
+    shuffle_enabled: bool | None = None
+    repeat_mode: str | None = Field(default=None, pattern="^(off|one|all)$")
+    settings: dict[str, object] | None = None
+    state: dict[str, object] | None = None
+
+
+class PlaybackQueueItemRequest(BaseModel):
+    track_id: int
+    origin: str = Field(default="manual", pattern="^(source|manual|autoplay|flow|generated_mix)$")
+    source_type: str | None = Field(default=None, pattern="^(release|artist|track|playlist|search|flow|autoplay|manual|generated_mix)$")
+    source_id: int | None = None
+    locked: bool = False
+    reason: str | None = None
+    score: float | None = None
+    debug: dict[str, object] | None = None
+
+
+class PlaybackQueuePatchRequest(BaseModel):
+    operation: str = Field(pattern="^(replace|add|remove|move|jump|mark_current)$")
+    queue_item_id: str | None = None
+    track_id: int | None = None
+    track_ids: list[int] = Field(default_factory=list)
+    position: int | None = Field(default=None, ge=0)
+    items: list[PlaybackQueueItemRequest] = Field(default_factory=list)
+
+
+class PlaybackEventRequest(BaseModel):
+    session_id: str | None = None
+    queue_item_id: str | None = None
+    track_id: int | None = None
+    release_id: int | None = None
+    artist_id: int | None = None
+    event_type: str = Field(
+        pattern=(
+            "^(track_started|progress|play_threshold_reached|completed|skipped|queue_click|"
+            "liked|unliked|disliked|replayed|removed_from_queue|saved_to_playlist|"
+            "autoplay_toggled|preference_changed)$"
+        )
+    )
+    position_seconds: float | None = Field(default=None, ge=0.0)
+    duration_seconds: float | None = Field(default=None, ge=0.0)
+    play_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    client_event_id: str | None = None
+    source: str = "web"
+    payload: dict[str, object] = Field(default_factory=dict)
+
+
 def context() -> tuple[Store, Settings]:
     settings = Settings.from_env()
     store = Store(settings.db_path)
@@ -708,6 +774,167 @@ def _track_release_summary(store: Store, track_id: int) -> dict[str, object] | N
     if row is None:
         return None
     return {"id": int(row["id"]), "title": str(row["title"])}
+
+
+def _json_object(value: str | None) -> dict[str, object]:
+    if not value:
+        return {}
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def playback_session_dict(store: Store, session) -> dict[str, object]:
+    current_track = store.get_track(session.current_track_id) if session.current_track_id else None
+    return {
+        "id": session.id,
+        "source_type": session.source_type,
+        "source_id": session.source_id,
+        "source_label": session.source_label,
+        "mode": session.mode,
+        "status": session.status,
+        "current_track_id": session.current_track_id,
+        "current_queue_item_id": session.current_queue_item_id,
+        "current_track": track_summary_dict(store, current_track) if current_track else None,
+        "autoplay_enabled": session.autoplay_enabled,
+        "shuffle_enabled": session.shuffle_enabled,
+        "repeat_mode": session.repeat_mode,
+        "started_at": session.started_at,
+        "updated_at": session.updated_at,
+        "ended_at": session.ended_at,
+        "settings": _json_object(session.settings_json),
+        "state": _json_object(session.state_json),
+    }
+
+
+def queue_item_dict(store: Store, item, include_debug: bool = False) -> dict[str, object]:
+    track = store.get_track(item.track_id)
+    data: dict[str, object] = {
+        "id": item.id,
+        "session_id": item.session_id,
+        "track_id": item.track_id,
+        "track": track_summary_dict(store, track) if track else None,
+        "position": item.position,
+        "origin": item.origin,
+        "source_type": item.source_type,
+        "source_id": item.source_id,
+        "status": item.status,
+        "locked": item.locked,
+        "reason": item.reason,
+        "score": item.score,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    }
+    if include_debug:
+        data["debug"] = _json_object(item.debug_json)
+    return data
+
+
+def playback_queue_dict(store: Store, session, items, include_debug: bool = False) -> dict[str, object]:
+    current_index = 0
+    if session.current_queue_item_id:
+        for index, item in enumerate(items):
+            if item.id == session.current_queue_item_id:
+                current_index = index
+                break
+    current_item = items[current_index] if items else None
+    return {
+        "items": [queue_item_dict(store, item, include_debug=include_debug) for item in items],
+        "current_index": current_index,
+        "current_item": queue_item_dict(store, current_item, include_debug=include_debug) if current_item else None,
+        "upcoming": [
+            queue_item_dict(store, item, include_debug=include_debug)
+            for item in items[current_index + 1 :]
+        ],
+        "played": [
+            queue_item_dict(store, item, include_debug=include_debug)
+            for item in items
+            if item.status in {"played", "skipped"}
+        ],
+        "source_items": [
+            queue_item_dict(store, item, include_debug=include_debug)
+            for item in items
+            if item.origin == "source"
+        ],
+        "generated_items": [
+            queue_item_dict(store, item, include_debug=include_debug)
+            for item in items
+            if item.origin in {"autoplay", "flow", "generated_mix"}
+        ],
+    }
+
+
+def playback_event_dict(event) -> dict[str, object]:
+    return {
+        "id": event.id,
+        "session_id": event.session_id,
+        "queue_item_id": event.queue_item_id,
+        "track_id": event.track_id,
+        "release_id": event.release_id,
+        "artist_id": event.artist_id,
+        "event_type": event.event_type,
+        "position_seconds": event.position_seconds,
+        "duration_seconds": event.duration_seconds,
+        "play_fraction": event.play_fraction,
+        "created_at": event.created_at,
+        "client_event_id": event.client_event_id,
+        "source": event.source,
+        "payload": _json_object(event.payload_json),
+    }
+
+
+def playback_session_response(store: Store, session, include_debug: bool = False) -> dict[str, object]:
+    queue_items = store.list_queue_items(session.id)
+    return {
+        "session": playback_session_dict(store, session),
+        "queue": playback_queue_dict(store, session, queue_items, include_debug=include_debug),
+    }
+
+
+def build_initial_playback_queue(store: Store, request: PlaybackSessionCreateRequest) -> list[int]:
+    if request.track_ids:
+        return request.track_ids
+    if request.track_id is not None:
+        return [request.track_id]
+    if request.source_type == "track":
+        if request.source_id is None:
+            raise ValueError("source_id is required for track playback sessions")
+        return [request.source_id]
+    if request.source_type == "release":
+        if request.source_id is None:
+            raise ValueError("source_id is required for release playback sessions")
+        tracks = store.list_release_tracks(request.source_id)
+        return [item.track.id for item in tracks]
+    if request.source_type == "artist":
+        if request.source_id is None:
+            raise ValueError("source_id is required for artist playback sessions")
+        with store.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT t.id
+                FROM track_artists ta
+                JOIN tracks t ON t.id = ta.track_id
+                LEFT JOIN release_tracks rt ON rt.track_id = t.id
+                WHERE ta.artist_id = ? AND ta.role = 'primary'
+                ORDER BY COALESCE(rt.position, t.id), t.id
+                LIMIT 100
+                """,
+                (request.source_id,),
+            ).fetchall()
+        return [int(row["id"]) for row in rows]
+    return []
+
+
+def queue_patch_items(request: PlaybackQueuePatchRequest) -> list[dict[str, object]]:
+    if request.items:
+        return [item.model_dump(exclude_none=True) for item in request.items]
+    if request.track_ids:
+        return [{"track_id": track_id, "origin": "manual"} for track_id in request.track_ids]
+    if request.track_id is not None:
+        return [{"track_id": request.track_id, "origin": "manual"}]
+    return []
 
 
 def search_group(group_type: str, title: str, items: list[dict[str, object]], total: int, limit: int, offset: int) -> dict[str, object]:
@@ -1488,6 +1715,163 @@ def get_worker_task_state(task_id: str, worker_id: str) -> dict[str, object]:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/api/v1/playback/sessions", response_model=None)
+def api_v1_create_playback_session(request: PlaybackSessionCreateRequest) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    try:
+        track_ids = build_initial_playback_queue(store, request)
+        if request.source_type in {"track", "release", "artist"} and not track_ids:
+            return api_error(404, "not_found", "Playback source has no local tracks")
+        session, _queue = store.create_playback_session(
+            source_type=request.source_type,
+            source_id=request.source_id,
+            source_label=request.source_label,
+            mode=request.mode,
+            track_ids=track_ids,
+            autoplay_enabled=request.autoplay_enabled,
+            shuffle_enabled=request.shuffle_enabled,
+            repeat_mode=request.repeat_mode,
+            settings=request.settings,
+            state=request.state,
+        )
+    except ValueError as exc:
+        return api_error(400, "invalid_request", str(exc))
+    return playback_session_response(store, session)
+
+
+@app.get("/api/v1/playback/sessions/{session_id}", response_model=None)
+def api_v1_get_playback_session(session_id: str) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    session = store.get_playback_session(session_id)
+    if session is None:
+        return api_error(404, "not_found", "Playback session not found")
+    return playback_session_response(store, session)
+
+
+@app.patch("/api/v1/playback/sessions/{session_id}", response_model=None)
+def api_v1_update_playback_session(
+    session_id: str,
+    request: PlaybackSessionPatchRequest,
+) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    try:
+        session = store.update_playback_session(
+            session_id,
+            status=request.status,
+            current_track_id=request.current_track_id,
+            current_queue_item_id=request.current_queue_item_id,
+            autoplay_enabled=request.autoplay_enabled,
+            shuffle_enabled=request.shuffle_enabled,
+            repeat_mode=request.repeat_mode,
+            settings=request.settings,
+            state=request.state,
+        )
+    except ValueError as exc:
+        return api_error(400, "invalid_request", str(exc))
+    if session is None:
+        return api_error(404, "not_found", "Playback session not found")
+    return playback_session_response(store, session)
+
+
+@app.get("/api/v1/playback/sessions/{session_id}/queue", response_model=None)
+def api_v1_get_playback_queue(
+    session_id: str,
+    include_debug: bool = False,
+) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    session = store.get_playback_session(session_id)
+    if session is None:
+        return api_error(404, "not_found", "Playback session not found")
+    items = store.list_queue_items(session_id)
+    return {"session": playback_session_dict(store, session), "queue": playback_queue_dict(store, session, items, include_debug)}
+
+
+@app.patch("/api/v1/playback/sessions/{session_id}/queue", response_model=None)
+def api_v1_patch_playback_queue(
+    session_id: str,
+    request: PlaybackQueuePatchRequest,
+) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    session = store.get_playback_session(session_id)
+    if session is None:
+        return api_error(404, "not_found", "Playback session not found")
+    try:
+        if request.operation == "replace":
+            store.replace_queue_items(session_id, queue_patch_items(request))
+        elif request.operation == "add":
+            items = queue_patch_items(request)
+            if not items:
+                return api_error(400, "invalid_request", "add requires track_id, track_ids, or items")
+            store.append_queue_items(session_id, items)
+        elif request.operation == "remove":
+            if not request.queue_item_id:
+                return api_error(400, "invalid_request", "remove requires queue_item_id")
+            item = store.remove_queue_item(session_id, request.queue_item_id)
+            if item is None:
+                return api_error(404, "not_found", "Queue item not found")
+            store.record_playback_event(
+                session_id=session_id,
+                queue_item_id=request.queue_item_id,
+                track_id=item.track_id,
+                event_type="removed_from_queue",
+                source="api",
+            )
+        elif request.operation == "move":
+            if not request.queue_item_id or request.position is None:
+                return api_error(400, "invalid_request", "move requires queue_item_id and position")
+            store.move_queue_item(session_id, request.queue_item_id, request.position)
+        elif request.operation in {"jump", "mark_current"}:
+            if not request.queue_item_id:
+                return api_error(400, "invalid_request", f"{request.operation} requires queue_item_id")
+            item = store.jump_to_queue_item(session_id, request.queue_item_id)
+            if item is None:
+                return api_error(404, "not_found", "Queue item not found")
+            event_type = "queue_click" if request.operation == "jump" else "track_started"
+            store.record_playback_event(
+                session_id=session_id,
+                queue_item_id=request.queue_item_id,
+                track_id=item.track_id,
+                event_type=event_type,
+                source="api",
+            )
+        else:
+            return api_error(400, "invalid_request", "Unsupported queue operation")
+    except ValueError as exc:
+        return api_error(400, "invalid_request", str(exc))
+    session = store.get_playback_session(session_id)
+    items = store.list_queue_items(session_id)
+    return {"session": playback_session_dict(store, session), "queue": playback_queue_dict(store, session, items)}
+
+
+@app.post("/api/v1/playback/events", response_model=None)
+def api_v1_record_playback_event(request: PlaybackEventRequest) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    try:
+        result = store.record_playback_event(
+            session_id=request.session_id,
+            queue_item_id=request.queue_item_id,
+            track_id=request.track_id,
+            release_id=request.release_id,
+            artist_id=request.artist_id,
+            event_type=request.event_type,
+            position_seconds=request.position_seconds,
+            duration_seconds=request.duration_seconds,
+            play_fraction=request.play_fraction,
+            client_event_id=request.client_event_id,
+            source=request.source,
+            payload=request.payload,
+        )
+    except ValueError as exc:
+        return api_error(400, "invalid_request", str(exc))
+    return {
+        "accepted": True,
+        "duplicate": result.duplicate,
+        "event_id": result.event.id,
+        "event": playback_event_dict(result.event),
+        "preference_delta": result.preference_delta,
+    }
 
 
 @app.get("/api/v1/search")

@@ -198,6 +198,135 @@ def test_api_v1_missing_entity_uses_error_envelope(tmp_path: Path, monkeypatch):
     }
 
 
+def test_api_v1_playback_create_get_and_patch_release_session(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path / "album" / "01.flac", title="One", artist="Alpha", album="Playback")
+    add_track(store, tmp_path / "album" / "02.flac", title="Two", artist="Alpha", album="Playback")
+    release_id = store.search_entities("Playback")["releases"]["items"][0].release.id
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/v1/playback/sessions",
+        json={
+            "source_type": "release",
+            "source_id": release_id,
+            "source_label": "Playback",
+            "autoplay_enabled": True,
+            "settings": {"visible_queue_size": 5},
+        },
+    )
+
+    assert created.status_code == 200
+    body = created.json()
+    session_id = body["session"]["id"]
+    assert body["session"]["source_type"] == "release"
+    assert body["session"]["autoplay_enabled"] is True
+    assert [item["track"]["title"] for item in body["queue"]["items"]] == ["One", "Two"]
+
+    restored = client.get(f"/api/v1/playback/sessions/{session_id}")
+    assert restored.status_code == 200
+    assert restored.json()["queue"]["current_index"] == 0
+
+    patched = client.patch(
+        f"/api/v1/playback/sessions/{session_id}",
+        json={"status": "paused", "shuffle_enabled": True, "repeat_mode": "all"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["session"]["status"] == "paused"
+    assert patched.json()["session"]["shuffle_enabled"] is True
+    assert patched.json()["session"]["repeat_mode"] == "all"
+
+
+def test_api_v1_playback_queue_patch_jump_records_navigation_not_skip(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    first_id = add_track(store, tmp_path / "queue" / "01.flac", title="First")
+    second_id = add_track(store, tmp_path / "queue" / "02.flac", title="Second")
+    third_id = add_track(store, tmp_path / "queue" / "03.flac", title="Third")
+    client = TestClient(app)
+    session_id = client.post(
+        "/api/v1/playback/sessions",
+        json={"source_type": "track", "source_id": first_id},
+    ).json()["session"]["id"]
+
+    added = client.patch(
+        f"/api/v1/playback/sessions/{session_id}/queue",
+        json={"operation": "add", "track_ids": [second_id, third_id]},
+    )
+    assert added.status_code == 200
+    assert [item["track_id"] for item in added.json()["queue"]["items"]] == [first_id, second_id, third_id]
+    third_item_id = added.json()["queue"]["items"][2]["id"]
+
+    moved = client.patch(
+        f"/api/v1/playback/sessions/{session_id}/queue",
+        json={"operation": "move", "queue_item_id": third_item_id, "position": 1},
+    )
+    assert moved.status_code == 200
+    assert [item["track_id"] for item in moved.json()["queue"]["items"]] == [first_id, third_id, second_id]
+
+    jumped = client.patch(
+        f"/api/v1/playback/sessions/{session_id}/queue",
+        json={"operation": "jump", "queue_item_id": third_item_id},
+    )
+    assert jumped.status_code == 200
+    assert jumped.json()["session"]["current_track_id"] == third_id
+    assert store.get_track_preference(third_id) is None
+    events = store.list_playback_events(session_id)
+    assert [event.event_type for event in events] == ["queue_click"]
+
+
+def test_api_v1_playback_event_ingest_updates_preferences_and_is_idempotent(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    track_id = add_track(store, tmp_path / "signals.flac", title="Signals", artist="Alpha")
+    client = TestClient(app)
+
+    threshold = client.post(
+        "/api/v1/playback/events",
+        json={
+            "track_id": track_id,
+            "event_type": "play_threshold_reached",
+            "position_seconds": 31.0,
+            "duration_seconds": 120.0,
+            "client_event_id": "threshold-1",
+        },
+    )
+    duplicate = client.post(
+        "/api/v1/playback/events",
+        json={"track_id": track_id, "event_type": "play_threshold_reached", "client_event_id": "threshold-1"},
+    )
+    skipped = client.post(
+        "/api/v1/playback/events",
+        json={
+            "track_id": track_id,
+            "event_type": "skipped",
+            "position_seconds": 8.0,
+            "duration_seconds": 120.0,
+            "client_event_id": "skip-1",
+        },
+    )
+
+    assert threshold.status_code == 200
+    assert threshold.json()["accepted"] is True
+    assert duplicate.status_code == 200
+    assert duplicate.json()["duplicate"] is True
+    assert skipped.status_code == 200
+    pref = store.get_track_preference(track_id)
+    assert pref.play_count == 1
+    assert pref.skip_count == 1
+    assert pref.early_skip_count == 1
+
+
+def test_api_v1_playback_event_rejects_invalid_event_type(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/playback/events",
+        json={"event_type": "not_a_real_event", "track_id": 1},
+    )
+
+    assert response.status_code == 422
+
+
 def test_navidrome_sync_job_imports_catalog(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
 
