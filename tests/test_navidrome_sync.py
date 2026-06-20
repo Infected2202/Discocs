@@ -29,7 +29,16 @@ def song(item_id: str, title: str, size: int = 100) -> NavidromeSong:
         content_type="audio/flac",
         genre="Techno",
         year=2001,
-        raw={"id": item_id, "title": title, "size": size},
+        raw={
+            "id": item_id,
+            "title": title,
+            "size": size,
+            "albumId": "album-1",
+            "albumArtist": "Album Artist",
+            "track": 1,
+            "discNumber": 1,
+            "coverArt": "cover-1",
+        },
     )
 
 
@@ -90,8 +99,15 @@ def test_sync_navidrome_catalog_imports_all_songs(tmp_path):
     assert first.year == 2001
     assert store.external_id_for_track(NAVIDROME_PROVIDER, first.id) == "song-1"
     assert store.get_external_track(NAVIDROME_PROVIDER, "song-1").raw_json == (
-        '{"id": "song-1", "size": 100, "title": "One"}'
+        '{"albumArtist": "Album Artist", "albumId": "album-1", "coverArt": "cover-1", '
+        '"discNumber": 1, "id": "song-1", "size": 100, "title": "One", "track": 1}'
     )
+    status = store.normalization_status()
+    assert status.releases == 1
+    assert status.artists == 2
+    release = store.search_entities("Album")["releases"]["items"][0].release
+    assert release.identity_key == "provider:navidrome:release:album-1"
+    assert release.cover_art_id == "cover-1"
 
 
 def test_sync_navidrome_catalog_is_idempotent_and_updates_metadata(tmp_path):

@@ -110,6 +110,74 @@ def test_health():
     assert response.json() == {"status": "ok"}
 
 
+def test_api_v1_search_artist_release_and_track_groups(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path / "album" / "one.flac", title="One", artist="Solee", album="Grind")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/search?q=Solee")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["query"] == "Solee"
+    assert data["top_result"]["entity_type"] == "artist"
+    groups = {group["type"]: group for group in data["groups"]}
+    assert groups["artists"]["items"][0]["name"] == "Solee"
+    assert groups["tracks"]["items"][0]["title"] == "One"
+    assert groups["releases"]["items"][0]["title"] == "Grind"
+
+
+def test_api_v1_release_and_tracks_contract(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path / "album" / "01.flac", title="First", artist="Alpha", album="Release")
+    release_id = store.search_entities("Release")["releases"]["items"][0].release.id
+    client = TestClient(app)
+
+    release_response = client.get(f"/api/v1/releases/{release_id}")
+    tracks_response = client.get(f"/api/v1/releases/{release_id}/tracks")
+    recommendations_response = client.get(f"/api/v1/releases/{release_id}/recommendations")
+
+    assert release_response.status_code == 200
+    release = release_response.json()["release"]
+    assert release["title"] == "Release"
+    assert release["release_type"] == "unknown"
+    assert release["artists"] == [{"id": release["artists"][0]["id"], "name": "Alpha"}]
+    assert tracks_response.status_code == 200
+    assert tracks_response.json()["items"][0]["title"] == "First"
+    assert recommendations_response.json()["available"] is False
+
+
+def test_api_v1_artist_discography_groups_unknown_releases(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path / "album" / "one.flac", title="One", artist="Alpha", album="Unknown Type")
+    artist_id = store.search_entities("Alpha")["artists"]["items"][0].artist.id
+    client = TestClient(app)
+
+    artist_response = client.get(f"/api/v1/artists/{artist_id}")
+    discography_response = client.get(f"/api/v1/artists/{artist_id}/discography")
+    top_tracks_response = client.get(f"/api/v1/artists/{artist_id}/top-tracks")
+    similar_response = client.get(f"/api/v1/artists/{artist_id}/similar")
+
+    assert artist_response.status_code == 200
+    assert artist_response.json()["artist"]["name"] == "Alpha"
+    groups = {group["key"]: group for group in discography_response.json()["groups"]}
+    assert groups["releases"]["items"][0]["title"] == "Unknown Type"
+    assert top_tracks_response.json()["available"] is False
+    assert similar_response.json()["basis"] == "not_available"
+
+
+def test_api_v1_missing_entity_uses_error_envelope(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.get("/api/v1/releases/999")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": {"code": "not_found", "message": "Release not found"}
+    }
+
+
 def test_navidrome_sync_job_imports_catalog(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
 

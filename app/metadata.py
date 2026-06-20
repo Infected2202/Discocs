@@ -10,9 +10,13 @@ class AudioMetadata:
     artist: str | None
     title: str | None
     album: str | None
+    album_artist: str | None
     genre: str | None
     year: int | None
     duration: float | None
+    track_number: int | None = None
+    disc_number: int | None = None
+    total_tracks: int | None = None
 
 
 def _first_text(value: Any) -> str | None:
@@ -39,6 +43,14 @@ def _year(value: Any) -> int | None:
     return None
 
 
+def _number(value: Any) -> int | None:
+    text = _first_text(value)
+    if not text:
+        return None
+    first = text.split("/", 1)[0].strip()
+    return int(first) if first.isdigit() else None
+
+
 def read_audio_metadata(path: Path) -> AudioMetadata:
     try:
         from mutagen import File
@@ -47,7 +59,15 @@ def read_audio_metadata(path: Path) -> AudioMetadata:
 
     parsed = File(path, easy=True)
     if parsed is None:
-        return AudioMetadata(artist=None, title=path.stem, album=None, duration=None)
+        return AudioMetadata(
+            artist=None,
+            title=path.stem,
+            album=None,
+            album_artist=None,
+            genre=None,
+            year=None,
+            duration=None,
+        )
 
     tags = parsed.tags or {}
     info = getattr(parsed, "info", None)
@@ -57,7 +77,16 @@ def read_audio_metadata(path: Path) -> AudioMetadata:
         artist=_first_text(tags.get("artist")),
         title=_first_text(tags.get("title")) or path.stem,
         album=_first_text(tags.get("album")),
+        album_artist=_first_text(
+            tags.get("albumartist")
+            or tags.get("album artist")
+            or tags.get("album_artist")
+            or tags.get("albumartistsort")
+        ),
         genre=_first_text(tags.get("genre")),
         year=_year(tags.get("date") or tags.get("year") or tags.get("originaldate")),
         duration=float(duration) if duration is not None else None,
+        track_number=_number(tags.get("tracknumber") or tags.get("track")),
+        disc_number=_number(tags.get("discnumber") or tags.get("disc")),
+        total_tracks=_number(tags.get("totaltracks") or tags.get("tracktotal")),
     )

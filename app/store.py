@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -10,6 +11,17 @@ from uuid import uuid4
 
 import numpy as np
 
+from app.library import (
+    ArtistCredit,
+    TrackMetadataEnvelope,
+    clean_display_text,
+    envelope_from_scanned_track,
+    envelope_from_track_row,
+    normalize_text,
+    parse_artist_credit,
+    release_identity_key,
+    release_title_for_envelope,
+)
 from app.scanner import ScannedTrack
 
 
@@ -40,6 +52,66 @@ class ExternalTrack:
     track_id: int
     raw_json: str | None
     synced_at: str
+
+
+@dataclass(frozen=True)
+class Artist:
+    id: int
+    name: str
+    sort_name: str | None
+    normalized_name: str
+    image_url: str | None = None
+    bio: str | None = None
+
+
+@dataclass(frozen=True)
+class Release:
+    id: int
+    title: str
+    normalized_title: str
+    release_type: str
+    release_date: str | None
+    release_year: int | None
+    cover_art_id: str | None
+    track_count: int
+    duration: float | None
+    label: str | None
+    catalog_number: str | None
+    identity_key: str
+    identity_confidence: str
+
+
+@dataclass(frozen=True)
+class ArtistSummaryRow:
+    artist: Artist
+    track_count: int
+    release_count: int
+
+
+@dataclass(frozen=True)
+class ReleaseSummaryRow:
+    release: Release
+    artists: list[Artist]
+
+
+@dataclass(frozen=True)
+class ReleaseTrackRow:
+    track: Track
+    disc_number: int | None
+    track_number: int | None
+    position: int
+    artists: list[Artist]
+
+
+@dataclass(frozen=True)
+class NormalizationStatus:
+    total_tracks: int
+    tracks_with_release: int
+    tracks_with_artist: int
+    releases: int
+    artists: int
+    orphan_releases: int
+    orphan_artists: int
 
 
 @dataclass(frozen=True)
@@ -320,6 +392,122 @@ class Store:
                     FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS artists (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    sort_name TEXT,
+                    normalized_name TEXT NOT NULL UNIQUE,
+                    image_url TEXT,
+                    bio TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_artists_name ON artists(name);
+
+                CREATE TABLE IF NOT EXISTS artist_aliases (
+                    artist_id INTEGER NOT NULL,
+                    alias TEXT NOT NULL,
+                    normalized_alias TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE (normalized_alias, source),
+                    FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_artist_aliases_artist
+                    ON artist_aliases(artist_id);
+
+                CREATE TABLE IF NOT EXISTS releases (
+                    id INTEGER PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    normalized_title TEXT NOT NULL,
+                    release_type TEXT NOT NULL DEFAULT 'unknown',
+                    release_date TEXT,
+                    release_year INTEGER,
+                    cover_art_id TEXT,
+                    track_count INTEGER NOT NULL DEFAULT 0,
+                    duration REAL,
+                    label TEXT,
+                    catalog_number TEXT,
+                    identity_key TEXT NOT NULL UNIQUE,
+                    identity_confidence TEXT NOT NULL DEFAULT 'derived',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_releases_normalized_title
+                    ON releases(normalized_title);
+                CREATE INDEX IF NOT EXISTS idx_releases_year ON releases(release_year);
+                CREATE INDEX IF NOT EXISTS idx_releases_type ON releases(release_type);
+
+                CREATE TABLE IF NOT EXISTS release_tracks (
+                    release_id INTEGER NOT NULL,
+                    track_id INTEGER NOT NULL,
+                    disc_number INTEGER,
+                    track_number INTEGER,
+                    position INTEGER NOT NULL,
+                    title_override TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (release_id, track_id),
+                    UNIQUE (release_id, position),
+                    FOREIGN KEY (release_id) REFERENCES releases(id) ON DELETE CASCADE,
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_release_tracks_track
+                    ON release_tracks(track_id);
+
+                CREATE TABLE IF NOT EXISTS track_artists (
+                    track_id INTEGER NOT NULL,
+                    artist_id INTEGER NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'primary',
+                    position INTEGER NOT NULL DEFAULT 0,
+                    credit_text TEXT,
+                    confidence TEXT NOT NULL DEFAULT 'derived',
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (track_id, artist_id, role, position),
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE,
+                    FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_track_artists_artist_role
+                    ON track_artists(artist_id, role);
+                CREATE INDEX IF NOT EXISTS idx_track_artists_track
+                    ON track_artists(track_id);
+
+                CREATE TABLE IF NOT EXISTS release_artists (
+                    release_id INTEGER NOT NULL,
+                    artist_id INTEGER NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'primary',
+                    position INTEGER NOT NULL DEFAULT 0,
+                    credit_text TEXT,
+                    confidence TEXT NOT NULL DEFAULT 'derived',
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (release_id, artist_id, role, position),
+                    FOREIGN KEY (release_id) REFERENCES releases(id) ON DELETE CASCADE,
+                    FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_release_artists_artist_role
+                    ON release_artists(artist_id, role);
+                CREATE INDEX IF NOT EXISTS idx_release_artists_release
+                    ON release_artists(release_id);
+
+                CREATE TABLE IF NOT EXISTS external_ids (
+                    provider TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    entity_id INTEGER NOT NULL,
+                    external_id TEXT NOT NULL,
+                    raw_json TEXT,
+                    synced_at TEXT NOT NULL,
+                    PRIMARY KEY (provider, entity_type, external_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_external_ids_entity
+                    ON external_ids(entity_type, entity_id);
+
                 CREATE TABLE IF NOT EXISTS instant_mix_requests (
                     id TEXT PRIMARY KEY,
                     provider TEXT NOT NULL,
@@ -501,6 +689,11 @@ class Store:
                         "DELETE FROM track_features WHERE track_id = ?",
                         (existing["id"],),
                     )
+                self._upsert_normalized_track_sidecars(
+                    conn,
+                    int(existing["id"]),
+                    envelope_from_scanned_track(scanned),
+                )
                 return int(existing["id"]), changed
 
             cursor = conn.execute(
@@ -526,7 +719,297 @@ class Store:
                     now,
                 ),
             )
-            return int(cursor.lastrowid), True
+            track_id = int(cursor.lastrowid)
+            self._upsert_normalized_track_sidecars(
+                conn,
+                track_id,
+                envelope_from_scanned_track(scanned),
+            )
+            return track_id, True
+
+    def upsert_normalized_track_sidecars(
+        self,
+        track_id: int,
+        envelope: TrackMetadataEnvelope,
+    ) -> int:
+        with self.connect() as conn:
+            return self._upsert_normalized_track_sidecars(conn, track_id, envelope)
+
+    def _upsert_normalized_track_sidecars(
+        self,
+        conn: sqlite3.Connection,
+        track_id: int,
+        envelope: TrackMetadataEnvelope,
+    ) -> int:
+        if conn.execute("SELECT 1 FROM tracks WHERE id = ?", (track_id,)).fetchone() is None:
+            raise ValueError(f"Track not found: {track_id}")
+        now = utc_now()
+        release_artists = parse_artist_credit(envelope.album_artist or envelope.artist)
+        track_artists = parse_artist_credit(envelope.artist)
+        identity_key, identity_confidence = release_identity_key(envelope)
+        release_id = self._upsert_release(
+            conn,
+            envelope=envelope,
+            identity_key=identity_key,
+            identity_confidence=identity_confidence,
+            now=now,
+        )
+
+        position = envelope.track_number or track_id
+        conn.execute("DELETE FROM release_tracks WHERE track_id = ?", (track_id,))
+        while conn.execute(
+            "SELECT 1 FROM release_tracks WHERE release_id = ? AND position = ?",
+            (release_id, position),
+        ).fetchone():
+            position += 1
+        conn.execute(
+            """
+            INSERT INTO release_tracks (
+                release_id, track_id, disc_number, track_number, position,
+                title_override, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+            ON CONFLICT(release_id, track_id) DO UPDATE SET
+                disc_number = excluded.disc_number,
+                track_number = excluded.track_number,
+                position = excluded.position,
+                updated_at = excluded.updated_at
+            """,
+            (
+                release_id,
+                track_id,
+                envelope.disc_number,
+                envelope.track_number,
+                position,
+                now,
+                now,
+            ),
+        )
+
+        conn.execute("DELETE FROM track_artists WHERE track_id = ?", (track_id,))
+        for credit in track_artists:
+            artist_id = self._upsert_artist(conn, credit.name, now)
+            self._insert_track_artist(conn, track_id, artist_id, credit, now)
+
+        conn.execute("DELETE FROM release_artists WHERE release_id = ?", (release_id,))
+        for credit in release_artists:
+            artist_id = self._upsert_artist(conn, credit.name, now)
+            self._insert_release_artist(conn, release_id, artist_id, credit, now)
+
+        if envelope.provider and envelope.provider_track_id:
+            self._upsert_external_id(
+                conn,
+                provider=envelope.provider,
+                entity_type="track",
+                entity_id=track_id,
+                external_id=envelope.provider_track_id,
+                raw_json=envelope.raw_json,
+                synced_at=now,
+            )
+        if envelope.provider and envelope.provider_release_id:
+            self._upsert_external_id(
+                conn,
+                provider=envelope.provider,
+                entity_type="release",
+                entity_id=release_id,
+                external_id=envelope.provider_release_id,
+                raw_json=envelope.raw_json,
+                synced_at=now,
+            )
+
+        self._refresh_release_basics(conn, release_id, now)
+        return release_id
+
+    def _upsert_artist(self, conn: sqlite3.Connection, name: str, now: str) -> int:
+        display_name = clean_display_text(name) or "Unknown Artist"
+        normalized_name = normalize_text(display_name)
+        row = conn.execute(
+            "SELECT id FROM artists WHERE normalized_name = ?",
+            (normalized_name,),
+        ).fetchone()
+        if row is not None:
+            conn.execute(
+                "UPDATE artists SET name = ?, sort_name = ?, updated_at = ? WHERE id = ?",
+                (display_name, display_name, now, row["id"]),
+            )
+            return int(row["id"])
+        cursor = conn.execute(
+            """
+            INSERT INTO artists (name, sort_name, normalized_name, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (display_name, display_name, normalized_name, now, now),
+        )
+        return int(cursor.lastrowid)
+
+    def _upsert_release(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        envelope: TrackMetadataEnvelope,
+        identity_key: str,
+        identity_confidence: str,
+        now: str,
+    ) -> int:
+        title = release_title_for_envelope(envelope)
+        normalized_title = normalize_text(title)
+        release_type = envelope.release_type or "unknown"
+        row = conn.execute(
+            "SELECT id FROM releases WHERE identity_key = ?",
+            (identity_key,),
+        ).fetchone()
+        params = (
+            title,
+            normalized_title,
+            release_type,
+            envelope.release_date,
+            envelope.year,
+            envelope.cover_art_id,
+            identity_confidence,
+            now,
+        )
+        if row is not None:
+            conn.execute(
+                """
+                UPDATE releases
+                SET title = ?, normalized_title = ?, release_type = ?,
+                    release_date = COALESCE(?, release_date),
+                    release_year = COALESCE(?, release_year),
+                    cover_art_id = COALESCE(?, cover_art_id),
+                    identity_confidence = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (*params, row["id"]),
+            )
+            return int(row["id"])
+        cursor = conn.execute(
+            """
+            INSERT INTO releases (
+                title, normalized_title, release_type, release_date, release_year,
+                cover_art_id, identity_key, identity_confidence, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                title,
+                normalized_title,
+                release_type,
+                envelope.release_date,
+                envelope.year,
+                envelope.cover_art_id,
+                identity_key,
+                identity_confidence,
+                now,
+                now,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def _insert_track_artist(
+        self,
+        conn: sqlite3.Connection,
+        track_id: int,
+        artist_id: int,
+        credit: ArtistCredit,
+        now: str,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO track_artists (
+                track_id, artist_id, role, position, credit_text, confidence, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                track_id,
+                artist_id,
+                credit.role,
+                credit.position,
+                credit.credit_text,
+                credit.confidence,
+                now,
+            ),
+        )
+
+    def _insert_release_artist(
+        self,
+        conn: sqlite3.Connection,
+        release_id: int,
+        artist_id: int,
+        credit: ArtistCredit,
+        now: str,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO release_artists (
+                release_id, artist_id, role, position, credit_text, confidence, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                release_id,
+                artist_id,
+                credit.role,
+                credit.position,
+                credit.credit_text,
+                credit.confidence,
+                now,
+            ),
+        )
+
+    def _upsert_external_id(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        provider: str,
+        entity_type: str,
+        entity_id: int,
+        external_id: str,
+        raw_json: str | None,
+        synced_at: str,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO external_ids (
+                provider, entity_type, entity_id, external_id, raw_json, synced_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(provider, entity_type, external_id) DO UPDATE SET
+                entity_id = excluded.entity_id,
+                raw_json = excluded.raw_json,
+                synced_at = excluded.synced_at
+            """,
+            (provider, entity_type, entity_id, external_id, raw_json, synced_at),
+        )
+
+    def _refresh_release_basics(
+        self,
+        conn: sqlite3.Connection,
+        release_id: int,
+        now: str,
+    ) -> None:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS track_count, SUM(t.duration) AS duration
+            FROM release_tracks rt
+            JOIN tracks t ON t.id = rt.track_id
+            WHERE rt.release_id = ?
+            """,
+            (release_id,),
+        ).fetchone()
+        conn.execute(
+            """
+            UPDATE releases
+            SET track_count = ?, duration = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                int(row["track_count"] or 0),
+                float(row["duration"]) if row["duration"] is not None else None,
+                now,
+                release_id,
+            ),
+        )
 
     def delete_embedding(self, track_id: int, model_name: str) -> None:
         with self.connect() as conn:
@@ -632,6 +1115,15 @@ class Store:
                 """,
                 (provider, external_id, track_id, raw_json, synced_at),
             )
+            self._upsert_external_id(
+                conn,
+                provider=provider,
+                entity_type="track",
+                entity_id=track_id,
+                external_id=external_id,
+                raw_json=raw_json,
+                synced_at=synced_at,
+            )
             row = conn.execute(
                 """
                 SELECT * FROM external_tracks
@@ -713,6 +1205,376 @@ class Store:
                     params,
                 ).fetchone()[0]
             )
+
+    def count_external_ids(self, provider: str | None = None, entity_type: str | None = None) -> int:
+        where: list[str] = []
+        params: list[object] = []
+        if provider is not None:
+            where.append("provider = ?")
+            params.append(_require_external_value(provider, "provider"))
+        if entity_type is not None:
+            where.append("entity_type = ?")
+            params.append(entity_type)
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        with self.connect() as conn:
+            return int(conn.execute(f"SELECT COUNT(*) FROM external_ids {where_sql}", params).fetchone()[0])
+
+    def backfill_library_normalization(self) -> NormalizationStatus:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    t.*,
+                    e.provider AS external_provider,
+                    e.external_id AS external_id,
+                    e.raw_json AS external_raw_json
+                FROM tracks t
+                LEFT JOIN external_tracks e ON e.track_id = t.id
+                ORDER BY t.id
+                """
+            ).fetchall()
+            for row in rows:
+                envelope = envelope_from_track_row(row)
+                if row["external_provider"] == "navidrome":
+                    envelope = _envelope_from_track_with_external(row, envelope)
+                self._upsert_normalized_track_sidecars(conn, int(row["id"]), envelope)
+            return self._normalization_status(conn)
+
+    def normalization_status(self) -> NormalizationStatus:
+        with self.connect() as conn:
+            return self._normalization_status(conn)
+
+    def _normalization_status(self, conn: sqlite3.Connection) -> NormalizationStatus:
+        return NormalizationStatus(
+            total_tracks=int(conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]),
+            tracks_with_release=int(
+                conn.execute("SELECT COUNT(DISTINCT track_id) FROM release_tracks").fetchone()[0]
+            ),
+            tracks_with_artist=int(
+                conn.execute("SELECT COUNT(DISTINCT track_id) FROM track_artists").fetchone()[0]
+            ),
+            releases=int(conn.execute("SELECT COUNT(*) FROM releases").fetchone()[0]),
+            artists=int(conn.execute("SELECT COUNT(*) FROM artists").fetchone()[0]),
+            orphan_releases=int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM releases r
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM release_tracks rt WHERE rt.release_id = r.id
+                    )
+                    """
+                ).fetchone()[0]
+            ),
+            orphan_artists=int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM artists a
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM track_artists ta WHERE ta.artist_id = a.id
+                    )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM release_artists ra WHERE ra.artist_id = a.id
+                    )
+                    """
+                ).fetchone()[0]
+            ),
+        )
+
+    def get_artist(self, artist_id: int) -> ArtistSummaryRow | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM artists WHERE id = ?", (artist_id,)).fetchone()
+            if row is None:
+                return None
+            stats = conn.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT ta.track_id) AS track_count,
+                    COUNT(DISTINCT rt.release_id) AS release_count
+                FROM artists a
+                LEFT JOIN track_artists ta ON ta.artist_id = a.id
+                LEFT JOIN release_tracks rt ON rt.track_id = ta.track_id
+                WHERE a.id = ?
+                """,
+                (artist_id,),
+            ).fetchone()
+        return ArtistSummaryRow(
+            artist=row_to_artist(row),
+            track_count=int(stats["track_count"] or 0),
+            release_count=int(stats["release_count"] or 0),
+        )
+
+    def get_release(self, release_id: int) -> ReleaseSummaryRow | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM releases WHERE id = ?", (release_id,)).fetchone()
+            if row is None:
+                return None
+            artist_rows = conn.execute(
+                """
+                SELECT a.*
+                FROM release_artists ra
+                JOIN artists a ON a.id = ra.artist_id
+                WHERE ra.release_id = ?
+                ORDER BY ra.position, a.name
+                """,
+                (release_id,),
+            ).fetchall()
+        return ReleaseSummaryRow(row_to_release(row), [row_to_artist(item) for item in artist_rows])
+
+    def list_release_tracks(self, release_id: int) -> list[ReleaseTrackRow]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT t.*, rt.disc_number, rt.track_number, rt.position
+                FROM release_tracks rt
+                JOIN tracks t ON t.id = rt.track_id
+                WHERE rt.release_id = ?
+                ORDER BY
+                    rt.disc_number IS NULL,
+                    rt.disc_number,
+                    rt.track_number IS NULL,
+                    rt.track_number,
+                    rt.position,
+                    t.id
+                """,
+                (release_id,),
+            ).fetchall()
+            artists_by_track = self._artists_for_tracks(conn, [int(row["id"]) for row in rows])
+        return [
+            ReleaseTrackRow(
+                track=row_to_track(row),
+                disc_number=int(row["disc_number"]) if row["disc_number"] is not None else None,
+                track_number=int(row["track_number"]) if row["track_number"] is not None else None,
+                position=int(row["position"]),
+                artists=artists_by_track.get(int(row["id"]), []),
+            )
+            for row in rows
+        ]
+
+    def artist_discography(self, artist_id: int) -> dict[str, list[ReleaseSummaryRow]]:
+        groups = {
+            "albums": [],
+            "eps": [],
+            "singles": [],
+            "compilations": [],
+            "featured_in": [],
+            "releases": [],
+        }
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT r.*,
+                    CASE WHEN ra.artist_id IS NULL THEN 1 ELSE 0 END AS featured_only
+                FROM releases r
+                JOIN release_tracks rt ON rt.release_id = r.id
+                JOIN track_artists ta ON ta.track_id = rt.track_id
+                LEFT JOIN release_artists ra
+                  ON ra.release_id = r.id AND ra.artist_id = ?
+                WHERE ta.artist_id = ?
+                ORDER BY r.release_year IS NULL, r.release_year DESC, r.title
+                """,
+                (artist_id, artist_id),
+            ).fetchall()
+            artists_by_release = self._artists_for_releases(conn, [int(row["id"]) for row in rows])
+        for row in rows:
+            release = row_to_release(row)
+            key = _discography_group_key(release.release_type, bool(row["featured_only"]))
+            groups[key].append(
+                ReleaseSummaryRow(release, artists_by_release.get(release.id, []))
+            )
+        return groups
+
+    def related_discography_for_release(self, release_id: int, limit: int = 12) -> list[ReleaseSummaryRow]:
+        release = self.get_release(release_id)
+        if release is None or not release.artists:
+            return []
+        artist_ids = [artist.id for artist in release.artists]
+        placeholders = ",".join("?" for _id in artist_ids)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT r.*
+                FROM releases r
+                JOIN release_artists ra ON ra.release_id = r.id
+                WHERE ra.artist_id IN ({placeholders})
+                  AND r.id != ?
+                ORDER BY r.release_year IS NULL, r.release_year DESC, r.title
+                LIMIT ?
+                """,
+                (*artist_ids, release_id, limit),
+            ).fetchall()
+            artists_by_release = self._artists_for_releases(conn, [int(row["id"]) for row in rows])
+        return [
+            ReleaseSummaryRow(row_to_release(row), artists_by_release.get(int(row["id"]), []))
+            for row in rows
+        ]
+
+    def search_entities(
+        self,
+        query: str,
+        *,
+        entity_type: str = "all",
+        limit: int = 8,
+        offset: int = 0,
+    ) -> dict[str, object]:
+        cleaned = " ".join(query.strip().split())
+        empty = {
+            "artists": {"items": [], "total": 0},
+            "releases": {"items": [], "total": 0},
+            "tracks": {"items": [], "total": 0},
+        }
+        if not cleaned:
+            return empty
+        like = f"%{cleaned}%"
+        normalized_like = f"%{normalize_text(cleaned)}%"
+        with self.connect() as conn:
+            artists = []
+            artist_total = 0
+            if entity_type in {"all", "artist"}:
+                artist_total = int(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM artists WHERE normalized_name LIKE ?",
+                        (normalized_like,),
+                    ).fetchone()[0]
+                )
+                artists = [
+                    ArtistSummaryRow(row_to_artist(row), int(row["track_count"] or 0), int(row["release_count"] or 0))
+                    for row in conn.execute(
+                        """
+                        SELECT a.*,
+                            COUNT(DISTINCT ta.track_id) AS track_count,
+                            COUNT(DISTINCT rt.release_id) AS release_count
+                        FROM artists a
+                        LEFT JOIN track_artists ta ON ta.artist_id = a.id
+                        LEFT JOIN release_tracks rt ON rt.track_id = ta.track_id
+                        WHERE a.normalized_name LIKE ?
+                        GROUP BY a.id
+                        ORDER BY CASE WHEN a.normalized_name = ? THEN 0 ELSE 1 END, a.name
+                        LIMIT ? OFFSET ?
+                        """,
+                        (normalized_like, normalize_text(cleaned), limit, offset),
+                    ).fetchall()
+                ]
+
+            releases = []
+            release_total = 0
+            if entity_type in {"all", "release"}:
+                release_total = int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(DISTINCT r.id)
+                        FROM releases r
+                        LEFT JOIN release_artists ra ON ra.release_id = r.id
+                        LEFT JOIN artists a ON a.id = ra.artist_id
+                        WHERE r.normalized_title LIKE ? OR a.normalized_name LIKE ?
+                        """,
+                        (normalized_like, normalized_like),
+                    ).fetchone()[0]
+                )
+                release_rows = conn.execute(
+                    """
+                    SELECT DISTINCT r.*
+                    FROM releases r
+                    LEFT JOIN release_artists ra ON ra.release_id = r.id
+                    LEFT JOIN artists a ON a.id = ra.artist_id
+                    WHERE r.normalized_title LIKE ? OR a.normalized_name LIKE ?
+                    ORDER BY CASE WHEN r.normalized_title = ? THEN 0 ELSE 1 END, r.title
+                    LIMIT ? OFFSET ?
+                    """,
+                    (normalized_like, normalized_like, normalize_text(cleaned), limit, offset),
+                ).fetchall()
+                artists_by_release = self._artists_for_releases(conn, [int(row["id"]) for row in release_rows])
+                releases = [
+                    ReleaseSummaryRow(row_to_release(row), artists_by_release.get(int(row["id"]), []))
+                    for row in release_rows
+                ]
+
+            tracks = []
+            track_total = 0
+            if entity_type in {"all", "track"}:
+                track_total = int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(DISTINCT t.id)
+                        FROM tracks t
+                        LEFT JOIN release_tracks rt ON rt.track_id = t.id
+                        LEFT JOIN releases r ON r.id = rt.release_id
+                        LEFT JOIN track_artists ta ON ta.track_id = t.id
+                        LEFT JOIN artists a ON a.id = ta.artist_id
+                        WHERE t.title LIKE ? OR t.artist LIKE ? OR t.album LIKE ?
+                           OR r.normalized_title LIKE ? OR a.normalized_name LIKE ?
+                        """,
+                        (like, like, like, normalized_like, normalized_like),
+                    ).fetchone()[0]
+                )
+                track_rows = conn.execute(
+                    """
+                    SELECT DISTINCT t.*
+                    FROM tracks t
+                    LEFT JOIN release_tracks rt ON rt.track_id = t.id
+                    LEFT JOIN releases r ON r.id = rt.release_id
+                    LEFT JOIN track_artists ta ON ta.track_id = t.id
+                    LEFT JOIN artists a ON a.id = ta.artist_id
+                    WHERE t.title LIKE ? OR t.artist LIKE ? OR t.album LIKE ?
+                       OR r.normalized_title LIKE ? OR a.normalized_name LIKE ?
+                    ORDER BY t.artist, t.album, t.title, t.id
+                    LIMIT ? OFFSET ?
+                    """,
+                    (like, like, like, normalized_like, normalized_like, limit, offset),
+                ).fetchall()
+                tracks = [row_to_track(row) for row in track_rows]
+        return {
+            "artists": {"items": artists, "total": artist_total},
+            "releases": {"items": releases, "total": release_total},
+            "tracks": {"items": tracks, "total": track_total},
+        }
+
+    def _artists_for_tracks(
+        self,
+        conn: sqlite3.Connection,
+        track_ids: list[int],
+    ) -> dict[int, list[Artist]]:
+        if not track_ids:
+            return {}
+        placeholders = ",".join("?" for _id in track_ids)
+        rows = conn.execute(
+            f"""
+            SELECT ta.track_id, a.*
+            FROM track_artists ta
+            JOIN artists a ON a.id = ta.artist_id
+            WHERE ta.track_id IN ({placeholders})
+            ORDER BY ta.track_id, ta.position, a.name
+            """,
+            track_ids,
+        ).fetchall()
+        grouped: dict[int, list[Artist]] = {}
+        for row in rows:
+            grouped.setdefault(int(row["track_id"]), []).append(row_to_artist(row))
+        return grouped
+
+    def _artists_for_releases(
+        self,
+        conn: sqlite3.Connection,
+        release_ids: list[int],
+    ) -> dict[int, list[Artist]]:
+        if not release_ids:
+            return {}
+        placeholders = ",".join("?" for _id in release_ids)
+        rows = conn.execute(
+            f"""
+            SELECT ra.release_id, a.*
+            FROM release_artists ra
+            JOIN artists a ON a.id = ra.artist_id
+            WHERE ra.release_id IN ({placeholders})
+            ORDER BY ra.release_id, ra.position, a.name
+            """,
+            release_ids,
+        ).fetchall()
+        grouped: dict[int, list[Artist]] = {}
+        for row in rows:
+            grouped.setdefault(int(row["release_id"]), []).append(row_to_artist(row))
+        return grouped
 
     def record_instant_mix_request(
         self,
@@ -2852,6 +3714,118 @@ def row_to_external_track(row: sqlite3.Row) -> ExternalTrack:
         raw_json=row["raw_json"],
         synced_at=str(row["synced_at"]),
     )
+
+
+def row_to_artist(row: sqlite3.Row) -> Artist:
+    return Artist(
+        id=int(row["id"]),
+        name=str(row["name"]),
+        sort_name=row["sort_name"],
+        normalized_name=str(row["normalized_name"]),
+        image_url=row["image_url"] if "image_url" in row.keys() else None,
+        bio=row["bio"] if "bio" in row.keys() else None,
+    )
+
+
+def row_to_release(row: sqlite3.Row) -> Release:
+    return Release(
+        id=int(row["id"]),
+        title=str(row["title"]),
+        normalized_title=str(row["normalized_title"]),
+        release_type=str(row["release_type"]),
+        release_date=row["release_date"],
+        release_year=int(row["release_year"]) if row["release_year"] is not None else None,
+        cover_art_id=row["cover_art_id"],
+        track_count=int(row["track_count"] or 0),
+        duration=float(row["duration"]) if row["duration"] is not None else None,
+        label=row["label"],
+        catalog_number=row["catalog_number"],
+        identity_key=str(row["identity_key"]),
+        identity_confidence=str(row["identity_confidence"]),
+    )
+
+
+def _discography_group_key(release_type: str, featured_only: bool) -> str:
+    if featured_only:
+        return "featured_in"
+    return {
+        "album": "albums",
+        "ep": "eps",
+        "single": "singles",
+        "compilation": "compilations",
+    }.get(release_type, "releases")
+
+
+def _envelope_from_track_with_external(
+    row: sqlite3.Row,
+    fallback: TrackMetadataEnvelope,
+) -> TrackMetadataEnvelope:
+    raw_json = row["external_raw_json"]
+    raw: dict[str, object] = {}
+    if raw_json:
+        try:
+            decoded = json.loads(str(raw_json))
+            raw = decoded if isinstance(decoded, dict) else {}
+        except json.JSONDecodeError:
+            raw = {}
+    album_id = _raw_value(raw, "albumId", "album_id")
+    album_artist = _raw_value(raw, "albumArtist", "albumartist", "album_artist")
+    cover_art_id = _raw_value(raw, "coverArt", "coverArtId", "cover_art_id")
+    release_date = _raw_value(raw, "releaseDate", "date")
+    release_type = _raw_release_type(_raw_value(raw, "releaseType", "albumType", "mediaType"))
+    return TrackMetadataEnvelope(
+        title=fallback.title,
+        artist=fallback.artist,
+        album=fallback.album,
+        album_artist=album_artist or fallback.album_artist,
+        genre=fallback.genre,
+        year=fallback.year,
+        duration=fallback.duration,
+        path=fallback.path,
+        track_number=_raw_int(raw, "track", "trackNumber", "track_number"),
+        disc_number=_raw_int(raw, "discNumber", "disc_number"),
+        total_tracks=_raw_int(raw, "totalTracks", "trackTotal", "total_tracks"),
+        release_type=release_type,
+        release_date=release_date,
+        cover_art_id=cover_art_id,
+        provider=str(row["external_provider"]),
+        provider_track_id=str(row["external_id"]),
+        provider_release_id=album_id,
+        raw_json=raw_json,
+    )
+
+
+def _raw_value(raw: dict[str, object], *keys: str) -> str | None:
+    for key in keys:
+        value = raw.get(key)
+        if isinstance(value, dict):
+            value = value.get("id") or value.get("name") or value.get("title")
+        if isinstance(value, list):
+            value = value[0] if value else None
+        text = clean_display_text(str(value)) if value is not None else None
+        if text:
+            return text
+    return None
+
+
+def _raw_int(raw: dict[str, object], *keys: str) -> int | None:
+    value = _raw_value(raw, *keys)
+    if not value:
+        return None
+    first = value.split("/", 1)[0].strip()
+    return int(first) if first.isdigit() else None
+
+
+def _raw_release_type(value: str | None) -> str:
+    normalized = normalize_text(value)
+    return {
+        "album": "album",
+        "ep": "ep",
+        "single": "single",
+        "compilation": "compilation",
+        "soundtrack": "soundtrack",
+        "mix": "mix",
+    }.get(normalized, "unknown")
 
 
 def row_to_instant_mix_request(row: sqlite3.Row) -> InstantMixRequest:

@@ -20,7 +20,7 @@ from typing import Callable
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 import numpy as np
 from starlette.background import BackgroundTask
@@ -56,9 +56,13 @@ from app.navidrome_sync import sync_navidrome_catalog
 from app.recommender import Recommender, build_index, index_metadata_path
 from app.store import (
     AnalysisTask,
+    Artist,
+    ArtistSummaryRow,
     FeatureFilter,
     FeatureTrack,
     InstantMixRequest,
+    ReleaseSummaryRow,
+    ReleaseTrackRow,
     Store,
     Track,
     TrackFeature,
@@ -595,6 +599,126 @@ def model_to_dict(model: BaseModel) -> dict[str, object]:
     if hasattr(model, "model_dump"):
         return model.model_dump()
     return model.dict()
+
+
+def api_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": {"code": code, "message": message}},
+    )
+
+
+def image_ref(url: str | None, source: str = "none") -> dict[str, object]:
+    return {"url": url, "source": source if url else "none", "placeholder": url is None}
+
+
+def entity_action(action_type: str, enabled: bool = True, endpoint: str | None = None) -> dict[str, object]:
+    return {"type": action_type, "enabled": enabled, "endpoint": endpoint}
+
+
+def release_type_label(release_type: str) -> str:
+    return {
+        "album": "Album",
+        "ep": "EP",
+        "single": "Single",
+        "compilation": "Compilation",
+        "soundtrack": "Soundtrack",
+        "mix": "Mix",
+    }.get(release_type, "Release")
+
+
+def artist_summary_dict(row: ArtistSummaryRow | Artist) -> dict[str, object]:
+    artist = row.artist if isinstance(row, ArtistSummaryRow) else row
+    track_count = row.track_count if isinstance(row, ArtistSummaryRow) else 0
+    release_count = row.release_count if isinstance(row, ArtistSummaryRow) else 0
+    return {
+        "id": artist.id,
+        "name": artist.name,
+        "image": image_ref(artist.image_url, "external" if artist.image_url else "none"),
+        "library_stats": {
+            "tracks": track_count,
+            "releases": release_count,
+            "liked_tracks": 0,
+            "plays": 0,
+        },
+    }
+
+
+def artist_link_dict(artist: Artist) -> dict[str, object]:
+    return {"id": artist.id, "name": artist.name}
+
+
+def release_summary_dict(row: ReleaseSummaryRow) -> dict[str, object]:
+    release = row.release
+    cover_url = f"/api/v1/releases/{release.id}/cover" if release.cover_art_id else None
+    return {
+        "id": release.id,
+        "title": release.title,
+        "release_type": release.release_type,
+        "release_type_label": release_type_label(release.release_type),
+        "artists": [artist_link_dict(artist) for artist in row.artists],
+        "release_date": release.release_date,
+        "release_year": release.release_year,
+        "track_count": release.track_count,
+        "duration": release.duration,
+        "artwork": image_ref(cover_url, "navidrome" if cover_url else "none"),
+    }
+
+
+def track_summary_dict(store: Store, track: Track, artists: list[Artist] | None = None) -> dict[str, object]:
+    release = _track_release_summary(store, track.id)
+    return {
+        "id": track.id,
+        "title": track.title or Path(track.path).stem,
+        "artists": [artist_link_dict(artist) for artist in (artists or [])],
+        "duration": track.duration,
+        "release": release,
+        "artwork": image_ref(f"/tracks/{track.id}/cover", "local"),
+        "explicit": False,
+        "liked": False,
+        "actions": [],
+    }
+
+
+def release_track_dict(store: Store, item: ReleaseTrackRow) -> dict[str, object]:
+    data = track_summary_dict(store, item.track, item.artists)
+    data.update(
+        {
+            "disc_number": item.disc_number,
+            "track_number": item.track_number,
+            "position": item.position,
+        }
+    )
+    return data
+
+
+def _track_release_summary(store: Store, track_id: int) -> dict[str, object] | None:
+    with store.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT r.id, r.title
+            FROM release_tracks rt
+            JOIN releases r ON r.id = rt.release_id
+            WHERE rt.track_id = ?
+            ORDER BY rt.position
+            LIMIT 1
+            """,
+            (track_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {"id": int(row["id"]), "title": str(row["title"])}
+
+
+def search_group(group_type: str, title: str, items: list[dict[str, object]], total: int, limit: int, offset: int) -> dict[str, object]:
+    next_offset = offset + limit if offset + limit < total else None
+    return {
+        "type": group_type,
+        "title": title,
+        "items": items,
+        "total": total,
+        "next_offset": next_offset,
+    }
 
 
 def create_job(kind: str, message: str) -> str:
@@ -1364,6 +1488,186 @@ def get_worker_task_state(task_id: str, worker_id: str) -> dict[str, object]:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/v1/search")
+def api_v1_search(
+    q: str = "",
+    type: str = Query(default="all", pattern="^(all|artist|release|track)$"),
+    limit: int = Query(default=8, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, object]:
+    store, _settings = context()
+    query = " ".join(q.strip().split())
+    results = store.search_entities(query, entity_type=type, limit=limit, offset=offset)
+    artist_rows = results["artists"]["items"]
+    release_rows = results["releases"]["items"]
+    track_rows = results["tracks"]["items"]
+    artists = [artist_summary_dict(row) for row in artist_rows]
+    releases = [release_summary_dict(row) for row in release_rows]
+    tracks = [track_summary_dict(store, track) for track in track_rows]
+    groups = [
+        search_group("artists", "Artists", artists, int(results["artists"]["total"]), limit, offset),
+        search_group("tracks", "Tracks", tracks, int(results["tracks"]["total"]), limit, offset),
+        search_group("releases", "Releases", releases, int(results["releases"]["total"]), limit, offset),
+    ]
+    top_result = None
+    for result_type, items in (("artist", artists), ("track", tracks), ("release", releases)):
+        if items:
+            top_result = {"entity_type": result_type, "entity": items[0]}
+            break
+    return {"query": query, "top_result": top_result, "groups": groups}
+
+
+@app.get("/api/v1/artists/{artist_id}", response_model=None)
+def api_v1_artist(artist_id: int) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    artist = store.get_artist(artist_id)
+    if artist is None:
+        return api_error(404, "not_found", "Artist not found")
+    return {
+        "artist": {**artist_summary_dict(artist), "sort_name": artist.artist.sort_name},
+        "actions": [entity_action("mix", True, None)],
+        "links": {
+            "discography": f"/api/v1/artists/{artist_id}/discography",
+            "top_tracks": f"/api/v1/artists/{artist_id}/top-tracks",
+            "similar": f"/api/v1/artists/{artist_id}/similar",
+        },
+    }
+
+
+@app.get("/api/v1/artists/{artist_id}/discography", response_model=None)
+def api_v1_artist_discography(
+    artist_id: int,
+    sort: str = Query(default="release_date_desc", pattern="^(release_date_desc|release_date_asc|title)$"),
+    limit: int | None = Query(default=None, ge=1, le=100),
+    include_tracks: bool = False,
+) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    artist = store.get_artist(artist_id)
+    if artist is None:
+        return api_error(404, "not_found", "Artist not found")
+    titles = {
+        "albums": "Albums",
+        "eps": "EPs",
+        "singles": "Singles",
+        "compilations": "Compilations",
+        "featured_in": "Featured In",
+        "releases": "Releases",
+    }
+    discography = store.artist_discography(artist_id)
+    groups = []
+    for key, title in titles.items():
+        items = discography[key]
+        if sort == "title":
+            items = sorted(items, key=lambda item: item.release.title.casefold())
+        elif sort == "release_date_asc":
+            items = sorted(
+                items,
+                key=lambda item: (
+                    item.release.release_year is None,
+                    item.release.release_year or 0,
+                    item.release.title.casefold(),
+                ),
+            )
+        if limit is not None:
+            items = items[:limit]
+        groups.append({"key": key, "title": title, "items": [release_summary_dict(item) for item in items]})
+    return {"artist": artist_link_dict(artist.artist), "groups": groups}
+
+
+@app.get("/api/v1/artists/{artist_id}/top-tracks", response_model=None)
+def api_v1_artist_top_tracks(artist_id: int) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    artist = store.get_artist(artist_id)
+    if artist is None:
+        return api_error(404, "not_found", "Artist not found")
+    return {"artist": artist_link_dict(artist.artist), "items": [], "basis": "local_playback", "available": False}
+
+
+@app.get("/api/v1/artists/{artist_id}/similar", response_model=None)
+def api_v1_artist_similar(artist_id: int) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    artist = store.get_artist(artist_id)
+    if artist is None:
+        return api_error(404, "not_found", "Artist not found")
+    return {"artist": artist_link_dict(artist.artist), "items": [], "available": False, "basis": "not_available"}
+
+
+@app.get("/api/v1/releases/{release_id}", response_model=None)
+def api_v1_release(release_id: int) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    release = store.get_release(release_id)
+    if release is None:
+        return api_error(404, "not_found", "Release not found")
+    return {
+        "release": release_summary_dict(release),
+        "actions": [entity_action("play", True, None), entity_action("shuffle", True, None)],
+        "links": {
+            "tracks": f"/api/v1/releases/{release_id}/tracks",
+            "discography": f"/api/v1/releases/{release_id}/related-discography",
+            "recommendations": f"/api/v1/releases/{release_id}/recommendations",
+        },
+    }
+
+
+@app.get("/api/v1/releases/{release_id}/tracks", response_model=None)
+def api_v1_release_tracks(release_id: int) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    release = store.get_release(release_id)
+    if release is None:
+        return api_error(404, "not_found", "Release not found")
+    return {
+        "release": {"id": release.release.id, "title": release.release.title},
+        "items": [release_track_dict(store, item) for item in store.list_release_tracks(release_id)],
+    }
+
+
+@app.get("/api/v1/releases/{release_id}/related-discography", response_model=None)
+def api_v1_release_related_discography(release_id: int) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    release = store.get_release(release_id)
+    if release is None:
+        return api_error(404, "not_found", "Release not found")
+    items = store.related_discography_for_release(release_id)
+    return {
+        "release": {"id": release.release.id, "title": release.release.title},
+        "context_artists": [artist_link_dict(artist) for artist in release.artists],
+        "items": [release_summary_dict(item) for item in items],
+    }
+
+
+@app.get("/api/v1/releases/{release_id}/recommendations", response_model=None)
+def api_v1_release_recommendations(release_id: int) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    release = store.get_release(release_id)
+    if release is None:
+        return api_error(404, "not_found", "Release not found")
+    return {
+        "release": {"id": release.release.id, "title": release.release.title},
+        "available": False,
+        "basis": "not_available",
+        "items": [],
+    }
+
+
+@app.get("/api/v1/releases/{release_id}/cover", response_model=None)
+def api_v1_release_cover(
+    release_id: int,
+    size: int = Query(default=300, ge=32, le=1000),
+) -> Response | JSONResponse:
+    store, settings = context()
+    release = store.get_release(release_id)
+    if release is None:
+        return api_error(404, "not_found", "Release not found")
+    if not release.release.cover_art_id:
+        return api_error(404, "not_found", "Release has no cover art")
+    try:
+        cover = NavidromeClient(settings.navidrome).get_cover_art(release.release.cover_art_id, size=size)
+    except Exception as exc:
+        logger.warning("Release cover lookup failed release_id=%s: %s", release_id, exc)
+        return api_error(404, "not_found", "Release cover not available")
+    return Response(content=cover.payload, media_type=cover.content_type)
 
 
 def run_maintenance_tick(store: Store | None = None) -> None:

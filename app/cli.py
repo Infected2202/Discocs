@@ -429,6 +429,20 @@ def scan(music_dir: Annotated[Path, typer.Argument(exists=True, file_okay=False)
     typer.echo(f"scanned={total} changed={changed} tracks={store.count_tracks()}")
 
 
+@cli.command("normalize-library")
+def normalize_library() -> None:
+    """Backfill normalized artist/release sidecar tables from existing tracks."""
+    store, _settings = get_store_and_settings()
+    status = store.backfill_library_normalization()
+    typer.echo(f"tracks={status.total_tracks}")
+    typer.echo(f"tracks_with_release={status.tracks_with_release}")
+    typer.echo(f"tracks_with_artist={status.tracks_with_artist}")
+    typer.echo(f"releases={status.releases}")
+    typer.echo(f"artists={status.artists}")
+    typer.echo(f"orphan_releases={status.orphan_releases}")
+    typer.echo(f"orphan_artists={status.orphan_artists}")
+
+
 @cli.command("inspect-folder")
 def inspect_folder(
     music_dir: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
@@ -2064,6 +2078,11 @@ def stats(model: Annotated[str, typer.Option("--model")] = "discogs_multi") -> N
     typer.echo(
         f"missing_audio_features={store.count_tracks_missing_features(AUDIO_FEATURE_EXTRACTOR)}"
     )
+    normalization = store.normalization_status()
+    typer.echo(f"artists={normalization.artists}")
+    typer.echo(f"releases={normalization.releases}")
+    typer.echo(f"tracks_with_release={normalization.tracks_with_release}")
+    typer.echo(f"tracks_with_artist={normalization.tracks_with_artist}")
     typer.echo(f"index={settings.index_path(model)}")
 
 

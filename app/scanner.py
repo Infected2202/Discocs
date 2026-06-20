@@ -34,6 +34,10 @@ class ScannedTrack:
     mtime: int
     genre: str | None = None
     year: int | None = None
+    album_artist: str | None = None
+    track_number: int | None = None
+    disc_number: int | None = None
+    total_tracks: int | None = None
 
 
 def iter_audio_files(root: Path) -> Iterator[Path]:
@@ -52,9 +56,13 @@ def scan_music_folder(root: Path) -> Iterator[ScannedTrack]:
             artist=metadata.artist,
             title=metadata.title,
             album=metadata.album,
+            album_artist=metadata.album_artist,
             genre=metadata.genre,
             year=metadata.year,
             duration=metadata.duration,
+            track_number=metadata.track_number,
+            disc_number=metadata.disc_number,
+            total_tracks=metadata.total_tracks,
             file_size=stat.st_size,
             mtime=int(stat.st_mtime),
         )
@@ -69,6 +77,7 @@ def _safe_metadata(path: Path) -> AudioMetadata:
             artist=None,
             title=path.stem,
             album=None,
+            album_artist=None,
             genre=None,
             year=None,
             duration=None,

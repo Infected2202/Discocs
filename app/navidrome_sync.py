@@ -7,6 +7,7 @@ import sqlite3
 from typing import Callable
 
 from app.navidrome import NavidromeClient, NavidromeSong
+from app.library import envelope_from_navidrome_song
 from app.scanner import ScannedTrack
 from app.store import Store, utc_now
 
@@ -96,6 +97,11 @@ def sync_navidrome_catalog(
 
                 raw_changed = existing_mapping is not None and existing_mapping["raw_json"] != raw_json
                 _upsert_external_track(conn, song.id, track_id, raw_json)
+                store._upsert_normalized_track_sidecars(
+                    conn,
+                    track_id,
+                    envelope_from_navidrome_song(song, raw_json),
+                )
                 if existing_mapping is None:
                     imported_count += 1
                 elif changed or raw_changed:
@@ -137,6 +143,10 @@ def _song_to_scanned_track(song: NavidromeSong) -> ScannedTrack:
         genre=song.genre,
         year=song.year,
         duration=float(song.duration) if song.duration is not None else None,
+        album_artist=(song.raw or {}).get("albumArtist") if song.raw else None,
+        track_number=_optional_int((song.raw or {}).get("track")) if song.raw else None,
+        disc_number=_optional_int((song.raw or {}).get("discNumber")) if song.raw else None,
+        total_tracks=_optional_int((song.raw or {}).get("totalTracks")) if song.raw else None,
         file_size=song.size or 0,
         mtime=0,
     )
@@ -198,6 +208,16 @@ def _track_matches(row: sqlite3.Row, scanned: ScannedTrack) -> bool:
 
 def _optional_float(value: object) -> float | None:
     return None if value is None else float(value)
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    text = str(value).split("/", 1)[0].strip()
+    try:
+        return int(text)
+    except ValueError:
+        return None
 
 
 def _upsert_track(conn: sqlite3.Connection, scanned: ScannedTrack) -> tuple[int, bool]:

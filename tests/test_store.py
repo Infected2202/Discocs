@@ -699,3 +699,104 @@ def test_changed_file_scan_removes_predictions(tmp_path: Path):
     assert store.load_predictions(track_id, "genre_discogs400") == []
     assert store.load_model_output(track_id, "genre_discogs400") is None
     assert store.load_features(track_id, "audio_features_v1") == []
+
+
+def test_upsert_track_creates_normalized_artist_release_sidecars(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "Artist" / "Album" / "01 - Title.flac").resolve(),
+            artist="Alpha & Beta",
+            title="Title",
+            album="Album",
+            album_artist="Alpha",
+            duration=120.0,
+            file_size=100,
+            mtime=1,
+            track_number=1,
+            disc_number=1,
+        )
+    )
+
+    status = store.normalization_status()
+    assert status.total_tracks == 1
+    assert status.tracks_with_release == 1
+    assert status.tracks_with_artist == 1
+    assert status.releases == 1
+    assert status.artists == 2
+
+    search = store.search_entities("Alpha")
+    release = search["releases"]["items"][0]
+    assert release.release.title == "Album"
+    assert [artist.name for artist in release.artists] == ["Alpha"]
+    tracks = store.list_release_tracks(release.release.id)
+    assert [item.track.id for item in tracks] == [track_id]
+    assert tracks[0].track_number == 1
+    assert [artist.name for artist in tracks[0].artists] == ["Alpha", "Beta"]
+
+
+def test_normalization_backfill_is_idempotent_and_mirrors_external_ids(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=Path("navidrome://song-1"),
+            artist="Artist",
+            title="Title",
+            album="Album",
+            duration=123.0,
+            file_size=100,
+            mtime=1,
+        )
+    )
+    store.upsert_external_track(
+        "navidrome",
+        "song-1",
+        track_id,
+        raw_json='{"albumId":"album-1","albumArtist":"Album Artist","coverArt":"cover-1"}',
+    )
+
+    first = store.backfill_library_normalization()
+    second = store.backfill_library_normalization()
+
+    assert first.tracks_with_release == 1
+    assert second.tracks_with_release == 1
+    assert first.releases == second.releases
+    assert second.artists == 2
+    assert second.orphan_releases == 1
+    assert store.count_external_ids("navidrome", "track") == 1
+    assert store.count_external_ids("navidrome", "release") == 1
+    releases = store.search_entities("Album")["releases"]["items"]
+    release = next(
+        item.release
+        for item in releases
+        if item.release.identity_key.startswith("provider:navidrome")
+    )
+    assert release.identity_key == "provider:navidrome:release:album-1"
+    assert release.cover_art_id == "cover-1"
+
+
+def test_missing_album_creates_synthetic_one_track_release(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "loose.flac").resolve(),
+            artist=None,
+            title="Loose Track",
+            album=None,
+            duration=60.0,
+            file_size=100,
+            mtime=1,
+        )
+    )
+
+    status = store.normalization_status()
+    assert status.releases == 1
+    release = store.search_entities("Loose Track")["releases"]["items"][0]
+    assert release.release.title == "Loose Track"
+    assert release.release.release_type == "unknown"
+    assert [item.track.id for item in store.list_release_tracks(release.release.id)] == [track_id]
