@@ -71,3 +71,17 @@
 - `python -m compileall app tests`: passed.
 - `python -m pytest`: failed in this Windows shell because pytest could not scan the default temp root `C:\Users\nexus\AppData\Local\Temp\pytest-of-nexus` (`PermissionError: [WinError 5]`).
 - `python -m pytest --basetemp .pytest-tmp`: passed, `199 passed, 4 warnings`.
+
+## Milestone 1 Fix-up
+
+- Fixed release-level artist sidecar refresh so explicit album/release artists remain authoritative, while releases without explicit album artists aggregate primary artists across all active release tracks.
+- Adjusted folder-based local release identity so same-folder/same-title releases without album artists are not split by per-track artist.
+- Hydrated normalized artists in `/api/v1/search` track summaries.
+- Removed stale generic `external_ids` track rows when a provider track mapping is replaced.
+- Added regression coverage for split-release artist aggregation, search track summary artists, and stale `external_ids` cleanup.
+
+## Latest Fix-up Test Results
+
+- `python -m pytest tests\test_store.py::test_release_artists_aggregate_track_artists_without_album_artist tests\test_store.py::test_external_track_replaces_old_provider_mapping_for_track tests\test_api.py::test_api_v1_search_track_summaries_include_normalized_artists --basetemp .pytest-tmp`: passed, `3 passed, 4 warnings`.
+- `python -m pytest --basetemp .pytest-tmp`: passed, `201 passed, 4 warnings`.
+- `python -m compileall app tests`: passed.

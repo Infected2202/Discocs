@@ -4,6 +4,7 @@ import logging
 import json
 import sqlite3
 from dataclasses import dataclass
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Lock
@@ -744,7 +745,6 @@ class Store:
         if conn.execute("SELECT 1 FROM tracks WHERE id = ?", (track_id,)).fetchone() is None:
             raise ValueError(f"Track not found: {track_id}")
         now = utc_now()
-        release_artists = parse_artist_credit(envelope.album_artist or envelope.artist)
         track_artists = parse_artist_credit(envelope.artist)
         identity_key, identity_confidence = release_identity_key(envelope)
         release_id = self._upsert_release(
@@ -791,10 +791,12 @@ class Store:
             artist_id = self._upsert_artist(conn, credit.name, now)
             self._insert_track_artist(conn, track_id, artist_id, credit, now)
 
-        conn.execute("DELETE FROM release_artists WHERE release_id = ?", (release_id,))
-        for credit in release_artists:
-            artist_id = self._upsert_artist(conn, credit.name, now)
-            self._insert_release_artist(conn, release_id, artist_id, credit, now)
+        self._refresh_release_artists(
+            conn,
+            release_id,
+            explicit_credit=envelope.album_artist,
+            now=now,
+        )
 
         if envelope.provider and envelope.provider_track_id:
             self._upsert_external_id(
@@ -957,6 +959,62 @@ class Store:
             ),
         )
 
+    def _refresh_release_artists(
+        self,
+        conn: sqlite3.Connection,
+        release_id: int,
+        *,
+        explicit_credit: str | None,
+        now: str,
+    ) -> None:
+        if clean_display_text(explicit_credit):
+            conn.execute("DELETE FROM release_artists WHERE release_id = ?", (release_id,))
+            for credit in parse_artist_credit(explicit_credit):
+                explicit = replace(credit, confidence="explicit")
+                artist_id = self._upsert_artist(conn, explicit.name, now)
+                self._insert_release_artist(conn, release_id, artist_id, explicit, now)
+            return
+
+        existing_explicit = conn.execute(
+            """
+            SELECT 1 FROM release_artists
+            WHERE release_id = ? AND confidence = 'explicit'
+            LIMIT 1
+            """,
+            (release_id,),
+        ).fetchone()
+        if existing_explicit is not None:
+            return
+
+        rows = conn.execute(
+            """
+            SELECT
+                ta.artist_id,
+                ta.role,
+                MIN(ta.credit_text) AS credit_text,
+                MIN(COALESCE(rt.position, rt.track_id)) AS release_position,
+                MIN(ta.position) AS artist_position,
+                MIN(a.name) AS artist_name
+            FROM release_tracks rt
+            JOIN track_artists ta ON ta.track_id = rt.track_id
+            JOIN artists a ON a.id = ta.artist_id
+            WHERE rt.release_id = ? AND ta.role = 'primary'
+            GROUP BY ta.artist_id, ta.role
+            ORDER BY release_position, artist_position, artist_name
+            """,
+            (release_id,),
+        ).fetchall()
+        conn.execute("DELETE FROM release_artists WHERE release_id = ?", (release_id,))
+        for position, row in enumerate(rows):
+            credit = ArtistCredit(
+                name=str(row["artist_name"]),
+                role=str(row["role"]),
+                position=position,
+                credit_text=row["credit_text"],
+                confidence="derived",
+            )
+            self._insert_release_artist(conn, release_id, int(row["artist_id"]), credit, now)
+
     def _upsert_external_id(
         self,
         conn: sqlite3.Connection,
@@ -1104,6 +1162,16 @@ class Store:
             )
             conn.execute(
                 """
+                DELETE FROM external_ids
+                WHERE provider = ?
+                  AND entity_type = 'track'
+                  AND entity_id = ?
+                  AND external_id != ?
+                """,
+                (provider, track_id, external_id),
+            )
+            conn.execute(
+                """
                 INSERT INTO external_tracks (
                     provider, external_id, track_id, raw_json, synced_at
                 )
@@ -1218,6 +1286,10 @@ class Store:
         where_sql = f"WHERE {' AND '.join(where)}" if where else ""
         with self.connect() as conn:
             return int(conn.execute(f"SELECT COUNT(*) FROM external_ids {where_sql}", params).fetchone()[0])
+
+    def artists_for_tracks(self, track_ids: list[int]) -> dict[int, list[Artist]]:
+        with self.connect() as conn:
+            return self._artists_for_tracks(conn, track_ids)
 
     def backfill_library_normalization(self) -> NormalizationStatus:
         with self.connect() as conn:

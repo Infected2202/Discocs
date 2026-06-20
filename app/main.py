@@ -1505,7 +1505,11 @@ def api_v1_search(
     track_rows = results["tracks"]["items"]
     artists = [artist_summary_dict(row) for row in artist_rows]
     releases = [release_summary_dict(row) for row in release_rows]
-    tracks = [track_summary_dict(store, track) for track in track_rows]
+    artists_by_track = store.artists_for_tracks([track.id for track in track_rows])
+    tracks = [
+        track_summary_dict(store, track, artists_by_track.get(track.id, []))
+        for track in track_rows
+    ]
     groups = [
         search_group("artists", "Artists", artists, int(results["artists"]["total"]), limit, offset),
         search_group("tracks", "Tracks", tracks, int(results["tracks"]["total"]), limit, offset),

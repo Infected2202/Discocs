@@ -127,6 +127,26 @@ def test_api_v1_search_artist_release_and_track_groups(tmp_path: Path, monkeypat
     assert groups["releases"]["items"][0]["title"] == "Grind"
 
 
+def test_api_v1_search_track_summaries_include_normalized_artists(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(
+        store,
+        tmp_path / "album" / "duo.flac",
+        title="Duo Track",
+        artist="Alpha & Beta",
+        album="Collab",
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/search?q=Duo%20Track")
+
+    assert response.status_code == 200
+    groups = {group["type"]: group for group in response.json()["groups"]}
+    track = groups["tracks"]["items"][0]
+    assert track["title"] == "Duo Track"
+    assert [artist["name"] for artist in track["artists"]] == ["Alpha", "Beta"]
+
+
 def test_api_v1_release_and_tracks_contract(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     add_track(store, tmp_path / "album" / "01.flac", title="First", artist="Alpha", album="Release")

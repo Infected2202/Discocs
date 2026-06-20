@@ -159,6 +159,17 @@ def test_external_track_replaces_old_provider_mapping_for_track(tmp_path: Path):
     assert store.get_external_track("navidrome", "old-song") is None
     assert store.external_id_for_track("navidrome", track_id) == "new-song"
     assert store.count_external_tracks("navidrome") == 1
+    assert store.count_external_ids("navidrome", "track") == 1
+    with store.connect() as conn:
+        stale = conn.execute(
+            """
+            SELECT 1 FROM external_ids
+            WHERE provider = 'navidrome'
+              AND entity_type = 'track'
+              AND external_id = 'old-song'
+            """
+        ).fetchone()
+    assert stale is None
 
 
 def test_external_track_cascades_when_track_is_deleted(tmp_path: Path):
@@ -735,6 +746,44 @@ def test_upsert_track_creates_normalized_artist_release_sidecars(tmp_path: Path)
     assert [item.track.id for item in tracks] == [track_id]
     assert tracks[0].track_number == 1
     assert [artist.name for artist in tracks[0].artists] == ["Alpha", "Beta"]
+
+
+def test_release_artists_aggregate_track_artists_without_album_artist(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    release_dir = tmp_path / "Various" / "Split"
+
+    first_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(release_dir / "01 - One.flac").resolve(),
+            artist="Alpha",
+            title="One",
+            album="Split",
+            duration=120.0,
+            file_size=100,
+            mtime=1,
+            track_number=1,
+        )
+    )
+    second_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(release_dir / "02 - Two.flac").resolve(),
+            artist="Beta",
+            title="Two",
+            album="Split",
+            duration=130.0,
+            file_size=101,
+            mtime=1,
+            track_number=2,
+        )
+    )
+
+    releases = store.search_entities("Split")["releases"]["items"]
+    assert len(releases) == 1
+    release = releases[0]
+    assert [artist.name for artist in release.artists] == ["Alpha", "Beta"]
+    tracks = store.list_release_tracks(release.release.id)
+    assert [item.track.id for item in tracks] == [first_id, second_id]
 
 
 def test_normalization_backfill_is_idempotent_and_mirrors_external_ids(tmp_path: Path):

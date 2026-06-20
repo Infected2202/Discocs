@@ -103,7 +103,9 @@ def release_identity_key(envelope: TrackMetadataEnvelope) -> tuple[str, str]:
     title_key = normalize_text(release_title)
     folder_key = _release_folder_key(envelope.path, has_album=bool(album_title))
     if folder_key and title_key:
-        return f"local-folder:{folder_key}:artist:{artist_key}:title:{title_key}", "derived"
+        if envelope.album_artist:
+            return f"local-folder:{folder_key}:artist:{artist_key}:title:{title_key}", "derived"
+        return f"local-folder:{folder_key}:title:{title_key}", "derived"
 
     if title_key:
         year = envelope.year if envelope.year is not None else ""
