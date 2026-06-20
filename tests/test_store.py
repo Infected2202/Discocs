@@ -849,3 +849,201 @@ def test_missing_album_creates_synthetic_one_track_release(tmp_path: Path):
     assert release.release.title == "Loose Track"
     assert release.release.release_type == "unknown"
     assert [item.track.id for item in store.list_release_tracks(release.release.id)] == [track_id]
+
+
+def test_playback_session_queue_round_trip(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    first_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "album" / "01.flac").resolve(),
+            artist="Alpha",
+            title="First",
+            album="Playback",
+            duration=180.0,
+            file_size=1,
+            mtime=1,
+        )
+    )
+    second_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "album" / "02.flac").resolve(),
+            artist="Alpha",
+            title="Second",
+            album="Playback",
+            duration=180.0,
+            file_size=1,
+            mtime=1,
+        )
+    )
+
+    session, queue = store.create_playback_session(
+        source_type="release",
+        source_id=1,
+        source_label="Playback",
+        track_ids=[first_id, second_id],
+        autoplay_enabled=True,
+        settings={"visible_queue_size": 5},
+    )
+
+    assert session.source_type == "release"
+    assert session.autoplay_enabled is True
+    assert len(queue) == 2
+    assert [item.track_id for item in queue] == [first_id, second_id]
+    assert store.get_playback_session(session.id).current_track_id == first_id
+
+    updated = store.update_playback_session(
+        session.id,
+        status="paused",
+        shuffle_enabled=True,
+        repeat_mode="all",
+        state={"position_seconds": 12.0},
+    )
+    assert updated.status == "paused"
+    assert updated.shuffle_enabled is True
+    assert updated.repeat_mode == "all"
+
+    moved = store.move_queue_item(session.id, queue[1].id, 0)
+    assert [item.track_id for item in moved] == [second_id, first_id]
+
+
+def test_playback_queue_click_is_navigation_not_skip(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "track.flac").resolve(),
+            artist="Navigator",
+            title="Jump",
+            album="Playback",
+            duration=200.0,
+            file_size=1,
+            mtime=1,
+        )
+    )
+    session, queue = store.create_playback_session(source_type="track", source_id=track_id, track_ids=[track_id])
+
+    result = store.record_playback_event(
+        session_id=session.id,
+        queue_item_id=queue[0].id,
+        event_type="queue_click",
+        position_seconds=5.0,
+        duration_seconds=200.0,
+        client_event_id="queue-click-1",
+    )
+
+    assert result.duplicate is False
+    assert store.get_playback_session(session.id).current_queue_item_id == queue[0].id
+    assert store.get_track_preference(track_id) is None
+    assert store.list_playback_events(session.id)[0].event_type == "queue_click"
+
+
+def test_playback_skip_strength_and_recompute_from_raw_events(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    early_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "early.flac").resolve(),
+            artist="Skip Artist",
+            title="Early",
+            album="Skips",
+            duration=240.0,
+            file_size=1,
+            mtime=1,
+        )
+    )
+    late_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "late.flac").resolve(),
+            artist="Skip Artist",
+            title="Late",
+            album="Skips",
+            duration=240.0,
+            file_size=1,
+            mtime=1,
+        )
+    )
+
+    store.record_playback_event(
+        track_id=early_id,
+        event_type="skipped",
+        position_seconds=10.0,
+        duration_seconds=240.0,
+        client_event_id="early-skip",
+    )
+    store.record_playback_event(
+        track_id=late_id,
+        event_type="skipped",
+        position_seconds=220.0,
+        duration_seconds=240.0,
+        client_event_id="late-skip",
+    )
+
+    early = store.get_track_preference(early_id)
+    late = store.get_track_preference(late_id)
+    assert early.skip_count == 1
+    assert early.early_skip_count == 1
+    assert late.skip_count == 1
+    assert late.early_skip_count == 0
+    assert early.score < late.score
+
+    before = (early.skip_count, early.early_skip_count, early.score, late.skip_count, late.score)
+    store.recompute_user_preferences()
+    early_after = store.get_track_preference(early_id)
+    late_after = store.get_track_preference(late_id)
+    assert (
+        early_after.skip_count,
+        early_after.early_skip_count,
+        early_after.score,
+        late_after.skip_count,
+        late_after.score,
+    ) == before
+
+
+def test_playback_completion_like_dislike_replay_save_and_duplicate_idempotency(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "positive.flac").resolve(),
+            artist="Positive Artist",
+            title="Positive",
+            album="Signals",
+            duration=120.0,
+            file_size=1,
+            mtime=1,
+        )
+    )
+    release_id = store.search_entities("Signals")["releases"]["items"][0].release.id
+    artist_id = store.search_entities("Positive Artist")["artists"]["items"][0].artist.id
+
+    store.record_playback_event(track_id=track_id, event_type="play_threshold_reached", client_event_id="threshold")
+    store.record_playback_event(track_id=track_id, event_type="completed", play_fraction=0.95, client_event_id="complete")
+    store.record_playback_event(track_id=track_id, event_type="liked", client_event_id="liked")
+    duplicate = store.record_playback_event(track_id=track_id, event_type="liked", client_event_id="liked")
+    store.record_playback_event(track_id=track_id, event_type="disliked", client_event_id="disliked")
+    store.record_playback_event(track_id=track_id, event_type="replayed", client_event_id="replayed")
+    store.record_playback_event(track_id=track_id, event_type="saved_to_playlist", client_event_id="saved")
+    store.record_playback_event(track_id=track_id, event_type="removed_from_queue", client_event_id="removed")
+
+    pref = store.get_track_preference(track_id)
+    assert duplicate.duplicate is True
+    assert pref.play_count == 1
+    assert pref.completion_count == 1
+    assert pref.liked is False
+    assert pref.disliked is True
+    assert pref.replay_count == 1
+
+    release_pref = store.get_release_preference(release_id)
+    artist_pref = store.get_artist_preference(artist_id)
+    assert release_pref.play_count == 1
+    assert release_pref.completion_count == 1
+    assert artist_pref.play_count == 1
+    assert artist_pref.completion_count == 1
+
+    store.recompute_user_preferences()
+    recomputed = store.get_track_preference(track_id)
+    assert recomputed.play_count == pref.play_count
+    assert recomputed.completion_count == pref.completion_count
+    assert recomputed.disliked == pref.disliked
+    assert recomputed.replay_count == pref.replay_count

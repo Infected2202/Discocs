@@ -267,8 +267,153 @@ class AnalysisWorker:
     message: str | None = None
 
 
+@dataclass(frozen=True)
+class PlaybackSession:
+    id: str
+    source_type: str
+    source_id: int | None
+    source_label: str | None
+    mode: str
+    status: str
+    current_track_id: int | None
+    current_queue_item_id: str | None
+    autoplay_enabled: bool
+    shuffle_enabled: bool
+    repeat_mode: str
+    started_at: str
+    updated_at: str
+    ended_at: str | None
+    settings_json: str | None
+    state_json: str | None
+
+
+@dataclass(frozen=True)
+class QueueItem:
+    id: str
+    session_id: str
+    track_id: int
+    position: int
+    origin: str
+    source_type: str | None
+    source_id: int | None
+    status: str
+    locked: bool
+    reason: str | None
+    score: float | None
+    debug_json: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class PlaybackEvent:
+    id: str
+    session_id: str | None
+    queue_item_id: str | None
+    track_id: int | None
+    release_id: int | None
+    artist_id: int | None
+    event_type: str
+    position_seconds: float | None
+    duration_seconds: float | None
+    play_fraction: float | None
+    created_at: str
+    client_event_id: str | None
+    source: str
+    payload_json: str | None
+
+
+@dataclass(frozen=True)
+class UserTrackPreference:
+    track_id: int
+    liked: bool
+    disliked: bool
+    play_count: int
+    completion_count: int
+    skip_count: int
+    early_skip_count: int
+    replay_count: int
+    last_played_at: str | None
+    last_completed_at: str | None
+    last_skipped_at: str | None
+    score: float
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class UserReleasePreference:
+    release_id: int
+    liked: bool
+    play_count: int
+    completion_count: int
+    skip_count: int
+    last_played_at: str | None
+    last_completed_at: str | None
+    score: float
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class UserArtistPreference:
+    artist_id: int
+    liked: bool
+    play_count: int
+    completion_count: int
+    skip_count: int
+    last_played_at: str | None
+    score: float
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class PlaybackEventResult:
+    event: PlaybackEvent
+    duplicate: bool
+    preference_delta: dict[str, object]
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+PLAYBACK_SOURCE_TYPES = {
+    "release",
+    "artist",
+    "track",
+    "playlist",
+    "search",
+    "flow",
+    "autoplay",
+    "manual",
+    "generated_mix",
+}
+PLAYBACK_MODES = {"linear", "shuffle", "radio", "flow", "autoplay"}
+PLAYBACK_SESSION_STATUSES = {"active", "paused", "ended"}
+PLAYBACK_REPEAT_MODES = {"off", "one", "all"}
+QUEUE_ORIGINS = {"source", "manual", "autoplay", "flow", "generated_mix"}
+QUEUE_STATUSES = {"queued", "playing", "played", "skipped", "removed"}
+PLAYBACK_EVENT_TYPES = {
+    "track_started",
+    "progress",
+    "play_threshold_reached",
+    "completed",
+    "skipped",
+    "queue_click",
+    "liked",
+    "unliked",
+    "disliked",
+    "replayed",
+    "removed_from_queue",
+    "saved_to_playlist",
+    "autoplay_toggled",
+    "preference_changed",
+}
+MEANINGFUL_LISTEN_SECONDS = 30.0
+MEANINGFUL_LISTEN_FRACTION = 0.5
+EARLY_SKIP_SECONDS = 30.0
+EARLY_SKIP_FRACTION = 0.25
+LATE_SKIP_FRACTION = 0.70
+COMPLETION_FRACTION = 0.90
 
 
 class Store:
@@ -509,6 +654,119 @@ class Store:
                 CREATE INDEX IF NOT EXISTS idx_external_ids_entity
                     ON external_ids(entity_type, entity_id);
 
+                CREATE TABLE IF NOT EXISTS playback_sessions (
+                    id TEXT PRIMARY KEY,
+                    source_type TEXT NOT NULL,
+                    source_id INTEGER,
+                    source_label TEXT,
+                    mode TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    current_track_id INTEGER,
+                    current_queue_item_id TEXT,
+                    autoplay_enabled INTEGER NOT NULL DEFAULT 0,
+                    shuffle_enabled INTEGER NOT NULL DEFAULT 0,
+                    repeat_mode TEXT NOT NULL DEFAULT 'off',
+                    started_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    settings_json TEXT,
+                    state_json TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_playback_sessions_status_updated
+                    ON playback_sessions(status, updated_at);
+
+                CREATE TABLE IF NOT EXISTS queue_items (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    track_id INTEGER NOT NULL,
+                    position INTEGER NOT NULL,
+                    origin TEXT NOT NULL,
+                    source_type TEXT,
+                    source_id INTEGER,
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    locked INTEGER NOT NULL DEFAULT 0,
+                    reason TEXT,
+                    score REAL,
+                    debug_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES playback_sessions(id) ON DELETE CASCADE
+                );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_items_session_position
+                    ON queue_items(session_id, position);
+                CREATE INDEX IF NOT EXISTS idx_queue_items_session_status
+                    ON queue_items(session_id, status, position);
+                CREATE INDEX IF NOT EXISTS idx_queue_items_track
+                    ON queue_items(track_id);
+
+                CREATE TABLE IF NOT EXISTS playback_events (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT,
+                    queue_item_id TEXT,
+                    track_id INTEGER,
+                    release_id INTEGER,
+                    artist_id INTEGER,
+                    event_type TEXT NOT NULL,
+                    position_seconds REAL,
+                    duration_seconds REAL,
+                    play_fraction REAL,
+                    created_at TEXT NOT NULL,
+                    client_event_id TEXT,
+                    source TEXT NOT NULL DEFAULT 'web',
+                    payload_json TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_playback_events_session_created
+                    ON playback_events(session_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_playback_events_track_created
+                    ON playback_events(track_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_playback_events_type_created
+                    ON playback_events(event_type, created_at);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_playback_events_client_event_id
+                    ON playback_events(client_event_id)
+                    WHERE client_event_id IS NOT NULL;
+
+                CREATE TABLE IF NOT EXISTS user_track_preferences (
+                    track_id INTEGER PRIMARY KEY,
+                    liked INTEGER NOT NULL DEFAULT 0,
+                    disliked INTEGER NOT NULL DEFAULT 0,
+                    play_count INTEGER NOT NULL DEFAULT 0,
+                    completion_count INTEGER NOT NULL DEFAULT 0,
+                    skip_count INTEGER NOT NULL DEFAULT 0,
+                    early_skip_count INTEGER NOT NULL DEFAULT 0,
+                    replay_count INTEGER NOT NULL DEFAULT 0,
+                    last_played_at TEXT,
+                    last_completed_at TEXT,
+                    last_skipped_at TEXT,
+                    score REAL NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS user_release_preferences (
+                    release_id INTEGER PRIMARY KEY,
+                    liked INTEGER NOT NULL DEFAULT 0,
+                    play_count INTEGER NOT NULL DEFAULT 0,
+                    completion_count INTEGER NOT NULL DEFAULT 0,
+                    skip_count INTEGER NOT NULL DEFAULT 0,
+                    last_played_at TEXT,
+                    last_completed_at TEXT,
+                    score REAL NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS user_artist_preferences (
+                    artist_id INTEGER PRIMARY KEY,
+                    liked INTEGER NOT NULL DEFAULT 0,
+                    play_count INTEGER NOT NULL DEFAULT 0,
+                    completion_count INTEGER NOT NULL DEFAULT 0,
+                    skip_count INTEGER NOT NULL DEFAULT 0,
+                    last_played_at TEXT,
+                    score REAL NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS instant_mix_requests (
                     id TEXT PRIMARY KEY,
                     provider TEXT NOT NULL,
@@ -625,6 +883,18 @@ class Store:
             self._ensure_column(conn, "analysis_workers", "current_task_id", "TEXT")
             self._ensure_column(conn, "analysis_workers", "stage", "TEXT")
             self._ensure_column(conn, "analysis_workers", "message", "TEXT")
+            self._ensure_column(conn, "playback_sessions", "source_label", "TEXT")
+            self._ensure_column(conn, "playback_sessions", "current_queue_item_id", "TEXT")
+            self._ensure_column(conn, "playback_sessions", "settings_json", "TEXT")
+            self._ensure_column(conn, "playback_sessions", "state_json", "TEXT")
+            self._ensure_column(conn, "queue_items", "locked", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "queue_items", "reason", "TEXT")
+            self._ensure_column(conn, "queue_items", "score", "REAL")
+            self._ensure_column(conn, "queue_items", "debug_json", "TEXT")
+            self._ensure_column(conn, "playback_events", "release_id", "INTEGER")
+            self._ensure_column(conn, "playback_events", "artist_id", "INTEGER")
+            self._ensure_column(conn, "playback_events", "source", "TEXT NOT NULL DEFAULT 'web'")
+            self._ensure_column(conn, "playback_events", "payload_json", "TEXT")
 
     def _ensure_column(
         self,
@@ -1647,6 +1917,908 @@ class Store:
         for row in rows:
             grouped.setdefault(int(row["release_id"]), []).append(row_to_artist(row))
         return grouped
+
+    def create_playback_session(
+        self,
+        *,
+        source_type: str,
+        source_id: int | None = None,
+        source_label: str | None = None,
+        mode: str = "linear",
+        status: str = "active",
+        track_ids: list[int] | None = None,
+        autoplay_enabled: bool = False,
+        shuffle_enabled: bool = False,
+        repeat_mode: str = "off",
+        settings: dict[str, object] | None = None,
+        state: dict[str, object] | None = None,
+        session_id: str | None = None,
+    ) -> tuple[PlaybackSession, list[QueueItem]]:
+        _require_choice(source_type, PLAYBACK_SOURCE_TYPES, "source_type")
+        _require_choice(mode, PLAYBACK_MODES, "mode")
+        _require_choice(status, PLAYBACK_SESSION_STATUSES, "status")
+        _require_choice(repeat_mode, PLAYBACK_REPEAT_MODES, "repeat_mode")
+        now = utc_now()
+        session_id = session_id or str(uuid4())
+        settings_json = _json_dumps(settings)
+        state_json = _json_dumps(state)
+        ended_at = now if status == "ended" else None
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO playback_sessions (
+                    id, source_type, source_id, source_label, mode, status,
+                    autoplay_enabled, shuffle_enabled, repeat_mode, started_at,
+                    updated_at, ended_at, settings_json, state_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    source_type,
+                    source_id,
+                    source_label,
+                    mode,
+                    status,
+                    1 if autoplay_enabled else 0,
+                    1 if shuffle_enabled else 0,
+                    repeat_mode,
+                    now,
+                    now,
+                    ended_at,
+                    settings_json,
+                    state_json,
+                ),
+            )
+        queue = self.replace_queue_items(
+            session_id,
+            [
+                {
+                    "track_id": track_id,
+                    "origin": "source",
+                    "source_type": source_type,
+                    "source_id": source_id,
+                }
+                for track_id in (track_ids or [])
+            ],
+        )
+        session = self.get_playback_session(session_id)
+        if session is None:
+            raise RuntimeError(f"Playback session not found after create: {session_id}")
+        return session, queue
+
+    def get_playback_session(self, session_id: str) -> PlaybackSession | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM playback_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+        return row_to_playback_session(row) if row else None
+
+    def update_playback_session(
+        self,
+        session_id: str,
+        *,
+        status: str | None = None,
+        current_track_id: int | None = None,
+        current_queue_item_id: str | None = None,
+        autoplay_enabled: bool | None = None,
+        shuffle_enabled: bool | None = None,
+        repeat_mode: str | None = None,
+        settings: dict[str, object] | None = None,
+        state: dict[str, object] | None = None,
+    ) -> PlaybackSession | None:
+        updates: list[str] = []
+        params: list[object] = []
+        if status is not None:
+            _require_choice(status, PLAYBACK_SESSION_STATUSES, "status")
+            updates.append("status = ?")
+            params.append(status)
+            updates.append("ended_at = ?")
+            params.append(utc_now() if status == "ended" else None)
+        if current_track_id is not None:
+            updates.append("current_track_id = ?")
+            params.append(current_track_id)
+        if current_queue_item_id is not None:
+            updates.append("current_queue_item_id = ?")
+            params.append(current_queue_item_id)
+        if autoplay_enabled is not None:
+            updates.append("autoplay_enabled = ?")
+            params.append(1 if autoplay_enabled else 0)
+        if shuffle_enabled is not None:
+            updates.append("shuffle_enabled = ?")
+            params.append(1 if shuffle_enabled else 0)
+        if repeat_mode is not None:
+            _require_choice(repeat_mode, PLAYBACK_REPEAT_MODES, "repeat_mode")
+            updates.append("repeat_mode = ?")
+            params.append(repeat_mode)
+        if settings is not None:
+            updates.append("settings_json = ?")
+            params.append(_json_dumps(settings))
+        if state is not None:
+            updates.append("state_json = ?")
+            params.append(_json_dumps(state))
+        if not updates:
+            return self.get_playback_session(session_id)
+        updates.append("updated_at = ?")
+        params.append(utc_now())
+        params.append(session_id)
+        with self.connect() as conn:
+            conn.execute(
+                f"UPDATE playback_sessions SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+            row = conn.execute(
+                "SELECT * FROM playback_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+        return row_to_playback_session(row) if row else None
+
+    def list_queue_items(self, session_id: str, include_removed: bool = False) -> list[QueueItem]:
+        where = "session_id = ?"
+        params: list[object] = [session_id]
+        if not include_removed:
+            where += " AND status != 'removed'"
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM queue_items
+                WHERE {where}
+                ORDER BY position, created_at, id
+                """,
+                params,
+            ).fetchall()
+        return [row_to_queue_item(row) for row in rows]
+
+    def get_queue_item(self, queue_item_id: str) -> QueueItem | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM queue_items WHERE id = ?",
+                (queue_item_id,),
+            ).fetchone()
+        return row_to_queue_item(row) if row else None
+
+    def replace_queue_items(
+        self,
+        session_id: str,
+        items: list[dict[str, object]],
+    ) -> list[QueueItem]:
+        now = utc_now()
+        with self.connect() as conn:
+            if not _playback_session_exists(conn, session_id):
+                raise ValueError(f"Playback session not found: {session_id}")
+            conn.execute("DELETE FROM queue_items WHERE session_id = ?", (session_id,))
+            inserted: list[str] = []
+            for index, item in enumerate(items):
+                queue_id = str(item.get("id") or uuid4())
+                origin = str(item.get("origin") or "manual")
+                _require_choice(origin, QUEUE_ORIGINS, "origin")
+                status = str(item.get("status") or "queued")
+                _require_choice(status, QUEUE_STATUSES, "status")
+                source_type = item.get("source_type")
+                if source_type is not None:
+                    _require_choice(str(source_type), PLAYBACK_SOURCE_TYPES, "source_type")
+                conn.execute(
+                    """
+                    INSERT INTO queue_items (
+                        id, session_id, track_id, position, origin, source_type,
+                        source_id, status, locked, reason, score, debug_json,
+                        created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        queue_id,
+                        session_id,
+                        int(item["track_id"]),
+                        int(item.get("position") or index),
+                        origin,
+                        str(source_type) if source_type is not None else None,
+                        _optional_int(item.get("source_id")),
+                        status,
+                        1 if bool(item.get("locked", False)) else 0,
+                        item.get("reason"),
+                        _optional_float(item.get("score")),
+                        _json_dumps(item.get("debug")) if isinstance(item.get("debug"), dict) else item.get("debug_json"),
+                        now,
+                        now,
+                    ),
+                )
+                inserted.append(queue_id)
+            current = inserted[0] if inserted else None
+            current_track_id = int(items[0]["track_id"]) if inserted else None
+            conn.execute(
+                """
+                UPDATE playback_sessions
+                SET current_queue_item_id = ?, current_track_id = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (current, current_track_id, now, session_id),
+            )
+            rows = conn.execute(
+                """
+                SELECT * FROM queue_items
+                WHERE session_id = ?
+                ORDER BY position, created_at, id
+                """,
+                (session_id,),
+            ).fetchall()
+        return [row_to_queue_item(row) for row in rows]
+
+    def append_queue_items(
+        self,
+        session_id: str,
+        items: list[dict[str, object]],
+    ) -> list[QueueItem]:
+        if not items:
+            return self.list_queue_items(session_id)
+        now = utc_now()
+        with self.connect() as conn:
+            if not _playback_session_exists(conn, session_id):
+                raise ValueError(f"Playback session not found: {session_id}")
+            max_position = conn.execute(
+                "SELECT COALESCE(MAX(position), -1) FROM queue_items WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()[0]
+            for offset, item in enumerate(items, start=1):
+                origin = str(item.get("origin") or "manual")
+                _require_choice(origin, QUEUE_ORIGINS, "origin")
+                source_type = item.get("source_type")
+                if source_type is not None:
+                    _require_choice(str(source_type), PLAYBACK_SOURCE_TYPES, "source_type")
+                status = str(item.get("status") or "queued")
+                _require_choice(status, QUEUE_STATUSES, "status")
+                conn.execute(
+                    """
+                    INSERT INTO queue_items (
+                        id, session_id, track_id, position, origin, source_type,
+                        source_id, status, locked, reason, score, debug_json,
+                        created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(item.get("id") or uuid4()),
+                        session_id,
+                        int(item["track_id"]),
+                        int(max_position) + offset,
+                        origin,
+                        str(source_type) if source_type is not None else None,
+                        _optional_int(item.get("source_id")),
+                        status,
+                        1 if bool(item.get("locked", False)) else 0,
+                        item.get("reason"),
+                        _optional_float(item.get("score")),
+                        _json_dumps(item.get("debug")) if isinstance(item.get("debug"), dict) else item.get("debug_json"),
+                        now,
+                        now,
+                    ),
+                )
+            conn.execute(
+                "UPDATE playback_sessions SET updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
+            rows = conn.execute(
+                """
+                SELECT * FROM queue_items
+                WHERE session_id = ?
+                ORDER BY position, created_at, id
+                """,
+                (session_id,),
+            ).fetchall()
+        return [row_to_queue_item(row) for row in rows]
+
+    def remove_queue_item(self, session_id: str, queue_item_id: str) -> QueueItem | None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE queue_items
+                SET status = 'removed', updated_at = ?
+                WHERE id = ? AND session_id = ?
+                """,
+                (now, queue_item_id, session_id),
+            )
+            conn.execute(
+                "UPDATE playback_sessions SET updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM queue_items WHERE id = ? AND session_id = ?",
+                (queue_item_id, session_id),
+            ).fetchone()
+        return row_to_queue_item(row) if row else None
+
+    def move_queue_item(self, session_id: str, queue_item_id: str, position: int) -> list[QueueItem]:
+        if position < 0:
+            raise ValueError("position must be non-negative")
+        now = utc_now()
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM queue_items
+                WHERE session_id = ? AND status != 'removed'
+                ORDER BY position, created_at, id
+                """,
+                (session_id,),
+            ).fetchall()
+            items = [row_to_queue_item(row) for row in rows]
+            moving = next((item for item in items if item.id == queue_item_id), None)
+            if moving is None:
+                raise ValueError(f"Queue item not found: {queue_item_id}")
+            remaining = [item for item in items if item.id != queue_item_id]
+            insert_at = min(position, len(remaining))
+            reordered = remaining[:insert_at] + [moving] + remaining[insert_at:]
+            for index, item in enumerate(reordered):
+                conn.execute(
+                    "UPDATE queue_items SET position = ?, updated_at = ? WHERE id = ?",
+                    (index + 100000, now, item.id),
+                )
+            for index, item in enumerate(reordered):
+                conn.execute(
+                    "UPDATE queue_items SET position = ?, updated_at = ? WHERE id = ?",
+                    (index, now, item.id),
+                )
+            conn.execute(
+                "UPDATE playback_sessions SET updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
+            rows = conn.execute(
+                """
+                SELECT * FROM queue_items
+                WHERE session_id = ? AND status != 'removed'
+                ORDER BY position, created_at, id
+                """,
+                (session_id,),
+            ).fetchall()
+        return [row_to_queue_item(row) for row in rows]
+
+    def jump_to_queue_item(self, session_id: str, queue_item_id: str) -> QueueItem | None:
+        now = utc_now()
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM queue_items WHERE id = ? AND session_id = ?",
+                (queue_item_id, session_id),
+            ).fetchone()
+            if row is None:
+                return None
+            item = row_to_queue_item(row)
+            conn.execute(
+                """
+                UPDATE queue_items
+                SET status = CASE WHEN id = ? THEN 'playing' ELSE status END,
+                    updated_at = CASE WHEN id = ? THEN ? ELSE updated_at END
+                WHERE session_id = ?
+                """,
+                (queue_item_id, queue_item_id, now, session_id),
+            )
+            conn.execute(
+                """
+                UPDATE playback_sessions
+                SET current_queue_item_id = ?, current_track_id = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (queue_item_id, item.track_id, now, session_id),
+            )
+            refreshed = conn.execute(
+                "SELECT * FROM queue_items WHERE id = ?",
+                (queue_item_id,),
+            ).fetchone()
+        return row_to_queue_item(refreshed) if refreshed else None
+
+    def record_playback_event(
+        self,
+        *,
+        event_type: str,
+        session_id: str | None = None,
+        queue_item_id: str | None = None,
+        track_id: int | None = None,
+        release_id: int | None = None,
+        artist_id: int | None = None,
+        position_seconds: float | None = None,
+        duration_seconds: float | None = None,
+        play_fraction: float | None = None,
+        client_event_id: str | None = None,
+        source: str = "web",
+        payload: dict[str, object] | None = None,
+        event_id: str | None = None,
+        created_at: str | None = None,
+    ) -> PlaybackEventResult:
+        _require_choice(event_type, PLAYBACK_EVENT_TYPES, "event_type")
+        created_at = created_at or utc_now()
+        event_id = event_id or str(uuid4())
+        play_fraction = _normalized_play_fraction(
+            play_fraction,
+            position_seconds=position_seconds,
+            duration_seconds=duration_seconds,
+        )
+        payload_json = _json_dumps(payload)
+        with self.connect() as conn:
+            if client_event_id:
+                duplicate = conn.execute(
+                    "SELECT * FROM playback_events WHERE client_event_id = ?",
+                    (client_event_id,),
+                ).fetchone()
+                if duplicate is not None:
+                    return PlaybackEventResult(
+                        row_to_playback_event(duplicate),
+                        True,
+                        {"duplicate": True},
+                    )
+            if queue_item_id and track_id is None:
+                queue_row = conn.execute(
+                    "SELECT track_id, session_id FROM queue_items WHERE id = ?",
+                    (queue_item_id,),
+                ).fetchone()
+                if queue_row is not None:
+                    track_id = int(queue_row["track_id"])
+                    session_id = session_id or str(queue_row["session_id"])
+            if track_id is not None:
+                release_id = release_id or _release_id_for_track(conn, track_id)
+                artist_id = artist_id or _primary_artist_id_for_track(conn, track_id)
+            conn.execute(
+                """
+                INSERT INTO playback_events (
+                    id, session_id, queue_item_id, track_id, release_id, artist_id,
+                    event_type, position_seconds, duration_seconds, play_fraction,
+                    created_at, client_event_id, source, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    session_id,
+                    queue_item_id,
+                    track_id,
+                    release_id,
+                    artist_id,
+                    event_type,
+                    position_seconds,
+                    duration_seconds,
+                    play_fraction,
+                    created_at,
+                    client_event_id,
+                    source or "web",
+                    payload_json,
+                ),
+            )
+            event_row = conn.execute(
+                "SELECT * FROM playback_events WHERE id = ?",
+                (event_id,),
+            ).fetchone()
+            delta = self._apply_playback_event_preferences(conn, event_row)
+            self._apply_playback_event_session_state(conn, event_row)
+        return PlaybackEventResult(row_to_playback_event(event_row), False, delta)
+
+    def _apply_playback_event_session_state(
+        self,
+        conn: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> None:
+        event_type = str(row["event_type"])
+        session_id = row["session_id"]
+        queue_item_id = row["queue_item_id"]
+        track_id = row["track_id"]
+        now = str(row["created_at"])
+        if session_id is None:
+            return
+        if event_type in {"track_started", "queue_click"} and queue_item_id:
+            queue_row = conn.execute(
+                "SELECT track_id FROM queue_items WHERE id = ? AND session_id = ?",
+                (queue_item_id, session_id),
+            ).fetchone()
+            if queue_row is not None:
+                conn.execute(
+                    """
+                    UPDATE queue_items
+                    SET status = CASE WHEN id = ? THEN 'playing' ELSE status END,
+                        updated_at = CASE WHEN id = ? THEN ? ELSE updated_at END
+                    WHERE session_id = ?
+                    """,
+                    (queue_item_id, queue_item_id, now, session_id),
+                )
+                conn.execute(
+                    """
+                    UPDATE playback_sessions
+                    SET current_queue_item_id = ?, current_track_id = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (queue_item_id, int(queue_row["track_id"]), now, session_id),
+                )
+            return
+        if event_type == "completed" and queue_item_id:
+            conn.execute(
+                "UPDATE queue_items SET status = 'played', updated_at = ? WHERE id = ?",
+                (now, queue_item_id),
+            )
+        elif event_type == "skipped" and queue_item_id:
+            conn.execute(
+                "UPDATE queue_items SET status = 'skipped', updated_at = ? WHERE id = ?",
+                (now, queue_item_id),
+            )
+        elif event_type == "removed_from_queue" and queue_item_id:
+            conn.execute(
+                "UPDATE queue_items SET status = 'removed', updated_at = ? WHERE id = ?",
+                (now, queue_item_id),
+            )
+        if event_type == "autoplay_toggled":
+            payload = _json_loads(row["payload_json"])
+            enabled = payload.get("enabled")
+            if isinstance(enabled, bool):
+                conn.execute(
+                    """
+                    UPDATE playback_sessions
+                    SET autoplay_enabled = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (1 if enabled else 0, now, session_id),
+                )
+        elif event_type in {"track_started", "queue_click"} and track_id is not None:
+            conn.execute(
+                """
+                UPDATE playback_sessions
+                SET current_track_id = ?, current_queue_item_id = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (int(track_id), queue_item_id, now, session_id),
+            )
+
+    def _apply_playback_event_preferences(
+        self,
+        conn: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> dict[str, object]:
+        event_type = str(row["event_type"])
+        if event_type in {"progress", "queue_click", "autoplay_toggled"}:
+            return {}
+        track_id = int(row["track_id"]) if row["track_id"] is not None else None
+        release_id = int(row["release_id"]) if row["release_id"] is not None else None
+        artist_ids = _artist_ids_for_event(conn, row)
+        created_at = str(row["created_at"])
+        delta: dict[str, object] = {}
+        if track_id is not None:
+            before = self._get_track_preference_row(conn, track_id)
+            self._apply_track_preference_event(conn, row, track_id)
+            after = self._get_track_preference_row(conn, track_id)
+            delta["track"] = _preference_delta_dict(before, after)
+        if release_id is not None:
+            self._apply_release_preference_event(conn, event_type, release_id, created_at, track_id is None)
+            delta["release_id"] = release_id
+        for artist_id in artist_ids:
+            self._apply_artist_preference_event(conn, event_type, artist_id, created_at, track_id is None)
+        if artist_ids:
+            delta["artist_ids"] = artist_ids
+        return delta
+
+    def _get_track_preference_row(
+        self,
+        conn: sqlite3.Connection,
+        track_id: int,
+    ) -> sqlite3.Row | None:
+        return conn.execute(
+            "SELECT * FROM user_track_preferences WHERE track_id = ?",
+            (track_id,),
+        ).fetchone()
+
+    def _apply_track_preference_event(
+        self,
+        conn: sqlite3.Connection,
+        row: sqlite3.Row,
+        track_id: int,
+    ) -> None:
+        event_type = str(row["event_type"])
+        created_at = str(row["created_at"])
+        self._ensure_track_preference(conn, track_id, created_at)
+        if event_type == "track_started":
+            conn.execute(
+                """
+                UPDATE user_track_preferences
+                SET last_played_at = ?, updated_at = ?
+                WHERE track_id = ?
+                """,
+                (created_at, created_at, track_id),
+            )
+        elif event_type == "play_threshold_reached":
+            conn.execute(
+                """
+                UPDATE user_track_preferences
+                SET play_count = play_count + 1,
+                    last_played_at = ?,
+                    score = score + 0.25,
+                    updated_at = ?
+                WHERE track_id = ?
+                """,
+                (created_at, created_at, track_id),
+            )
+        elif event_type == "completed":
+            conn.execute(
+                """
+                UPDATE user_track_preferences
+                SET completion_count = completion_count + 1,
+                    last_completed_at = ?,
+                    score = score + 1.0,
+                    updated_at = ?
+                WHERE track_id = ?
+                """,
+                (created_at, created_at, track_id),
+            )
+        elif event_type == "skipped":
+            early = playback_event_is_early_skip(
+                row["position_seconds"],
+                row["duration_seconds"],
+                row["play_fraction"],
+            )
+            score_delta = playback_skip_score_delta(
+                row["position_seconds"],
+                row["duration_seconds"],
+                row["play_fraction"],
+            )
+            conn.execute(
+                """
+                UPDATE user_track_preferences
+                SET skip_count = skip_count + 1,
+                    early_skip_count = early_skip_count + ?,
+                    last_skipped_at = ?,
+                    score = score + ?,
+                    updated_at = ?
+                WHERE track_id = ?
+                """,
+                (1 if early else 0, created_at, score_delta, created_at, track_id),
+            )
+        elif event_type == "liked":
+            conn.execute(
+                """
+                UPDATE user_track_preferences
+                SET liked = 1, disliked = 0, score = score + CASE WHEN liked = 0 THEN 5.0 ELSE 0 END
+                    + CASE WHEN disliked = 1 THEN 5.0 ELSE 0 END, updated_at = ?
+                WHERE track_id = ?
+                """,
+                (created_at, track_id),
+            )
+        elif event_type == "unliked":
+            conn.execute(
+                """
+                UPDATE user_track_preferences
+                SET liked = 0, score = score - CASE WHEN liked = 1 THEN 5.0 ELSE 0 END,
+                    updated_at = ?
+                WHERE track_id = ?
+                """,
+                (created_at, track_id),
+            )
+        elif event_type == "disliked":
+            conn.execute(
+                """
+                UPDATE user_track_preferences
+                SET disliked = 1, liked = 0, score = score - CASE WHEN disliked = 0 THEN 5.0 ELSE 0 END
+                    - CASE WHEN liked = 1 THEN 5.0 ELSE 0 END, updated_at = ?
+                WHERE track_id = ?
+                """,
+                (created_at, track_id),
+            )
+        elif event_type == "replayed":
+            conn.execute(
+                """
+                UPDATE user_track_preferences
+                SET replay_count = replay_count + 1, score = score + 2.0, updated_at = ?
+                WHERE track_id = ?
+                """,
+                (created_at, track_id),
+            )
+        elif event_type == "saved_to_playlist":
+            conn.execute(
+                """
+                UPDATE user_track_preferences
+                SET score = score + 3.0, updated_at = ?
+                WHERE track_id = ?
+                """,
+                (created_at, track_id),
+            )
+        elif event_type == "removed_from_queue":
+            conn.execute(
+                """
+                UPDATE user_track_preferences
+                SET score = score - 1.0, updated_at = ?
+                WHERE track_id = ?
+                """,
+                (created_at, track_id),
+            )
+
+    def _apply_release_preference_event(
+        self,
+        conn: sqlite3.Connection,
+        event_type: str,
+        release_id: int,
+        created_at: str,
+        explicit_entity_event: bool,
+    ) -> None:
+        self._ensure_release_preference(conn, release_id, created_at)
+        if event_type == "play_threshold_reached":
+            conn.execute(
+                """
+                UPDATE user_release_preferences
+                SET play_count = play_count + 1, last_played_at = ?,
+                    score = score + 0.25, updated_at = ?
+                WHERE release_id = ?
+                """,
+                (created_at, created_at, release_id),
+            )
+        elif event_type == "completed":
+            conn.execute(
+                """
+                UPDATE user_release_preferences
+                SET completion_count = completion_count + 1, last_completed_at = ?,
+                    score = score + 1.0, updated_at = ?
+                WHERE release_id = ?
+                """,
+                (created_at, created_at, release_id),
+            )
+        elif event_type == "skipped":
+            conn.execute(
+                """
+                UPDATE user_release_preferences
+                SET skip_count = skip_count + 1, score = score + ?, updated_at = ?
+                WHERE release_id = ?
+                """,
+                (-0.5, created_at, release_id),
+            )
+        elif event_type in {"liked", "saved_to_playlist"}:
+            conn.execute(
+                """
+                UPDATE user_release_preferences
+                SET liked = CASE WHEN ? THEN 1 ELSE liked END,
+                    score = score + CASE WHEN ? THEN 5.0 ELSE 1.0 END,
+                    updated_at = ?
+                WHERE release_id = ?
+                """,
+                (1 if explicit_entity_event and event_type == "liked" else 0, 1 if event_type == "liked" else 0, created_at, release_id),
+            )
+
+    def _apply_artist_preference_event(
+        self,
+        conn: sqlite3.Connection,
+        event_type: str,
+        artist_id: int,
+        created_at: str,
+        explicit_entity_event: bool,
+    ) -> None:
+        self._ensure_artist_preference(conn, artist_id, created_at)
+        if event_type == "play_threshold_reached":
+            conn.execute(
+                """
+                UPDATE user_artist_preferences
+                SET play_count = play_count + 1, last_played_at = ?,
+                    score = score + 0.25, updated_at = ?
+                WHERE artist_id = ?
+                """,
+                (created_at, created_at, artist_id),
+            )
+        elif event_type == "completed":
+            conn.execute(
+                """
+                UPDATE user_artist_preferences
+                SET completion_count = completion_count + 1,
+                    score = score + 1.0, updated_at = ?
+                WHERE artist_id = ?
+                """,
+                (created_at, artist_id),
+            )
+        elif event_type == "skipped":
+            conn.execute(
+                """
+                UPDATE user_artist_preferences
+                SET skip_count = skip_count + 1, score = score + ?, updated_at = ?
+                WHERE artist_id = ?
+                """,
+                (-0.5, created_at, artist_id),
+            )
+        elif event_type in {"liked", "saved_to_playlist"}:
+            conn.execute(
+                """
+                UPDATE user_artist_preferences
+                SET liked = CASE WHEN ? THEN 1 ELSE liked END,
+                    score = score + CASE WHEN ? THEN 5.0 ELSE 1.0 END,
+                    updated_at = ?
+                WHERE artist_id = ?
+                """,
+                (1 if explicit_entity_event and event_type == "liked" else 0, 1 if event_type == "liked" else 0, created_at, artist_id),
+            )
+
+    def _ensure_track_preference(
+        self,
+        conn: sqlite3.Connection,
+        track_id: int,
+        updated_at: str,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO user_track_preferences (track_id, updated_at)
+            VALUES (?, ?)
+            """,
+            (track_id, updated_at),
+        )
+
+    def _ensure_release_preference(
+        self,
+        conn: sqlite3.Connection,
+        release_id: int,
+        updated_at: str,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO user_release_preferences (release_id, updated_at)
+            VALUES (?, ?)
+            """,
+            (release_id, updated_at),
+        )
+
+    def _ensure_artist_preference(
+        self,
+        conn: sqlite3.Connection,
+        artist_id: int,
+        updated_at: str,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO user_artist_preferences (artist_id, updated_at)
+            VALUES (?, ?)
+            """,
+            (artist_id, updated_at),
+        )
+
+    def get_track_preference(self, track_id: int) -> UserTrackPreference | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM user_track_preferences WHERE track_id = ?",
+                (track_id,),
+            ).fetchone()
+        return row_to_user_track_preference(row) if row else None
+
+    def get_release_preference(self, release_id: int) -> UserReleasePreference | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM user_release_preferences WHERE release_id = ?",
+                (release_id,),
+            ).fetchone()
+        return row_to_user_release_preference(row) if row else None
+
+    def get_artist_preference(self, artist_id: int) -> UserArtistPreference | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM user_artist_preferences WHERE artist_id = ?",
+                (artist_id,),
+            ).fetchone()
+        return row_to_user_artist_preference(row) if row else None
+
+    def list_playback_events(self, session_id: str | None = None) -> list[PlaybackEvent]:
+        where = ""
+        params: list[object] = []
+        if session_id is not None:
+            where = "WHERE session_id = ?"
+            params.append(session_id)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM playback_events
+                {where}
+                ORDER BY created_at, id
+                """,
+                params,
+            ).fetchall()
+        return [row_to_playback_event(row) for row in rows]
+
+    def recompute_user_preferences(self) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM user_track_preferences")
+            conn.execute("DELETE FROM user_release_preferences")
+            conn.execute("DELETE FROM user_artist_preferences")
+            rows = conn.execute(
+                """
+                SELECT * FROM playback_events
+                ORDER BY created_at, id
+                """
+            ).fetchall()
+            for row in rows:
+                self._apply_playback_event_preferences(conn, row)
 
     def record_instant_mix_request(
         self,
@@ -3817,6 +4989,110 @@ def row_to_release(row: sqlite3.Row) -> Release:
     )
 
 
+def row_to_playback_session(row: sqlite3.Row) -> PlaybackSession:
+    return PlaybackSession(
+        id=str(row["id"]),
+        source_type=str(row["source_type"]),
+        source_id=int(row["source_id"]) if row["source_id"] is not None else None,
+        source_label=row["source_label"],
+        mode=str(row["mode"]),
+        status=str(row["status"]),
+        current_track_id=int(row["current_track_id"]) if row["current_track_id"] is not None else None,
+        current_queue_item_id=row["current_queue_item_id"],
+        autoplay_enabled=bool(row["autoplay_enabled"]),
+        shuffle_enabled=bool(row["shuffle_enabled"]),
+        repeat_mode=str(row["repeat_mode"]),
+        started_at=str(row["started_at"]),
+        updated_at=str(row["updated_at"]),
+        ended_at=row["ended_at"],
+        settings_json=row["settings_json"],
+        state_json=row["state_json"],
+    )
+
+
+def row_to_queue_item(row: sqlite3.Row) -> QueueItem:
+    return QueueItem(
+        id=str(row["id"]),
+        session_id=str(row["session_id"]),
+        track_id=int(row["track_id"]),
+        position=int(row["position"]),
+        origin=str(row["origin"]),
+        source_type=row["source_type"],
+        source_id=int(row["source_id"]) if row["source_id"] is not None else None,
+        status=str(row["status"]),
+        locked=bool(row["locked"]),
+        reason=row["reason"],
+        score=float(row["score"]) if row["score"] is not None else None,
+        debug_json=row["debug_json"],
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def row_to_playback_event(row: sqlite3.Row) -> PlaybackEvent:
+    return PlaybackEvent(
+        id=str(row["id"]),
+        session_id=row["session_id"],
+        queue_item_id=row["queue_item_id"],
+        track_id=int(row["track_id"]) if row["track_id"] is not None else None,
+        release_id=int(row["release_id"]) if row["release_id"] is not None else None,
+        artist_id=int(row["artist_id"]) if row["artist_id"] is not None else None,
+        event_type=str(row["event_type"]),
+        position_seconds=float(row["position_seconds"]) if row["position_seconds"] is not None else None,
+        duration_seconds=float(row["duration_seconds"]) if row["duration_seconds"] is not None else None,
+        play_fraction=float(row["play_fraction"]) if row["play_fraction"] is not None else None,
+        created_at=str(row["created_at"]),
+        client_event_id=row["client_event_id"],
+        source=str(row["source"]),
+        payload_json=row["payload_json"],
+    )
+
+
+def row_to_user_track_preference(row: sqlite3.Row) -> UserTrackPreference:
+    return UserTrackPreference(
+        track_id=int(row["track_id"]),
+        liked=bool(row["liked"]),
+        disliked=bool(row["disliked"]),
+        play_count=int(row["play_count"]),
+        completion_count=int(row["completion_count"]),
+        skip_count=int(row["skip_count"]),
+        early_skip_count=int(row["early_skip_count"]),
+        replay_count=int(row["replay_count"]),
+        last_played_at=row["last_played_at"],
+        last_completed_at=row["last_completed_at"],
+        last_skipped_at=row["last_skipped_at"],
+        score=float(row["score"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def row_to_user_release_preference(row: sqlite3.Row) -> UserReleasePreference:
+    return UserReleasePreference(
+        release_id=int(row["release_id"]),
+        liked=bool(row["liked"]),
+        play_count=int(row["play_count"]),
+        completion_count=int(row["completion_count"]),
+        skip_count=int(row["skip_count"]),
+        last_played_at=row["last_played_at"],
+        last_completed_at=row["last_completed_at"],
+        score=float(row["score"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def row_to_user_artist_preference(row: sqlite3.Row) -> UserArtistPreference:
+    return UserArtistPreference(
+        artist_id=int(row["artist_id"]),
+        liked=bool(row["liked"]),
+        play_count=int(row["play_count"]),
+        completion_count=int(row["completion_count"]),
+        skip_count=int(row["skip_count"]),
+        last_played_at=row["last_played_at"],
+        score=float(row["score"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
 def _discography_group_key(release_type: str, featured_only: bool) -> str:
     if featured_only:
         return "featured_in"
@@ -3898,6 +5174,159 @@ def _raw_release_type(value: str | None) -> str:
         "soundtrack": "soundtrack",
         "mix": "mix",
     }.get(normalized, "unknown")
+
+
+def _require_choice(value: str, allowed: set[str], name: str) -> str:
+    if value not in allowed:
+        choices = ", ".join(sorted(allowed))
+        raise ValueError(f"{name} must be one of: {choices}")
+    return value
+
+
+def _json_dumps(value: object | None) -> str | None:
+    if value is None:
+        return None
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _json_loads(value: str | None) -> dict[str, object]:
+    if not value:
+        return {}
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _optional_int(value: object | None) -> int | None:
+    return int(value) if value is not None else None
+
+
+def _optional_float(value: object | None) -> float | None:
+    return float(value) if value is not None else None
+
+
+def _normalized_play_fraction(
+    play_fraction: float | None,
+    *,
+    position_seconds: float | None,
+    duration_seconds: float | None,
+) -> float | None:
+    if play_fraction is not None:
+        return max(0.0, min(1.0, float(play_fraction)))
+    if position_seconds is None or duration_seconds is None or duration_seconds <= 0:
+        return None
+    return max(0.0, min(1.0, float(position_seconds) / float(duration_seconds)))
+
+
+def playback_event_is_early_skip(
+    position_seconds: object | None,
+    duration_seconds: object | None,
+    play_fraction: object | None,
+) -> bool:
+    if position_seconds is not None and float(position_seconds) < EARLY_SKIP_SECONDS:
+        return True
+    fraction = _normalized_play_fraction(
+        float(play_fraction) if play_fraction is not None else None,
+        position_seconds=float(position_seconds) if position_seconds is not None else None,
+        duration_seconds=float(duration_seconds) if duration_seconds is not None else None,
+    )
+    return fraction is not None and fraction < EARLY_SKIP_FRACTION
+
+
+def playback_skip_score_delta(
+    position_seconds: object | None,
+    duration_seconds: object | None,
+    play_fraction: object | None,
+) -> float:
+    if playback_event_is_early_skip(position_seconds, duration_seconds, play_fraction):
+        return -2.0
+    fraction = _normalized_play_fraction(
+        float(play_fraction) if play_fraction is not None else None,
+        position_seconds=float(position_seconds) if position_seconds is not None else None,
+        duration_seconds=float(duration_seconds) if duration_seconds is not None else None,
+    )
+    if fraction is not None and fraction >= LATE_SKIP_FRACTION:
+        return -0.1
+    return -1.0
+
+
+def _playback_session_exists(conn: sqlite3.Connection, session_id: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM playback_sessions WHERE id = ?",
+        (session_id,),
+    ).fetchone() is not None
+
+
+def _release_id_for_track(conn: sqlite3.Connection, track_id: int) -> int | None:
+    row = conn.execute(
+        """
+        SELECT release_id
+        FROM release_tracks
+        WHERE track_id = ?
+        ORDER BY position
+        LIMIT 1
+        """,
+        (track_id,),
+    ).fetchone()
+    return int(row["release_id"]) if row else None
+
+
+def _primary_artist_id_for_track(conn: sqlite3.Connection, track_id: int) -> int | None:
+    row = conn.execute(
+        """
+        SELECT artist_id
+        FROM track_artists
+        WHERE track_id = ? AND role = 'primary'
+        ORDER BY position
+        LIMIT 1
+        """,
+        (track_id,),
+    ).fetchone()
+    return int(row["artist_id"]) if row else None
+
+
+def _artist_ids_for_event(conn: sqlite3.Connection, row: sqlite3.Row) -> list[int]:
+    if row["artist_id"] is not None:
+        return [int(row["artist_id"])]
+    if row["track_id"] is None:
+        return []
+    rows = conn.execute(
+        """
+        SELECT artist_id
+        FROM track_artists
+        WHERE track_id = ? AND role = 'primary'
+        ORDER BY position
+        """,
+        (int(row["track_id"]),),
+    ).fetchall()
+    return [int(item["artist_id"]) for item in rows]
+
+
+def _preference_delta_dict(
+    before: sqlite3.Row | None,
+    after: sqlite3.Row | None,
+) -> dict[str, object]:
+    if after is None:
+        return {}
+    fields = [
+        "liked",
+        "disliked",
+        "play_count",
+        "completion_count",
+        "skip_count",
+        "early_skip_count",
+        "replay_count",
+        "score",
+    ]
+    delta: dict[str, object] = {"track_id": int(after["track_id"])}
+    for field in fields:
+        old = before[field] if before is not None else 0
+        new = after[field]
+        if old != new:
+            delta[field] = new
+    return delta
 
 
 def row_to_instant_mix_request(row: sqlite3.Row) -> InstantMixRequest:
