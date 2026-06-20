@@ -8,6 +8,7 @@ __pycache__/
 .mypy_cache/
 .venv/
 venv/
+.codex/bootstrap-venv/
 dist/
 build/
 *.egg-info/
