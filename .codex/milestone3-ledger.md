@@ -60,3 +60,4 @@
 - `python -m pytest tests\test_api.py::test_api_v1_dashboard_shelves_use_library_and_playback_history tests\test_api.py::test_listener_surface_routes_serve_shell tests\test_api.py::test_test_ui_loads --basetemp .pytest-tmp`: passed, `3 passed, 4 warnings`.
 - `python -m pytest --basetemp .pytest-tmp`: passed, `211 passed, 4 warnings`.
 - `python -m compileall app tests`: passed.
+- Extracted inline UI script and ran `node --check`: passed.
