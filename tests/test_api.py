@@ -327,6 +327,54 @@ def test_api_v1_playback_event_rejects_invalid_event_type(tmp_path: Path, monkey
     assert response.status_code == 422
 
 
+def test_api_v1_dashboard_shelves_use_library_and_playback_history(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    old_id = add_track(store, tmp_path / "old" / "01.flac", title="Old One", artist="Alpha", album="Old Release")
+    new_id = add_track(store, tmp_path / "new" / "01.flac", title="New One", artist="Beta", album="New Release")
+    with store.connect() as conn:
+        conn.execute("UPDATE tracks SET created_at = ? WHERE id = ?", ("2024-01-01T00:00:00+00:00", old_id))
+        conn.execute("UPDATE tracks SET created_at = ? WHERE id = ?", ("2026-01-01T00:00:00+00:00", new_id))
+    store.record_playback_event(
+        track_id=old_id,
+        event_type="play_threshold_reached",
+        created_at="2024-02-01T00:00:00+00:00",
+    )
+    store.record_playback_event(
+        track_id=old_id,
+        event_type="completed",
+        created_at="2024-02-01T00:03:00+00:00",
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/dashboard?limit=5")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["hero"]["title"] == "Flow"
+    shelves = {shelf["key"]: shelf for shelf in data["shelves"]}
+    assert shelves["recently_added"]["items"][0]["title"] == "New Release"
+    assert shelves["listen_again"]["items"][0]["title"] == "Old One"
+    assert shelves["long_time_no_listen"]["items"][0]["title"] == "Old One"
+
+    shelf_response = client.get("/api/v1/dashboard/shelves/listen_again?limit=1")
+    assert shelf_response.status_code == 200
+    assert shelf_response.json()["next_offset"] is None
+
+    missing_response = client.get("/api/v1/dashboard/shelves/not_real")
+    assert missing_response.status_code == 404
+
+
+def test_listener_surface_routes_serve_shell():
+    client = TestClient(app)
+
+    for path in ["/search", "/artists/1", "/releases/1"]:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "listenerSearch" in response.text
+        assert "artistSurface" in response.text
+        assert "releaseSurface" in response.text
+
+
 def test_navidrome_sync_job_imports_catalog(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
 
@@ -377,6 +425,14 @@ def test_test_ui_loads():
     assert response.status_code == 200
     assert "discocs" in response.text
     assert "Dashboard" in response.text
+    assert "listenerDashboardShelves" in response.text
+    assert "/api/v1/dashboard?limit=8" in response.text
+    assert "Search library" in response.text
+    assert "listenerSearch" in response.text
+    assert "/api/v1/search" in response.text
+    assert "artistSurface" in response.text
+    assert "releaseSurface" in response.text
+    assert "playSource('release'" in response.text
     assert "Library" in response.text
     assert "Browse" in response.text
     assert "Metrics" in response.text

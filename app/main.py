@@ -14,7 +14,7 @@ import sqlite3
 from threading import Event, Lock, Thread
 import time
 from time import perf_counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import traceback
 from typing import Callable
 from uuid import uuid4
@@ -67,6 +67,7 @@ from app.store import (
     Track,
     TrackFeature,
     TrackPrediction,
+    row_to_track,
     similar_track_dict,
     track_dict,
     track_listing_dict,
@@ -945,6 +946,261 @@ def search_group(group_type: str, title: str, items: list[dict[str, object]], to
         "items": items,
         "total": total,
         "next_offset": next_offset,
+    }
+
+
+def _compact_artist_names(artists: list[dict[str, object]]) -> str:
+    names = [str(artist.get("name") or "") for artist in artists if artist.get("name")]
+    return ", ".join(names) if names else "Unknown artist"
+
+
+def dashboard_shelf_item(
+    entity_type: str,
+    entity_id: int,
+    title: str,
+    subtitle: str,
+    target: str,
+    *,
+    artwork_url: str | None = None,
+    play_source_type: str | None = None,
+    play_source_id: int | None = None,
+    reason: str | None = None,
+    badges: list[str] | None = None,
+    debug: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "id": f"{entity_type}:{entity_id}",
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "title": title,
+        "subtitle": subtitle,
+        "artwork": image_ref(artwork_url, "local" if artwork_url else "none"),
+        "action": {"type": "open", "target": target},
+        "play_action": {
+            "type": "play",
+            "source_type": play_source_type or entity_type,
+            "source_id": play_source_id or entity_id,
+        },
+        "badges": badges or [],
+        "reason": reason,
+        "debug": debug,
+    }
+
+
+def _release_shelf_item(row: ReleaseSummaryRow, reason: str | None = None) -> dict[str, object]:
+    release = release_summary_dict(row)
+    artwork = release.get("artwork") if isinstance(release.get("artwork"), dict) else {}
+    return dashboard_shelf_item(
+        "release",
+        int(release["id"]),
+        str(release["title"]),
+        _compact_artist_names(list(release.get("artists") or [])),
+        f"/releases/{release['id']}",
+        artwork_url=str(artwork.get("url") or "") or None,
+        play_source_type="release",
+        play_source_id=int(release["id"]),
+        reason=reason,
+        badges=[str(release.get("release_type_label") or "Release")],
+    )
+
+
+def _track_shelf_item(store: Store, track: Track, artists: list[Artist], reason: str | None = None) -> dict[str, object]:
+    summary = track_summary_dict(store, track, artists)
+    release = summary.get("release") if isinstance(summary.get("release"), dict) else None
+    target = f"/releases/{release['id']}" if release and release.get("id") else f"?view=recommendations&seed={track.id}"
+    return dashboard_shelf_item(
+        "track",
+        track.id,
+        str(summary["title"]),
+        _compact_artist_names(list(summary.get("artists") or [])),
+        target,
+        artwork_url=f"/tracks/{track.id}/cover",
+        play_source_type="track",
+        play_source_id=track.id,
+        reason=reason,
+        badges=[str(release["title"])] if release and release.get("title") else [],
+    )
+
+
+def _dashboard_recently_added(store: Store, limit: int, offset: int, include_debug: bool = False) -> tuple[list[dict[str, object]], int]:
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT r.id, MAX(COALESCE(t.created_at, rt.created_at, r.created_at)) AS added_at
+            FROM releases r
+            JOIN release_tracks rt ON rt.release_id = r.id
+            JOIN tracks t ON t.id = rt.track_id
+            WHERE t.missing_at IS NULL
+            GROUP BY r.id
+            ORDER BY added_at DESC, r.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+        total_row = conn.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM (
+                SELECT r.id
+                FROM releases r
+                JOIN release_tracks rt ON rt.release_id = r.id
+                JOIN tracks t ON t.id = rt.track_id
+                WHERE t.missing_at IS NULL
+                GROUP BY r.id
+            )
+            """
+        ).fetchone()
+    items: list[dict[str, object]] = []
+    for row in rows:
+        release = store.get_release(int(row["id"]))
+        if release is None:
+            continue
+        item = _release_shelf_item(release, "New in collection")
+        if include_debug:
+            item["debug"] = {"added_at": row["added_at"]}
+        items.append(item)
+    return items, int(total_row["total"] if total_row else 0)
+
+
+def _dashboard_listen_again(store: Store, limit: int, offset: int, include_debug: bool = False) -> tuple[list[dict[str, object]], int]:
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT t.*, p.liked, p.completion_count, p.replay_count, p.score,
+                   p.last_played_at, p.last_completed_at, p.last_skipped_at
+            FROM user_track_preferences p
+            JOIN tracks t ON t.id = p.track_id
+            WHERE t.missing_at IS NULL
+              AND p.disliked = 0
+              AND (p.liked = 1 OR p.completion_count > 0 OR p.replay_count > 0 OR p.score > 0)
+              AND (
+                    p.last_skipped_at IS NULL
+                    OR p.liked = 1
+                    OR COALESCE(p.last_completed_at, p.last_played_at, p.updated_at) >= p.last_skipped_at
+                  )
+            ORDER BY p.liked DESC,
+                     COALESCE(p.last_completed_at, p.last_played_at, p.updated_at) DESC,
+                     p.score DESC,
+                     t.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+        total_row = conn.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM user_track_preferences p
+            JOIN tracks t ON t.id = p.track_id
+            WHERE t.missing_at IS NULL
+              AND p.disliked = 0
+              AND (p.liked = 1 OR p.completion_count > 0 OR p.replay_count > 0 OR p.score > 0)
+              AND (
+                    p.last_skipped_at IS NULL
+                    OR p.liked = 1
+                    OR COALESCE(p.last_completed_at, p.last_played_at, p.updated_at) >= p.last_skipped_at
+                  )
+            """
+        ).fetchone()
+    tracks = [row_to_track(row) for row in rows]
+    artists_by_track = store.artists_for_tracks([track.id for track in tracks])
+    items: list[dict[str, object]] = []
+    for row, track in zip(rows, tracks, strict=True):
+        if int(row["liked"] or 0):
+            reason = "You liked this"
+        elif int(row["replay_count"] or 0):
+            reason = f"Replayed {int(row['replay_count'])} times"
+        else:
+            reason = f"Completed {int(row['completion_count'] or 0)} times"
+        item = _track_shelf_item(store, track, artists_by_track.get(track.id, []), reason)
+        if include_debug:
+            item["debug"] = {
+                "score": row["score"],
+                "last_played_at": row["last_played_at"],
+                "last_completed_at": row["last_completed_at"],
+                "last_skipped_at": row["last_skipped_at"],
+            }
+        items.append(item)
+    return items, int(total_row["total"] if total_row else 0)
+
+
+def _dashboard_long_time_no_listen(store: Store, limit: int, offset: int, include_debug: bool = False) -> tuple[list[dict[str, object]], int]:
+    cutoff = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT t.*, p.liked, p.completion_count, p.replay_count, p.score,
+                   p.last_played_at, p.last_completed_at, p.last_skipped_at
+            FROM user_track_preferences p
+            JOIN tracks t ON t.id = p.track_id
+            WHERE t.missing_at IS NULL
+              AND p.disliked = 0
+              AND (p.liked = 1 OR p.completion_count > 0 OR p.replay_count > 0 OR p.score > 0)
+              AND p.last_played_at IS NOT NULL
+              AND p.last_played_at < ?
+              AND (p.last_skipped_at IS NULL OR p.last_skipped_at <= p.last_played_at OR p.liked = 1)
+            ORDER BY p.liked DESC, p.last_played_at ASC, p.score DESC, t.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (cutoff, limit, offset),
+        ).fetchall()
+        total_row = conn.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM user_track_preferences p
+            JOIN tracks t ON t.id = p.track_id
+            WHERE t.missing_at IS NULL
+              AND p.disliked = 0
+              AND (p.liked = 1 OR p.completion_count > 0 OR p.replay_count > 0 OR p.score > 0)
+              AND p.last_played_at IS NOT NULL
+              AND p.last_played_at < ?
+              AND (p.last_skipped_at IS NULL OR p.last_skipped_at <= p.last_played_at OR p.liked = 1)
+            """,
+            (cutoff,),
+        ).fetchone()
+    tracks = [row_to_track(row) for row in rows]
+    artists_by_track = store.artists_for_tracks([track.id for track in tracks])
+    items: list[dict[str, object]] = []
+    for row, track in zip(rows, tracks, strict=True):
+        item = _track_shelf_item(store, track, artists_by_track.get(track.id, []), "Long time since last listen")
+        if include_debug:
+            item["debug"] = {"cutoff": cutoff, "last_played_at": row["last_played_at"], "score": row["score"]}
+        items.append(item)
+    return items, int(total_row["total"] if total_row else 0)
+
+
+def dashboard_shelf_response(
+    store: Store,
+    key: str,
+    *,
+    limit: int,
+    offset: int,
+    include_debug: bool = False,
+) -> dict[str, object] | None:
+    titles = {
+        "recently_added": ("Recently Added", "New in your collection"),
+        "listen_again": ("Listen Again", "Tracks with positive listening history"),
+        "long_time_no_listen": ("Long Time No Listen", "Good tracks that fell out of rotation"),
+    }
+    if key not in titles:
+        return None
+    if key == "recently_added":
+        items, total = _dashboard_recently_added(store, limit, offset, include_debug)
+    elif key == "listen_again":
+        items, total = _dashboard_listen_again(store, limit, offset, include_debug)
+    else:
+        items, total = _dashboard_long_time_no_listen(store, limit, offset, include_debug)
+    title, subtitle = titles[key]
+    next_offset = offset + limit if offset + limit < total else None
+    return {
+        "key": key,
+        "title": title,
+        "subtitle": subtitle,
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "next_offset": next_offset,
+        "available": True,
     }
 
 
@@ -1874,6 +2130,48 @@ def api_v1_record_playback_event(request: PlaybackEventRequest) -> dict[str, obj
     }
 
 
+@app.get("/api/v1/dashboard", response_model=None)
+def api_v1_dashboard(
+    limit: int = Query(default=12, ge=1, le=50),
+    include_debug: bool = False,
+) -> dict[str, object]:
+    store, _settings = context()
+    shelf_keys = ["recently_added", "listen_again", "long_time_no_listen"]
+    shelves = [
+        shelf
+        for key in shelf_keys
+        if (shelf := dashboard_shelf_response(store, key, limit=limit, offset=0, include_debug=include_debug)) is not None
+    ]
+    return {
+        "hero": {
+            "type": "flow",
+            "title": "Flow",
+            "subtitle": "Start your personal stream",
+            "available": False,
+            "action": {"type": "start_flow", "enabled": False, "endpoint": None},
+        },
+        "shelves": shelves,
+        "settings": {
+            "visible_shelves": shelf_keys,
+            "items_per_shelf": limit,
+        },
+    }
+
+
+@app.get("/api/v1/dashboard/shelves/{key}", response_model=None)
+def api_v1_dashboard_shelf(
+    key: str,
+    limit: int = Query(default=12, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    include_debug: bool = False,
+) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    shelf = dashboard_shelf_response(store, key, limit=limit, offset=offset, include_debug=include_debug)
+    if shelf is None:
+        return api_error(404, "not_found", "Dashboard shelf not found")
+    return shelf
+
+
 @app.get("/api/v1/search")
 def api_v1_search(
     q: str = "",
@@ -2215,6 +2513,9 @@ def metrics_search(request: FeatureSearchRequest):
 
 
 @app.get("/", response_class=HTMLResponse)
+@app.get("/search", response_class=HTMLResponse)
+@app.get("/artists/{artist_id}", response_class=HTMLResponse)
+@app.get("/releases/{release_id}", response_class=HTMLResponse)
 def test_ui() -> HTMLResponse:
     return HTMLResponse(
         UI_HTML,
@@ -5929,11 +6230,45 @@ UI_HTML = r"""
     .range-slider input[type="range"]::-moz-range-track { background:transparent; }
     .feature-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
     .feature-chip { border:1px solid var(--line); border-radius:999px; padding:3px 8px; font-size:12px; color:var(--muted); }
+    .listener-hero { border:1px solid var(--line); border-radius:8px; padding:18px; background:#14191d; display:grid; gap:12px; }
+    .listener-hero h2 { font-size:28px; margin:0; }
+    .surface-header { display:grid; grid-template-columns:220px minmax(0,1fr); gap:22px; align-items:end; }
+    .surface-art {
+      width:220px; aspect-ratio:1; border:1px solid var(--line); border-radius:8px; overflow:hidden;
+      background:linear-gradient(135deg, #20272b, #111518); display:grid; place-items:center;
+      color:var(--muted); font-weight:700;
+    }
+    .surface-art.artist-art { border-radius:999px; }
+    .surface-art img { width:100%; height:100%; object-fit:cover; display:block; }
+    .surface-title { font-size:38px; line-height:1.05; margin:0; overflow-wrap:anywhere; }
+    .surface-subtitle a, .entity-link { color:var(--text); text-decoration:none; }
+    .surface-subtitle a:hover, .entity-link:hover { color:var(--accent); }
+    .surface-grid { display:grid; gap:18px; }
+    .shelf { display:grid; gap:10px; }
+    .shelf-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+    .shelf-row { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
+    .media-card { border:1px solid var(--line); border-radius:8px; padding:10px; background:#14181b; display:grid; gap:8px; min-width:0; }
+    .media-card-cover { aspect-ratio:1; border:1px solid var(--line); border-radius:6px; overflow:hidden; background:#0d0f11; display:grid; place-items:center; color:var(--muted); }
+    .media-card-cover img { width:100%; height:100%; object-fit:cover; display:block; }
+    .media-card-title { font-weight:700; overflow-wrap:anywhere; }
+    .media-card-actions { display:flex; gap:6px; flex-wrap:wrap; }
+    .entity-tabs { display:flex; gap:8px; flex-wrap:wrap; }
+    .entity-tabs button.active { border-color:var(--accent); color:var(--accent); }
+    .track-table { width:100%; border-collapse:collapse; font-size:14px; }
+    .track-table th, .track-table td { border-top:1px solid var(--line); padding:9px 8px; text-align:left; vertical-align:middle; }
+    .track-table th { color:var(--muted); font-weight:600; }
+    .track-table tr:hover td { background:#171d21; }
+    .search-page-layout { display:grid; gap:14px; }
+    .search-tabs { display:flex; gap:8px; flex-wrap:wrap; }
+    .search-tabs button.active { border-color:var(--accent); color:var(--accent); }
+    .top-result { border:1px solid var(--line); border-radius:8px; padding:14px; background:#14191d; display:grid; gap:8px; }
     @media (max-width: 1100px) { .metrics-layout { grid-template-columns:minmax(320px, .75fr) minmax(360px, 1.25fr); } }
     @media (max-width: 900px) {
       .metrics-layout { grid-template-columns:1fr; overflow:auto; }
       .metrics-layout > .panel { min-height:420px; }
       .metric-filter-scroll { max-height:none; }
+      .surface-header { grid-template-columns:1fr; }
+      .surface-art { width:160px; }
     }
   </style>
 </head>
@@ -5943,6 +6278,7 @@ UI_HTML = r"""
       <h1>discocs</h1>
       <nav>
         <button class="active" data-nav="dashboard" onclick="showSection('dashboard')">Dashboard</button>
+        <button data-nav="listenerSearch" onclick="showSection('listenerSearch')">Search</button>
         <button data-nav="library" onclick="showSection('library')">Library</button>
         <button data-nav="browse" onclick="showSection('browse')">Browse</button>
         <button data-nav="metrics" onclick="showSection('metrics')">Metrics</button>
@@ -5960,6 +6296,20 @@ UI_HTML = r"""
     </aside>
     <main>
       <section id="dashboard" class="section active">
+        <div class="listener-hero">
+          <div>
+            <h2>Flow</h2>
+            <div class="meta">Personal stream placeholder. Playback surfaces are ready; Flow generation comes later.</div>
+          </div>
+          <div class="actions">
+            <button class="primary" disabled>Start Flow</button>
+            <button onclick="routeTo({view:'listenerSearch'}, {reset:true})">Search library</button>
+            <button onclick="routeTo({view:'library'}, {reset:true})">Open old Library</button>
+          </div>
+        </div>
+        <div class="surface-grid" id="listenerDashboardShelves">
+          <div class="meta">Loading listener shelves...</div>
+        </div>
         <div class="stats" id="dashboardCards">
           <div class="stat"><strong id="tracks">0</strong><span>tracks</span></div>
           <div class="stat"><strong id="missingHeadPackTracks">0</strong><span>need tags</span></div>
@@ -5984,6 +6334,40 @@ UI_HTML = r"""
         <div class="panel">
           <h2>Recent jobs</h2>
           <div id="dashboardJobs" class="jobs"></div>
+        </div>
+      </section>
+      <section id="listenerSearch" class="section section-fill">
+        <div class="panel panel-fill search-page-layout">
+          <div>
+            <h2>Search</h2>
+            <div class="search">
+              <input id="listenerSearchQuery" placeholder="Search artists, releases, tracks">
+              <button onclick="runListenerSearch()">Search</button>
+            </div>
+            <div class="search-tabs" id="listenerSearchTabs">
+              <button class="active" data-search-tab="all" onclick="setListenerSearchTab('all')">All</button>
+              <button data-search-tab="artists" onclick="setListenerSearchTab('artists')">Artists</button>
+              <button data-search-tab="tracks" onclick="setListenerSearchTab('tracks')">Tracks</button>
+              <button data-search-tab="releases" onclick="setListenerSearchTab('releases')">Releases</button>
+            </div>
+          </div>
+          <div class="list-region"><div id="listenerSearchResults" class="surface-grid">
+            <div class="meta">Search the normalized library graph.</div>
+          </div></div>
+        </div>
+      </section>
+      <section id="artistSurface" class="section section-fill">
+        <div class="panel panel-fill">
+          <div id="artistSurfaceContent" class="surface-grid">
+            <div class="meta">Loading artist...</div>
+          </div>
+        </div>
+      </section>
+      <section id="releaseSurface" class="section section-fill">
+        <div class="panel panel-fill">
+          <div id="releaseSurfaceContent" class="surface-grid">
+            <div class="meta">Loading release...</div>
+          </div>
         </div>
       </section>
       <section id="library" class="section section-fill">
@@ -6667,6 +7051,9 @@ UI_HTML = r"""
     }
     const VIEW_TO_SECTION = {
       dashboard: "dashboard",
+      listenerSearch: "listenerSearch",
+      artist: "artistSurface",
+      release: "releaseSurface",
       library: "library",
       browse: "browse",
       metrics: "metrics",
@@ -6694,13 +7081,23 @@ UI_HTML = r"""
       return VIEW_TO_SECTION[view] || view || "dashboard";
     }
     function viewForSection(sectionId) {
+      if (sectionId === "artistSurface") return "artist";
+      if (sectionId === "releaseSurface") return "release";
       if (sectionId === "jobsPage") return "jobs";
       if (sectionId === "workersPage") return "workers";
       return sectionId;
     }
     function paramsFromSearch(search = location.search) {
       const raw = Object.fromEntries(new URLSearchParams(search));
-      const params = {view: raw.view || "dashboard"};
+      let pathView = "dashboard";
+      const artistMatch = location.pathname.match(/^\/artists\/(\d+)\/?$/);
+      const releaseMatch = location.pathname.match(/^\/releases\/(\d+)\/?$/);
+      if (location.pathname === "/search") pathView = "listenerSearch";
+      else if (artistMatch) pathView = "artist";
+      else if (releaseMatch) pathView = "release";
+      const params = {view: raw.view || pathView};
+      if (artistMatch && raw.artist_id === undefined) params.artist_id = artistMatch[1];
+      if (releaseMatch && raw.release_id === undefined) params.release_id = releaseMatch[1];
       Object.entries(raw).forEach(([key, value]) => {
         if (value === "" || value === undefined || value === null) return;
         params[key] = value;
@@ -6806,7 +7203,14 @@ UI_HTML = r"""
         const sectionId = sectionIdForView(view);
         applySettingsFromParams(params);
         activateSection(sectionId);
-        if (sectionId === "library") {
+        if (sectionId === "listenerSearch") {
+          if (params.q !== undefined) document.getElementById("listenerSearchQuery").value = params.q;
+          await runListenerSearch({updateUrl: false});
+        } else if (sectionId === "artistSurface") {
+          await loadArtistSurface(Number(params.artist_id || params.id || 0));
+        } else if (sectionId === "releaseSurface") {
+          await loadReleaseSurface(Number(params.release_id || params.id || 0));
+        } else if (sectionId === "library") {
           if (params.query !== undefined) document.getElementById("query").value = params.query;
           if (params.embedding_status) document.getElementById("embeddingStatus").value = params.embedding_status;
           await searchTracks({updateUrl: false});
@@ -6912,12 +7316,255 @@ UI_HTML = r"""
         ...recommendationParams()
       }, {replace: true, reset: true});
     }
+    function entityArtistsHtml(artists) {
+      const items = artists || [];
+      return items.map(artist => `<a class="entity-link" href="/artists/${artist.id}" onclick="event.preventDefault(); openArtist(${artist.id})">${esc(artist.name)}</a>`).join(", ") || "Unknown artist";
+    }
+    function entityDuration(seconds) {
+      if (!seconds && seconds !== 0) return "";
+      const total = Math.round(Number(seconds) || 0);
+      const minutes = Math.floor(total / 60);
+      const rest = String(total % 60).padStart(2, "0");
+      return `${minutes}:${rest}`;
+    }
+    function mediaCard(item) {
+      const type = item.entity_type || (item.release_type ? "release" : "artist");
+      const id = item.entity_id || item.id;
+      const title = item.title || item.name || `#${id}`;
+      const subtitle = item.subtitle || entityArtistsHtml(item.artists || []);
+      const artwork = item.artwork || item.image || {};
+      const url = artwork.url || "";
+      const target = item.action?.target || (type === "artist" ? `/artists/${id}` : `/releases/${id}`);
+      const play = item.play_action
+        ? `<button onclick="playSource('${esc(item.play_action.source_type)}', ${Number(item.play_action.source_id)}, '${encodedArg(title)}')">Play</button>`
+        : "";
+      return `<div class="media-card">
+        <a class="media-card-cover" href="${esc(target)}" onclick="event.preventDefault(); navigateEntityTarget('${encodedArg(target)}')">
+          ${url ? `<img src="${esc(url)}" loading="lazy" alt="" onerror="this.remove()">` : `<span>${esc(type)}</span>`}
+        </a>
+        <div class="media-card-title">${esc(title)}</div>
+        <div class="meta">${subtitle}</div>
+        ${item.reason ? `<div class="meta">${esc(item.reason)}</div>` : ""}
+        <div class="media-card-actions">
+          <button onclick="navigateEntityTarget('${encodedArg(target)}')">Open</button>
+          ${play}
+        </div>
+      </div>`;
+    }
+    function trackRow(track, {releaseContextId = null} = {}) {
+      const artists = entityArtistsHtml(track.artists || []);
+      const release = track.release || {};
+      const releaseLink = release.id
+        ? `<a class="entity-link" href="/releases/${release.id}" onclick="event.preventDefault(); openRelease(${release.id})">${esc(release.title || "")}</a>`
+        : "";
+      const playSource = releaseContextId
+        ? `playSource('release', ${Number(releaseContextId)}, '${encodedArg(release.title || track.title || "Release")}', ${Number(track.id)})`
+        : `playSource('track', ${Number(track.id)}, '${encodedArg(track.title || "Track")}')`;
+      return `<tr>
+        <td>${track.track_number || track.position || ""}</td>
+        <td><button class="stat-icon-button" onclick="${playSource}" title="Play" aria-label="Play">&#9654;</button></td>
+        <td><strong>${esc(track.title || `track #${track.id}`)}</strong><div class="meta">${artists}</div></td>
+        <td>${releaseLink}</td>
+        <td>${entityDuration(track.duration)}</td>
+      </tr>`;
+    }
+    function trackTable(tracks, options = {}) {
+      if (!tracks.length) return `<div class="meta">No tracks available.</div>`;
+      return `<table class="track-table">
+        <thead><tr><th>#</th><th></th><th>Track</th><th>Release</th><th>Duration</th></tr></thead>
+        <tbody>${tracks.map(track => trackRow(track, options)).join("")}</tbody>
+      </table>`;
+    }
+    function openArtist(id) {
+      return routeTo({view: "artist", artist_id: id}, {reset: true});
+    }
+    function openRelease(id) {
+      return routeTo({view: "release", release_id: id}, {reset: true});
+    }
+    function searchListenerForEncoded(encodedQuery) {
+      return routeTo({view: "listenerSearch", q: decodeURIComponent(encodedQuery || "")}, {reset: true});
+    }
+    function navigateEntityTarget(encodedTarget) {
+      const target = decodeURIComponent(encodedTarget || "");
+      const artistMatch = target.match(/^\/artists\/(\d+)/);
+      const releaseMatch = target.match(/^\/releases\/(\d+)/);
+      if (artistMatch) return openArtist(Number(artistMatch[1]));
+      if (releaseMatch) return openRelease(Number(releaseMatch[1]));
+      if (target.includes("view=recommendations")) return routeTo({view: "recommendations"}, {reset: true});
+      return routeTo({view: "listenerSearch"}, {reset: true});
+    }
+    async function playSource(sourceType, sourceId, encodedLabel, preferredTrackId = null) {
+      try {
+        const data = await json("/api/v1/playback/sessions", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({source_type: sourceType, source_id: Number(sourceId), source_label: decodeURIComponent(encodedLabel || "")})
+        });
+        const first = preferredTrackId || data.queue?.current_item?.track_id || data.queue?.items?.[0]?.track_id;
+        const labelText = decodeURIComponent(encodedLabel || "") || data.session?.source_label || `${sourceType} #${sourceId}`;
+        if (first) await playTrack(Number(first), encodedArg(labelText));
+      } catch (err) {
+        document.getElementById("playerError").textContent = `Playback session failed: ${err.message}`;
+      }
+    }
+    function setListenerSearchTab(tab) {
+      document.querySelectorAll("#listenerSearchTabs button").forEach(button => {
+        button.classList.toggle("active", button.dataset.searchTab === tab);
+      });
+      renderListenerSearchResults(lastListenerSearchResults, tab);
+    }
+    let lastListenerSearchResults = null;
+    async function runListenerSearch({updateUrl = true} = {}) {
+      const query = document.getElementById("listenerSearchQuery").value.trim();
+      if (updateUrl && !applyingRoute) pushRouteOnly({view: "listenerSearch", q: query}, {replace: true, reset: true});
+      const target = document.getElementById("listenerSearchResults");
+      if (!query) {
+        lastListenerSearchResults = null;
+        target.innerHTML = `<div class="meta">Search artists, tracks, and releases.</div>`;
+        return;
+      }
+      target.innerHTML = `<div class="meta">Searching...</div>`;
+      try {
+        lastListenerSearchResults = await json(`/api/v1/search?q=${encodeURIComponent(query)}&limit=12`);
+        renderListenerSearchResults(lastListenerSearchResults, activeListenerSearchTab());
+      } catch (err) {
+        target.innerHTML = `<div class="error">Search failed: ${esc(err.message)}</div>`;
+      }
+    }
+    function activeListenerSearchTab() {
+      return document.querySelector("#listenerSearchTabs button.active")?.dataset.searchTab || "all";
+    }
+    function renderListenerSearchResults(data, tab = "all") {
+      const target = document.getElementById("listenerSearchResults");
+      if (!data) return;
+      const groups = Object.fromEntries((data.groups || []).map(group => [group.type, group]));
+      const sections = [];
+      if (tab === "all" && data.top_result) {
+        const entity = data.top_result.entity;
+        const label = data.top_result.entity_type;
+        sections.push(`<div class="top-result">
+          <div class="meta">Top result</div>
+          <h2>${esc(entity.name || entity.title || label)}</h2>
+          <div class="actions">
+            <button onclick="${label === "artist" ? `openArtist(${entity.id})` : label === "release" ? `openRelease(${entity.id})` : `playSource('track', ${entity.id}, '${encodedArg(entity.title || "Track")}')`}">Open</button>
+          </div>
+        </div>`);
+      }
+      const wanted = tab === "all" ? ["artists", "tracks", "releases"] : [tab];
+      wanted.forEach(key => {
+        const group = groups[key];
+        if (!group) return;
+        if (key === "tracks") {
+          sections.push(`<div class="shelf"><div class="shelf-head"><h2>Tracks</h2><span class="meta">${group.total} found</span></div>${trackTable(group.items || [])}</div>`);
+        } else {
+          sections.push(`<div class="shelf"><div class="shelf-head"><h2>${esc(group.title)}</h2><span class="meta">${group.total} found</span></div><div class="shelf-row">${(group.items || []).map(item => mediaCard({...item, entity_type: key === "artists" ? "artist" : "release", entity_id: item.id})).join("") || `<div class="meta">No ${esc(group.title.toLowerCase())}.</div>`}</div></div>`);
+        }
+      });
+      target.innerHTML = sections.join("") || `<div class="meta">No results.</div>`;
+    }
+    async function loadArtistSurface(artistId) {
+      const target = document.getElementById("artistSurfaceContent");
+      if (!artistId) {
+        target.innerHTML = `<div class="error">Artist id is missing.</div>`;
+        return;
+      }
+      target.innerHTML = `<div class="meta">Loading artist...</div>`;
+      try {
+        const [artistData, discography, topTracks] = await Promise.all([
+          json(`/api/v1/artists/${artistId}`),
+          json(`/api/v1/artists/${artistId}/discography`),
+          json(`/api/v1/artists/${artistId}/top-tracks`)
+        ]);
+        const artist = artistData.artist;
+        const stats = artist.library_stats || {};
+        const groups = (discography.groups || []).filter(group => (group.items || []).length);
+        target.innerHTML = `
+          <div class="surface-header">
+            <div class="surface-art artist-art">${artist.image?.url ? `<img src="${esc(artist.image.url)}" alt="">` : esc((artist.name || "?").slice(0, 1))}</div>
+            <div>
+              <div class="meta">Artist</div>
+              <h2 class="surface-title">${esc(artist.name)}</h2>
+              <div class="meta">${stats.tracks || 0} tracks - ${stats.releases || 0} releases in library</div>
+              <div class="actions" style="margin-top:12px">
+                <button onclick="playSource('artist', ${Number(artist.id)}, '${encodedArg(artist.name)}')">Play artist</button>
+                <button onclick="searchListenerForEncoded('${encodedArg(artist.name)}')">Search artist</button>
+              </div>
+            </div>
+          </div>
+          ${topTracks.available && (topTracks.items || []).length ? `<div class="shelf"><h2>Top Tracks</h2>${trackTable(topTracks.items)}</div>` : ""}
+          <div class="entity-tabs"><button class="active">Discography</button><button disabled>Top Tracks</button><button disabled>Similar Artists</button></div>
+          ${groups.map(group => `<div class="shelf"><div class="shelf-head"><h2>${esc(group.title)}</h2><span class="meta">${group.items.length}</span></div><div class="shelf-row">${group.items.map(item => mediaCard({...item, entity_type:"release", entity_id:item.id})).join("")}</div></div>`).join("") || `<div class="meta">No discography found for this artist.</div>`}
+        `;
+      } catch (err) {
+        target.innerHTML = `<div class="error">Artist failed to load: ${esc(err.message)}</div>`;
+      }
+    }
+    async function loadReleaseSurface(releaseId) {
+      const target = document.getElementById("releaseSurfaceContent");
+      if (!releaseId) {
+        target.innerHTML = `<div class="error">Release id is missing.</div>`;
+        return;
+      }
+      target.innerHTML = `<div class="meta">Loading release...</div>`;
+      try {
+        const [releaseData, tracksData, relatedData, recommendationsData] = await Promise.all([
+          json(`/api/v1/releases/${releaseId}`),
+          json(`/api/v1/releases/${releaseId}/tracks`),
+          json(`/api/v1/releases/${releaseId}/related-discography`),
+          json(`/api/v1/releases/${releaseId}/recommendations`)
+        ]);
+        const release = releaseData.release;
+        const artwork = release.artwork || {};
+        const tracks = tracksData.items || [];
+        const related = relatedData.items || [];
+        const recommendations = recommendationsData.items || [];
+        target.innerHTML = `
+          <div class="surface-header">
+            <div class="surface-art">${artwork.url ? `<img src="${esc(artwork.url)}" alt="">` : "ART"}</div>
+            <div>
+              <div class="meta">${esc(release.release_type_label || "Release")}</div>
+              <h2 class="surface-title">${esc(release.title)}</h2>
+              <div class="surface-subtitle">${entityArtistsHtml(release.artists || [])}</div>
+              <div class="meta">${release.track_count || tracks.length} tracks${release.release_year ? ` - ${release.release_year}` : ""}${release.duration ? ` - ${entityDuration(release.duration)}` : ""}</div>
+              <div class="actions" style="margin-top:12px">
+                <button class="primary" onclick="playSource('release', ${Number(release.id)}, '${encodedArg(release.title)}')">Play release</button>
+                <button onclick="searchListenerForEncoded('${encodedArg(release.title)}')">Search title</button>
+              </div>
+            </div>
+          </div>
+          <div class="shelf"><h2>Tracks</h2>${trackTable(tracks, {releaseContextId: release.id})}</div>
+          ${related.length ? `<div class="shelf"><div class="shelf-head"><h2>Related Discography</h2><span class="meta">${related.length}</span></div><div class="shelf-row">${related.map(item => mediaCard({...item, entity_type:"release", entity_id:item.id})).join("")}</div></div>` : ""}
+          ${recommendations.length ? `<div class="shelf"><h2>Recommended Releases</h2><div class="shelf-row">${recommendations.map(item => mediaCard({...item, entity_type:"release", entity_id:item.id})).join("")}</div></div>` : ""}
+        `;
+      } catch (err) {
+        target.innerHTML = `<div class="error">Release failed to load: ${esc(err.message)}</div>`;
+      }
+    }
+    async function loadListenerDashboard() {
+      const target = document.getElementById("listenerDashboardShelves");
+      if (!target) return;
+      try {
+        const data = await json("/api/v1/dashboard?limit=8");
+        const shelves = (data.shelves || []).filter(shelf => shelf.available);
+        target.innerHTML = shelves.map(shelf => `
+          <div class="shelf">
+            <div class="shelf-head">
+              <div><h2>${esc(shelf.title)}</h2><div class="meta">${esc(shelf.subtitle || "")}</div></div>
+              <span class="meta">${shelf.total} items</span>
+            </div>
+            <div class="shelf-row">${(shelf.items || []).map(mediaCard).join("") || `<div class="meta">No items yet.</div>`}</div>
+          </div>`).join("") || `<div class="meta">Run a scan or play tracks to fill listener shelves.</div>`;
+      } catch (err) {
+        target.innerHTML = `<div class="error">Dashboard shelves unavailable: ${esc(err.message)}</div>`;
+      }
+    }
     async function refreshStats() {
       if (statsInFlight) return;
       statsInFlight = true;
       try {
         const data = await json(`/stats?model=${encodeURIComponent(model())}`, {timeoutMs: 30000});
         renderDashboardCards(data);
+        await loadListenerDashboard();
         renderModelCards(data);
         const indexStatus = data.index_status || (data.index_exists ? "ready" : "missing");
         const indexCount = data.index_count ?? "?";
@@ -8788,7 +9435,7 @@ UI_HTML = r"""
     async function initFromUrl() {
       const params = paramsFromSearch();
       applySettingsFromParams(params);
-      if (!location.search || !new URLSearchParams(location.search).get("view")) {
+      if (location.pathname === "/" && (!location.search || !new URLSearchParams(location.search).get("view"))) {
         await replaceRoute({view: "dashboard", model: model()}, {reset: true});
         await refreshStats();
         await refreshJobs();
@@ -8814,6 +9461,9 @@ UI_HTML = r"""
     document.getElementById("model").addEventListener("change", onModelChange);
     document.getElementById("query").addEventListener("keydown", event => {
       if (event.key === "Enter") searchTracks();
+    });
+    document.getElementById("listenerSearchQuery").addEventListener("keydown", event => {
+      if (event.key === "Enter") runListenerSearch();
     });
     document.getElementById("seedQuery").addEventListener("keydown", event => {
       if (event.key === "Enter") searchSeeds();
