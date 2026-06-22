@@ -38,6 +38,17 @@ Phase 4 should not require rewriting backend data logic. It should consume:
 If the current FastAPI HTML remains useful operationally, keep it. The target UI
 should not depend on SQLite internals or old `/tracks` response shapes.
 
+Implementation clarification:
+
+- the target web app is a listener/player surface, not the existing operational
+  analysis dashboard with extra recommendation blocks inserted into it;
+- keep operational scan/analyze/index/job controls in a separate Operations,
+  Admin, or Analysis area;
+- the Home dashboard should be the music start page: global search entry,
+  prominent Flow CTA, and listener shelves;
+- old prototype pages may remain available, but they must not dictate the target
+  card layout, navigation model, or first-screen hierarchy.
+
 ## App Shell
 
 Desktop layout:
@@ -105,6 +116,15 @@ Phase 4 dashboard can include:
 - empty/loading/error states.
 
 Real dashboard shelves belong to Phase 5.
+
+Home layout rules:
+
+- search entry appears at the top of Home and routes into `/search` with query
+  state preserved;
+- Flow is the primary visual/action block above shelves;
+- operational status is a small link/summary only, not the main content;
+- do not render dashboard shelves as tall management cards with permanent
+  Open/Play buttons. Use the visual spec `MediaCard` treatment.
 
 ## Search Page
 
@@ -209,11 +229,16 @@ Persistent across pages.
 Collapsed layout:
 
 - left: previous, play/pause, next;
-- progress bar;
+- custom progress bar, visually integrated with the bottom player;
+- progress bar may span the full player width above the control strip;
+- progress thumb should expose current time while dragging/hovering;
 - center: cover thumbnail, title, artist, release/year;
 - like/dislike and menu actions;
 - right: volume, repeat, shuffle/autoplay controls;
 - far right: expand arrow.
+- controls for volume/repeat/shuffle/autoplay may render as disabled
+  placeholders until their backend behavior exists, but their visual positions
+  should already match the intended player layout.
 
 Behavior:
 
@@ -221,24 +246,34 @@ Behavior:
 - audio can stream from existing audio endpoint;
 - progress events are sent through playback events API;
 - navigation does not reset player state.
+- native browser `<audio controls>` must not be visible in the final player UI;
+  the audio element can exist only as a hidden playback engine.
 
 ## Expanded Player
 
 Desktop layout:
 
+- expanded player occupies the main content area from the top of the viewport to
+  the bottom player, rather than appearing as a small card over the current page;
 - large artwork/current track area on the left/center;
 - queue panel on the right;
 - bottom player remains visible or integrated;
 - background stays dark and focused.
+- previous page content should not remain visually dominant behind the expanded
+  player.
+- artwork uses contain-style fitting and must not be cropped.
 
 Queue panel:
 
 - tabs: Up Next, Lyrics/Text, Related;
 - source label at top;
-- autoplay toggle;
+- autoplay toggle is visible as UI preparation; until Phase 6 it can be disabled
+  or marked unavailable;
 - save queue/playlist action;
 - current source queue and autoplay/generated items visually separated;
 - preference chips for autoplay later.
+- queue items are compact rows with cover, title, artist/source, and duration,
+  not framed cards.
 
 Rules:
 
@@ -492,3 +527,13 @@ Known future visual questions remain in the visual spec:
 Recommended default for Phase 4:
 
 - expanded player as overlay/drawer above the app shell, not a separate route.
+
+## Audit Follow-Up Queue
+
+These items are intentionally parked until all audited phases are reviewed:
+
+- decide whether the listener/player UI should remain embedded in FastAPI HTML or move to a dedicated frontend app;
+- decide how much of the old operational prototype should remain in the sidebar versus being hidden behind Operations/Admin;
+- replace the current native `<audio controls>` fallback with a fully custom player control strip when the player design stabilizes;
+- decide whether `/settings` should persist tab state in URL query (`settings_tab`) or app state only;
+- define mobile layout separately; Phase 4 keeps desktop as the primary target.

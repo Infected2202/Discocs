@@ -29,6 +29,7 @@ Earlier phases provide:
 - `/api/v1` entity response shapes;
 - playback sessions/events;
 - user preference aggregates;
+- Navidrome play-history import into user preference aggregates;
 - app shell/dashboard skeleton.
 
 Known product direction:
@@ -37,7 +38,22 @@ Known product direction:
 - shelves use horizontal cover-first cards;
 - shelves share visual structure even when logic differs;
 - Recently Added is operational and newest-first, not personalized;
-- Listen Again and Long Time No Listen depend on first-party playback events.
+- Listen Again and Long Time No Listen should use the merged local preference
+  projection: Navidrome `playCount`/`played`/`starred` plus local Discocs
+  telemetry. They must not stay empty just because prior listening happened in
+  Navidrome, Symfonium, or another Subsonic client.
+
+Implementation clarification:
+
+- Phase 5 shelves belong on the music Home dashboard, not inside the old
+  analyze/index/job dashboard;
+- operational scan/index/model cards should live in a separate Operations/Admin
+  page or a collapsed operational summary;
+- shelf cards must be compact cover-first media cards: square artwork, title,
+  subtitle, optional reason, and hover/secondary actions;
+- avoid tall empty cards with fixed bottom Open/Play buttons;
+- Home may show a global search field above Flow; the dedicated `/search` page
+  remains the full results page.
 
 ## Dashboard API
 
@@ -248,7 +264,7 @@ Purpose:
 
 Signals:
 
-- liked tracks/releases;
+- liked/starred tracks/releases from Navidrome truth;
 - completed plays;
 - replayed tracks;
 - high play count;
@@ -273,8 +289,8 @@ score =
 
 Simple first implementation:
 
-- include liked tracks;
-- include tracks with completions;
+- include Navidrome-starred/local liked tracks;
+- include tracks with Navidrome play count or local completions;
 - sort by recent positive activity and preference score;
 - exclude tracks with recent early skip unless liked.
 
@@ -298,7 +314,7 @@ Purpose:
 
 Signals:
 
-- liked/starred tracks;
+- liked/starred tracks from Navidrome truth;
 - historical completions;
 - historical high play count;
 - not played recently.
@@ -386,6 +402,7 @@ Requires:
 - Phase 1 normalized releases/artists;
 - Phase 2 summary response shapes;
 - Phase 3 playback events/preferences;
+- Phase 3 Navidrome playback bridge/scrobble/history import;
 - explicit `added_at` for Recently Added.
 
 Does not require:
@@ -531,3 +548,13 @@ Defaults can be tuned later:
 - Listen Again window;
 - Long Time No Listen minimum age;
 - release-vs-track card mix.
+
+## Audit Follow-Up Queue
+
+These items are intentionally parked until all audited phases are reviewed:
+
+- decide whether Dashboard settings should be persisted as runtime settings or remain hard-coded defaults for the MVP;
+- tune Listen Again and Long Time No Listen scoring weights after real playback history accumulates;
+- decide when Long Time No Listen should collapse multiple positive tracks into one release card;
+- decide whether Recently Added should expose a user-selectable releases-vs-tracks mode in Phase 5 or later;
+- add richer operational badges only after missing embedding/lost file/unanalyzed semantics are stable in the UI.

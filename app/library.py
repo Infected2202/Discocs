@@ -48,6 +48,7 @@ class TrackMetadataEnvelope:
     provider: str | None = None
     provider_track_id: str | None = None
     provider_release_id: str | None = None
+    provider_artist_id: str | None = None
     raw_json: str | None = None
 
 
@@ -177,6 +178,7 @@ def envelope_from_navidrome_song(song: Any, raw_json: str | None = None) -> Trac
         provider="navidrome",
         provider_track_id=song.id,
         provider_release_id=album_id,
+        provider_artist_id=getattr(song, "artist_id", None) or _first_raw_value(raw, "artistId", "artist_id"),
         raw_json=raw_json,
     )
 

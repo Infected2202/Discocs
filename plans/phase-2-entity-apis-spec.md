@@ -978,3 +978,19 @@ Reason:
 
 - release page layout can be stable while recommendation quality work remains
   separate.
+
+## Audit Follow-Up Queue
+
+These items are intentionally tracked for a later cross-phase audit instead of
+blocking the Phase 2 entity API contract:
+
+- decide whether `/api/v1/artists/{id}/image` should remain a JSON `ImageRef`
+  endpoint or become a byte/redirect image endpoint after external image
+  caching is added;
+- verify whether release/track artwork should expose a future
+  `/api/v1/tracks/{id}/cover` URL instead of the existing prototype
+  `/tracks/{id}/cover` path;
+- revisit search ranking quality after real library usage, especially when
+  exact artist, release, and track matches compete;
+- decide whether all `/api/v1` routes, including later playback/dashboard
+  endpoints, should use fully typed Pydantic response models.

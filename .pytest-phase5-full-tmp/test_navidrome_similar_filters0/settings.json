@@ -1,0 +1,10 @@
+{
+  "instant_mix": {
+    "count": 50,
+    "count_collaboration_artists": true,
+    "exclude_same_album": false,
+    "max_per_artist": 10,
+    "min_similarity": 0.9,
+    "model": "discogs_multi"
+  }
+}

@@ -44,6 +44,7 @@ class Track:
     genre: str | None = None
     year: int | None = None
     missing_at: str | None = None
+    added_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,7 @@ class Release:
     catalog_number: str | None
     identity_key: str
     identity_confidence: str
+    added_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -372,6 +374,32 @@ class PlaybackEventResult:
     preference_delta: dict[str, object]
 
 
+@dataclass(frozen=True)
+class GeneratedMix:
+    id: str
+    title: str
+    mix_type: str
+    status: str
+    anchor_json: str | None
+    settings_json: str | None
+    score_summary_json: str | None
+    created_at: str
+    updated_at: str
+    expires_at: str | None
+    saved_playlist_id: int | None
+
+
+@dataclass(frozen=True)
+class GeneratedMixItem:
+    mix_id: str
+    position: int
+    track_id: int
+    score: float | None
+    score_breakdown_json: str | None
+    reason_json: str | None
+    created_at: str
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -392,6 +420,8 @@ PLAYBACK_SESSION_STATUSES = {"active", "paused", "ended"}
 PLAYBACK_REPEAT_MODES = {"off", "one", "all"}
 QUEUE_ORIGINS = {"source", "manual", "autoplay", "flow", "generated_mix"}
 QUEUE_STATUSES = {"queued", "playing", "played", "skipped", "removed"}
+GENERATED_MIX_TYPES = {"taste_region", "supermix", "forgotten", "discovery", "manual_seed", "debug"}
+GENERATED_MIX_STATUSES = {"active", "stale", "saved", "archived"}
 PLAYBACK_EVENT_TYPES = {
     "track_started",
     "progress",
@@ -460,6 +490,7 @@ class Store:
                     audio_hash TEXT,
                     missing_at TEXT,
                     last_seen_at TEXT,
+                    added_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -578,6 +609,7 @@ class Store:
                     catalog_number TEXT,
                     identity_key TEXT NOT NULL UNIQUE,
                     identity_confidence TEXT NOT NULL DEFAULT 'derived',
+                    added_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -767,6 +799,40 @@ class Store:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS generated_mixes (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    mix_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    anchor_json TEXT,
+                    settings_json TEXT,
+                    score_summary_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    expires_at TEXT,
+                    saved_playlist_id INTEGER
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_generated_mixes_status_updated
+                    ON generated_mixes(status, updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS generated_mix_items (
+                    mix_id TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    track_id INTEGER NOT NULL,
+                    score REAL,
+                    score_breakdown_json TEXT,
+                    reason_json TEXT,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (mix_id, position),
+                    UNIQUE (mix_id, track_id),
+                    FOREIGN KEY (mix_id) REFERENCES generated_mixes(id) ON DELETE CASCADE,
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_generated_mix_items_track
+                    ON generated_mix_items(track_id);
+
                 CREATE TABLE IF NOT EXISTS instant_mix_requests (
                     id TEXT PRIMARY KEY,
                     provider TEXT NOT NULL,
@@ -873,6 +939,8 @@ class Store:
             self._ensure_column(conn, "tracks", "year", "INTEGER")
             self._ensure_column(conn, "tracks", "missing_at", "TEXT")
             self._ensure_column(conn, "tracks", "last_seen_at", "TEXT")
+            self._ensure_column(conn, "tracks", "added_at", "TEXT")
+            self._ensure_column(conn, "releases", "added_at", "TEXT")
             self._ensure_column(conn, "analysis_jobs", "kind", "TEXT NOT NULL DEFAULT 'analyze'")
             self._ensure_column(conn, "analysis_jobs", "progress_done", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "analysis_jobs", "progress_failed", "INTEGER NOT NULL DEFAULT 0")
@@ -895,6 +963,7 @@ class Store:
             self._ensure_column(conn, "playback_events", "artist_id", "INTEGER")
             self._ensure_column(conn, "playback_events", "source", "TEXT NOT NULL DEFAULT 'web'")
             self._ensure_column(conn, "playback_events", "payload_json", "TEXT")
+            self._backfill_added_timestamps(conn)
 
     def _ensure_column(
         self,
@@ -906,6 +975,25 @@ class Store:
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+    def _backfill_added_timestamps(self, conn: sqlite3.Connection) -> None:
+        conn.execute("UPDATE tracks SET added_at = created_at WHERE added_at IS NULL")
+        conn.execute(
+            """
+            UPDATE releases
+            SET added_at = COALESCE(
+                (
+                    SELECT MAX(COALESCE(t.added_at, t.created_at))
+                    FROM release_tracks rt
+                    JOIN tracks t ON t.id = rt.track_id
+                    WHERE rt.release_id = releases.id
+                ),
+                added_at,
+                created_at
+            )
+            WHERE added_at IS NULL
+            """
+        )
 
     def upsert_track(self, scanned: ScannedTrack) -> tuple[int, bool]:
         now = utc_now()
@@ -971,9 +1059,9 @@ class Store:
                 """
                 INSERT INTO tracks (
                     path, artist, title, album, genre, year, duration, file_size, mtime,
-                    missing_at, last_seen_at, created_at, updated_at
+                    missing_at, last_seen_at, added_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
                 """,
                 (
                     path,
@@ -985,6 +1073,7 @@ class Store:
                     scanned.duration,
                     scanned.file_size,
                     scanned.mtime,
+                    now,
                     now,
                     now,
                     now,
@@ -1026,6 +1115,13 @@ class Store:
         )
 
         position = envelope.track_number or track_id
+        previous_release_ids = [
+            int(row["release_id"])
+            for row in conn.execute(
+                "SELECT release_id FROM release_tracks WHERE track_id = ?",
+                (track_id,),
+            ).fetchall()
+        ]
         conn.execute("DELETE FROM release_tracks WHERE track_id = ?", (track_id,))
         while conn.execute(
             "SELECT 1 FROM release_tracks WHERE release_id = ? AND position = ?",
@@ -1056,9 +1152,11 @@ class Store:
             ),
         )
 
+        track_artist_ids: list[int] = []
         conn.execute("DELETE FROM track_artists WHERE track_id = ?", (track_id,))
         for credit in track_artists:
             artist_id = self._upsert_artist(conn, credit.name, now)
+            track_artist_ids.append(artist_id)
             self._insert_track_artist(conn, track_id, artist_id, credit, now)
 
         self._refresh_release_artists(
@@ -1088,8 +1186,21 @@ class Store:
                 raw_json=envelope.raw_json,
                 synced_at=now,
             )
+        if envelope.provider and envelope.provider_artist_id and track_artist_ids:
+            self._upsert_external_id(
+                conn,
+                provider=envelope.provider,
+                entity_type="artist",
+                entity_id=track_artist_ids[0],
+                external_id=envelope.provider_artist_id,
+                raw_json=envelope.raw_json,
+                synced_at=now,
+            )
 
         self._refresh_release_basics(conn, release_id, now)
+        for previous_release_id in previous_release_ids:
+            if previous_release_id != release_id:
+                self._refresh_release_after_track_removal(conn, previous_release_id, now)
         return release_id
 
     def _upsert_artist(self, conn: sqlite3.Connection, name: str, now: str) -> int:
@@ -1158,9 +1269,9 @@ class Store:
             """
             INSERT INTO releases (
                 title, normalized_title, release_type, release_date, release_year,
-                cover_art_id, identity_key, identity_confidence, created_at, updated_at
+                cover_art_id, identity_key, identity_confidence, added_at, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 title,
@@ -1171,6 +1282,7 @@ class Store:
                 envelope.cover_art_id,
                 identity_key,
                 identity_confidence,
+                now,
                 now,
                 now,
             ),
@@ -1318,7 +1430,7 @@ class Store:
     ) -> None:
         row = conn.execute(
             """
-            SELECT COUNT(*) AS track_count, SUM(t.duration) AS duration
+            SELECT COUNT(*) AS track_count, SUM(t.duration) AS duration, MAX(COALESCE(t.added_at, t.created_at)) AS added_at
             FROM release_tracks rt
             JOIN tracks t ON t.id = rt.track_id
             WHERE rt.release_id = ?
@@ -1328,16 +1440,33 @@ class Store:
         conn.execute(
             """
             UPDATE releases
-            SET track_count = ?, duration = ?, updated_at = ?
+            SET track_count = ?, duration = ?, added_at = COALESCE(?, added_at, created_at), updated_at = ?
             WHERE id = ?
             """,
             (
                 int(row["track_count"] or 0),
                 float(row["duration"]) if row["duration"] is not None else None,
+                row["added_at"],
                 now,
                 release_id,
             ),
         )
+
+    def _refresh_release_after_track_removal(
+        self,
+        conn: sqlite3.Connection,
+        release_id: int,
+        now: str,
+    ) -> None:
+        has_tracks = conn.execute(
+            "SELECT 1 FROM release_tracks WHERE release_id = ? LIMIT 1",
+            (release_id,),
+        ).fetchone()
+        if has_tracks is None:
+            conn.execute("DELETE FROM release_artists WHERE release_id = ?", (release_id,))
+        else:
+            self._refresh_release_artists(conn, release_id, explicit_credit=None, now=now)
+        self._refresh_release_basics(conn, release_id, now)
 
     def delete_embedding(self, track_id: int, model_name: str) -> None:
         with self.connect() as conn:
@@ -1557,6 +1686,47 @@ class Store:
         with self.connect() as conn:
             return int(conn.execute(f"SELECT COUNT(*) FROM external_ids {where_sql}", params).fetchone()[0])
 
+    def external_id_for_entity(self, provider: str, entity_type: str, entity_id: int) -> str | None:
+        provider = _require_external_value(provider, "provider")
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT external_id
+                FROM external_ids
+                WHERE provider = ? AND entity_type = ? AND entity_id = ?
+                ORDER BY synced_at DESC
+                LIMIT 1
+                """,
+                (provider, entity_type, entity_id),
+            ).fetchone()
+        return str(row["external_id"]) if row else None
+
+    def update_artist_external_info(
+        self,
+        artist_id: int,
+        *,
+        image_url: str | None = None,
+        bio: str | None = None,
+    ) -> None:
+        assignments = []
+        params: list[object] = []
+        if image_url:
+            assignments.append("image_url = ?")
+            params.append(image_url)
+        if bio:
+            assignments.append("bio = ?")
+            params.append(bio)
+        if not assignments:
+            return
+        assignments.append("updated_at = ?")
+        params.append(utc_now())
+        params.append(artist_id)
+        with self.connect() as conn:
+            conn.execute(
+                f"UPDATE artists SET {', '.join(assignments)} WHERE id = ?",
+                params,
+            )
+
     def artists_for_tracks(self, track_ids: list[int]) -> dict[int, list[Artist]]:
         with self.connect() as conn:
             return self._artists_for_tracks(conn, track_ids)
@@ -1694,6 +1864,55 @@ class Store:
             for row in rows
         ]
 
+    def release_id_for_track(self, track_id: int) -> int | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT release_id
+                FROM release_tracks
+                WHERE track_id = ?
+                ORDER BY position, release_id
+                LIMIT 1
+                """,
+                (track_id,),
+            ).fetchone()
+        return int(row["release_id"]) if row else None
+
+    def artist_ids_for_track(self, track_id: int) -> list[int]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT artist_id
+                FROM track_artists
+                WHERE track_id = ?
+                ORDER BY
+                    CASE role WHEN 'primary' THEN 0 ELSE 1 END,
+                    position,
+                    artist_id
+                """,
+                (track_id,),
+            ).fetchall()
+        return [int(row["artist_id"]) for row in rows]
+
+    def list_artist_track_ids(self, artist_id: int, *, limit: int = 100) -> list[int]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT t.id
+                FROM track_artists ta
+                JOIN tracks t ON t.id = ta.track_id
+                LEFT JOIN release_tracks rt ON rt.track_id = t.id
+                WHERE ta.artist_id = ?
+                ORDER BY
+                    CASE ta.role WHEN 'primary' THEN 0 ELSE 1 END,
+                    COALESCE(rt.position, t.id),
+                    t.id
+                LIMIT ?
+                """,
+                (artist_id, limit),
+            ).fetchall()
+        return [int(row["id"]) for row in rows]
+
     def artist_discography(self, artist_id: int) -> dict[str, list[ReleaseSummaryRow]]:
         groups = {
             "albums": [],
@@ -1728,29 +1947,73 @@ class Store:
         return groups
 
     def related_discography_for_release(self, release_id: int, limit: int = 12) -> list[ReleaseSummaryRow]:
-        release = self.get_release(release_id)
-        if release is None or not release.artists:
+        context_artists = self.participating_artists_for_release(release_id)
+        if not context_artists:
             return []
-        artist_ids = [artist.id for artist in release.artists]
+        artist_ids = [artist.id for artist in context_artists]
         placeholders = ",".join("?" for _id in artist_ids)
         with self.connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT DISTINCT r.*
+                SELECT DISTINCT r.*, ra.artist_id AS context_artist_id
                 FROM releases r
                 JOIN release_artists ra ON ra.release_id = r.id
                 WHERE ra.artist_id IN ({placeholders})
                   AND r.id != ?
                 ORDER BY r.release_year IS NULL, r.release_year DESC, r.title
-                LIMIT ?
                 """,
-                (*artist_ids, release_id, limit),
+                (*artist_ids, release_id),
             ).fetchall()
-            artists_by_release = self._artists_for_releases(conn, [int(row["id"]) for row in rows])
+            selected_ids: list[int] = []
+            seen_release_ids: set[int] = set()
+            rows_by_artist: dict[int, list[sqlite3.Row]] = {}
+            for row in rows:
+                rows_by_artist.setdefault(int(row["context_artist_id"]), []).append(row)
+            while len(selected_ids) < limit:
+                added = False
+                for artist_id in artist_ids:
+                    candidates = rows_by_artist.get(artist_id, [])
+                    while candidates:
+                        row = candidates.pop(0)
+                        candidate_id = int(row["id"])
+                        if candidate_id in seen_release_ids:
+                            continue
+                        seen_release_ids.add(candidate_id)
+                        selected_ids.append(candidate_id)
+                        added = True
+                        break
+                    if len(selected_ids) >= limit:
+                        break
+                if not added:
+                    break
+            rows_by_id = {int(row["id"]): row for row in rows}
+            selected_rows = [rows_by_id[release_id] for release_id in selected_ids]
+            artists_by_release = self._artists_for_releases(conn, selected_ids)
         return [
             ReleaseSummaryRow(row_to_release(row), artists_by_release.get(int(row["id"]), []))
-            for row in rows
+            for row in selected_rows
         ]
+
+    def participating_artists_for_release(self, release_id: int) -> list[Artist]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT a.*,
+                    MIN(COALESCE(ra.position, ta.position, 999999)) AS sort_position
+                FROM artists a
+                LEFT JOIN release_artists ra
+                  ON ra.artist_id = a.id AND ra.release_id = ?
+                LEFT JOIN release_tracks rt
+                  ON rt.release_id = ?
+                LEFT JOIN track_artists ta
+                  ON ta.artist_id = a.id AND ta.track_id = rt.track_id
+                WHERE ra.artist_id IS NOT NULL OR ta.artist_id IS NOT NULL
+                GROUP BY a.id
+                ORDER BY sort_position, a.name
+                """,
+                (release_id, release_id),
+            ).fetchall()
+        return [row_to_artist(row) for row in rows]
 
     def search_entities(
         self,
@@ -1943,7 +2206,9 @@ class Store:
         settings_json = _json_dumps(settings)
         state_json = _json_dumps(state)
         ended_at = now if status == "ended" else None
+        initial_track_ids = [int(track_id) for track_id in (track_ids or [])]
         with self.connect() as conn:
+            _validate_track_ids(conn, initial_track_ids)
             conn.execute(
                 """
                 INSERT INTO playback_sessions (
@@ -1979,7 +2244,7 @@ class Store:
                     "source_type": source_type,
                     "source_id": source_id,
                 }
-                for track_id in (track_ids or [])
+                for track_id in initial_track_ids
             ],
         )
         session = self.get_playback_session(session_id)
@@ -2002,6 +2267,8 @@ class Store:
         status: str | None = None,
         current_track_id: int | None = None,
         current_queue_item_id: str | None = None,
+        clear_current_track: bool = False,
+        clear_current_queue_item: bool = False,
         autoplay_enabled: bool | None = None,
         shuffle_enabled: bool | None = None,
         repeat_mode: str | None = None,
@@ -2016,10 +2283,16 @@ class Store:
             params.append(status)
             updates.append("ended_at = ?")
             params.append(utc_now() if status == "ended" else None)
-        if current_track_id is not None:
+        if clear_current_track:
+            updates.append("current_track_id = ?")
+            params.append(None)
+        elif current_track_id is not None:
             updates.append("current_track_id = ?")
             params.append(current_track_id)
-        if current_queue_item_id is not None:
+        if clear_current_queue_item:
+            updates.append("current_queue_item_id = ?")
+            params.append(None)
+        elif current_queue_item_id is not None:
             updates.append("current_queue_item_id = ?")
             params.append(current_queue_item_id)
         if autoplay_enabled is not None:
@@ -2087,6 +2360,7 @@ class Store:
         with self.connect() as conn:
             if not _playback_session_exists(conn, session_id):
                 raise ValueError(f"Playback session not found: {session_id}")
+            _validate_track_ids(conn, [int(item["track_id"]) for item in items])
             conn.execute("DELETE FROM queue_items WHERE session_id = ?", (session_id,))
             inserted: list[str] = []
             for index, item in enumerate(items):
@@ -2156,6 +2430,7 @@ class Store:
         with self.connect() as conn:
             if not _playback_session_exists(conn, session_id):
                 raise ValueError(f"Playback session not found: {session_id}")
+            _validate_track_ids(conn, [int(item["track_id"]) for item in items])
             max_position = conn.execute(
                 "SELECT COALESCE(MAX(position), -1) FROM queue_items WHERE session_id = ?",
                 (session_id,),
@@ -2426,7 +2701,11 @@ class Store:
                     (queue_item_id, int(queue_row["track_id"]), now, session_id),
                 )
             return
-        if event_type == "completed" and queue_item_id:
+        if (
+            event_type == "completed"
+            and queue_item_id
+            and playback_event_is_completion(row["position_seconds"], row["duration_seconds"], row["play_fraction"])
+        ):
             conn.execute(
                 "UPDATE queue_items SET status = 'played', updated_at = ? WHERE id = ?",
                 (now, queue_item_id),
@@ -2482,10 +2761,10 @@ class Store:
             after = self._get_track_preference_row(conn, track_id)
             delta["track"] = _preference_delta_dict(before, after)
         if release_id is not None:
-            self._apply_release_preference_event(conn, event_type, release_id, created_at, track_id is None)
+            self._apply_release_preference_event(conn, row, release_id, track_id is None)
             delta["release_id"] = release_id
         for artist_id in artist_ids:
-            self._apply_artist_preference_event(conn, event_type, artist_id, created_at, track_id is None)
+            self._apply_artist_preference_event(conn, row, artist_id, track_id is None)
         if artist_ids:
             delta["artist_ids"] = artist_ids
         return delta
@@ -2531,6 +2810,12 @@ class Store:
                 (created_at, created_at, track_id),
             )
         elif event_type == "completed":
+            if not playback_event_is_completion(
+                row["position_seconds"],
+                row["duration_seconds"],
+                row["play_fraction"],
+            ):
+                return
             conn.execute(
                 """
                 UPDATE user_track_preferences
@@ -2626,11 +2911,12 @@ class Store:
     def _apply_release_preference_event(
         self,
         conn: sqlite3.Connection,
-        event_type: str,
+        row: sqlite3.Row,
         release_id: int,
-        created_at: str,
         explicit_entity_event: bool,
     ) -> None:
+        event_type = str(row["event_type"])
+        created_at = str(row["created_at"])
         self._ensure_release_preference(conn, release_id, created_at)
         if event_type == "play_threshold_reached":
             conn.execute(
@@ -2643,6 +2929,12 @@ class Store:
                 (created_at, created_at, release_id),
             )
         elif event_type == "completed":
+            if not playback_event_is_completion(
+                row["position_seconds"],
+                row["duration_seconds"],
+                row["play_fraction"],
+            ):
+                return
             conn.execute(
                 """
                 UPDATE user_release_preferences
@@ -2653,13 +2945,18 @@ class Store:
                 (created_at, created_at, release_id),
             )
         elif event_type == "skipped":
+            score_delta = playback_skip_score_delta(
+                row["position_seconds"],
+                row["duration_seconds"],
+                row["play_fraction"],
+            )
             conn.execute(
                 """
                 UPDATE user_release_preferences
                 SET skip_count = skip_count + 1, score = score + ?, updated_at = ?
                 WHERE release_id = ?
                 """,
-                (-0.5, created_at, release_id),
+                (score_delta * 0.25, created_at, release_id),
             )
         elif event_type in {"liked", "saved_to_playlist"}:
             conn.execute(
@@ -2676,11 +2973,12 @@ class Store:
     def _apply_artist_preference_event(
         self,
         conn: sqlite3.Connection,
-        event_type: str,
+        row: sqlite3.Row,
         artist_id: int,
-        created_at: str,
         explicit_entity_event: bool,
     ) -> None:
+        event_type = str(row["event_type"])
+        created_at = str(row["created_at"])
         self._ensure_artist_preference(conn, artist_id, created_at)
         if event_type == "play_threshold_reached":
             conn.execute(
@@ -2693,6 +2991,12 @@ class Store:
                 (created_at, created_at, artist_id),
             )
         elif event_type == "completed":
+            if not playback_event_is_completion(
+                row["position_seconds"],
+                row["duration_seconds"],
+                row["play_fraction"],
+            ):
+                return
             conn.execute(
                 """
                 UPDATE user_artist_preferences
@@ -2703,13 +3007,18 @@ class Store:
                 (created_at, artist_id),
             )
         elif event_type == "skipped":
+            score_delta = playback_skip_score_delta(
+                row["position_seconds"],
+                row["duration_seconds"],
+                row["play_fraction"],
+            )
             conn.execute(
                 """
                 UPDATE user_artist_preferences
                 SET skip_count = skip_count + 1, score = score + ?, updated_at = ?
                 WHERE artist_id = ?
                 """,
-                (-0.5, created_at, artist_id),
+                (score_delta * 0.25, created_at, artist_id),
             )
         elif event_type in {"liked", "saved_to_playlist"}:
             conn.execute(
@@ -2773,6 +3082,145 @@ class Store:
             ).fetchone()
         return row_to_user_track_preference(row) if row else None
 
+    def import_external_track_play_state(
+        self,
+        track_id: int,
+        *,
+        play_count: int | None = None,
+        last_played_at: str | None = None,
+        liked: bool | None = None,
+    ) -> UserTrackPreference | None:
+        with self.connect() as conn:
+            self._import_external_track_play_state(
+                conn,
+                track_id,
+                play_count=play_count,
+                last_played_at=last_played_at,
+                liked=liked,
+            )
+            row = self._get_track_preference_row(conn, track_id)
+        return row_to_user_track_preference(row) if row else None
+
+    def _import_external_track_play_state(
+        self,
+        conn: sqlite3.Connection,
+        track_id: int,
+        *,
+        play_count: int | None = None,
+        last_played_at: str | None = None,
+        liked: bool | None = None,
+    ) -> None:
+        if play_count is None and last_played_at is None and liked is None:
+            return
+        now = utc_now()
+        self._ensure_track_preference(conn, track_id, now)
+        bounded_play_count = max(int(play_count), 0) if play_count is not None else None
+        play_score = min(float(bounded_play_count or 0) * 0.25, 5.0)
+        conn.execute(
+            """
+            UPDATE user_track_preferences
+            SET play_count = CASE
+                    WHEN ? IS NULL THEN play_count
+                    WHEN play_count < ? THEN ?
+                    ELSE play_count
+                END,
+                last_played_at = CASE
+                    WHEN ? IS NULL THEN last_played_at
+                    WHEN last_played_at IS NULL OR ? > last_played_at THEN ?
+                    ELSE last_played_at
+                END,
+                liked = CASE WHEN ? IS NULL THEN liked WHEN ? THEN 1 ELSE liked END,
+                disliked = CASE WHEN ? THEN 0 ELSE disliked END,
+                score = MAX(score, ? + CASE WHEN ? THEN 5.0 ELSE 0 END),
+                updated_at = ?
+            WHERE track_id = ?
+            """,
+            (
+                bounded_play_count,
+                bounded_play_count,
+                bounded_play_count,
+                last_played_at,
+                last_played_at,
+                last_played_at,
+                liked,
+                1 if liked else 0,
+                1 if liked else 0,
+                play_score,
+                1 if liked else 0,
+                now,
+                track_id,
+            ),
+        )
+        release_id = _release_id_for_track(conn, track_id)
+        if release_id is not None:
+            self._ensure_release_preference(conn, release_id, now)
+            conn.execute(
+                """
+                UPDATE user_release_preferences
+                SET play_count = CASE
+                        WHEN ? IS NULL THEN play_count
+                        WHEN play_count < ? THEN ?
+                        ELSE play_count
+                    END,
+                    last_played_at = CASE
+                        WHEN ? IS NULL THEN last_played_at
+                        WHEN last_played_at IS NULL OR ? > last_played_at THEN ?
+                        ELSE last_played_at
+                    END,
+                    liked = CASE WHEN ? THEN 1 ELSE liked END,
+                    score = MAX(score, ? + CASE WHEN ? THEN 5.0 ELSE 0 END),
+                    updated_at = ?
+                WHERE release_id = ?
+                """,
+                (
+                    bounded_play_count,
+                    bounded_play_count,
+                    bounded_play_count,
+                    last_played_at,
+                    last_played_at,
+                    last_played_at,
+                    1 if liked else 0,
+                    play_score,
+                    1 if liked else 0,
+                    now,
+                    release_id,
+                ),
+            )
+        for artist_id in _artist_ids_for_track(conn, track_id):
+            self._ensure_artist_preference(conn, artist_id, now)
+            conn.execute(
+                """
+                UPDATE user_artist_preferences
+                SET play_count = CASE
+                        WHEN ? IS NULL THEN play_count
+                        WHEN play_count < ? THEN ?
+                        ELSE play_count
+                    END,
+                    last_played_at = CASE
+                        WHEN ? IS NULL THEN last_played_at
+                        WHEN last_played_at IS NULL OR ? > last_played_at THEN ?
+                        ELSE last_played_at
+                    END,
+                    liked = CASE WHEN ? THEN 1 ELSE liked END,
+                    score = MAX(score, ? + CASE WHEN ? THEN 5.0 ELSE 0 END),
+                    updated_at = ?
+                WHERE artist_id = ?
+                """,
+                (
+                    bounded_play_count,
+                    bounded_play_count,
+                    bounded_play_count,
+                    last_played_at,
+                    last_played_at,
+                    last_played_at,
+                    1 if liked else 0,
+                    play_score,
+                    1 if liked else 0,
+                    now,
+                    artist_id,
+                ),
+            )
+
     def get_release_preference(self, release_id: int) -> UserReleasePreference | None:
         with self.connect() as conn:
             row = conn.execute(
@@ -2805,6 +3253,183 @@ class Store:
                 params,
             ).fetchall()
         return [row_to_playback_event(row) for row in rows]
+
+    def save_generated_mix(
+        self,
+        *,
+        mix_id: str,
+        title: str,
+        mix_type: str,
+        status: str = "active",
+        anchor: dict[str, object] | None = None,
+        settings: dict[str, object] | None = None,
+        score_summary: dict[str, object] | None = None,
+        items: list[dict[str, object]] | None = None,
+        expires_at: str | None = None,
+        saved_playlist_id: int | None = None,
+    ) -> GeneratedMix:
+        _require_choice(mix_type, GENERATED_MIX_TYPES, "mix_type")
+        _require_choice(status, GENERATED_MIX_STATUSES, "status")
+        now = utc_now()
+        mix_items = items or []
+        with self.connect() as conn:
+            _validate_track_ids(conn, [int(item["track_id"]) for item in mix_items])
+            existing = conn.execute(
+                "SELECT created_at FROM generated_mixes WHERE id = ?",
+                (mix_id,),
+            ).fetchone()
+            created_at = str(existing["created_at"]) if existing else now
+            conn.execute(
+                """
+                INSERT INTO generated_mixes (
+                    id, title, mix_type, status, anchor_json, settings_json,
+                    score_summary_json, created_at, updated_at, expires_at,
+                    saved_playlist_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    mix_type = excluded.mix_type,
+                    status = excluded.status,
+                    anchor_json = excluded.anchor_json,
+                    settings_json = excluded.settings_json,
+                    score_summary_json = excluded.score_summary_json,
+                    updated_at = excluded.updated_at,
+                    expires_at = excluded.expires_at,
+                    saved_playlist_id = excluded.saved_playlist_id
+                """,
+                (
+                    mix_id,
+                    title,
+                    mix_type,
+                    status,
+                    _json_dumps(anchor),
+                    _json_dumps(settings),
+                    _json_dumps(score_summary),
+                    created_at,
+                    now,
+                    expires_at,
+                    saved_playlist_id,
+                ),
+            )
+            conn.execute("DELETE FROM generated_mix_items WHERE mix_id = ?", (mix_id,))
+            for index, item in enumerate(mix_items):
+                conn.execute(
+                    """
+                    INSERT INTO generated_mix_items (
+                        mix_id, position, track_id, score, score_breakdown_json,
+                        reason_json, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        mix_id,
+                        int(item.get("position", index)),
+                        int(item["track_id"]),
+                        _optional_float(item.get("score")),
+                        _json_dumps(item.get("score_breakdown"))
+                        if isinstance(item.get("score_breakdown"), dict)
+                        else item.get("score_breakdown_json"),
+                        _json_dumps(item.get("reason"))
+                        if isinstance(item.get("reason"), dict)
+                        else item.get("reason_json"),
+                        now,
+                    ),
+                )
+            row = conn.execute(
+                "SELECT * FROM generated_mixes WHERE id = ?",
+                (mix_id,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError(f"Generated mix not found after save: {mix_id}")
+        return row_to_generated_mix(row)
+
+    def list_generated_mixes(
+        self,
+        *,
+        statuses: list[str] | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[GeneratedMix]:
+        status_values = statuses or ["active", "saved"]
+        for status in status_values:
+            _require_choice(status, GENERATED_MIX_STATUSES, "status")
+        placeholders = ", ".join("?" for _ in status_values)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM generated_mixes
+                WHERE status IN ({placeholders})
+                ORDER BY updated_at DESC, created_at DESC, id
+                LIMIT ? OFFSET ?
+                """,
+                [*status_values, int(limit), int(offset)],
+            ).fetchall()
+        return [row_to_generated_mix(row) for row in rows]
+
+    def count_generated_mixes(self, statuses: list[str] | None = None) -> int:
+        status_values = statuses or ["active", "saved"]
+        for status in status_values:
+            _require_choice(status, GENERATED_MIX_STATUSES, "status")
+        placeholders = ", ".join("?" for _ in status_values)
+        with self.connect() as conn:
+            return int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM generated_mixes WHERE status IN ({placeholders})",
+                    status_values,
+                ).fetchone()[0]
+            )
+
+    def get_generated_mix(self, mix_id: str) -> GeneratedMix | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM generated_mixes WHERE id = ?",
+                (mix_id,),
+            ).fetchone()
+        return row_to_generated_mix(row) if row else None
+
+    def list_generated_mix_items(self, mix_id: str) -> list[GeneratedMixItem]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM generated_mix_items
+                WHERE mix_id = ?
+                ORDER BY position
+                """,
+                (mix_id,),
+            ).fetchall()
+        return [row_to_generated_mix_item(row) for row in rows]
+
+    def save_generated_mix_as_playlist(self, mix_id: str) -> GeneratedMix | None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE generated_mixes
+                SET status = 'saved', updated_at = ?
+                WHERE id = ? AND status != 'archived'
+                """,
+                (now, mix_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM generated_mixes WHERE id = ?",
+                (mix_id,),
+            ).fetchone()
+        return row_to_generated_mix(row) if row else None
+
+    def mark_generated_mixes_stale(self, *, mix_type: str | None = None) -> int:
+        params: list[object] = [utc_now()]
+        where = "status = 'active'"
+        if mix_type is not None:
+            _require_choice(mix_type, GENERATED_MIX_TYPES, "mix_type")
+            where += " AND mix_type = ?"
+            params.append(mix_type)
+        with self.connect() as conn:
+            cursor = conn.execute(
+                f"UPDATE generated_mixes SET status = 'stale', updated_at = ? WHERE {where}",
+                params,
+            )
+            return int(cursor.rowcount)
 
     def recompute_user_preferences(self) -> None:
         with self.connect() as conn:
@@ -4947,6 +5572,7 @@ def row_to_track(row: sqlite3.Row) -> Track:
         file_size=int(row["file_size"]),
         mtime=int(row["mtime"]),
         missing_at=row["missing_at"] if "missing_at" in row.keys() else None,
+        added_at=row["added_at"] if "added_at" in row.keys() else None,
     )
 
 
@@ -4986,6 +5612,7 @@ def row_to_release(row: sqlite3.Row) -> Release:
         catalog_number=row["catalog_number"],
         identity_key=str(row["identity_key"]),
         identity_confidence=str(row["identity_confidence"]),
+        added_at=row["added_at"] if "added_at" in row.keys() else None,
     )
 
 
@@ -5093,6 +5720,34 @@ def row_to_user_artist_preference(row: sqlite3.Row) -> UserArtistPreference:
     )
 
 
+def row_to_generated_mix(row: sqlite3.Row) -> GeneratedMix:
+    return GeneratedMix(
+        id=str(row["id"]),
+        title=str(row["title"]),
+        mix_type=str(row["mix_type"]),
+        status=str(row["status"]),
+        anchor_json=row["anchor_json"],
+        settings_json=row["settings_json"],
+        score_summary_json=row["score_summary_json"],
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+        expires_at=row["expires_at"],
+        saved_playlist_id=int(row["saved_playlist_id"]) if row["saved_playlist_id"] is not None else None,
+    )
+
+
+def row_to_generated_mix_item(row: sqlite3.Row) -> GeneratedMixItem:
+    return GeneratedMixItem(
+        mix_id=str(row["mix_id"]),
+        position=int(row["position"]),
+        track_id=int(row["track_id"]),
+        score=float(row["score"]) if row["score"] is not None else None,
+        score_breakdown_json=row["score_breakdown_json"],
+        reason_json=row["reason_json"],
+        created_at=str(row["created_at"]),
+    )
+
+
 def _discography_group_key(release_type: str, featured_only: bool) -> str:
     if featured_only:
         return "featured_in"
@@ -5139,6 +5794,7 @@ def _envelope_from_track_with_external(
         provider=str(row["external_provider"]),
         provider_track_id=str(row["external_id"]),
         provider_release_id=album_id,
+        provider_artist_id=_raw_value(raw, "artistId", "artist_id"),
         raw_json=raw_json,
     )
 
@@ -5235,6 +5891,19 @@ def playback_event_is_early_skip(
     return fraction is not None and fraction < EARLY_SKIP_FRACTION
 
 
+def playback_event_is_completion(
+    position_seconds: object | None,
+    duration_seconds: object | None,
+    play_fraction: object | None,
+) -> bool:
+    fraction = _normalized_play_fraction(
+        float(play_fraction) if play_fraction is not None else None,
+        position_seconds=float(position_seconds) if position_seconds is not None else None,
+        duration_seconds=float(duration_seconds) if duration_seconds is not None else None,
+    )
+    return fraction is None or fraction >= COMPLETION_FRACTION
+
+
 def playback_skip_score_delta(
     position_seconds: object | None,
     duration_seconds: object | None,
@@ -5257,6 +5926,22 @@ def _playback_session_exists(conn: sqlite3.Connection, session_id: str) -> bool:
         "SELECT 1 FROM playback_sessions WHERE id = ?",
         (session_id,),
     ).fetchone() is not None
+
+
+def _validate_track_ids(conn: sqlite3.Connection, track_ids: list[int]) -> None:
+    if not track_ids:
+        return
+    unique_ids = sorted(set(int(track_id) for track_id in track_ids))
+    placeholders = ", ".join("?" for _ in unique_ids)
+    rows = conn.execute(
+        f"SELECT id FROM tracks WHERE id IN ({placeholders})",
+        unique_ids,
+    ).fetchall()
+    found = {int(row["id"]) for row in rows}
+    missing = [track_id for track_id in unique_ids if track_id not in found]
+    if missing:
+        formatted = ", ".join(str(track_id) for track_id in missing)
+        raise ValueError(f"Tracks not found: {formatted}")
 
 
 def _release_id_for_track(conn: sqlite3.Connection, track_id: int) -> int | None:
@@ -5287,11 +5972,7 @@ def _primary_artist_id_for_track(conn: sqlite3.Connection, track_id: int) -> int
     return int(row["artist_id"]) if row else None
 
 
-def _artist_ids_for_event(conn: sqlite3.Connection, row: sqlite3.Row) -> list[int]:
-    if row["artist_id"] is not None:
-        return [int(row["artist_id"])]
-    if row["track_id"] is None:
-        return []
+def _artist_ids_for_track(conn: sqlite3.Connection, track_id: int) -> list[int]:
     rows = conn.execute(
         """
         SELECT artist_id
@@ -5299,9 +5980,17 @@ def _artist_ids_for_event(conn: sqlite3.Connection, row: sqlite3.Row) -> list[in
         WHERE track_id = ? AND role = 'primary'
         ORDER BY position
         """,
-        (int(row["track_id"]),),
+        (track_id,),
     ).fetchall()
     return [int(item["artist_id"]) for item in rows]
+
+
+def _artist_ids_for_event(conn: sqlite3.Connection, row: sqlite3.Row) -> list[int]:
+    if row["artist_id"] is not None:
+        return [int(row["artist_id"])]
+    if row["track_id"] is None:
+        return []
+    return _artist_ids_for_track(conn, int(row["track_id"]))
 
 
 def _preference_delta_dict(

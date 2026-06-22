@@ -20,6 +20,8 @@ from typing import Callable
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 import numpy as np
@@ -27,6 +29,10 @@ from starlette.background import BackgroundTask
 
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR, AudioFeatureAnalyzer
 from app.audio_source import is_navidrome_track, track_audio_path
+from app.autoplay import (
+    autoplay_default_settings,
+    refill_autoplay_queue,
+)
 from app.config import (
     DISCOGS_EFFNET_MODEL,
     MODEL_FILES,
@@ -46,7 +52,11 @@ from app.head_pack import (
     required_model_files,
 )
 from app.logging_config import configure_logging, get_analysis_logger, get_navidrome_plugin_logger
-from app.navidrome import NavidromeClient
+from app.mixes import (
+    generate_mixes,
+    generated_mix_default_settings,
+)
+from app.navidrome import NavidromeClient, artist_info_bio, artist_info_image_url
 from app.navidrome_starred import (
     build_starred_catalog,
     build_starred_track_ids,
@@ -58,9 +68,15 @@ from app.store import (
     AnalysisTask,
     Artist,
     ArtistSummaryRow,
+    COMPLETION_FRACTION,
+    EARLY_SKIP_FRACTION,
+    EARLY_SKIP_SECONDS,
     FeatureFilter,
     FeatureTrack,
     InstantMixRequest,
+    LATE_SKIP_FRACTION,
+    MEANINGFUL_LISTEN_FRACTION,
+    MEANINGFUL_LISTEN_SECONDS,
     ReleaseSummaryRow,
     ReleaseTrackRow,
     Store,
@@ -68,6 +84,7 @@ from app.store import (
     TrackFeature,
     TrackPrediction,
     row_to_track,
+    playback_event_is_completion,
     similar_track_dict,
     track_dict,
     track_listing_dict,
@@ -115,6 +132,162 @@ ACTIVE_JOB_STATUSES = {"queued", "running"}
 TEXT_SEARCH_EMBEDDER_LOCK = Lock()
 TEXT_SEARCH_EMBEDDER: MuqMulanEmbedder | None = None
 UI_BUILD_ID = "likes-remote-only-20260611-1918"
+
+
+class ApiErrorDetail(BaseModel):
+    code: str
+    message: str
+
+
+class ApiErrorResponse(BaseModel):
+    error: ApiErrorDetail
+
+
+class ImageRefResponse(BaseModel):
+    url: str | None
+    source: str
+    placeholder: bool
+
+
+class EntityActionResponse(BaseModel):
+    type: str
+    enabled: bool
+    endpoint: str | None = None
+
+
+class ArtistLinkResponse(BaseModel):
+    id: int
+    name: str
+
+
+class LibraryStatsResponse(BaseModel):
+    tracks: int
+    releases: int
+    liked_tracks: int
+    plays: int
+
+
+class ArtistSummaryResponse(BaseModel):
+    id: int
+    name: str
+    image: ImageRefResponse
+    library_stats: LibraryStatsResponse
+    sort_name: str | None = None
+
+
+class ReleaseSummaryResponse(BaseModel):
+    id: int
+    title: str
+    release_type: str
+    release_type_label: str
+    artists: list[ArtistLinkResponse]
+    release_date: str | None
+    release_year: int | None
+    track_count: int
+    duration: float | None
+    artwork: ImageRefResponse
+
+
+class TrackReleaseLinkResponse(BaseModel):
+    id: int
+    title: str
+
+
+class TrackSummaryResponse(BaseModel):
+    id: int
+    title: str
+    artists: list[ArtistLinkResponse]
+    duration: float | None
+    release: TrackReleaseLinkResponse | None
+    artwork: ImageRefResponse
+    explicit: bool
+    liked: bool
+    actions: list[EntityActionResponse]
+
+
+class ReleaseTrackItemResponse(TrackSummaryResponse):
+    disc_number: int | None
+    track_number: int | None
+    position: int
+
+
+class SearchTopResultResponse(BaseModel):
+    entity_type: str
+    entity: dict[str, object]
+
+
+class SearchGroupResponse(BaseModel):
+    type: str
+    title: str
+    items: list[dict[str, object]]
+    total: int
+    next_offset: int | None
+
+
+class SearchResponse(BaseModel):
+    query: str
+    top_result: SearchTopResultResponse | None
+    groups: list[SearchGroupResponse]
+
+
+class ArtistResponse(BaseModel):
+    artist: ArtistSummaryResponse
+    actions: list[EntityActionResponse]
+    links: dict[str, str]
+
+
+class DiscographyGroupResponse(BaseModel):
+    key: str
+    title: str
+    items: list[dict[str, object]]
+
+
+class ArtistDiscographyResponse(BaseModel):
+    artist: ArtistLinkResponse
+    groups: list[DiscographyGroupResponse]
+
+
+class AvailabilityStubResponse(BaseModel):
+    artist: ArtistLinkResponse | None = None
+    release: TrackReleaseLinkResponse | None = None
+    items: list[dict[str, object]]
+    available: bool
+    basis: str
+
+
+class ArtistAvailabilityStubResponse(BaseModel):
+    artist: ArtistLinkResponse
+    items: list[dict[str, object]]
+    available: bool
+    basis: str
+
+
+class ReleaseAvailabilityStubResponse(BaseModel):
+    release: TrackReleaseLinkResponse
+    items: list[dict[str, object]]
+    available: bool
+    basis: str
+
+
+class ReleaseResponse(BaseModel):
+    release: ReleaseSummaryResponse
+    actions: list[EntityActionResponse]
+    links: dict[str, str]
+
+
+class ReleaseTracksResponse(BaseModel):
+    release: TrackReleaseLinkResponse
+    items: list[ReleaseTrackItemResponse]
+
+
+class RelatedDiscographyResponse(BaseModel):
+    release: TrackReleaseLinkResponse
+    context_artists: list[ArtistLinkResponse]
+    items: list[ReleaseSummaryResponse]
+
+
+class ImageInfoResponse(BaseModel):
+    image: ImageRefResponse
 
 
 def should_log_http_request(path: str) -> bool:
@@ -425,7 +598,7 @@ class PlaybackSessionCreateRequest(BaseModel):
     mode: str = Field(default="linear", pattern="^(linear|shuffle|radio|flow|autoplay)$")
     track_id: int | None = None
     track_ids: list[int] = Field(default_factory=list)
-    autoplay_enabled: bool = False
+    autoplay_enabled: bool = True
     shuffle_enabled: bool = False
     repeat_mode: str = Field(default="off", pattern="^(off|one|all)$")
     settings: dict[str, object] = Field(default_factory=dict)
@@ -484,6 +657,111 @@ class PlaybackEventRequest(BaseModel):
     payload: dict[str, object] = Field(default_factory=dict)
 
 
+class PlaybackSessionSummaryResponse(BaseModel):
+    id: str
+    source_type: str
+    source_id: int | None = None
+    source_label: str | None = None
+    mode: str
+    status: str
+    current_track_id: int | None = None
+    current_queue_item_id: str | None = None
+    current_track: dict[str, object] | None = None
+    autoplay_enabled: bool
+    shuffle_enabled: bool
+    repeat_mode: str
+    started_at: str
+    updated_at: str
+    ended_at: str | None = None
+    settings: dict[str, object]
+    state: dict[str, object]
+
+
+class PlaybackQueueItemResponse(BaseModel):
+    id: str
+    session_id: str
+    track_id: int
+    track: dict[str, object] | None = None
+    position: int
+    origin: str
+    source_type: str | None = None
+    source_id: int | None = None
+    status: str
+    locked: bool
+    reason: str | None = None
+    score: float | None = None
+    created_at: str
+    updated_at: str
+    debug: dict[str, object] | None = None
+
+
+class PlaybackQueueResponse(BaseModel):
+    items: list[PlaybackQueueItemResponse]
+    current_index: int
+    current_item: PlaybackQueueItemResponse | None = None
+    upcoming: list[PlaybackQueueItemResponse]
+    played: list[PlaybackQueueItemResponse]
+    source_items: list[PlaybackQueueItemResponse]
+    generated_items: list[PlaybackQueueItemResponse]
+    autoplay_pool: list[dict[str, object]] = Field(default_factory=list)
+
+
+class PlaybackSessionEnvelopeResponse(BaseModel):
+    session: PlaybackSessionSummaryResponse
+    queue: PlaybackQueueResponse
+
+
+class PlaybackEventSummaryResponse(BaseModel):
+    id: str
+    session_id: str | None = None
+    queue_item_id: str | None = None
+    track_id: int | None = None
+    release_id: int | None = None
+    artist_id: int | None = None
+    event_type: str
+    position_seconds: float | None = None
+    duration_seconds: float | None = None
+    play_fraction: float | None = None
+    created_at: str
+    client_event_id: str | None = None
+    source: str
+    payload: dict[str, object]
+
+
+class PlaybackEventIngestResponse(BaseModel):
+    accepted: bool
+    duplicate: bool
+    event_id: str
+    event: PlaybackEventSummaryResponse
+    preference_delta: dict[str, object]
+    navidrome_scrobble: dict[str, object] | None = None
+
+
+class PlaybackSettingsResponse(BaseModel):
+    settings: dict[str, object]
+
+
+class AutoplayRefillRequest(BaseModel):
+    session_id: str
+    visible_buffer: int | None = Field(default=None, ge=1, le=50)
+    candidate_count: int | None = Field(default=None, ge=1, le=500)
+    settings: dict[str, object] = Field(default_factory=dict)
+
+
+class AutoplayRefillResponse(BaseModel):
+    session_id: str
+    added_items: list[PlaybackQueueItemResponse]
+    candidate_count: int
+    debug: dict[str, object] | None = None
+
+
+class MixGenerateRequest(BaseModel):
+    count: int = Field(default=6, ge=1, le=20)
+    tracks_per_mix: int = Field(default=100, ge=1, le=300)
+    force: bool = False
+    settings: dict[str, object] = Field(default_factory=dict)
+
+
 def context() -> tuple[Store, Settings]:
     settings = Settings.from_env()
     store = Store(settings.db_path)
@@ -512,6 +790,34 @@ def instant_mix_settings(settings: Settings) -> dict[str, object]:
         "exclude_same_album": bool(saved.get("exclude_same_album", True)),
         "count_collaboration_artists": bool(saved.get("count_collaboration_artists", True)),
     }
+
+
+def playback_settings_defaults() -> dict[str, object]:
+    settings = {
+        "meaningful_listen_seconds": MEANINGFUL_LISTEN_SECONDS,
+        "meaningful_listen_fraction": MEANINGFUL_LISTEN_FRACTION,
+        "early_skip_seconds": EARLY_SKIP_SECONDS,
+        "early_skip_fraction": EARLY_SKIP_FRACTION,
+        "late_skip_fraction": LATE_SKIP_FRACTION,
+        "completion_fraction": COMPLETION_FRACTION,
+        "progress_event_frequency_seconds": 10,
+        "visible_queue_size": 25,
+    }
+    settings.update(autoplay_default_settings())
+    settings.update(generated_mix_default_settings())
+    return settings
+
+
+def playback_session_settings(request_settings: dict[str, object]) -> dict[str, object]:
+    settings = playback_settings_defaults()
+    settings.update(request_settings)
+    return settings
+
+
+def request_field_names(model: BaseModel) -> set[str]:
+    if hasattr(model, "model_fields_set"):
+        return set(model.model_fields_set)
+    return set(getattr(model, "__fields_set__", set()))
 
 
 def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
@@ -675,6 +981,23 @@ def api_error(status_code: int, code: str, message: str) -> JSONResponse:
     )
 
 
+@app.exception_handler(RequestValidationError)
+async def api_v1_validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError,
+):
+    if not request.url.path.startswith("/api/v1"):
+        return await request_validation_exception_handler(request, exc)
+    errors = exc.errors()
+    message = "Invalid request"
+    if errors:
+        first = errors[0]
+        location = ".".join(str(part) for part in first.get("loc", []) if part != "query")
+        detail = str(first.get("msg") or message)
+        message = f"{location}: {detail}" if location else detail
+    return api_error(422, "invalid_request", message)
+
+
 def image_ref(url: str | None, source: str = "none") -> dict[str, object]:
     return {"url": url, "source": source if url else "none", "placeholder": url is None}
 
@@ -709,6 +1032,29 @@ def artist_summary_dict(row: ArtistSummaryRow | Artist) -> dict[str, object]:
             "plays": 0,
         },
     }
+
+
+def artist_summary_with_external_image(
+    store: Store,
+    settings: Settings,
+    row: ArtistSummaryRow | Artist,
+) -> dict[str, object]:
+    artist = row.artist if isinstance(row, ArtistSummaryRow) else row
+    if not artist.image_url:
+        external_id = store.external_id_for_entity("navidrome", "artist", artist.id)
+        if external_id:
+            try:
+                info = NavidromeClient(settings.navidrome).get_artist_info2(external_id, count=0)
+                image_url = artist_info_image_url(info)
+                bio = artist_info_bio(info)
+                store.update_artist_external_info(artist.id, image_url=image_url, bio=bio)
+                if image_url or bio:
+                    refreshed = store.get_artist(artist.id)
+                    if refreshed is not None:
+                        row = refreshed
+            except Exception as exc:
+                logger.warning("Navidrome artist info lookup failed artist_id=%s external_id=%s: %s", artist.id, external_id, exc)
+    return artist_summary_dict(row)
 
 
 def artist_link_dict(artist: Artist) -> dict[str, object]:
@@ -864,7 +1210,44 @@ def playback_queue_dict(store: Store, session, items, include_debug: bool = Fals
             for item in items
             if item.origin in {"autoplay", "flow", "generated_mix"}
         ],
+        "autoplay_pool": autoplay_pool_dict(store, session, include_debug=include_debug),
     }
+
+
+def autoplay_pool_dict(store: Store, session, include_debug: bool = False) -> list[dict[str, object]]:
+    state = _json_object(session.state_json)
+    raw_pool = state.get("autoplay_pool")
+    if not isinstance(raw_pool, list):
+        return []
+    result: list[dict[str, object]] = []
+    for index, raw_item in enumerate(raw_pool):
+        if not isinstance(raw_item, dict):
+            continue
+        try:
+            track_id = int(raw_item["track_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        track = store.get_track(track_id)
+        if track is None:
+            continue
+        item: dict[str, object] = {
+            "id": f"autoplay-pool-{track_id}",
+            "session_id": session.id,
+            "track_id": track_id,
+            "track": track_summary_dict(store, track),
+            "position": index,
+            "origin": "autoplay_pool",
+            "source_type": raw_item.get("source_type"),
+            "source_id": raw_item.get("source_id"),
+            "status": "prepared",
+            "locked": False,
+            "reason": raw_item.get("reason"),
+            "score": raw_item.get("score"),
+        }
+        if include_debug and isinstance(raw_item.get("debug"), dict):
+            item["debug"] = raw_item["debug"]
+        result.append(item)
+    return result
 
 
 def playback_event_dict(event) -> dict[str, object]:
@@ -884,6 +1267,84 @@ def playback_event_dict(event) -> dict[str, object]:
         "source": event.source,
         "payload": _json_object(event.payload_json),
     }
+
+
+def playback_event_time_ms(created_at: str) -> int | None:
+    try:
+        value = datetime.fromisoformat(created_at)
+    except ValueError:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return int(value.timestamp() * 1000)
+
+
+def should_scrobble_navidrome_play(store: Store, result) -> bool:
+    event = result.event
+    if result.duplicate or event.track_id is None:
+        return False
+    if event.event_type == "play_threshold_reached":
+        return True
+    if event.event_type != "completed" or not playback_event_is_completion(
+        event.position_seconds,
+        event.duration_seconds,
+        event.play_fraction,
+    ):
+        return False
+    if not event.session_id:
+        return True
+    for prior in store.list_playback_events(event.session_id):
+        if prior.id == event.id:
+            continue
+        if prior.event_type not in {"play_threshold_reached", "completed"}:
+            continue
+        same_queue_item = event.queue_item_id and prior.queue_item_id == event.queue_item_id
+        same_track_without_queue = not event.queue_item_id and prior.track_id == event.track_id
+        if same_queue_item or same_track_without_queue:
+            return False
+    return True
+
+
+def navidrome_scrobble_submission(store: Store, result) -> tuple[bool, str] | None:
+    event = result.event
+    if result.duplicate:
+        return None
+    if event.track_id is None:
+        return None
+    if event.event_type == "track_started":
+        return (False, "now_playing")
+    if should_scrobble_navidrome_play(store, result):
+        return (True, "submission")
+    return None
+
+
+def maybe_scrobble_navidrome_play(store: Store, settings: Settings, result) -> dict[str, object]:
+    decision = navidrome_scrobble_submission(store, result)
+    if decision is None:
+        return {"status": "skipped", "reason": "event_not_scrobbleable"}
+    submission, mode = decision
+    track_id = result.event.track_id
+    if track_id is None:
+        return {"status": "skipped", "reason": "missing_track_id"}
+    item_id = store.external_id_for_track("navidrome", track_id)
+    if not item_id:
+        return {"status": "skipped", "reason": "no_navidrome_mapping", "track_id": track_id}
+    try:
+        NavidromeClient(settings.navidrome).scrobble_song(
+            item_id,
+            played_at_ms=playback_event_time_ms(result.event.created_at),
+            submission=submission,
+        )
+    except Exception as exc:
+        navidrome_logger.warning(
+            "Navidrome scrobble failed track_id=%s item_id=%s event_id=%s error=%s",
+            track_id,
+            item_id,
+            result.event.id,
+            exc,
+        )
+        return {"status": "failed", "mode": mode, "track_id": track_id, "item_id": item_id, "error": str(exc)}
+    return {"status": "ok", "mode": mode, "track_id": track_id, "item_id": item_id, "submission": submission}
 
 
 def playback_session_response(store: Store, session, include_debug: bool = False) -> dict[str, object]:
@@ -947,6 +1408,50 @@ def search_group(group_type: str, title: str, items: list[dict[str, object]], to
         "total": total,
         "next_offset": next_offset,
     }
+
+
+def _field_search_score(query: str, value: object) -> int:
+    if not isinstance(value, str) or not query:
+        return 0
+    query_text = query.casefold()
+    value_text = value.casefold()
+    if value_text == query_text:
+        return 100
+    if value_text.startswith(query_text):
+        return 80
+    if query_text in value_text:
+        return 50
+    return 0
+
+
+def _entity_search_score(query: str, entity_type: str, entity: dict[str, object]) -> int:
+    score = _field_search_score(query, entity.get("name") or entity.get("title"))
+    if entity_type in {"release", "track"}:
+        for artist in entity.get("artists") or []:
+            if isinstance(artist, dict):
+                score = max(score, _field_search_score(query, artist.get("name")))
+    if entity_type == "track":
+        release = entity.get("release")
+        if isinstance(release, dict):
+            score = max(score, _field_search_score(query, release.get("title")))
+    tie_breaker = {"artist": 3, "release": 2, "track": 1}.get(entity_type, 0)
+    return score * 10 + tie_breaker if score else tie_breaker
+
+
+def search_top_result(
+    query: str,
+    artists: list[dict[str, object]],
+    releases: list[dict[str, object]],
+    tracks: list[dict[str, object]],
+) -> dict[str, object] | None:
+    candidates: list[tuple[int, str, dict[str, object]]] = []
+    for entity_type, items in (("artist", artists), ("release", releases), ("track", tracks)):
+        for item in items:
+            candidates.append((_entity_search_score(query, entity_type, item), entity_type, item))
+    if not candidates:
+        return None
+    _score, entity_type, entity = max(candidates, key=lambda item: item[0])
+    return {"entity_type": entity_type, "entity": entity}
 
 
 def _compact_artist_names(artists: list[dict[str, object]]) -> str:
@@ -1022,11 +1527,92 @@ def _track_shelf_item(store: Store, track: Track, artists: list[Artist], reason:
     )
 
 
+def generated_mix_summary_dict(store: Store, mix) -> dict[str, object]:
+    items = store.list_generated_mix_items(mix.id)
+    anchor = _json_object(mix.anchor_json)
+    settings = _json_object(mix.settings_json)
+    score_summary = _json_object(mix.score_summary_json)
+    subtitle_parts = [str(value) for value in anchor.get("top_artists", [])[:3] if value]
+    subtitle = ", ".join(subtitle_parts) if subtitle_parts else f"{len(items)} tracks"
+    return {
+        "id": mix.id,
+        "title": mix.title,
+        "mix_type": mix.mix_type,
+        "status": mix.status,
+        "subtitle": subtitle,
+        "track_count": len(items),
+        "anchor": anchor,
+        "settings": settings,
+        "score_summary": score_summary,
+        "created_at": mix.created_at,
+        "updated_at": mix.updated_at,
+        "expires_at": mix.expires_at,
+        "saved_playlist_id": mix.saved_playlist_id,
+        "action": {"type": "open", "target": f"/mixes/{mix.id}"},
+        "play_action": {"type": "post", "endpoint": f"/api/v1/mixes/{mix.id}/play"},
+    }
+
+
+def generated_mix_detail_dict(store: Store, mix) -> dict[str, object]:
+    item_rows = store.list_generated_mix_items(mix.id)
+    tracks = store.get_tracks([item.track_id for item in item_rows])
+    artists_by_track = store.artists_for_tracks([item.track_id for item in item_rows])
+    items: list[dict[str, object]] = []
+    for item in item_rows:
+        track = tracks.get(item.track_id)
+        items.append(
+            {
+                "mix_id": item.mix_id,
+                "position": item.position,
+                "track_id": item.track_id,
+                "track": track_summary_dict(store, track, artists_by_track.get(item.track_id, [])) if track else None,
+                "score": item.score,
+                "score_breakdown": _json_object(item.score_breakdown_json),
+                "reason": _json_object(item.reason_json),
+                "created_at": item.created_at,
+            }
+        )
+    summary = generated_mix_summary_dict(store, mix)
+    summary["items"] = items
+    summary["actions"] = {
+        "save": {"method": "POST", "endpoint": f"/api/v1/mixes/{mix.id}/save"},
+        "play": {"method": "POST", "endpoint": f"/api/v1/mixes/{mix.id}/play"},
+    }
+    return summary
+
+
+def _dashboard_generated_mixes(store: Store, limit: int, offset: int, include_debug: bool = False) -> tuple[list[dict[str, object]], int]:
+    mixes = store.list_generated_mixes(statuses=["active", "saved"], limit=limit, offset=offset)
+    items: list[dict[str, object]] = []
+    for mix in mixes:
+        summary = generated_mix_summary_dict(store, mix)
+        item = {
+            "id": f"generated_mix:{mix.id}",
+            "entity_type": "generated_mix",
+            "entity_id": mix.id,
+            "title": summary["title"],
+            "subtitle": summary["subtitle"],
+            "artwork": image_ref(None, "none"),
+            "action": summary["action"],
+            "play_action": summary["play_action"],
+            "badges": [str(summary["track_count"]) + " tracks", str(mix.status)],
+            "reason": "Generated from your taste regions",
+        }
+        if include_debug:
+            item["debug"] = {
+                "anchor": summary["anchor"],
+                "score_summary": summary["score_summary"],
+                "settings": summary["settings"],
+            }
+        items.append(item)
+    return items, store.count_generated_mixes(statuses=["active", "saved"])
+
+
 def _dashboard_recently_added(store: Store, limit: int, offset: int, include_debug: bool = False) -> tuple[list[dict[str, object]], int]:
     with store.connect() as conn:
         rows = conn.execute(
             """
-            SELECT r.id, MAX(COALESCE(t.created_at, rt.created_at, r.created_at)) AS added_at
+            SELECT r.id, COALESCE(r.added_at, MAX(COALESCE(t.added_at, t.created_at, rt.created_at, r.created_at))) AS added_at
             FROM releases r
             JOIN release_tracks rt ON rt.release_id = r.id
             JOIN tracks t ON t.id = rt.track_id
@@ -1066,7 +1652,7 @@ def _dashboard_listen_again(store: Store, limit: int, offset: int, include_debug
     with store.connect() as conn:
         rows = conn.execute(
             """
-            SELECT t.*, p.liked, p.completion_count, p.replay_count, p.score,
+            SELECT t.*, p.liked, p.play_count, p.completion_count, p.replay_count, p.score,
                    p.last_played_at, p.last_completed_at, p.last_skipped_at
             FROM user_track_preferences p
             JOIN tracks t ON t.id = p.track_id
@@ -1109,8 +1695,12 @@ def _dashboard_listen_again(store: Store, limit: int, offset: int, include_debug
             reason = "You liked this"
         elif int(row["replay_count"] or 0):
             reason = f"Replayed {int(row['replay_count'])} times"
+        elif int(row["completion_count"] or 0):
+            reason = f"Completed {int(row['completion_count'])} times"
+        elif int(row["play_count"] or 0):
+            reason = f"Played {int(row['play_count'])} times"
         else:
-            reason = f"Completed {int(row['completion_count'] or 0)} times"
+            reason = "Played before"
         item = _track_shelf_item(store, track, artists_by_track.get(track.id, []), reason)
         if include_debug:
             item["debug"] = {
@@ -1180,6 +1770,7 @@ def dashboard_shelf_response(
         "recently_added": ("Recently Added", "New in your collection"),
         "listen_again": ("Listen Again", "Tracks with positive listening history"),
         "long_time_no_listen": ("Long Time No Listen", "Good tracks that fell out of rotation"),
+        "mixes_for_you": ("Mixes For You", "Generated finite mixes from taste regions"),
     }
     if key not in titles:
         return None
@@ -1187,8 +1778,10 @@ def dashboard_shelf_response(
         items, total = _dashboard_recently_added(store, limit, offset, include_debug)
     elif key == "listen_again":
         items, total = _dashboard_listen_again(store, limit, offset, include_debug)
-    else:
+    elif key == "long_time_no_listen":
         items, total = _dashboard_long_time_no_listen(store, limit, offset, include_debug)
+    else:
+        items, total = _dashboard_generated_mixes(store, limit, offset, include_debug)
     title, subtitle = titles[key]
     next_offset = offset + limit if offset + limit < total else None
     return {
@@ -1973,7 +2566,53 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/api/v1/playback/sessions", response_model=None)
+@app.get("/api/v1/playback/settings", response_model=PlaybackSettingsResponse)
+def api_v1_playback_settings() -> dict[str, object]:
+    return {"settings": playback_settings_defaults()}
+
+
+@app.post("/api/v1/autoplay/refill", response_model=AutoplayRefillResponse)
+def api_v1_autoplay_refill(
+    request: AutoplayRefillRequest,
+    include_debug: bool = Query(False),
+) -> dict[str, object] | JSONResponse:
+    store, settings = context()
+    session = store.get_playback_session(request.session_id)
+    if session is None:
+        return api_error(404, "not_found", "Playback session not found")
+    if not session.autoplay_enabled:
+        return {
+            "session_id": session.id,
+            "added_items": [],
+            "candidate_count": request.candidate_count or 0,
+            "debug": {"autoplay_enabled": False} if include_debug else None,
+        }
+    try:
+        result = refill_autoplay_queue(
+            store,
+            settings,
+            session,
+            request.settings,
+            visible_buffer=request.visible_buffer,
+            candidate_count=request.candidate_count,
+            include_debug=include_debug,
+        )
+    except FileNotFoundError as exc:
+        return api_error(409, "index_not_ready", str(exc))
+    except LookupError as exc:
+        return api_error(404, "not_found", str(exc))
+    return {
+        "session_id": result.session_id,
+        "added_items": [
+            queue_item_dict(store, item, include_debug=include_debug)
+            for item in result.added_items
+        ],
+        "candidate_count": result.candidate_count,
+        "debug": result.debug,
+    }
+
+
+@app.post("/api/v1/playback/sessions", response_model=PlaybackSessionEnvelopeResponse)
 def api_v1_create_playback_session(request: PlaybackSessionCreateRequest) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     try:
@@ -1989,7 +2628,7 @@ def api_v1_create_playback_session(request: PlaybackSessionCreateRequest) -> dic
             autoplay_enabled=request.autoplay_enabled,
             shuffle_enabled=request.shuffle_enabled,
             repeat_mode=request.repeat_mode,
-            settings=request.settings,
+            settings=playback_session_settings(request.settings),
             state=request.state,
         )
     except ValueError as exc:
@@ -1997,7 +2636,7 @@ def api_v1_create_playback_session(request: PlaybackSessionCreateRequest) -> dic
     return playback_session_response(store, session)
 
 
-@app.get("/api/v1/playback/sessions/{session_id}", response_model=None)
+@app.get("/api/v1/playback/sessions/{session_id}", response_model=PlaybackSessionEnvelopeResponse)
 def api_v1_get_playback_session(session_id: str) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     session = store.get_playback_session(session_id)
@@ -2006,18 +2645,21 @@ def api_v1_get_playback_session(session_id: str) -> dict[str, object] | JSONResp
     return playback_session_response(store, session)
 
 
-@app.patch("/api/v1/playback/sessions/{session_id}", response_model=None)
+@app.patch("/api/v1/playback/sessions/{session_id}", response_model=PlaybackSessionEnvelopeResponse)
 def api_v1_update_playback_session(
     session_id: str,
     request: PlaybackSessionPatchRequest,
 ) -> dict[str, object] | JSONResponse:
     store, _settings = context()
+    fields = request_field_names(request)
     try:
         session = store.update_playback_session(
             session_id,
             status=request.status,
             current_track_id=request.current_track_id,
             current_queue_item_id=request.current_queue_item_id,
+            clear_current_track="current_track_id" in fields and request.current_track_id is None,
+            clear_current_queue_item="current_queue_item_id" in fields and request.current_queue_item_id is None,
             autoplay_enabled=request.autoplay_enabled,
             shuffle_enabled=request.shuffle_enabled,
             repeat_mode=request.repeat_mode,
@@ -2031,7 +2673,7 @@ def api_v1_update_playback_session(
     return playback_session_response(store, session)
 
 
-@app.get("/api/v1/playback/sessions/{session_id}/queue", response_model=None)
+@app.get("/api/v1/playback/sessions/{session_id}/queue", response_model=PlaybackSessionEnvelopeResponse)
 def api_v1_get_playback_queue(
     session_id: str,
     include_debug: bool = False,
@@ -2044,7 +2686,7 @@ def api_v1_get_playback_queue(
     return {"session": playback_session_dict(store, session), "queue": playback_queue_dict(store, session, items, include_debug)}
 
 
-@app.patch("/api/v1/playback/sessions/{session_id}/queue", response_model=None)
+@app.patch("/api/v1/playback/sessions/{session_id}/queue", response_model=PlaybackSessionEnvelopeResponse)
 def api_v1_patch_playback_queue(
     session_id: str,
     request: PlaybackQueuePatchRequest,
@@ -2101,9 +2743,9 @@ def api_v1_patch_playback_queue(
     return {"session": playback_session_dict(store, session), "queue": playback_queue_dict(store, session, items)}
 
 
-@app.post("/api/v1/playback/events", response_model=None)
+@app.post("/api/v1/playback/events", response_model=PlaybackEventIngestResponse)
 def api_v1_record_playback_event(request: PlaybackEventRequest) -> dict[str, object] | JSONResponse:
-    store, _settings = context()
+    store, settings = context()
     try:
         result = store.record_playback_event(
             session_id=request.session_id,
@@ -2121,13 +2763,124 @@ def api_v1_record_playback_event(request: PlaybackEventRequest) -> dict[str, obj
         )
     except ValueError as exc:
         return api_error(400, "invalid_request", str(exc))
+    navidrome_scrobble = maybe_scrobble_navidrome_play(store, settings, result)
     return {
         "accepted": True,
         "duplicate": result.duplicate,
         "event_id": result.event.id,
         "event": playback_event_dict(result.event),
         "preference_delta": result.preference_delta,
+        "navidrome_scrobble": navidrome_scrobble,
     }
+
+
+@app.get("/api/v1/mixes", response_model=None)
+def api_v1_mixes(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    include_debug: bool = False,
+) -> dict[str, object]:
+    store, _settings = context()
+    mixes = store.list_generated_mixes(statuses=["active", "saved"], limit=limit, offset=offset)
+    items = [generated_mix_summary_dict(store, mix) for mix in mixes]
+    if not include_debug:
+        for item in items:
+            item.pop("score_summary", None)
+            item.pop("anchor", None)
+            item.pop("settings", None)
+    total = store.count_generated_mixes(statuses=["active", "saved"])
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "next_offset": offset + limit if offset + limit < total else None,
+        "generated_at": utc_now(),
+    }
+
+
+@app.get("/api/v1/mixes/{mix_id}", response_model=None)
+def api_v1_mix_detail(mix_id: str, include_debug: bool = False) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    mix = store.get_generated_mix(mix_id)
+    if mix is None:
+        return api_error(404, "not_found", "Generated mix not found")
+    detail = generated_mix_detail_dict(store, mix)
+    if not include_debug:
+        detail.pop("score_summary", None)
+        detail.pop("settings", None)
+        for item in detail["items"]:
+            item.pop("score_breakdown", None)
+    return detail
+
+
+@app.post("/api/v1/mixes/generate", response_model=None)
+def api_v1_generate_mixes(request: MixGenerateRequest) -> dict[str, object] | JSONResponse:
+    store, settings = context()
+    result = generate_mixes(
+        store,
+        settings,
+        request.settings,
+        count=request.count,
+        tracks_per_mix=request.tracks_per_mix,
+        force=request.force,
+    )
+    if not result.mixes:
+        return api_error(409, "not_enough_data", "No embedded tracks or positive listening signals available for generated mixes")
+    return {
+        "items": [generated_mix_summary_dict(store, mix) for mix in result.mixes],
+        "generated_at": utc_now(),
+        "diagnostics": result.diagnostics,
+    }
+
+
+@app.post("/api/v1/mixes/{mix_id}/save", response_model=None)
+def api_v1_save_mix(mix_id: str) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    mix = store.save_generated_mix_as_playlist(mix_id)
+    if mix is None:
+        return api_error(404, "not_found", "Generated mix not found")
+    return generated_mix_summary_dict(store, mix)
+
+
+@app.post("/api/v1/mixes/{mix_id}/play", response_model=PlaybackSessionEnvelopeResponse)
+def api_v1_play_mix(mix_id: str) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    mix = store.get_generated_mix(mix_id)
+    if mix is None:
+        return api_error(404, "not_found", "Generated mix not found")
+    track_ids = [item.track_id for item in store.list_generated_mix_items(mix_id)]
+    if not track_ids:
+        return api_error(409, "empty_mix", "Generated mix has no playable tracks")
+    session, _queue = store.create_playback_session(
+        source_type="generated_mix",
+        source_label=mix.title,
+        mode="linear",
+        track_ids=track_ids,
+        autoplay_enabled=True,
+        settings=playback_session_settings({"source_mix_id": mix.id}),
+    )
+    items = [
+        {
+            "track_id": item.track_id,
+            "origin": "generated_mix",
+            "source_type": "generated_mix",
+            "reason": "Generated mix item",
+            "score": item.score,
+            "debug": {
+                "mix_id": mix.id,
+                "position": item.position,
+                "score_breakdown": _json_object(item.score_breakdown_json),
+                "reason": _json_object(item.reason_json),
+            },
+        }
+        for item in store.list_generated_mix_items(mix_id)
+    ]
+    store.replace_queue_items(session.id, items)
+    refreshed = store.get_playback_session(session.id)
+    if refreshed is None:
+        return api_error(500, "internal_error", "Playback session disappeared after creation")
+    return playback_session_response(store, refreshed)
 
 
 @app.get("/api/v1/dashboard", response_model=None)
@@ -2136,7 +2889,7 @@ def api_v1_dashboard(
     include_debug: bool = False,
 ) -> dict[str, object]:
     store, _settings = context()
-    shelf_keys = ["recently_added", "listen_again", "long_time_no_listen"]
+    shelf_keys = ["mixes_for_you", "recently_added", "listen_again", "long_time_no_listen"]
     shelves = [
         shelf
         for key in shelf_keys
@@ -2172,20 +2925,21 @@ def api_v1_dashboard_shelf(
     return shelf
 
 
-@app.get("/api/v1/search")
+@app.get("/api/v1/search", response_model=SearchResponse)
 def api_v1_search(
     q: str = "",
     type: str = Query(default="all", pattern="^(all|artist|release|track)$"),
     limit: int = Query(default=8, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
+    include_debug: bool = False,
 ) -> dict[str, object]:
-    store, _settings = context()
+    store, settings = context()
     query = " ".join(q.strip().split())
     results = store.search_entities(query, entity_type=type, limit=limit, offset=offset)
     artist_rows = results["artists"]["items"]
     release_rows = results["releases"]["items"]
     track_rows = results["tracks"]["items"]
-    artists = [artist_summary_dict(row) for row in artist_rows]
+    artists = [artist_summary_with_external_image(store, settings, row) for row in artist_rows]
     releases = [release_summary_dict(row) for row in release_rows]
     artists_by_track = store.artists_for_tracks([track.id for track in track_rows])
     tracks = [
@@ -2197,24 +2951,32 @@ def api_v1_search(
         search_group("tracks", "Tracks", tracks, int(results["tracks"]["total"]), limit, offset),
         search_group("releases", "Releases", releases, int(results["releases"]["total"]), limit, offset),
     ]
-    top_result = None
-    for result_type, items in (("artist", artists), ("track", tracks), ("release", releases)):
-        if items:
-            top_result = {"entity_type": result_type, "entity": items[0]}
-            break
+    top_result = search_top_result(query, artists, releases, tracks)
+    if include_debug:
+        for group in groups:
+            for item in group["items"]:
+                if isinstance(item, dict):
+                    item["debug"] = {
+                        "search_score": _entity_search_score(
+                            query,
+                            str(group["type"]).rstrip("s"),
+                            item,
+                        )
+                    }
     return {"query": query, "top_result": top_result, "groups": groups}
 
 
-@app.get("/api/v1/artists/{artist_id}", response_model=None)
+@app.get("/api/v1/artists/{artist_id}", response_model=ArtistResponse)
 def api_v1_artist(artist_id: int) -> dict[str, object] | JSONResponse:
-    store, _settings = context()
+    store, settings = context()
     artist = store.get_artist(artist_id)
     if artist is None:
         return api_error(404, "not_found", "Artist not found")
     return {
-        "artist": {**artist_summary_dict(artist), "sort_name": artist.artist.sort_name},
+        "artist": {**artist_summary_with_external_image(store, settings, artist), "sort_name": artist.artist.sort_name},
         "actions": [entity_action("mix", True, None)],
         "links": {
+            "image": f"/api/v1/artists/{artist_id}/image",
             "discography": f"/api/v1/artists/{artist_id}/discography",
             "top_tracks": f"/api/v1/artists/{artist_id}/top-tracks",
             "similar": f"/api/v1/artists/{artist_id}/similar",
@@ -2222,7 +2984,7 @@ def api_v1_artist(artist_id: int) -> dict[str, object] | JSONResponse:
     }
 
 
-@app.get("/api/v1/artists/{artist_id}/discography", response_model=None)
+@app.get("/api/v1/artists/{artist_id}/discography", response_model=ArtistDiscographyResponse)
 def api_v1_artist_discography(
     artist_id: int,
     sort: str = Query(default="release_date_desc", pattern="^(release_date_desc|release_date_asc|title)$"),
@@ -2258,11 +3020,33 @@ def api_v1_artist_discography(
             )
         if limit is not None:
             items = items[:limit]
-        groups.append({"key": key, "title": title, "items": [release_summary_dict(item) for item in items]})
+        release_items = []
+        for item in items:
+            release_item = release_summary_dict(item)
+            if include_tracks:
+                release_item["tracks"] = [
+                    release_track_dict(store, track)
+                    for track in store.list_release_tracks(item.release.id)
+                ]
+            release_items.append(release_item)
+        groups.append({"key": key, "title": title, "items": release_items})
     return {"artist": artist_link_dict(artist.artist), "groups": groups}
 
 
-@app.get("/api/v1/artists/{artist_id}/top-tracks", response_model=None)
+@app.get("/api/v1/artists/{artist_id}/image", response_model=ImageInfoResponse)
+def api_v1_artist_image(artist_id: int) -> dict[str, object] | JSONResponse:
+    store, settings = context()
+    artist = store.get_artist(artist_id)
+    if artist is None:
+        return api_error(404, "not_found", "Artist not found")
+    summary = artist_summary_with_external_image(store, settings, artist)
+    image = summary["image"] if isinstance(summary.get("image"), dict) else image_ref(None)
+    if not image.get("url"):
+        return api_error(404, "not_found", "Artist image not available")
+    return {"image": image}
+
+
+@app.get("/api/v1/artists/{artist_id}/top-tracks", response_model=ArtistAvailabilityStubResponse)
 def api_v1_artist_top_tracks(artist_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     artist = store.get_artist(artist_id)
@@ -2271,7 +3055,7 @@ def api_v1_artist_top_tracks(artist_id: int) -> dict[str, object] | JSONResponse
     return {"artist": artist_link_dict(artist.artist), "items": [], "basis": "local_playback", "available": False}
 
 
-@app.get("/api/v1/artists/{artist_id}/similar", response_model=None)
+@app.get("/api/v1/artists/{artist_id}/similar", response_model=ArtistAvailabilityStubResponse)
 def api_v1_artist_similar(artist_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     artist = store.get_artist(artist_id)
@@ -2280,7 +3064,7 @@ def api_v1_artist_similar(artist_id: int) -> dict[str, object] | JSONResponse:
     return {"artist": artist_link_dict(artist.artist), "items": [], "available": False, "basis": "not_available"}
 
 
-@app.get("/api/v1/releases/{release_id}", response_model=None)
+@app.get("/api/v1/releases/{release_id}", response_model=ReleaseResponse)
 def api_v1_release(release_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     release = store.get_release(release_id)
@@ -2297,7 +3081,7 @@ def api_v1_release(release_id: int) -> dict[str, object] | JSONResponse:
     }
 
 
-@app.get("/api/v1/releases/{release_id}/tracks", response_model=None)
+@app.get("/api/v1/releases/{release_id}/tracks", response_model=ReleaseTracksResponse)
 def api_v1_release_tracks(release_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     release = store.get_release(release_id)
@@ -2309,7 +3093,7 @@ def api_v1_release_tracks(release_id: int) -> dict[str, object] | JSONResponse:
     }
 
 
-@app.get("/api/v1/releases/{release_id}/related-discography", response_model=None)
+@app.get("/api/v1/releases/{release_id}/related-discography", response_model=RelatedDiscographyResponse)
 def api_v1_release_related_discography(release_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     release = store.get_release(release_id)
@@ -2318,12 +3102,15 @@ def api_v1_release_related_discography(release_id: int) -> dict[str, object] | J
     items = store.related_discography_for_release(release_id)
     return {
         "release": {"id": release.release.id, "title": release.release.title},
-        "context_artists": [artist_link_dict(artist) for artist in release.artists],
+        "context_artists": [
+            artist_link_dict(artist)
+            for artist in store.participating_artists_for_release(release_id)
+        ],
         "items": [release_summary_dict(item) for item in items],
     }
 
 
-@app.get("/api/v1/releases/{release_id}/recommendations", response_model=None)
+@app.get("/api/v1/releases/{release_id}/recommendations", response_model=ReleaseAvailabilityStubResponse)
 def api_v1_release_recommendations(release_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     release = store.get_release(release_id)
@@ -2516,6 +3303,8 @@ def metrics_search(request: FeatureSearchRequest):
 @app.get("/search", response_class=HTMLResponse)
 @app.get("/artists/{artist_id}", response_class=HTMLResponse)
 @app.get("/releases/{release_id}", response_class=HTMLResponse)
+@app.get("/mixes/{mix_id}", response_class=HTMLResponse)
+@app.get("/settings", response_class=HTMLResponse)
 def test_ui() -> HTMLResponse:
     return HTMLResponse(
         UI_HTML,
@@ -5989,11 +6778,14 @@ UI_HTML = r"""
       min-height: 36px; border: 1px solid var(--line); border-radius: 6px; padding: 0 10px;
       background: #0d0f11; color: var(--text);
     }
-    .app { display: grid; grid-template-columns: 220px minmax(0, 1fr); flex: 1; min-height: 0; }
+    .app {
+      display: grid; grid-template-columns: 220px minmax(0, 1fr);
+      flex: 1; min-height: 0; height: 100vh; padding-bottom: 92px;
+    }
     aside { border-right: 1px solid var(--line); background: #111518; padding: 18px; overflow-y: auto; min-height: 0; }
     main {
       padding: 18px; display: flex; flex-direction: column; gap: 16px;
-      min-height: 0; overflow-y: auto;
+      min-height: 0; overflow-y: auto; padding-bottom: 124px;
     }
     h1 { font-size: 22px; margin: 0 0 16px; letter-spacing: 0; }
     h2 { font-size: 16px; margin: 0 0 10px; letter-spacing: 0; }
@@ -6021,7 +6813,7 @@ UI_HTML = r"""
     .section { display: none; }
     .section.active { display: grid; gap: 16px; }
     .section.section-fill.active {
-      display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; gap: 16px;
+      display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; gap: 16px;
     }
     .section-fill.active > .layout,
     .section-fill.active > .browse-layout,
@@ -6153,11 +6945,97 @@ UI_HTML = r"""
     .pill { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); font-size: 12px; }
     .bad-pill { border: 1px solid var(--bad); color: var(--bad); background: transparent; }
     .player {
-      flex-shrink: 0; border-top: 1px solid var(--line); background: #0f1316;
-      padding: 12px 18px; display: grid; gap: 8px;
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 25;
+      min-height: 82px; border-top: 1px solid var(--line); background: #111;
+      padding: 0 18px 10px; display: grid; grid-template-columns: auto minmax(260px, 1fr) auto;
+      grid-template-rows: 16px 56px; column-gap: 18px; align-items: center; box-shadow: 0 -12px 30px rgba(0,0,0,.28);
     }
+    .player-seek { grid-column:1 / -1; height:16px; margin:0 -18px; position:relative; display:flex; align-items:start; }
+    .player-seek input[type="range"] {
+      width:100%; min-height:16px; padding:0; margin:0; background:transparent; border:0; border-radius:0; outline:0;
+      -webkit-appearance:none; appearance:none; cursor:pointer;
+    }
+    .player-seek input[type="range"]:focus { outline:0; box-shadow:none; }
+    .player-seek input[type="range"]::-webkit-slider-runnable-track { height:4px; background:linear-gradient(to right, #ff2a6d var(--seek-progress, 0%), #4a4a4a var(--seek-progress, 0%)); }
+    .player-seek input[type="range"]::-moz-range-track { height:4px; background:#4a4a4a; }
+    .player-seek input[type="range"]::-moz-range-progress { height:4px; background:#ff2a6d; }
+    .player-seek input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance:none; appearance:none; width:16px; height:16px; border-radius:999px;
+      background:#ff2a6d; border:0; margin-top:-6px;
+    }
+    .player-seek input[type="range"]::-moz-range-thumb { width:16px; height:16px; border-radius:999px; background:#ff2a6d; border:0; }
+    .player-seek-bubble {
+      position:absolute; top:-34px; transform:translateX(-50%); min-width:44px; padding:5px 8px;
+      border-radius:4px; background:#333; color:#fff; text-align:center; font-size:12px; font-weight:700;
+      opacity:0; pointer-events:none;
+    }
+    .player-seek:hover .player-seek-bubble, .player-seek.scrubbing .player-seek-bubble { opacity:1; }
+    .player-controls, .player-actions, .player-inline-actions { display:flex; gap:8px; align-items:center; }
+    .player-controls button, .player-actions button, .player-inline-actions button { width:38px; padding:0; border-radius:999px; border:0; background:#2d2d2d; }
+    .player-controls button.player-play { width:52px; height:52px; font-size:26px; background:#f1f1f1; color:#111; }
+    .player-now { display:grid; grid-template-columns:48px minmax(0,1fr); gap:10px; align-items:center; min-width:0; }
+    .player-cover {
+      width:48px; aspect-ratio:1; border:1px solid var(--line); border-radius:6px;
+      background:#111518; overflow:hidden; display:grid; place-items:center; color:var(--muted); font-size:10px; font-weight:800;
+    }
+    .player-cover img { width:100%; height:100%; object-fit:cover; display:block; }
+    .player-title, .player-subtitle { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .player-title { display:flex; align-items:center; gap:14px; }
+    .player-title strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .player-inline-actions button { width:auto; min-width:30px; height:30px; color:#d8d8d8; background:transparent; font-weight:800; }
+    .player-inline-actions button:hover { background:#2d2d2d; }
+    .player-actions { justify-content:flex-end; }
+    .player-actions button[disabled] { opacity:.65; cursor:default; }
+    .player-progress { display:none; }
+    .player-time { display:flex; justify-content:space-between; gap:12px; color:var(--muted); font-size:12px; }
+    .player audio { display:none; }
+    .expanded-player {
+      position:fixed; left:220px; right:0; top:0; bottom:82px; z-index:24;
+      background:#070707; box-shadow:0 -16px 42px rgba(0,0,0,.38);
+      padding:34px 64px; display:none; grid-template-columns:minmax(420px, 1fr) minmax(360px, 560px); gap:72px; overflow:hidden;
+    }
+    .expanded-player.open { display:grid; }
+    .expanded-main { min-width:0; display:grid; align-content:center; justify-items:center; gap:18px; }
+    .expanded-art {
+      width:min(72vh, 760px); max-width:100%; aspect-ratio:1; border:0; border-radius:0; background:#111;
+      display:grid; place-items:center; overflow:hidden; color:var(--muted); font-weight:800;
+    }
+    .expanded-art img { width:100%; height:100%; object-fit:contain; display:block; }
+    .expanded-track-text { width:min(72vh, 760px); max-width:100%; }
+    .queue-panel { border:0; border-radius:0; background:transparent; padding:0 4px 34px 0; display:grid; gap:14px; align-content:start; min-height:0; overflow:auto; }
+    .queue-tabs { display:grid; grid-template-columns:1fr 1fr 1fr; gap:0; border-bottom:1px solid #242424; }
+    .queue-tabs button { border:0; border-bottom:2px solid transparent; border-radius:0; background:transparent; color:#777; font-weight:800; }
+    .queue-tabs button.active { border-bottom-color:#d8d8d8; color:#f0f0f0; }
+    .autoplay-prep { display:grid; gap:4px; color:var(--muted); }
+    .autoplay-row { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .toggle-pill { width:42px; height:22px; border-radius:999px; background:#24313b; position:relative; opacity:.7; border:0; }
+    .toggle-pill::after { content:""; position:absolute; left:3px; top:3px; width:16px; height:16px; border-radius:999px; background:#82909a; }
+    .toggle-pill.active { background:#dcecff; opacity:1; }
+    .toggle-pill.active::after { left:auto; right:3px; background:#0f86d8; }
+    .chip-row { display:flex; gap:10px; row-gap:10px; flex-wrap:wrap; padding:10px 0 20px; margin:0; }
+    .chip-row button { min-height:34px; border:0; border-radius:7px; background:#2e2e2e; font-weight:700; color:#d0d0d0; }
+    .chip-row button.active { background:#eee; color:#111; }
+    .queue-list { display:block; min-height:0; }
+    .autoplay-pool-section { display:block; clear:both; margin-top:28px; padding-top:20px; border-top:1px solid #2a2a2a; }
+    .autoplay-pool-list { display:block; margin-top:2px; }
+    .autoplay-pool-header { display:block; margin:0 0 2px; font-weight:800; text-transform:none; }
+    .queue-item {
+      border:0; border-bottom:1px solid #232323; border-radius:0; padding:10px 0; min-height:62px; background:transparent;
+      cursor:pointer; display:grid; grid-template-columns:40px minmax(0,1fr) auto; gap:12px; align-items:center;
+    }
+    .queue-item.prepared { cursor:default; opacity:.92; }
+    .queue-item.current { background:#2d2d2d; padding-left:8px; padding-right:8px; }
+    .queue-item-cover { width:34px; aspect-ratio:1; background:#222; overflow:hidden; display:grid; place-items:center; color:var(--muted); font-size:9px; }
+    .queue-item-cover img { width:100%; height:100%; object-fit:cover; display:block; }
+    .queue-item-title, .queue-item-subtitle { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .queue-item-duration { color:var(--muted); font-weight:700; }
+    .settings-page { display:grid; gap:14px; }
+    .settings-tabs { display:flex; gap:8px; flex-wrap:wrap; position:sticky; top:0; z-index:2; background:var(--panel); padding-bottom:8px; }
+    .settings-tabs button.active { border-color:var(--accent); color:var(--accent); }
+    .settings-pane { display:none; }
+    .settings-pane.active { display:block; }
     .navidrome-debug {
-      color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      display:none; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .build-marker { color: var(--accent-2); font-size: 12px; font-weight: 700; }
     audio { width: 100%; }
@@ -6202,6 +7080,8 @@ UI_HTML = r"""
       .cover { width: 80px; min-height: 80px; }
       .track-card-line { display: block; }
       .track-card-right { text-align: left; white-space: normal; }
+      .player { grid-template-columns:1fr; }
+      .expanded-player { left:0; grid-template-columns:1fr; }
     }
     .metrics-layout { display:grid; grid-template-columns:minmax(260px, 340px) minmax(0, 1fr); gap:16px; height:100%; min-height:0; }
     .metrics-controls { flex-shrink:0; }
@@ -6230,8 +7110,27 @@ UI_HTML = r"""
     .range-slider input[type="range"]::-moz-range-track { background:transparent; }
     .feature-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
     .feature-chip { border:1px solid var(--line); border-radius:999px; padding:3px 8px; font-size:12px; color:var(--muted); }
-    .listener-hero { border:1px solid var(--line); border-radius:8px; padding:18px; background:#14191d; display:grid; gap:12px; }
-    .listener-hero h2 { font-size:28px; margin:0; }
+    .home-dashboard { gap:30px; padding-bottom:24px; }
+    .home-top { display:grid; gap:18px; }
+    .home-search {
+      display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:10px;
+      width:min(760px, 100%);
+    }
+    .home-search input {
+      min-height:46px; border-radius:999px; padding:0 18px; background:#0b0d0f;
+      font-size:15px;
+    }
+    .listener-hero {
+      border:1px solid rgba(65, 211, 167, .35); border-radius:10px; padding:24px;
+      background:
+        radial-gradient(circle at 18% 15%, rgba(65,211,167,.16), transparent 34%),
+        linear-gradient(135deg, #172025, #101315 72%);
+      display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:20px; align-items:center;
+      min-height:150px;
+    }
+    .listener-hero h2 { font-size:42px; line-height:1; margin:0 0 8px; }
+    .operations-link { color:var(--accent); text-decoration:none; font-weight:700; }
+    .operations-link:hover { text-decoration:underline; }
     .surface-header { display:grid; grid-template-columns:220px minmax(0,1fr); gap:22px; align-items:end; }
     .surface-art {
       width:220px; aspect-ratio:1; border:1px solid var(--line); border-radius:8px; overflow:hidden;
@@ -6243,25 +7142,71 @@ UI_HTML = r"""
     .surface-title { font-size:38px; line-height:1.05; margin:0; overflow-wrap:anywhere; }
     .surface-subtitle a, .entity-link { color:var(--text); text-decoration:none; }
     .surface-subtitle a:hover, .entity-link:hover { color:var(--accent); }
-    .surface-grid { display:grid; gap:18px; }
-    .shelf { display:grid; gap:10px; }
+    .surface-grid { display:grid; gap:32px; }
+    .shelf { display:grid; gap:14px; min-width:0; }
     .shelf-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap; }
-    .shelf-row { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
-    .media-card { border:1px solid var(--line); border-radius:8px; padding:10px; background:#14181b; display:grid; gap:8px; min-width:0; }
-    .media-card-cover { aspect-ratio:1; border:1px solid var(--line); border-radius:6px; overflow:hidden; background:#0d0f11; display:grid; place-items:center; color:var(--muted); }
+    .shelf-head h2 { font-size:26px; margin:0; }
+    .shelf-row {
+      display:flex; gap:22px; overflow-x:auto; overflow-y:hidden; padding:2px 4px 12px 0;
+      scroll-snap-type:x proximity;
+    }
+    .shelf-row::-webkit-scrollbar { height:10px; }
+    .shelf-row::-webkit-scrollbar-thumb { background:#273036; border-radius:999px; }
+    .media-card {
+      border:0; border-radius:8px; padding:0; background:transparent; display:grid; gap:8px;
+      min-width:0; flex:0 0 clamp(178px, 14.5vw, 236px); scroll-snap-align:start;
+      position:relative; cursor:pointer;
+    }
+    .media-card-cover {
+      aspect-ratio:1; border:1px solid var(--line); border-radius:8px; overflow:hidden;
+      background:#111518; display:grid; place-items:center; color:var(--muted);
+      transition:filter .12s ease, transform .12s ease;
+    }
+    .media-card-cover.artist-avatar { border-radius:999px; background:#182024; font-size:34px; font-weight:800; }
     .media-card-cover img { width:100%; height:100%; object-fit:cover; display:block; }
-    .media-card-title { font-weight:700; overflow-wrap:anywhere; }
-    .media-card-actions { display:flex; gap:6px; flex-wrap:wrap; }
+    .media-card:hover .media-card-cover { filter:brightness(.78); }
+    .media-card-title {
+      font-weight:800; font-size:15px; line-height:1.25; overflow:hidden;
+      display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    }
+    .media-card-subtitle, .media-card-reason {
+      line-height:1.3; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical;
+    }
+    .media-card-subtitle { -webkit-line-clamp:2; }
+    .media-card-reason { -webkit-line-clamp:1; }
+    .media-card-actions {
+      position:absolute; right:10px; top:10px; display:flex; gap:6px; opacity:0;
+      transform:translateY(4px); transition:opacity .12s ease, transform .12s ease;
+    }
+    .media-card:hover .media-card-actions, .media-card:focus-within .media-card-actions {
+      opacity:1; transform:translateY(0);
+    }
+    .media-card-actions button {
+      min-height:34px; width:34px; padding:0; border-radius:999px; background:var(--accent);
+      border-color:var(--accent); color:#07110e; font-weight:800;
+    }
     .entity-tabs { display:flex; gap:8px; flex-wrap:wrap; }
     .entity-tabs button.active { border-color:var(--accent); color:var(--accent); }
     .track-table { width:100%; border-collapse:collapse; font-size:14px; }
     .track-table th, .track-table td { border-top:1px solid var(--line); padding:9px 8px; text-align:left; vertical-align:middle; }
     .track-table th { color:var(--muted); font-weight:600; }
     .track-table tr:hover td { background:#171d21; }
+    .search-track-cover { width:48px; }
+    .track-table-cover {
+      width:44px; aspect-ratio:1; border:1px solid var(--line); border-radius:5px; overflow:hidden;
+      background:#111518; display:grid; place-items:center; color:var(--muted); font-size:10px; font-weight:800;
+    }
+    .track-table-cover img { width:100%; height:100%; object-fit:cover; display:block; }
     .search-page-layout { display:grid; gap:14px; }
     .search-tabs { display:flex; gap:8px; flex-wrap:wrap; }
     .search-tabs button.active { border-color:var(--accent); color:var(--accent); }
-    .top-result { border:1px solid var(--line); border-radius:8px; padding:14px; background:#14191d; display:grid; gap:8px; }
+    .top-result { border:1px solid var(--line); border-radius:8px; padding:14px; background:#14191d; display:flex; gap:14px; align-items:center; }
+    .top-result-avatar {
+      width:72px; aspect-ratio:1; border:1px solid var(--line); border-radius:999px; overflow:hidden;
+      background:#182024; display:grid; place-items:center; color:var(--muted); font-size:28px; font-weight:800; flex:0 0 auto;
+    }
+    .top-result-avatar img { width:100%; height:100%; object-fit:cover; display:block; }
+    .top-result-body { display:grid; gap:8px; min-width:0; }
     @media (max-width: 1100px) { .metrics-layout { grid-template-columns:minmax(320px, .75fr) minmax(360px, 1.25fr); } }
     @media (max-width: 900px) {
       .metrics-layout { grid-template-columns:1fr; overflow:auto; }
@@ -6277,9 +7222,10 @@ UI_HTML = r"""
     <aside>
       <h1>discocs</h1>
       <nav>
-        <button class="active" data-nav="dashboard" onclick="showSection('dashboard')">Dashboard</button>
+        <button class="active" data-nav="dashboard" onclick="showSection('dashboard')">Home</button>
         <button data-nav="listenerSearch" onclick="showSection('listenerSearch')">Search</button>
         <button data-nav="library" onclick="showSection('library')">Library</button>
+        <button data-nav="operations" onclick="showSection('operations')">Operations</button>
         <button data-nav="browse" onclick="showSection('browse')">Browse</button>
         <button data-nav="metrics" onclick="showSection('metrics')">Metrics</button>
         <button data-nav="lostFiles" onclick="showSection('lostFiles')">Lost files</button>
@@ -6295,7 +7241,16 @@ UI_HTML = r"""
       </nav>
     </aside>
     <main>
-      <section id="dashboard" class="section active">
+      <section id="dashboard" class="section active home-dashboard">
+        <div class="home-top">
+          <div>
+            <h2 style="font-size:34px; margin:0 0 10px">Home</h2>
+            <div class="home-search">
+              <input id="homeSearchQuery" placeholder="Search artists, releases, tracks">
+              <button class="primary" onclick="runHomeSearch()">Search</button>
+            </div>
+          </div>
+        </div>
         <div class="listener-hero">
           <div>
             <h2>Flow</h2>
@@ -6303,12 +7258,17 @@ UI_HTML = r"""
           </div>
           <div class="actions">
             <button class="primary" disabled>Start Flow</button>
-            <button onclick="routeTo({view:'listenerSearch'}, {reset:true})">Search library</button>
-            <button onclick="routeTo({view:'library'}, {reset:true})">Open old Library</button>
+            <a class="operations-link" href="?view=operations" onclick="event.preventDefault(); routeTo({view:'operations'}, {reset:true})">Operations</a>
           </div>
         </div>
         <div class="surface-grid" id="listenerDashboardShelves">
           <div class="meta">Loading listener shelves...</div>
+        </div>
+      </section>
+      <section id="operations" class="section">
+        <div class="panel">
+          <h2>Operations</h2>
+          <div class="meta">Scan, analyze, index, and job controls. The music Home stays focused on listening.</div>
         </div>
         <div class="stats" id="dashboardCards">
           <div class="stat"><strong id="tracks">0</strong><span>tracks</span></div>
@@ -6759,8 +7719,22 @@ UI_HTML = r"""
         </div>
       </section>
       <section id="settings" class="section">
-        <div class="panel">
+        <div class="panel settings-page">
         <h2>Settings</h2>
+        <div class="settings-tabs" id="settingsTabs">
+          <button class="active" data-settings-tab="embeddings" onclick="setSettingsTab('embeddings')">Embeddings and Models</button>
+          <button data-settings-tab="analysis" onclick="setSettingsTab('analysis')">Analysis</button>
+          <button data-settings-tab="general" onclick="setSettingsTab('general')">General</button>
+          <button data-settings-tab="flow" onclick="setSettingsTab('flow')">Flow</button>
+          <button data-settings-tab="autoplay" onclick="setSettingsTab('autoplay')">Autoplay</button>
+          <button data-settings-tab="mixes" onclick="setSettingsTab('mixes')">Mixes</button>
+          <button data-settings-tab="albums" onclick="setSettingsTab('albums')">Albums</button>
+          <button data-settings-tab="dashboard" onclick="setSettingsTab('dashboard')">Dashboard</button>
+          <button data-settings-tab="player" onclick="setSettingsTab('player')">Player</button>
+          <button data-settings-tab="storage" onclick="setSettingsTab('storage')">Storage</button>
+          <button data-settings-tab="advanced" onclick="setSettingsTab('advanced')">Advanced / Debug</button>
+        </div>
+        <div class="settings-pane active" data-settings-pane="embeddings">
         <label><span class="label-title">Model <span class="info" tabindex="0" data-tooltip="Embedding model used for analyze, index, and recommendations. Changing it requires separate embeddings and index.">(i)</span></span>
           <select id="model">
             <option value="discogs_multi">discogs_multi</option>
@@ -6786,6 +7760,8 @@ UI_HTML = r"""
         <label><span class="label-title">Analyze TF threads <span class="info" tabindex="0" data-tooltip="TensorFlow/OMP threads per analyzer process. Too high causes contention; benchmarked default is 4 with 4 workers.">(i)</span></span>
           <input id="tfThreads" type="number" min="1" value="4">
         </label>
+        </div>
+        <div class="settings-pane" data-settings-pane="analysis">
         <h3>Audio features</h3>
         <label><span class="label-title">Audio feature workers <span class="info" tabindex="0" data-tooltip="Number of local analyzer processes for BPM/key/loudness/dynamics. Separate from Discogs embedding workers so audio feature tuning cannot overload model inference.">(i)</span></span>
           <input id="audioFeatureWorkers" type="number" min="1" value="8">
@@ -6800,6 +7776,8 @@ UI_HTML = r"""
           <button id="rescanAudioFeaturesBtn" onclick="rescanAudioFeatures()">Rescan audio features</button>
         </div>
         <div class="meta" id="audioFeaturesRescanStatus"></div>
+        </div>
+        <div class="settings-pane" data-settings-pane="general">
         <h3>Navidrome</h3>
         <label><span class="label-title">Navidrome URL <span class="info" tabindex="0" data-tooltip="Base URL that this app can reach, for example http://192.168.1.41:4533 or http://navidrome:4533 from Docker.">(i)</span></span>
           <input id="navidromeUrl" placeholder="http://127.0.0.1:4533">
@@ -6834,6 +7812,8 @@ UI_HTML = r"""
         </div>
         <div class="meta" id="navidromeStatus">Navidrome settings are loaded from server config.</div>
         <div class="meta">For Navidrome Instant Mix set <code>ND_AGENTS=discocs-instant-mix,deezer,lastfm,listenbrainz</code>.</div>
+        </div>
+        <div class="settings-pane" data-settings-pane="advanced">
         <h3>Remote worker</h3>
         <label><span class="label-title">Server URL for worker <span class="info" tabindex="0" data-tooltip="Base URL that the remote machine can reach. Use the host/IP running this web app, not localhost unless the worker runs on the same machine.">(i)</span></span>
           <input id="workerServerUrl" value="http://127.0.0.1:8711" oninput="refreshWorkerCommand()">
@@ -6862,6 +7842,8 @@ UI_HTML = r"""
         <label><span class="label-title">Worker command</span>
           <textarea id="workerCommand" rows="5" readonly></textarea>
         </label>
+        </div>
+        <div class="settings-pane" data-settings-pane="mixes">
         <label><span class="label-title">Results <span class="info" tabindex="0" data-tooltip="Number of similar tracks requested for the current seed. Higher values return a wider list but may include weaker matches.">(i)</span></span>
           <input id="k" type="number" min="1" max="100" value="30">
         </label>
@@ -6872,6 +7854,37 @@ UI_HTML = r"""
           <input id="excludeSameAlbum" type="checkbox" checked style="min-height:auto">
           <span class="label-title">Exclude same album <span class="info" tabindex="0" data-tooltip="Removes tracks from the same album as the seed. Useful when you want discovery instead of near-duplicates.">(i)</span></span>
         </label>
+        </div>
+        <div class="settings-pane" data-settings-pane="flow">
+          <h3>Flow</h3>
+          <div class="meta">Reserved for Flow generation settings after the Flow engine lands.</div>
+        </div>
+        <div class="settings-pane" data-settings-pane="autoplay">
+          <h3>Autoplay</h3>
+          <label><span class="label-title">Visible buffer</span>
+            <input id="autoplayVisibleBuffer" type="number" min="1" max="50" value="5">
+          </label>
+          <label><span class="label-title">Prepared pool</span>
+            <input id="autoplayCandidateCount" type="number" min="1" max="500" value="50">
+          </label>
+          <div class="meta">Autoplay continues the active source first; chips lightly adjust reranking.</div>
+        </div>
+        <div class="settings-pane" data-settings-pane="albums">
+          <h3>Albums</h3>
+          <div class="meta">Reserved for album/release grouping preferences.</div>
+        </div>
+        <div class="settings-pane" data-settings-pane="dashboard">
+          <h3>Dashboard</h3>
+          <div class="meta">Reserved for Home shelf visibility and ordering.</div>
+        </div>
+        <div class="settings-pane" data-settings-pane="player">
+          <h3>Player</h3>
+          <div class="meta">Player event thresholds are exposed by <code>/api/v1/playback/settings</code>.</div>
+        </div>
+        <div class="settings-pane" data-settings-pane="storage">
+          <h3>Storage</h3>
+          <div class="meta">Runtime database, indexes, models, and generated evaluation output remain local and gitignored.</div>
+        </div>
         </div>
       </section>
     </main>
@@ -6888,16 +7901,74 @@ UI_HTML = r"""
       <div id="analysisContent" class="analysis-grid"></div>
     </div>
   </div>
+  <div class="expanded-player" id="expandedPlayer">
+    <div class="expanded-main">
+      <div class="expanded-art" id="expandedPlayerArt">ART</div>
+      <div class="expanded-track-text">
+        <h2 id="expandedPlayerTitle" style="font-size:28px; margin:14px 0 4px">Nothing playing</h2>
+        <div class="meta" id="expandedPlayerSubtitle">Start playback from search, artist, or release pages.</div>
+      </div>
+    </div>
+    <div class="queue-panel">
+      <div class="queue-tabs">
+        <button class="active">Up Next</button>
+        <button disabled>Lyrics/Text</button>
+        <button disabled>Related</button>
+      </div>
+      <div class="row" style="justify-content:space-between">
+        <div class="meta">Source:<br><strong id="queueSourceLabel">No active playback session</strong></div>
+        <button class="icon-button" onclick="toggleExpandedPlayer()" aria-label="Close expanded player">&times;</button>
+      </div>
+      <div class="autoplay-prep">
+        <div class="autoplay-row">
+          <strong>Autoplay</strong>
+          <button id="autoplayToggle" class="toggle-pill" onclick="toggleAutoplay()" title="Toggle autoplay" aria-label="Toggle autoplay"></button>
+        </div>
+        <div class="meta" id="autoplayStatus">Autoplay follows the active source.</div>
+      </div>
+      <div class="queue-list" id="playerQueueList"><div class="meta">Queue is empty.</div></div>
+    </div>
+  </div>
   <div class="player">
-    <div class="row" style="justify-content:space-between">
-      <strong id="nowPlaying">No track loaded</strong>
-      <span class="error" id="playerError"></span>
+    <div class="player-seek" id="playerSeekWrap">
+      <input id="playerSeek" type="range" min="0" max="1000" value="0" aria-label="Seek playback">
+      <div class="player-seek-bubble" id="playerSeekBubble">0:00</div>
+    </div>
+    <div class="player-controls">
+      <button onclick="playPreviousQueueItem()" title="Previous" aria-label="Previous">&#9664;&#9664;</button>
+      <button class="player-play" onclick="toggleAudioPlayback()" title="Play/Pause" aria-label="Play/Pause">&#9654;</button>
+      <button onclick="skipCurrentTrack()" title="Skip" aria-label="Skip">&#9654;&#9654;</button>
+    </div>
+    <div class="player-now">
+      <div class="player-cover" id="playerCover">ART</div>
+      <div>
+        <div class="player-title">
+          <strong id="nowPlaying">No track loaded</strong>
+          <div class="player-inline-actions">
+            <button onclick="recordCurrentPreference('liked')" title="Like" aria-label="Like">^</button>
+            <button onclick="recordCurrentPreference('disliked')" title="Dislike" aria-label="Dislike">v</button>
+            <button disabled title="Track menu placeholder" aria-label="Track menu placeholder">...</button>
+          </div>
+        </div>
+        <div class="player-subtitle meta" id="nowPlayingMeta">Persistent player is ready.</div>
+        <span class="error" id="playerError"></span>
+      </div>
     </div>
     <div class="navidrome-debug" id="navidromeLikeDebug">
       <span class="build-marker">UI build likes-remote-only-20260611-1918</span>
       · Navidrome likes debug: idle
     </div>
-    <audio id="audioPlayer" controls preload="none"></audio>
+    <div class="player-progress">
+      <audio id="audioPlayer" preload="none"></audio>
+      <div class="player-time"><span id="playerElapsed">0:00</span><span id="playerDuration">0:00</span></div>
+    </div>
+    <div class="player-actions">
+      <button disabled title="Volume placeholder" aria-label="Volume placeholder">Vol</button>
+      <button disabled title="Repeat placeholder" aria-label="Repeat placeholder">Rpt</button>
+      <button disabled title="Shuffle placeholder" aria-label="Shuffle placeholder">Shf</button>
+      <button onclick="toggleAutoplay()" title="Toggle autoplay" aria-label="Toggle autoplay">Aut</button>
+      <button onclick="toggleExpandedPlayer()" title="Expand player" aria-label="Expand player">&#9650;</button>
+    </div>
   </div>
   <script>
     const SETTINGS_KEY = "discocs.settings.v1";
@@ -6917,6 +7988,11 @@ UI_HTML = r"""
     let seedId = null;
     let seedTrack = null;
     let activeTrackId = null;
+    let activePlaybackSession = null;
+    let activePlaybackQueue = null;
+    let activeQueueItemId = null;
+    let lastAutoplayStatus = null;
+    let progressEventSent = false;
     let currentSimilarTracks = [];
     let lastJobs = [];
     let seedBasket = [];
@@ -7049,8 +8125,17 @@ UI_HTML = r"""
       const target = document.getElementById("workerCommand");
       if (target) target.value = command;
     }
+    function setSettingsTab(tab) {
+      document.querySelectorAll("#settingsTabs button").forEach(button => {
+        button.classList.toggle("active", button.dataset.settingsTab === tab);
+      });
+      document.querySelectorAll(".settings-pane").forEach(pane => {
+        pane.classList.toggle("active", pane.dataset.settingsPane === tab);
+      });
+    }
     const VIEW_TO_SECTION = {
       dashboard: "dashboard",
+      operations: "operations",
       listenerSearch: "listenerSearch",
       artist: "artistSurface",
       release: "releaseSurface",
@@ -7078,7 +8163,8 @@ UI_HTML = r"""
     let applyingRoute = false;
 
     function sectionIdForView(view) {
-      return VIEW_TO_SECTION[view] || view || "dashboard";
+      const candidate = VIEW_TO_SECTION[view] || view || "dashboard";
+      return document.getElementById(candidate) ? candidate : "dashboard";
     }
     function viewForSection(sectionId) {
       if (sectionId === "artistSurface") return "artist";
@@ -7093,6 +8179,7 @@ UI_HTML = r"""
       const artistMatch = location.pathname.match(/^\/artists\/(\d+)\/?$/);
       const releaseMatch = location.pathname.match(/^\/releases\/(\d+)\/?$/);
       if (location.pathname === "/search") pathView = "listenerSearch";
+      else if (location.pathname === "/settings") pathView = "settings";
       else if (artistMatch) pathView = "artist";
       else if (releaseMatch) pathView = "release";
       const params = {view: raw.view || pathView};
@@ -7239,6 +8326,8 @@ UI_HTML = r"""
           }
           renderTextSearchRecent();
           if ((params.text_query || "").trim()) await runTextSearch({updateUrl: false});
+        } else if (sectionId === "settings") {
+          setSettingsTab(params.settings_tab || "embeddings");
         } else if (sectionId === "navidromeLikes") {
           if (params.filter) document.getElementById("likedFilter").value = params.filter;
           if (params.autoload === "1") await loadNavidromeLikes({updateUrl: false});
@@ -7335,20 +8424,27 @@ UI_HTML = r"""
       const artwork = item.artwork || item.image || {};
       const url = artwork.url || "";
       const target = item.action?.target || (type === "artist" ? `/artists/${id}` : `/releases/${id}`);
+      const coverClass = type === "artist" ? "media-card-cover artist-avatar" : "media-card-cover";
+      const placeholder = type === "artist" ? esc((title || "?").slice(0, 1).toUpperCase()) : esc(type);
       const play = item.play_action
-        ? `<button onclick="playSource('${esc(item.play_action.source_type)}', ${Number(item.play_action.source_id)}, '${encodedArg(title)}')">Play</button>`
+        ? `<button onclick="event.stopPropagation(); playSource('${esc(item.play_action.source_type)}', ${Number(item.play_action.source_id)}, '${encodedArg(title)}')" title="Play" aria-label="Play">&#9654;</button>`
         : "";
-      return `<div class="media-card">
-        <a class="media-card-cover" href="${esc(target)}" onclick="event.preventDefault(); navigateEntityTarget('${encodedArg(target)}')">
-          ${url ? `<img src="${esc(url)}" loading="lazy" alt="" onerror="this.remove()">` : `<span>${esc(type)}</span>`}
-        </a>
-        <div class="media-card-title">${esc(title)}</div>
-        <div class="meta">${subtitle}</div>
-        ${item.reason ? `<div class="meta">${esc(item.reason)}</div>` : ""}
-        <div class="media-card-actions">
-          <button onclick="navigateEntityTarget('${encodedArg(target)}')">Open</button>
-          ${play}
+      return `<div class="media-card" role="button" tabindex="0" onclick="navigateEntityTarget('${encodedArg(target)}')" onkeydown="if(event.key === 'Enter') navigateEntityTarget('${encodedArg(target)}')">
+        <div class="${coverClass}">
+          ${url ? `<img src="${esc(url)}" loading="lazy" alt="" onerror="this.remove()">` : `<span>${placeholder}</span>`}
         </div>
+        <div class="media-card-title">${esc(title)}</div>
+        <div class="meta media-card-subtitle">${subtitle}</div>
+        ${item.reason ? `<div class="meta media-card-reason">${esc(item.reason)}</div>` : ""}
+        ${play ? `<div class="media-card-actions">${play}</div>` : ""}
+      </div>`;
+    }
+    function trackCoverCell(track) {
+      const artwork = track.artwork || {};
+      const url = artwork.url || `/tracks/${Number(track.id)}/cover`;
+      const sizedUrl = `${url}${url.includes("?") ? "&" : "?"}size=96`;
+      return `<div class="track-table-cover">
+        <img src="${esc(sizedUrl)}" loading="lazy" alt="" onerror="this.remove()">
       </div>`;
     }
     function trackRow(track, {releaseContextId = null} = {}) {
@@ -7363,6 +8459,7 @@ UI_HTML = r"""
       return `<tr>
         <td>${track.track_number || track.position || ""}</td>
         <td><button class="stat-icon-button" onclick="${playSource}" title="Play" aria-label="Play">&#9654;</button></td>
+        <td class="search-track-cover">${trackCoverCell(track)}</td>
         <td><strong>${esc(track.title || `track #${track.id}`)}</strong><div class="meta">${artists}</div></td>
         <td>${releaseLink}</td>
         <td>${entityDuration(track.duration)}</td>
@@ -7371,7 +8468,7 @@ UI_HTML = r"""
     function trackTable(tracks, options = {}) {
       if (!tracks.length) return `<div class="meta">No tracks available.</div>`;
       return `<table class="track-table">
-        <thead><tr><th>#</th><th></th><th>Track</th><th>Release</th><th>Duration</th></tr></thead>
+        <thead><tr><th>#</th><th></th><th class="search-track-cover"></th><th>Track</th><th>Release</th><th>Duration</th></tr></thead>
         <tbody>${tracks.map(track => trackRow(track, options)).join("")}</tbody>
       </table>`;
     }
@@ -7384,6 +8481,10 @@ UI_HTML = r"""
     function searchListenerForEncoded(encodedQuery) {
       return routeTo({view: "listenerSearch", q: decodeURIComponent(encodedQuery || "")}, {reset: true});
     }
+    function runHomeSearch() {
+      const query = document.getElementById("homeSearchQuery").value.trim();
+      return routeTo({view: "listenerSearch", q: query}, {reset: true});
+    }
     function navigateEntityTarget(encodedTarget) {
       const target = decodeURIComponent(encodedTarget || "");
       const artistMatch = target.match(/^\/artists\/(\d+)/);
@@ -7393,6 +8494,275 @@ UI_HTML = r"""
       if (target.includes("view=recommendations")) return routeTo({view: "recommendations"}, {reset: true});
       return routeTo({view: "listenerSearch"}, {reset: true});
     }
+    function queueTrackLabel(item) {
+      const track = item?.track || {};
+      const artists = (track.artists || []).map(artist => artist.name).filter(Boolean).join(", ");
+      return artists ? `${artists} - ${track.title || `track #${item.track_id}`}` : (track.title || `track #${item.track_id}`);
+    }
+    function queueTrackSubtitle(item) {
+      const track = item?.track || {};
+      const release = track.release || {};
+      return release.title || item?.origin || "";
+    }
+    function sizedArtworkUrl(url, size) {
+      if (!url) return "";
+      const separator = url.includes("?") ? "&" : "?";
+      return url.includes("size=")
+        ? url.replace(/([?&])size=\d+/, `$1size=${size}`)
+        : `${url}${separator}size=${size}`;
+    }
+    function queueTrackArtwork(item, size = 600) {
+      const track = item?.track || {};
+      const artwork = track.artwork || {};
+      const url = artwork.url || `/tracks/${Number(item.track_id)}/cover`;
+      return sizedArtworkUrl(url, size);
+    }
+    function queueTrackDuration(item) {
+      const seconds = item?.track?.duration;
+      return seconds || seconds === 0 ? entityDuration(seconds) : "";
+    }
+    function currentQueueItem() {
+      const items = activePlaybackQueue?.items || [];
+      return items.find(item => item.id === activeQueueItemId)
+        || activePlaybackQueue?.current_item
+        || items.find(item => item.track_id === activeTrackId)
+        || null;
+    }
+    function renderQueueListItem(queueItem, options = {}) {
+      const currentClass = queueItem.id === activeQueueItemId ? "current" : "";
+      const preparedClass = options.prepared ? "prepared" : "";
+      const click = options.prepared ? "" : ` onclick="jumpToQueueItem('${esc(queueItem.id)}')"`;
+      return `
+        <div class="queue-item ${currentClass} ${preparedClass}"${click}>
+          <div class="queue-item-cover"><img src="${esc(queueTrackArtwork(queueItem, 96))}" alt="" onerror="this.remove()"></div>
+          <div>
+            <div class="queue-item-title"><strong>${esc(queueTrackLabel(queueItem))}</strong></div>
+            <div class="queue-item-subtitle meta">${esc(queueTrackSubtitle(queueItem))}</div>
+          </div>
+          <div class="queue-item-duration">${esc(queueTrackDuration(queueItem))}</div>
+        </div>
+      `;
+    }
+    function renderAutoplayChipRow(activeChip) {
+      const chips = ["All", "Familiar", "Recommended", "Party", "Energy", "Training"];
+      return `<div class="chip-row">${chips.map(chip => (
+        `<button class="${chip === activeChip ? "active" : ""}" data-autoplay-chip="${esc(chip)}" onclick="setAutoplayChip('${esc(chip)}')">${esc(chip)}</button>`
+      )).join("")}</div>`;
+    }
+    function renderPlayerState() {
+      const item = currentQueueItem();
+      const title = item ? queueTrackLabel(item) : (activeTrackId ? `Track #${activeTrackId}` : "No track loaded");
+      const subtitle = item ? queueTrackSubtitle(item) : "Persistent player is ready.";
+      const artwork = item ? queueTrackArtwork(item, 600) : "";
+      document.getElementById("nowPlaying").textContent = title;
+      document.getElementById("nowPlayingMeta").textContent = subtitle;
+      document.getElementById("expandedPlayerTitle").textContent = title;
+      document.getElementById("expandedPlayerSubtitle").textContent = subtitle;
+      document.getElementById("queueSourceLabel").textContent = activePlaybackSession?.source_label || activePlaybackSession?.source_type || "No active playback session";
+      const coverHtml = artwork ? `<img src="${esc(artwork)}" alt="" onerror="this.remove()">` : "ART";
+      document.getElementById("playerCover").innerHTML = coverHtml;
+      document.getElementById("expandedPlayerArt").innerHTML = coverHtml;
+      const items = activePlaybackQueue?.items || [];
+      const poolItems = activePlaybackQueue?.autoplay_pool || [];
+      const autoplayEnabled = activePlaybackSession?.autoplay_enabled !== false;
+      const autoplayToggle = document.getElementById("autoplayToggle");
+      if (autoplayToggle) autoplayToggle.classList.toggle("active", autoplayEnabled);
+      const chip = activePlaybackSession?.settings?.autoplay_preference_chip || "All";
+      const queueHtml = items.map(queueItem => renderQueueListItem(queueItem)).join("") || `<div class="meta">Queue is empty.</div>`;
+      const poolHtml = poolItems.map(queueItem => renderQueueListItem(queueItem, {prepared: true})).join("") || `<div class="meta">Prepared autoplay pool is empty.</div>`;
+      document.getElementById("playerQueueList").innerHTML = `
+        ${queueHtml}
+        <div class="autoplay-pool-section">
+          <div class="autoplay-pool-header meta">Autoplay enabled</div>
+          ${renderAutoplayChipRow(chip)}
+          <div class="autoplay-pool-list">${poolHtml}</div>
+        </div>
+      `;
+      const generatedCount = (activePlaybackQueue?.generated_items || []).filter(item => item.origin === "autoplay").length;
+      const poolCount = poolItems.length;
+      document.getElementById("autoplayStatus").textContent = autoplayEnabled
+        ? (lastAutoplayStatus || `Autoplay ready - ${generatedCount} in queue, ${poolCount} prepared.`)
+        : "Autoplay is off for this session.";
+    }
+    function toggleExpandedPlayer() {
+      document.getElementById("expandedPlayer").classList.toggle("open");
+      renderPlayerState();
+    }
+    function updatePlayerClock() {
+      const player = document.getElementById("audioPlayer");
+      const seek = document.getElementById("playerSeek");
+      const bubble = document.getElementById("playerSeekBubble");
+      const duration = Number.isFinite(player.duration) && player.duration > 0 ? player.duration : 0;
+      const current = Number.isFinite(player.currentTime) ? player.currentTime : 0;
+      const percent = duration ? Math.max(0, Math.min(100, (current / duration) * 100)) : 0;
+      seek.value = String(Math.round(percent * 10));
+      seek.style.setProperty("--seek-progress", `${percent}%`);
+      bubble.textContent = entityDuration(current);
+      bubble.style.left = `${percent}%`;
+      document.getElementById("playerElapsed").textContent = entityDuration(player.currentTime || 0);
+      document.getElementById("playerDuration").textContent = Number.isFinite(player.duration) ? entityDuration(player.duration) : "0:00";
+    }
+    function seekPlayerToRangeValue(value) {
+      const player = document.getElementById("audioPlayer");
+      if (!Number.isFinite(player.duration) || player.duration <= 0) return;
+      const fraction = Math.max(0, Math.min(1, Number(value || 0) / 1000));
+      player.currentTime = player.duration * fraction;
+      updatePlayerClock();
+    }
+    async function recordPlaybackEvent(eventType, extra = {}) {
+      if (!activeTrackId && !extra.track_id) return;
+      try {
+        await json("/api/v1/playback/events", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            session_id: activePlaybackSession?.id || null,
+            queue_item_id: activeQueueItemId,
+            track_id: activeTrackId,
+            event_type: eventType,
+            source: "web",
+            ...extra,
+          }),
+        });
+        if (["completed", "skipped", "liked", "disliked", "replayed", "removed_from_queue"].includes(eventType)) {
+          await refillAutoplay();
+        }
+      } catch (err) {
+        document.getElementById("playerError").textContent = `Playback event failed: ${err.message}`;
+      }
+    }
+    function autoplaySettingsPayload() {
+      return {
+        autoplay_visible_buffer: Number(document.getElementById("autoplayVisibleBuffer")?.value || 5),
+        autoplay_candidate_count: Number(document.getElementById("autoplayCandidateCount")?.value || 200),
+        autoplay_preference_chip: activePlaybackSession?.settings?.autoplay_preference_chip || "All",
+      };
+    }
+    function autoplayStatusFromRefill(result) {
+      const added = result?.added_items?.length || 0;
+      const debug = result?.debug || {};
+      const prepared = debug.pool_after || 0;
+      if (added > 0) return `Autoplay added ${added} track${added === 1 ? "" : "s"}; ${prepared} prepared.`;
+      if (debug.needed === 0) return `Autoplay ready - queue buffer is full; ${prepared} prepared.`;
+      if (debug.empty_reason === "no_seed_embeddings") {
+        return `Autoplay needs ${debug.seed_track_ids?.length ? "usable" : "source"} embeddings for this source.`;
+      }
+      if (debug.candidate_count === 0) return "Autoplay found no eligible candidates for this source.";
+      if (debug.needed > 0) return `Autoplay tried to fill ${debug.needed} slot${debug.needed === 1 ? "" : "s"} but added none.`;
+      return "Autoplay ready.";
+    }
+    async function refillAutoplay() {
+      if (!activePlaybackSession?.id || activePlaybackSession.autoplay_enabled === false) return;
+      try {
+        const settings = autoplaySettingsPayload();
+        const result = await json("/api/v1/autoplay/refill?include_debug=true", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            session_id: activePlaybackSession.id,
+            visible_buffer: settings.autoplay_visible_buffer,
+            candidate_count: settings.autoplay_candidate_count,
+            settings,
+          }),
+        });
+        lastAutoplayStatus = autoplayStatusFromRefill(result);
+        await refreshPlaybackQueue();
+      } catch (err) {
+        lastAutoplayStatus = null;
+        document.getElementById("autoplayStatus").textContent = `Autoplay refill failed: ${err.message}`;
+      }
+    }
+    async function refreshPlaybackQueue() {
+      if (!activePlaybackSession?.id) return;
+      const data = await json(`/api/v1/playback/sessions/${activePlaybackSession.id}/queue`);
+      activePlaybackSession = data.session;
+      activePlaybackQueue = data.queue;
+      if (!activeQueueItemId && data.queue?.current_item?.id) {
+        activeQueueItemId = data.queue.current_item.id;
+      }
+      renderPlayerState();
+    }
+    async function toggleAutoplay() {
+      if (!activePlaybackSession?.id) return;
+      const enabled = activePlaybackSession.autoplay_enabled === false;
+      try {
+        const data = await json(`/api/v1/playback/sessions/${activePlaybackSession.id}`, {
+          method: "PATCH",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({autoplay_enabled: enabled}),
+        });
+        lastAutoplayStatus = null;
+        activePlaybackSession = data.session;
+        activePlaybackQueue = data.queue;
+        renderPlayerState();
+        if (enabled) await refillAutoplay();
+      } catch (err) {
+        document.getElementById("playerError").textContent = `Autoplay toggle failed: ${err.message}`;
+      }
+    }
+    async function setAutoplayChip(chip) {
+      if (!activePlaybackSession?.id) return;
+      const settings = {...(activePlaybackSession.settings || {}), autoplay_preference_chip: chip};
+      try {
+        const data = await json(`/api/v1/playback/sessions/${activePlaybackSession.id}`, {
+          method: "PATCH",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({settings}),
+        });
+        lastAutoplayStatus = null;
+        activePlaybackSession = data.session;
+        activePlaybackQueue = data.queue;
+        renderPlayerState();
+        await refillAutoplay();
+      } catch (err) {
+        document.getElementById("playerError").textContent = `Autoplay preference failed: ${err.message}`;
+      }
+    }
+    async function jumpToQueueItem(queueItemId) {
+      if (!activePlaybackSession?.id) return;
+      try {
+        const data = await json(`/api/v1/playback/sessions/${activePlaybackSession.id}/queue`, {
+          method: "PATCH",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({operation: "jump", queue_item_id: queueItemId}),
+        });
+        activePlaybackSession = data.session;
+        activePlaybackQueue = data.queue;
+        activeQueueItemId = queueItemId;
+        const item = currentQueueItem();
+        if (item) await playTrack(Number(item.track_id), encodedArg(queueTrackLabel(item)), {queueItemId: item.id, recordStarted: false});
+      } catch (err) {
+        document.getElementById("playerError").textContent = `Queue jump failed: ${err.message}`;
+      }
+    }
+    async function playQueueOffset(offset) {
+      const items = activePlaybackQueue?.items || [];
+      const index = items.findIndex(item => item.id === activeQueueItemId);
+      const item = items[index + offset];
+      if (item) await jumpToQueueItem(item.id);
+    }
+    function playPreviousQueueItem() {
+      return playQueueOffset(-1);
+    }
+    function toggleAudioPlayback() {
+      const player = document.getElementById("audioPlayer");
+      if (!player.src) return;
+      if (player.paused) player.play().catch(() => {
+        document.getElementById("playerError").textContent = "Click play in the audio controls if autoplay is blocked.";
+      });
+      else player.pause();
+    }
+    async function skipCurrentTrack() {
+      const player = document.getElementById("audioPlayer");
+      await recordPlaybackEvent("skipped", {
+        position_seconds: Number.isFinite(player.currentTime) ? player.currentTime : null,
+        duration_seconds: Number.isFinite(player.duration) ? player.duration : null,
+      });
+      await playQueueOffset(1);
+    }
+    function recordCurrentPreference(eventType) {
+      return recordPlaybackEvent(eventType);
+    }
     async function playSource(sourceType, sourceId, encodedLabel, preferredTrackId = null) {
       try {
         const data = await json("/api/v1/playback/sessions", {
@@ -7400,9 +8770,17 @@ UI_HTML = r"""
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({source_type: sourceType, source_id: Number(sourceId), source_label: decodeURIComponent(encodedLabel || "")})
         });
-        const first = preferredTrackId || data.queue?.current_item?.track_id || data.queue?.items?.[0]?.track_id;
+        activePlaybackSession = data.session;
+        activePlaybackQueue = data.queue;
+        lastAutoplayStatus = null;
+        const preferredItem = (data.queue?.items || []).find(item => Number(item.track_id) === Number(preferredTrackId));
+        const firstItem = preferredItem || data.queue?.current_item || data.queue?.items?.[0];
+        activeQueueItemId = firstItem?.id || null;
+        const first = firstItem?.track_id || preferredTrackId;
         const labelText = decodeURIComponent(encodedLabel || "") || data.session?.source_label || `${sourceType} #${sourceId}`;
-        if (first) await playTrack(Number(first), encodedArg(labelText));
+        renderPlayerState();
+        if (first) await playTrack(Number(first), encodedArg(preferredItem ? queueTrackLabel(preferredItem) : labelText), {queueItemId: activeQueueItemId});
+        await refillAutoplay();
       } catch (err) {
         document.getElementById("playerError").textContent = `Playback session failed: ${err.message}`;
       }
@@ -7442,11 +8820,20 @@ UI_HTML = r"""
       if (tab === "all" && data.top_result) {
         const entity = data.top_result.entity;
         const label = data.top_result.entity_type;
+        const artwork = entity.image || entity.artwork || {};
+        const imageUrl = artwork.url || "";
+        const title = entity.name || entity.title || label;
+        const initial = esc((title || "?").slice(0, 1).toUpperCase());
         sections.push(`<div class="top-result">
-          <div class="meta">Top result</div>
-          <h2>${esc(entity.name || entity.title || label)}</h2>
-          <div class="actions">
-            <button onclick="${label === "artist" ? `openArtist(${entity.id})` : label === "release" ? `openRelease(${entity.id})` : `playSource('track', ${entity.id}, '${encodedArg(entity.title || "Track")}')`}">Open</button>
+          <div class="top-result-avatar">
+            ${imageUrl ? `<img src="${esc(imageUrl)}" loading="lazy" alt="" onerror="this.remove()">` : `<span>${initial}</span>`}
+          </div>
+          <div class="top-result-body">
+            <div class="meta">Top result</div>
+            <h2>${esc(title)}</h2>
+            <div class="actions">
+              <button onclick="${label === "artist" ? `openArtist(${entity.id})` : label === "release" ? `openRelease(${entity.id})` : `playSource('track', ${entity.id}, '${encodedArg(entity.title || "Track")}')`}">Open</button>
+            </div>
           </div>
         </div>`);
       }
@@ -7561,10 +8948,10 @@ UI_HTML = r"""
     async function refreshStats() {
       if (statsInFlight) return;
       statsInFlight = true;
+      const listenerDashboardPromise = loadListenerDashboard();
       try {
         const data = await json(`/stats?model=${encodeURIComponent(model())}`, {timeoutMs: 30000});
         renderDashboardCards(data);
-        await loadListenerDashboard();
         renderModelCards(data);
         const indexStatus = data.index_status || (data.index_exists ? "ready" : "missing");
         const indexCount = data.index_count ?? "?";
@@ -7576,6 +8963,7 @@ UI_HTML = r"""
       } catch (err) {
         document.getElementById("modelState").textContent = `Stats unavailable: ${err.message}`;
       } finally {
+        await listenerDashboardPromise.catch(() => {});
         statsInFlight = false;
       }
     }
@@ -9106,12 +10494,16 @@ UI_HTML = r"""
         target.innerHTML = `<div class="error">${esc(err.message)}</div>`;
       }
     }
-    async function playTrack(id, encodedLabel) {
+    async function playTrack(id, encodedLabel, {queueItemId = null, recordStarted = true} = {}) {
       activeTrackId = id;
+      activeQueueItemId = queueItemId || activeQueueItemId;
+      progressEventSent = false;
       document.getElementById("playerError").textContent = "";
       document.getElementById("nowPlaying").textContent = decodeURIComponent(encodedLabel);
       const player = document.getElementById("audioPlayer");
       player.src = `/tracks/${id}/audio`;
+      renderPlayerState();
+      if (recordStarted) await recordPlaybackEvent("track_started");
       try {
         await player.play();
       } catch (err) {
@@ -9124,6 +10516,10 @@ UI_HTML = r"""
       if (seedId) await loadSimilar(seedId, {updateUrl: true});
     }
     async function playNextSimilarTrack() {
+      if (activePlaybackQueue?.items?.length) {
+        await playQueueOffset(1);
+        return;
+      }
       const index = currentSimilarTracks.findIndex(track => track.id === activeTrackId);
       if (index < 0 || index >= currentSimilarTracks.length - 1) return;
       const next = currentSimilarTracks[index + 1];
@@ -9465,6 +10861,9 @@ UI_HTML = r"""
     document.getElementById("listenerSearchQuery").addEventListener("keydown", event => {
       if (event.key === "Enter") runListenerSearch();
     });
+    document.getElementById("homeSearchQuery").addEventListener("keydown", event => {
+      if (event.key === "Enter") runHomeSearch();
+    });
     document.getElementById("seedQuery").addEventListener("keydown", event => {
       if (event.key === "Enter") searchSeeds();
     });
@@ -9492,7 +10891,38 @@ UI_HTML = r"""
     document.getElementById("audioPlayer").addEventListener("error", () => {
       document.getElementById("playerError").textContent = "file not mounted";
     });
-    document.getElementById("audioPlayer").addEventListener("ended", playNextSimilarTrack);
+    document.getElementById("audioPlayer").addEventListener("timeupdate", event => {
+      const player = event.currentTarget;
+      updatePlayerClock();
+      if (!progressEventSent && Number.isFinite(player.currentTime) && player.currentTime >= 30) {
+        progressEventSent = true;
+        recordPlaybackEvent("play_threshold_reached", {
+          position_seconds: player.currentTime,
+          duration_seconds: Number.isFinite(player.duration) ? player.duration : null,
+        });
+      }
+    });
+    document.getElementById("audioPlayer").addEventListener("loadedmetadata", updatePlayerClock);
+    document.getElementById("audioPlayer").addEventListener("ended", async event => {
+      const player = event.currentTarget;
+      await recordPlaybackEvent("completed", {
+        position_seconds: Number.isFinite(player.duration) ? player.duration : player.currentTime,
+        duration_seconds: Number.isFinite(player.duration) ? player.duration : null,
+        play_fraction: 1,
+      });
+      await playNextSimilarTrack();
+    });
+    document.getElementById("playerSeek").addEventListener("input", event => {
+      document.getElementById("playerSeekWrap").classList.add("scrubbing");
+      seekPlayerToRangeValue(event.currentTarget.value);
+    });
+    document.getElementById("playerSeek").addEventListener("change", event => {
+      seekPlayerToRangeValue(event.currentTarget.value);
+      document.getElementById("playerSeekWrap").classList.remove("scrubbing");
+    });
+    document.getElementById("playerSeek").addEventListener("blur", () => {
+      document.getElementById("playerSeekWrap").classList.remove("scrubbing");
+    });
     loadSettings();
     bindSettingsAutosave();
     renderTextSearchRecent();

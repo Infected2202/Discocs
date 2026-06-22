@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from app.scanner import ScannedTrack
 from app.store import Store, TrackFeature, TrackPrediction
@@ -53,6 +54,69 @@ def test_store_upsert_and_embedding_round_trip(tmp_path: Path):
     assert same_id == track_id
     assert changed is True
     assert store.load_embedding(track_id, "discogs_multi") is None
+
+
+def test_added_at_is_preserved_and_release_added_at_is_derived(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_path = (tmp_path / "added" / "01.flac").resolve()
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=track_path,
+            artist="Added Artist",
+            title="First",
+            album="Added Release",
+            duration=100.0,
+            file_size=1,
+            mtime=1,
+        )
+    )
+    first = store.get_track(track_id)
+    assert first is not None
+    assert first.added_at is not None
+
+    same_id, changed = store.upsert_track(
+        ScannedTrack(
+            path=track_path,
+            artist="Added Artist",
+            title="First Updated",
+            album="Added Release",
+            duration=101.0,
+            file_size=2,
+            mtime=2,
+        )
+    )
+    updated = store.get_track(same_id)
+    assert changed is True
+    assert updated is not None
+    assert updated.added_at == first.added_at
+
+    second_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "added" / "02.flac").resolve(),
+            artist="Added Artist",
+            title="Second",
+            album="Added Release",
+            duration=100.0,
+            file_size=1,
+            mtime=1,
+        )
+    )
+    release = store.search_entities("Added Release")["releases"]["items"][0].release
+    with store.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT r.added_at AS release_added_at, MAX(t.added_at) AS max_track_added_at
+            FROM releases r
+            JOIN release_tracks rt ON rt.release_id = r.id
+            JOIN tracks t ON t.id = rt.track_id
+            WHERE r.id = ?
+            """,
+            (release.id,),
+        ).fetchone()
+
+    assert second_id != track_id
+    assert row["release_added_at"] == row["max_track_added_at"]
 
 
 def test_metadata_rescan_without_file_change_keeps_embedding(tmp_path: Path):
@@ -786,6 +850,52 @@ def test_release_artists_aggregate_track_artists_without_album_artist(tmp_path: 
     assert [item.track.id for item in tracks] == [first_id, second_id]
 
 
+def test_track_release_move_refreshes_old_release_sidecars(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_path = (tmp_path / "Artist" / "Old Album" / "01 - Title.flac").resolve()
+
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=track_path,
+            artist="Alpha",
+            title="Title",
+            album="Old Album",
+            album_artist="Old Artist",
+            duration=120.0,
+            file_size=100,
+            mtime=1,
+            track_number=1,
+        )
+    )
+    old_release_id = store.search_entities("Old Album")["releases"]["items"][0].release.id
+
+    refreshed_id, changed = store.upsert_track(
+        ScannedTrack(
+            path=track_path,
+            artist="Alpha",
+            title="Title",
+            album="New Album",
+            album_artist="New Artist",
+            duration=120.0,
+            file_size=101,
+            mtime=2,
+            track_number=1,
+        )
+    )
+
+    assert refreshed_id == track_id
+    assert changed is True
+    old_release = store.get_release(old_release_id)
+    assert old_release is not None
+    assert old_release.release.track_count == 0
+    assert old_release.artists == []
+    assert store.list_release_tracks(old_release_id) == []
+    new_release = store.search_entities("New Album")["releases"]["items"][0]
+    assert new_release.release.track_count == 1
+    assert [artist.name for artist in new_release.artists] == ["New Artist"]
+
+
 def test_normalization_backfill_is_idempotent_and_mirrors_external_ids(tmp_path: Path):
     store = Store(tmp_path / "app.db")
     store.init()
@@ -825,6 +935,39 @@ def test_normalization_backfill_is_idempotent_and_mirrors_external_ids(tmp_path:
     )
     assert release.identity_key == "provider:navidrome:release:album-1"
     assert release.cover_art_id == "cover-1"
+
+
+def test_normalization_backfill_mirrors_navidrome_artist_id(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=Path("navidrome://song-1"),
+            artist="Artist",
+            title="Title",
+            album="Album",
+            duration=123.0,
+            file_size=100,
+            mtime=1,
+        )
+    )
+    store.upsert_external_track(
+        "navidrome",
+        "song-1",
+        track_id,
+        raw_json='{"albumId":"album-1","artistId":"artist-1"}',
+    )
+
+    store.backfill_library_normalization()
+    artist_id = store.search_entities("Artist")["artists"]["items"][0].artist.id
+
+    assert store.external_id_for_entity("navidrome", "artist", artist_id) == "artist-1"
+
+    store.update_artist_external_info(artist_id, image_url="https://lastfm.example/artist.jpg", bio="Bio")
+    artist = store.get_artist(artist_id)
+    assert artist is not None
+    assert artist.artist.image_url == "https://lastfm.example/artist.jpg"
+    assert artist.artist.bio == "Bio"
 
 
 def test_missing_album_creates_synthetic_one_track_release(tmp_path: Path):
@@ -981,11 +1124,19 @@ def test_playback_skip_strength_and_recompute_from_raw_events(tmp_path: Path):
 
     early = store.get_track_preference(early_id)
     late = store.get_track_preference(late_id)
+    release_id = store.search_entities("Skips")["releases"]["items"][0].release.id
+    artist_id = store.search_entities("Skip Artist")["artists"]["items"][0].artist.id
+    release_pref = store.get_release_preference(release_id)
+    artist_pref = store.get_artist_preference(artist_id)
     assert early.skip_count == 1
     assert early.early_skip_count == 1
     assert late.skip_count == 1
     assert late.early_skip_count == 0
     assert early.score < late.score
+    assert release_pref.skip_count == 2
+    assert artist_pref.skip_count == 2
+    assert release_pref.score == artist_pref.score
+    assert release_pref.score > early.score
 
     before = (early.skip_count, early.early_skip_count, early.score, late.skip_count, late.score)
     store.recompute_user_preferences()
@@ -1018,6 +1169,7 @@ def test_playback_completion_like_dislike_replay_save_and_duplicate_idempotency(
     artist_id = store.search_entities("Positive Artist")["artists"]["items"][0].artist.id
 
     store.record_playback_event(track_id=track_id, event_type="play_threshold_reached", client_event_id="threshold")
+    store.record_playback_event(track_id=track_id, event_type="completed", play_fraction=0.5, client_event_id="low-complete")
     store.record_playback_event(track_id=track_id, event_type="completed", play_fraction=0.95, client_event_id="complete")
     store.record_playback_event(track_id=track_id, event_type="liked", client_event_id="liked")
     duplicate = store.record_playback_event(track_id=track_id, event_type="liked", client_event_id="liked")
@@ -1047,3 +1199,39 @@ def test_playback_completion_like_dislike_replay_save_and_duplicate_idempotency(
     assert recomputed.completion_count == pref.completion_count
     assert recomputed.disliked == pref.disliked
     assert recomputed.replay_count == pref.replay_count
+
+
+def test_playback_queue_rejects_missing_tracks_and_low_completion_does_not_finish_item(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "queue.flac").resolve(),
+            artist="Queue Artist",
+            title="Queue Track",
+            album="Queue Release",
+            duration=100.0,
+            file_size=1,
+            mtime=1,
+        )
+    )
+
+    with pytest.raises(ValueError, match="Tracks not found: 999"):
+        store.create_playback_session(source_type="track", source_id=999, track_ids=[999])
+
+    session, queue = store.create_playback_session(source_type="track", source_id=track_id, track_ids=[track_id])
+    with pytest.raises(ValueError, match="Tracks not found: 999"):
+        store.append_queue_items(session.id, [{"track_id": 999}])
+    with pytest.raises(ValueError, match="Tracks not found: 999"):
+        store.replace_queue_items(session.id, [{"track_id": 999}])
+
+    store.record_playback_event(
+        session_id=session.id,
+        queue_item_id=queue[0].id,
+        track_id=track_id,
+        event_type="completed",
+        play_fraction=0.5,
+    )
+
+    assert store.list_queue_items(session.id)[0].status == "queued"
+    assert store.get_track_preference(track_id).completion_count == 0

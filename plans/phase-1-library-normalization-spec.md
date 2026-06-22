@@ -962,3 +962,15 @@ Acceptance:
 
 - user can see whether normalization is complete;
 - cleanup is explicit and not risky during sync/backfill.
+
+## Audit Follow-Up Queue
+
+These items are intentionally tracked for a later cross-phase audit instead of
+blocking the Phase 1 data-model baseline:
+
+- decide whether `artist_aliases` should become active in Phase 1 or remain a
+  deferred entity-resolution feature;
+- decide whether full multi-artist credits should create standalone artist
+  entities or stay as preserved `credit_text` on parsed artists;
+- verify after all phases whether a web/API repair action is needed for
+  `normalize-library`, beyond the CLI command.

@@ -24,6 +24,7 @@ class NavidromeSong:
     id: str
     title: str | None = None
     artist: str | None = None
+    artist_id: str | None = None
     album: str | None = None
     duration: int | None = None
     size: int | None = None
@@ -31,6 +32,9 @@ class NavidromeSong:
     content_type: str | None = None
     genre: str | None = None
     year: int | None = None
+    play_count: int | None = None
+    last_played_at: str | None = None
+    starred_at: str | None = None
     raw: dict[str, Any] | None = None
 
 
@@ -95,11 +99,35 @@ class NavidromeClient:
             payload = self.request("getStarred")
         return songs_from_starred_payload(payload)
 
+    def get_artist_info2(self, artist_id: str, *, count: int = 0) -> dict[str, Any]:
+        payload = self.request(
+            "getArtistInfo2",
+            {
+                "id": artist_id,
+                "count": max(count, 0),
+                "includeNotPresent": "false",
+            },
+        )
+        info = payload.get("artistInfo2") or payload.get("artistInfo") or {}
+        return info if isinstance(info, dict) else {}
+
     def star_song(self, item_id: str) -> dict[str, Any]:
         return self.request("star", {"id": item_id})
 
     def unstar_song(self, item_id: str) -> dict[str, Any]:
         return self.request("unstar", {"id": item_id})
+
+    def scrobble_song(
+        self,
+        item_id: str,
+        *,
+        played_at_ms: int | None = None,
+        submission: bool = True,
+    ) -> dict[str, Any]:
+        params: dict[str, object] = {"id": item_id, "submission": "true" if submission else "false"}
+        if played_at_ms is not None:
+            params["time"] = played_at_ms
+        return self.request("scrobble", params)
 
     def iter_songs(
         self,
@@ -275,6 +303,7 @@ def parse_song(raw: dict[str, Any]) -> NavidromeSong:
         id=str(raw.get("id", "")),
         title=_optional_str(raw.get("title")),
         artist=_optional_str(raw.get("artist")),
+        artist_id=_optional_str(raw.get("artistId")),
         album=_optional_str(raw.get("album")),
         duration=_optional_int(raw.get("duration")),
         size=_optional_int(raw.get("size")),
@@ -282,8 +311,26 @@ def parse_song(raw: dict[str, Any]) -> NavidromeSong:
         content_type=_optional_str(raw.get("contentType")),
         genre=_optional_str(raw.get("genre")),
         year=_optional_int(raw.get("year")),
+        play_count=_optional_int(raw.get("playCount")),
+        last_played_at=_optional_str(raw.get("played") or raw.get("lastPlayed")),
+        starred_at=_optional_str(raw.get("starred")),
         raw=raw,
     )
+
+
+def artist_info_image_url(info: dict[str, Any]) -> str | None:
+    for key in ("largeImageUrl", "mediumImageUrl", "smallImageUrl"):
+        value = _optional_str(info.get(key))
+        if value:
+            return value
+    return None
+
+
+def artist_info_bio(info: dict[str, Any]) -> str | None:
+    biography = info.get("biography")
+    if isinstance(biography, dict):
+        return _optional_str(biography.get("value") or biography.get("summary"))
+    return _optional_str(info.get("biography"))
 
 
 def _as_list(value: object) -> list[dict[str, Any]]:

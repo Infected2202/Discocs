@@ -1,0 +1,11 @@
+{
+  "navidrome": {
+    "auth_mode": "token",
+    "download_mode": "download",
+    "password": "secret",
+    "temp_dir": "C:\\Users\\nexus\\scripts\\discocs\\.pytest-full-tmp\\test_navidrome_settings_round_0\\navidrome-tmp",
+    "timeout_seconds": 45,
+    "url": "http://navidrome:4533",
+    "user": "tester"
+  }
+}

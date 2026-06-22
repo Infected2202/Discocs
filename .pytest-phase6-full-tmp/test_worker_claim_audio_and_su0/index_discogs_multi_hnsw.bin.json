@@ -1,0 +1,7 @@
+{
+  "count": 1,
+  "dim": 3,
+  "model_name": "discogs_multi",
+  "path": "C:\\Users\\nexus\\scripts\\discocs\\.pytest-phase6-full-tmp\\test_worker_claim_audio_and_su0\\index_discogs_multi_hnsw.bin",
+  "space": "cosine"
+}

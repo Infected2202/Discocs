@@ -1,0 +1,7 @@
+{
+  "count": 3,
+  "dim": 2,
+  "model_name": "discogs_multi",
+  "path": "C:\\Users\\nexus\\scripts\\discocs\\.pytest-phase6-full-tmp\\test_api_v1_autoplay_refill_ad0\\index_discogs_multi_hnsw.bin",
+  "space": "cosine"
+}
