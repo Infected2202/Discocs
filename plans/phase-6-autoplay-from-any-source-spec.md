@@ -67,6 +67,24 @@ Important:
 - one skip should not permanently punish a track/source;
 - likes reinforce the current source/session direction.
 
+## Track Action Menu Integration
+
+The web player should expose the same per-track overflow menu everywhere a
+track can be acted on:
+
+- current track title in the persistent player;
+- Up Next / expanded queue rows;
+- playlist or generated-mix track rows;
+- release/album track rows.
+
+The first shared menu item is `Instant Mix`. It starts a track-scoped instant
+mix from the selected track using the saved instant-mix settings, records the
+request in instant-mix history, creates a playback session/queue from the seed
+and returned tracks, and starts that queue in the player. It must not route the
+listener into the instant-mix history/debug page. The menu component should be
+shared by these surfaces so future track actions are added once instead of
+reimplemented per list.
+
 ## Session Model
 
 Autoplay uses Phase 3 `playback_sessions`.

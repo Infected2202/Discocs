@@ -15,6 +15,7 @@ AUTOPLAY_SOURCE_TYPES = {"track", "release", "artist", "playlist", "search", "ma
 POSITIVE_EVENTS = {"completed", "liked", "play_threshold_reached", "replayed"}
 NEGATIVE_EVENTS = {"skipped", "disliked"}
 AUTOPLAY_POOL_STATE_KEY = "autoplay_pool"
+AUTOPLAY_POOL_LOW_WATERMARK_RATIO = 0.2
 
 
 @dataclass(frozen=True)
@@ -36,10 +37,15 @@ class AutoplaySettings:
 class SourceContext:
     source_type: str
     source_id: int | None
+    source_track_ids: list[int]
     seed_track_ids: list[int]
     accepted_track_ids: list[int]
     skipped_track_ids: list[int]
+    played_track_ids: list[int]
+    existing_queue_track_ids: list[int]
+    current_track_ids: list[int]
     exclude_track_ids: set[int]
+    source_debug: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -163,7 +169,7 @@ def build_source_context(store: Store, session: PlaybackSession) -> SourceContex
     played_ids = [item.track_id for item in items if item.status in {"played", "skipped"}]
     current_ids = [session.current_track_id] if session.current_track_id else []
     existing_queue_ids = [item.track_id for item in items if item.status != "removed"]
-    source_ids = _source_seed_track_ids(store, session, items)
+    source_ids, source_debug = _source_seed_track_ids(store, session, items)
     seed_ids = _dedupe([*accepted_ids, *source_ids])
     exclude_ids = set(
         int(track_id)
@@ -173,10 +179,15 @@ def build_source_context(store: Store, session: PlaybackSession) -> SourceContex
     return SourceContext(
         source_type=session.source_type,
         source_id=session.source_id,
+        source_track_ids=source_ids,
         seed_track_ids=seed_ids,
         accepted_track_ids=_dedupe(accepted_ids),
         skipped_track_ids=_dedupe(skipped_ids),
+        played_track_ids=_dedupe(played_ids),
+        existing_queue_track_ids=_dedupe(existing_queue_ids),
+        current_track_ids=_dedupe(current_ids),
         exclude_track_ids=exclude_ids,
+        source_debug=source_debug,
     )
 
 
@@ -187,15 +198,24 @@ def generate_autoplay_candidates(
     autoplay_settings: AutoplaySettings,
 ) -> tuple[list[AutoplayCandidate], SourceContext, dict[str, object]]:
     context = build_source_context(store, session)
-    seed_tracks = [track for track in store.get_tracks(context.seed_track_ids).values()]
+    seed_tracks = [track for track in store.get_tracks(context.seed_track_ids).values() if track.missing_at is None]
     seed_tracks = [track for track in seed_tracks if store.load_embedding(track.id, autoplay_settings.model) is not None]
     debug: dict[str, object] = {
         "source_type": context.source_type,
         "source_id": context.source_id,
+        "source_track_ids": context.source_track_ids,
         "seed_track_ids": [track.id for track in seed_tracks],
+        "source_debug": context.source_debug,
         "accepted_track_ids": context.accepted_track_ids,
         "skipped_track_ids": context.skipped_track_ids,
-        "excluded_track_count": len(context.exclude_track_ids),
+        "excluded_counts": {
+            "existing_queue": len(context.existing_queue_track_ids),
+            "played": len(context.played_track_ids),
+            "current": len(context.current_track_ids),
+            "skipped": len(context.skipped_track_ids),
+            "unique_total": len(context.exclude_track_ids),
+        },
+        "unavailable_candidate_count": 0,
     }
     if not seed_tracks:
         debug["empty_reason"] = "no_seed_embeddings"
@@ -216,6 +236,9 @@ def generate_autoplay_candidates(
     for result in similar:
         if result.track.id in context.exclude_track_ids:
             continue
+        if result.track.missing_at is not None:
+            debug["unavailable_candidate_count"] = int(debug["unavailable_candidate_count"]) + 1
+            continue
         candidate_vector = store.load_embedding(result.track.id, autoplay_settings.model)
         if candidate_vector is None:
             continue
@@ -226,13 +249,21 @@ def generate_autoplay_candidates(
         freshness_bonus = 0.03 if preference is None or not preference.last_played_at else 0.0
         continuity_bonus = _continuity_bonus(store, session, result.track.id)
         skip_penalty = autoplay_settings.recent_skip_penalty * max(0.0, skip_similarity)
+        already_played_penalty = 0.0
+        artist_fatigue_penalty = 0.0
+        release_fatigue_penalty = 0.0
+        unavailable_penalty = 0.0
         score = (
             autoplay_settings.source_weight * result.similarity
             + autoplay_settings.accepted_weight * accepted_similarity
             + autoplay_settings.personal_weight * personal_score
             + autoplay_settings.exploration_ratio * freshness_bonus
             + continuity_bonus
+            - already_played_penalty
             - skip_penalty
+            - artist_fatigue_penalty
+            - release_fatigue_penalty
+            - unavailable_penalty
         )
         reason = _candidate_reason(session, result.similarity, accepted_similarity, personal_score)
         scored.append(
@@ -250,7 +281,11 @@ def generate_autoplay_candidates(
                         "personal_preference": personal_score,
                         "freshness_bonus": freshness_bonus,
                         "continuity_bonus": continuity_bonus,
+                        "already_played_penalty": already_played_penalty,
                         "recent_skip_penalty": skip_penalty,
+                        "artist_fatigue_penalty": artist_fatigue_penalty,
+                        "release_fatigue_penalty": release_fatigue_penalty,
+                        "unavailable_penalty": unavailable_penalty,
                     },
                     "settings": {
                         "source_weight": autoplay_settings.source_weight,
@@ -333,8 +368,12 @@ def refill_autoplay_queue(
         "pool_before": len(pool),
         "pool_target": autoplay_settings.candidate_count,
     }
+    pool_low_watermark = autoplay_pool_low_watermark(autoplay_settings)
+    debug["pool_low_watermark"] = pool_low_watermark
     generated_pool: list[dict[str, object]] = []
-    if len(pool) < autoplay_settings.candidate_count:
+    should_generate_pool = len(pool) < needed or len(pool) < pool_low_watermark
+    debug["generated_pool_requested"] = should_generate_pool
+    if should_generate_pool:
         candidates, _context, candidate_debug = generate_autoplay_candidates(
             store,
             settings,
@@ -366,6 +405,13 @@ def refill_autoplay_queue(
     )
 
 
+def autoplay_pool_low_watermark(settings: AutoplaySettings) -> int:
+    return min(
+        settings.candidate_count,
+        max(settings.visible_buffer * 2, math.ceil(settings.candidate_count * AUTOPLAY_POOL_LOW_WATERMARK_RATIO)),
+    )
+
+
 def autoplay_items_needed(store: Store, session: PlaybackSession, visible_buffer: int) -> int:
     items = store.list_queue_items(session.id)
     current_index = 0
@@ -378,18 +424,48 @@ def autoplay_items_needed(store: Store, session: PlaybackSession, visible_buffer
     return max(0, visible_buffer - len(upcoming))
 
 
-def _source_seed_track_ids(store: Store, session: PlaybackSession, items: list[QueueItem]) -> list[int]:
+def _source_seed_track_ids(
+    store: Store,
+    session: PlaybackSession,
+    items: list[QueueItem],
+) -> tuple[list[int], dict[str, object]]:
     if session.source_type == "track" and session.source_id is not None:
-        return [session.source_id]
+        return [session.source_id], {"strategy": "track_seed"}
     if session.source_type == "release" and session.source_id is not None:
-        return [item.track.id for item in store.list_release_tracks(session.source_id)]
+        release_track_ids = [item.track.id for item in store.list_release_tracks(session.source_id)]
+        return release_track_ids, {"strategy": "release_tracks", "release_track_count": len(release_track_ids)}
     if session.source_type == "artist" and session.source_id is not None:
-        return store.list_artist_track_ids(session.source_id, limit=50)
-    return [
+        artist_track_ids = store.list_artist_track_ids(session.source_id, limit=50)
+        return artist_track_ids, {"strategy": "artist_tracks", "artist_track_count": len(artist_track_ids)}
+    if session.source_type == "playlist" and session.source_id is not None:
+        playlist_track_ids = [item.track_id for item in store.list_playlist_items(session.source_id)]
+        return playlist_track_ids, {"strategy": "playlist_items", "playlist_track_count": len(playlist_track_ids)}
+    if session.source_type == "generated_mix":
+        mix_id = _generated_mix_id(session)
+        if mix_id:
+            mix_track_ids = [item.track_id for item in store.list_generated_mix_items(mix_id)]
+            return mix_track_ids, {
+                "strategy": "generated_mix_items",
+                "generated_mix_id": mix_id,
+                "generated_mix_track_count": len(mix_track_ids),
+            }
+    queue_track_ids = [
         item.track_id
         for item in items
         if item.origin in {"source", "manual", "generated_mix", "flow"} and item.status != "removed"
     ]
+    strategy = "accepted_or_source_queue"
+    if session.source_type == "search":
+        strategy = "search_result_queue"
+    elif session.source_type == "manual":
+        strategy = "manual_queue"
+    elif session.source_type == "flow":
+        strategy = "flow_queue"
+    elif session.source_type == "playlist":
+        strategy = "playlist_queue"
+    elif session.source_type == "generated_mix":
+        strategy = "generated_mix_queue"
+    return queue_track_ids, {"strategy": strategy, "queue_track_count": len(queue_track_ids)}
 
 
 def _candidate_pool_item(candidate: AutoplayCandidate, session: PlaybackSession) -> dict[str, object]:
@@ -433,7 +509,8 @@ def _valid_autoplay_pool_items(
             track_id = int(raw_item["track_id"])
         except (KeyError, TypeError, ValueError):
             continue
-        if track_id in excluded or store.get_track(track_id) is None:
+        track = store.get_track(track_id)
+        if track_id in excluded or track is None or track.missing_at is not None:
             continue
         item = dict(raw_item)
         item["track_id"] = track_id
@@ -534,6 +611,16 @@ def _session_state(session: PlaybackSession) -> dict[str, object]:
     except (TypeError, ValueError):
         return {}
     return decoded if isinstance(decoded, dict) else {}
+
+
+def _generated_mix_id(session: PlaybackSession) -> str | None:
+    settings = _session_settings(session)
+    state = _session_state(session)
+    for values in (settings, state):
+        raw = values.get("generated_mix_id") or values.get("mix_id")
+        if raw:
+            return str(raw)
+    return None
 
 
 def _dedupe(values: Iterable[int]) -> list[int]:

@@ -28,35 +28,15 @@ For real audio embedding extraction:
 python -m pip install -e ".[dev,essentia]"
 ```
 
-`essentia-tensorflow` is a heavy/fragile dependency. Use the Linux server or Docker for real embedding extraction. Keep imports lazy and do not require Essentia for unit tests that do not actually run model inference.
+`essentia-tensorflow` is a heavy/fragile dependency. Use Docker or an environment with Essentia installed for real embedding extraction. Keep imports lazy and do not require Essentia for unit tests that do not actually run model inference.
 
-## Codex / Windows Environment
+## Codex Environment
 
-Codex runs on a Windows PC, while the app and files are on the LAN server.
-
-Use the LAN app URL for browser/API checks and configuration:
+Use this default app URL for browser/API checks and configuration:
 
 ```text
-http://192.168.1.41:8711/
+http://192.168.1.146:8711/
 ```
-
-Do not assume `localhost:8711` points to the app from Codex.
-
-The repo is accessed through SMB/Samba:
-
-```text
-\\192.168.1.41\infected2202\dev\discocs
-```
-
-Do not use the SMB/UNC path or `H:\dev\discocs` as the process working
-directory. PowerShell may fail before running the command with:
-
-```text
-CreateProcessWithLogonW failed: 267
-```
-
-If this happens, treat it as a Windows/SMB process-start issue first. Retry the
-command before assuming the project, file, or tool is broken.
 
 ## Runtime Files
 

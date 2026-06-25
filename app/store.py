@@ -380,6 +380,7 @@ class GeneratedMix:
     title: str
     mix_type: str
     status: str
+    cover_path: str | None
     anchor_json: str | None
     settings_json: str | None
     score_summary_json: str | None
@@ -397,6 +398,24 @@ class GeneratedMixItem:
     score: float | None
     score_breakdown_json: str | None
     reason_json: str | None
+    created_at: str
+
+
+@dataclass(frozen=True)
+class Playlist:
+    id: int
+    title: str
+    kind: str
+    source_json: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class PlaylistItem:
+    playlist_id: int
+    position: int
+    track_id: int
     created_at: str
 
 
@@ -804,6 +823,7 @@ class Store:
                     title TEXT NOT NULL,
                     mix_type TEXT NOT NULL,
                     status TEXT NOT NULL,
+                    cover_path TEXT,
                     anchor_json TEXT,
                     settings_json TEXT,
                     score_summary_json TEXT,
@@ -832,6 +852,29 @@ class Store:
 
                 CREATE INDEX IF NOT EXISTS idx_generated_mix_items_track
                     ON generated_mix_items(track_id);
+
+                CREATE TABLE IF NOT EXISTS playlists (
+                    id INTEGER PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    source_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS playlist_items (
+                    playlist_id INTEGER NOT NULL,
+                    position INTEGER NOT NULL,
+                    track_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (playlist_id, position),
+                    UNIQUE (playlist_id, track_id),
+                    FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_playlist_items_track
+                    ON playlist_items(track_id);
 
                 CREATE TABLE IF NOT EXISTS instant_mix_requests (
                     id TEXT PRIMARY KEY,
@@ -963,6 +1006,7 @@ class Store:
             self._ensure_column(conn, "playback_events", "artist_id", "INTEGER")
             self._ensure_column(conn, "playback_events", "source", "TEXT NOT NULL DEFAULT 'web'")
             self._ensure_column(conn, "playback_events", "payload_json", "TEXT")
+            self._ensure_column(conn, "generated_mixes", "cover_path", "TEXT")
             self._backfill_added_timestamps(conn)
 
     def _ensure_column(
@@ -2748,7 +2792,7 @@ class Store:
         row: sqlite3.Row,
     ) -> dict[str, object]:
         event_type = str(row["event_type"])
-        if event_type in {"progress", "queue_click", "autoplay_toggled"}:
+        if event_type in {"track_started", "progress", "queue_click", "autoplay_toggled"}:
             return {}
         track_id = int(row["track_id"]) if row["track_id"] is not None else None
         release_id = int(row["release_id"]) if row["release_id"] is not None else None
@@ -2788,16 +2832,7 @@ class Store:
         event_type = str(row["event_type"])
         created_at = str(row["created_at"])
         self._ensure_track_preference(conn, track_id, created_at)
-        if event_type == "track_started":
-            conn.execute(
-                """
-                UPDATE user_track_preferences
-                SET last_played_at = ?, updated_at = ?
-                WHERE track_id = ?
-                """,
-                (created_at, created_at, track_id),
-            )
-        elif event_type == "play_threshold_reached":
+        if event_type == "play_threshold_reached":
             conn.execute(
                 """
                 UPDATE user_track_preferences
@@ -3265,6 +3300,7 @@ class Store:
         settings: dict[str, object] | None = None,
         score_summary: dict[str, object] | None = None,
         items: list[dict[str, object]] | None = None,
+        cover_path: str | None = None,
         expires_at: str | None = None,
         saved_playlist_id: int | None = None,
     ) -> GeneratedMix:
@@ -3282,15 +3318,16 @@ class Store:
             conn.execute(
                 """
                 INSERT INTO generated_mixes (
-                    id, title, mix_type, status, anchor_json, settings_json,
+                    id, title, mix_type, status, cover_path, anchor_json, settings_json,
                     score_summary_json, created_at, updated_at, expires_at,
                     saved_playlist_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
                     mix_type = excluded.mix_type,
                     status = excluded.status,
+                    cover_path = COALESCE(excluded.cover_path, generated_mixes.cover_path),
                     anchor_json = excluded.anchor_json,
                     settings_json = excluded.settings_json,
                     score_summary_json = excluded.score_summary_json,
@@ -3303,6 +3340,7 @@ class Store:
                     title,
                     mix_type,
                     status,
+                    cover_path,
                     _json_dumps(anchor),
                     _json_dumps(settings),
                     _json_dumps(score_summary),
@@ -3344,6 +3382,18 @@ class Store:
             raise RuntimeError(f"Generated mix not found after save: {mix_id}")
         return row_to_generated_mix(row)
 
+    def set_generated_mix_cover_path(self, mix_id: str, cover_path: str | None) -> GeneratedMix | None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE generated_mixes SET cover_path = ?, updated_at = ? WHERE id = ?",
+                (cover_path, utc_now(), mix_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM generated_mixes WHERE id = ?",
+                (mix_id,),
+            ).fetchone()
+        return row_to_generated_mix(row) if row else None
+
     def list_generated_mixes(
         self,
         *,
@@ -3360,7 +3410,18 @@ class Store:
                 f"""
                 SELECT * FROM generated_mixes
                 WHERE status IN ({placeholders})
-                ORDER BY updated_at DESC, created_at DESC, id
+                ORDER BY
+                    CASE
+                        WHEN id LIKE 'mix-%' THEN substr(id, 5, 20)
+                        ELSE updated_at
+                    END DESC,
+                    CASE
+                        WHEN id LIKE 'mix-%' THEN CAST(substr(substr(id, 26), 1, instr(substr(id, 26), '-') - 1) AS INTEGER)
+                        ELSE 0
+                    END ASC,
+                    updated_at DESC,
+                    created_at DESC,
+                    id
                 LIMIT ? OFFSET ?
                 """,
                 [*status_values, int(limit), int(offset)],
@@ -3403,19 +3464,85 @@ class Store:
     def save_generated_mix_as_playlist(self, mix_id: str) -> GeneratedMix | None:
         now = utc_now()
         with self.connect() as conn:
+            mix = conn.execute(
+                "SELECT * FROM generated_mixes WHERE id = ? AND status != 'archived'",
+                (mix_id,),
+            ).fetchone()
+            if mix is None:
+                return None
+            existing_playlist_id = mix["saved_playlist_id"]
+            source = {
+                "source_type": "generated_mix",
+                "generated_mix_id": mix_id,
+                "mix_type": mix["mix_type"],
+            }
+            if existing_playlist_id is None:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO playlists (title, kind, source_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (mix["title"], "saved_mix", _json_dumps(source), now, now),
+                )
+                playlist_id = int(cursor.lastrowid)
+            else:
+                playlist_id = int(existing_playlist_id)
+                conn.execute(
+                    """
+                    UPDATE playlists
+                    SET title = ?, kind = ?, source_json = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (mix["title"], "saved_mix", _json_dumps(source), now, playlist_id),
+                )
+            conn.execute("DELETE FROM playlist_items WHERE playlist_id = ?", (playlist_id,))
+            items = conn.execute(
+                """
+                SELECT track_id
+                FROM generated_mix_items
+                WHERE mix_id = ?
+                ORDER BY position
+                """,
+                (mix_id,),
+            ).fetchall()
+            for position, item in enumerate(items):
+                conn.execute(
+                    """
+                    INSERT INTO playlist_items (playlist_id, position, track_id, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (playlist_id, position, int(item["track_id"]), now),
+                )
             conn.execute(
                 """
                 UPDATE generated_mixes
-                SET status = 'saved', updated_at = ?
-                WHERE id = ? AND status != 'archived'
+                SET status = 'saved', saved_playlist_id = ?, updated_at = ?
+                WHERE id = ?
                 """,
-                (now, mix_id),
+                (playlist_id, now, mix_id),
             )
             row = conn.execute(
                 "SELECT * FROM generated_mixes WHERE id = ?",
                 (mix_id,),
             ).fetchone()
         return row_to_generated_mix(row) if row else None
+
+    def get_playlist(self, playlist_id: int) -> Playlist | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM playlists WHERE id = ?", (playlist_id,)).fetchone()
+        return row_to_playlist(row) if row else None
+
+    def list_playlist_items(self, playlist_id: int) -> list[PlaylistItem]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM playlist_items
+                WHERE playlist_id = ?
+                ORDER BY position
+                """,
+                (playlist_id,),
+            ).fetchall()
+        return [row_to_playlist_item(row) for row in rows]
 
     def mark_generated_mixes_stale(self, *, mix_type: str | None = None) -> int:
         params: list[object] = [utc_now()]
@@ -3583,11 +3710,36 @@ class Store:
         missing = 0
         now = utc_now()
         with self.connect() as conn:
-            rows = conn.execute("SELECT id, path FROM tracks ORDER BY id").fetchall()
+            rows = conn.execute(
+                """
+                SELECT
+                    t.id,
+                    t.path,
+                    EXISTS (
+                        SELECT 1
+                        FROM external_tracks e
+                        WHERE e.track_id = t.id
+                          AND e.provider = 'navidrome'
+                    ) AS is_navidrome
+                FROM tracks t
+                ORDER BY t.id
+                """
+            ).fetchall()
             for row in rows:
                 checked += 1
                 track_id = int(row["id"])
-                path = Path(str(row["path"]))
+                track_path = str(row["path"])
+                if row["is_navidrome"] or track_path.startswith("navidrome://"):
+                    conn.execute(
+                        """
+                        UPDATE tracks
+                        SET missing_at = NULL, last_seen_at = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (now, now, track_id),
+                    )
+                    continue
+                path = Path(track_path)
                 if path.exists() and path.is_file():
                     conn.execute(
                         """
@@ -5726,6 +5878,7 @@ def row_to_generated_mix(row: sqlite3.Row) -> GeneratedMix:
         title=str(row["title"]),
         mix_type=str(row["mix_type"]),
         status=str(row["status"]),
+        cover_path=row["cover_path"],
         anchor_json=row["anchor_json"],
         settings_json=row["settings_json"],
         score_summary_json=row["score_summary_json"],
@@ -5744,6 +5897,26 @@ def row_to_generated_mix_item(row: sqlite3.Row) -> GeneratedMixItem:
         score=float(row["score"]) if row["score"] is not None else None,
         score_breakdown_json=row["score_breakdown_json"],
         reason_json=row["reason_json"],
+        created_at=str(row["created_at"]),
+    )
+
+
+def row_to_playlist(row: sqlite3.Row) -> Playlist:
+    return Playlist(
+        id=int(row["id"]),
+        title=str(row["title"]),
+        kind=str(row["kind"]),
+        source_json=row["source_json"],
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def row_to_playlist_item(row: sqlite3.Row) -> PlaylistItem:
+    return PlaylistItem(
+        playlist_id=int(row["playlist_id"]),
+        position=int(row["position"]),
+        track_id=int(row["track_id"]),
         created_at=str(row["created_at"]),
     )
 

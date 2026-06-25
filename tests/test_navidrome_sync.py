@@ -224,6 +224,29 @@ def test_sync_navidrome_catalog_skips_unchanged_existing_tracks(tmp_path):
     assert store.count_external_tracks(NAVIDROME_PROVIDER) == 1
 
 
+def test_sync_navidrome_catalog_marks_unchanged_seen_track_available(tmp_path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    item = song("song-1", "One")
+    sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([item]),  # type: ignore[arg-type]
+    )
+    track = store.get_track_by_external_id(NAVIDROME_PROVIDER, "song-1")
+    store.mark_track_missing(track.id)
+
+    result = sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([item]),  # type: ignore[arg-type]
+    )
+
+    refreshed = store.get_track_by_external_id(NAVIDROME_PROVIDER, "song-1")
+    assert result.imported_count == 0
+    assert result.updated_count == 0
+    assert refreshed.id == track.id
+    assert refreshed.missing_at is None
+
+
 def test_sync_navidrome_catalog_repairs_unchanged_normalized_sidecars(tmp_path):
     store = Store(tmp_path / "app.db")
     store.init()

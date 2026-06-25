@@ -88,6 +88,7 @@ def sync_navidrome_catalog(
                     if str(mapped_path).startswith("navidrome://"):
                         raw_changed = existing_mapping["raw_json"] != raw_json
                         if not raw_changed and _track_matches(existing_mapping, scanned):
+                            _mark_track_available(conn, track_id)
                             store._upsert_normalized_track_sidecars(
                                 conn,
                                 track_id,
@@ -97,6 +98,7 @@ def sync_navidrome_catalog(
                             continue
                         track_id, changed = _upsert_track(conn, scanned)
                     elif existing_mapping["raw_json"] == raw_json:
+                        _mark_track_available(conn, track_id)
                         store._upsert_normalized_track_sidecars(
                             conn,
                             track_id,
@@ -353,6 +355,14 @@ def _mark_track_missing(conn: sqlite3.Connection, track_id: int) -> None:
     now = utc_now()
     conn.execute(
         "UPDATE tracks SET missing_at = ?, updated_at = ? WHERE id = ?",
+        (now, now, track_id),
+    )
+
+
+def _mark_track_available(conn: sqlite3.Connection, track_id: int) -> None:
+    now = utc_now()
+    conn.execute(
+        "UPDATE tracks SET missing_at = NULL, last_seen_at = ?, updated_at = ? WHERE id = ?",
         (now, now, track_id),
     )
 

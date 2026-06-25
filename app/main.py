@@ -17,18 +17,20 @@ from time import perf_counter
 from datetime import UTC, datetime, timedelta
 import traceback
 from typing import Callable
+from urllib.error import HTTPError, URLError
+from urllib.request import Request as UrlRequest, urlopen
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 import numpy as np
 from starlette.background import BackgroundTask
 
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR, AudioFeatureAnalyzer
-from app.audio_source import is_navidrome_track, track_audio_path
+from app.audio_source import has_navidrome_audio_source, navidrome_item_id_for_track, track_audio_path
 from app.autoplay import (
     autoplay_default_settings,
     refill_autoplay_queue,
@@ -53,6 +55,8 @@ from app.head_pack import (
 )
 from app.logging_config import configure_logging, get_analysis_logger, get_navidrome_plugin_logger
 from app.mixes import (
+    dashboard_mix_generation_plan,
+    ensure_dashboard_mixes,
     generate_mixes,
     generated_mix_default_settings,
 )
@@ -131,7 +135,8 @@ AUTO_INDEX_ANALYSIS_JOBS: set[str] = set()
 ACTIVE_JOB_STATUSES = {"queued", "running"}
 TEXT_SEARCH_EMBEDDER_LOCK = Lock()
 TEXT_SEARCH_EMBEDDER: MuqMulanEmbedder | None = None
-UI_BUILD_ID = "likes-remote-only-20260611-1918"
+MIX_GENERATION_LOCK = Lock()
+UI_BUILD_ID = "mix-cover-mosaic-20260624-2215"
 
 
 class ApiErrorDetail(BaseModel):
@@ -762,6 +767,21 @@ class MixGenerateRequest(BaseModel):
     settings: dict[str, object] = Field(default_factory=dict)
 
 
+class GeneratedMixSettingsRequest(BaseModel):
+    mix_dashboard_count: int | None = Field(default=None, ge=1, le=20)
+    mix_tracks_per_mix: int | None = Field(default=None, ge=1, le=300)
+    mix_update_cadence: str | None = Field(default=None, pattern="^(manual|daily|weekly)$")
+    mix_region_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    mix_discovery_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+    mix_novelty_weight: float | None = Field(default=None, ge=0.0, le=1.0)
+    mix_duplicate_strictness: str | None = Field(default=None, pattern="^(strict|soft)$")
+    mix_seed_source: str | None = Field(default=None, pattern="^(listening_history|track_likes_only|positive_history)$")
+    mix_max_per_artist: int | None = Field(default=None, ge=1, le=50)
+    mix_max_per_release: int | None = Field(default=None, ge=1, le=50)
+    mix_candidate_pool: int | None = Field(default=None, ge=10, le=5000)
+    mix_model: str | None = None
+
+
 def context() -> tuple[Store, Settings]:
     settings = Settings.from_env()
     store = Store(settings.db_path)
@@ -790,6 +810,59 @@ def instant_mix_settings(settings: Settings) -> dict[str, object]:
         "exclude_same_album": bool(saved.get("exclude_same_album", True)),
         "count_collaboration_artists": bool(saved.get("count_collaboration_artists", True)),
     }
+
+
+def generated_mix_settings(settings: Settings) -> dict[str, object]:
+    runtime = load_runtime_settings(settings.data_dir)
+    saved = runtime.get("generated_mixes", runtime.get("mixes", {}))
+    saved = saved if isinstance(saved, dict) else {}
+    return {**generated_mix_default_settings(), **saved}
+
+
+def ensure_dashboard_mixes_fast(store: Store, settings: Settings) -> dict[str, object]:
+    mix_settings = generated_mix_settings(settings)
+    model = str(mix_settings.get("mix_model") or "discogs_multi")
+    embedding_count = store.count_embeddings(model)
+    plan = dashboard_mix_generation_plan(store, mix_settings)
+    if not plan.should_generate:
+        diagnostics = dict(plan.diagnostics)
+        diagnostics.update({"background": False, "embedding_count": embedding_count})
+        return diagnostics
+    if embedding_count <= 5000:
+        return ensure_dashboard_mixes(store, settings, mix_settings).diagnostics
+    started = _start_dashboard_mix_generation(settings.db_path, settings)
+    diagnostics = dict(plan.diagnostics)
+    diagnostics.update({
+        "reason": "scheduled" if started else "already_running",
+        "generated_count": 0,
+        "background": True,
+        "embedding_count": embedding_count,
+    })
+    return diagnostics
+
+
+def _start_dashboard_mix_generation(db_path: Path, settings: Settings) -> bool:
+    if not MIX_GENERATION_LOCK.acquire(blocking=False):
+        return False
+
+    def run() -> None:
+        try:
+            logger.info("Background generated mix refresh started db_path=%s", db_path)
+            background_store = Store(db_path)
+            background_store.init()
+            result = ensure_dashboard_mixes(background_store, settings, generated_mix_settings(settings))
+            logger.info(
+                "Background generated mix refresh finished generated=%s reason=%s",
+                result.diagnostics.get("generated_count"),
+                result.diagnostics.get("reason"),
+            )
+        except Exception:
+            logger.exception("Background generated mix refresh failed")
+        finally:
+            MIX_GENERATION_LOCK.release()
+
+    Thread(target=run, name="generated-mix-refresh", daemon=True).start()
+    return True
 
 
 def playback_settings_defaults() -> dict[str, object]:
@@ -933,6 +1006,7 @@ def record_instant_mix_request(
     duration_ms: float | None,
     requested_max_per_artist: int | None = None,
     requested_exclude_same_album: bool | None = None,
+    provider: str = "navidrome",
     error: str | None = None,
 ) -> None:
     params = {
@@ -949,7 +1023,7 @@ def record_instant_mix_request(
     }
     store.record_instant_mix_request(
         request_id=request_id,
-        provider="navidrome",
+        provider=provider,
         seed_item_id=item_id,
         seed_track_id=seed_track_id,
         model_name=model,
@@ -1080,13 +1154,17 @@ def release_summary_dict(row: ReleaseSummaryRow) -> dict[str, object]:
 
 def track_summary_dict(store: Store, track: Track, artists: list[Artist] | None = None) -> dict[str, object]:
     release = _track_release_summary(store, track.id)
+    navidrome_item_id = store.external_id_for_track("navidrome", track.id)
     return {
         "id": track.id,
         "title": track.title or Path(track.path).stem,
+        "artist": track.artist,
+        "album": track.album,
         "artists": [artist_link_dict(artist) for artist in (artists or [])],
         "duration": track.duration,
         "release": release,
         "artwork": image_ref(f"/tracks/{track.id}/cover", "local"),
+        "navidrome_item_id": navidrome_item_id,
         "explicit": False,
         "liked": False,
         "actions": [],
@@ -1156,13 +1234,19 @@ def playback_session_dict(store: Store, session) -> dict[str, object]:
     }
 
 
-def queue_item_dict(store: Store, item, include_debug: bool = False) -> dict[str, object]:
+def queue_item_dict(
+    store: Store,
+    item,
+    include_debug: bool = False,
+    artists_by_track: dict[int, list[Artist]] | None = None,
+) -> dict[str, object]:
     track = store.get_track(item.track_id)
+    artists = artists_by_track.get(item.track_id, []) if artists_by_track is not None else []
     data: dict[str, object] = {
         "id": item.id,
         "session_id": item.session_id,
         "track_id": item.track_id,
-        "track": track_summary_dict(store, track) if track else None,
+        "track": track_summary_dict(store, track, artists) if track else None,
         "position": item.position,
         "origin": item.origin,
         "source_type": item.source_type,
@@ -1180,6 +1264,7 @@ def queue_item_dict(store: Store, item, include_debug: bool = False) -> dict[str
 
 
 def playback_queue_dict(store: Store, session, items, include_debug: bool = False) -> dict[str, object]:
+    artists_by_track = store.artists_for_tracks([item.track_id for item in items])
     current_index = 0
     if session.current_queue_item_id:
         for index, item in enumerate(items):
@@ -1188,25 +1273,32 @@ def playback_queue_dict(store: Store, session, items, include_debug: bool = Fals
                 break
     current_item = items[current_index] if items else None
     return {
-        "items": [queue_item_dict(store, item, include_debug=include_debug) for item in items],
+        "items": [
+            queue_item_dict(store, item, include_debug=include_debug, artists_by_track=artists_by_track)
+            for item in items
+        ],
         "current_index": current_index,
-        "current_item": queue_item_dict(store, current_item, include_debug=include_debug) if current_item else None,
+        "current_item": (
+            queue_item_dict(store, current_item, include_debug=include_debug, artists_by_track=artists_by_track)
+            if current_item
+            else None
+        ),
         "upcoming": [
-            queue_item_dict(store, item, include_debug=include_debug)
+            queue_item_dict(store, item, include_debug=include_debug, artists_by_track=artists_by_track)
             for item in items[current_index + 1 :]
         ],
         "played": [
-            queue_item_dict(store, item, include_debug=include_debug)
+            queue_item_dict(store, item, include_debug=include_debug, artists_by_track=artists_by_track)
             for item in items
             if item.status in {"played", "skipped"}
         ],
         "source_items": [
-            queue_item_dict(store, item, include_debug=include_debug)
+            queue_item_dict(store, item, include_debug=include_debug, artists_by_track=artists_by_track)
             for item in items
             if item.origin == "source"
         ],
         "generated_items": [
-            queue_item_dict(store, item, include_debug=include_debug)
+            queue_item_dict(store, item, include_debug=include_debug, artists_by_track=artists_by_track)
             for item in items
             if item.origin in {"autoplay", "flow", "generated_mix"}
         ],
@@ -1219,6 +1311,15 @@ def autoplay_pool_dict(store: Store, session, include_debug: bool = False) -> li
     raw_pool = state.get("autoplay_pool")
     if not isinstance(raw_pool, list):
         return []
+    track_ids: list[int] = []
+    for raw_item in raw_pool:
+        if not isinstance(raw_item, dict):
+            continue
+        try:
+            track_ids.append(int(raw_item["track_id"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    artists_by_track = store.artists_for_tracks(track_ids)
     result: list[dict[str, object]] = []
     for index, raw_item in enumerate(raw_pool):
         if not isinstance(raw_item, dict):
@@ -1234,7 +1335,7 @@ def autoplay_pool_dict(store: Store, session, include_debug: bool = False) -> li
             "id": f"autoplay-pool-{track_id}",
             "session_id": session.id,
             "track_id": track_id,
-            "track": track_summary_dict(store, track),
+            "track": track_summary_dict(store, track, artists_by_track.get(track_id, [])),
             "position": index,
             "origin": "autoplay_pool",
             "source_type": raw_item.get("source_type"),
@@ -1519,7 +1620,7 @@ def _track_shelf_item(store: Store, track: Track, artists: list[Artist], reason:
         str(summary["title"]),
         _compact_artist_names(list(summary.get("artists") or [])),
         target,
-        artwork_url=f"/tracks/{track.id}/cover",
+        artwork_url=f"/tracks/{track.id}/cover?size=512",
         play_source_type="track",
         play_source_id=track.id,
         reason=reason,
@@ -1532,8 +1633,16 @@ def generated_mix_summary_dict(store: Store, mix) -> dict[str, object]:
     anchor = _json_object(mix.anchor_json)
     settings = _json_object(mix.settings_json)
     score_summary = _json_object(mix.score_summary_json)
-    subtitle_parts = [str(value) for value in anchor.get("top_artists", [])[:3] if value]
-    subtitle = ", ".join(subtitle_parts) if subtitle_parts else f"{len(items)} tracks"
+    subtitle_parts = [
+        str(anchor.get("representative_artist") or ""),
+        str(anchor.get("representative_album") or ""),
+    ]
+    subtitle = ", ".join(value for value in subtitle_parts if value) or f"{len(items)} tracks"
+    artwork = (
+        image_ref(f"/api/v1/mixes/{mix.id}/cover", "generated_mix")
+        if mix.cover_path
+        else (image_ref(f"/tracks/{items[0].track_id}/cover?size=512", "track") if items else image_ref(None, "none"))
+    )
     return {
         "id": mix.id,
         "title": mix.title,
@@ -1541,6 +1650,7 @@ def generated_mix_summary_dict(store: Store, mix) -> dict[str, object]:
         "status": mix.status,
         "subtitle": subtitle,
         "track_count": len(items),
+        "artwork": artwork,
         "anchor": anchor,
         "settings": settings,
         "score_summary": score_summary,
@@ -1592,7 +1702,7 @@ def _dashboard_generated_mixes(store: Store, limit: int, offset: int, include_de
             "entity_id": mix.id,
             "title": summary["title"],
             "subtitle": summary["subtitle"],
-            "artwork": image_ref(None, "none"),
+            "artwork": summary["artwork"],
             "action": summary["action"],
             "play_action": summary["play_action"],
             "badges": [str(summary["track_count"]) + " tracks", str(mix.status)],
@@ -2780,7 +2890,8 @@ def api_v1_mixes(
     offset: int = Query(default=0, ge=0),
     include_debug: bool = False,
 ) -> dict[str, object]:
-    store, _settings = context()
+    store, settings = context()
+    ensure_diagnostics = ensure_dashboard_mixes_fast(store, settings)
     mixes = store.list_generated_mixes(statuses=["active", "saved"], limit=limit, offset=offset)
     items = [generated_mix_summary_dict(store, mix) for mix in mixes]
     if not include_debug:
@@ -2789,7 +2900,7 @@ def api_v1_mixes(
             item.pop("anchor", None)
             item.pop("settings", None)
     total = store.count_generated_mixes(statuses=["active", "saved"])
-    return {
+    response: dict[str, object] = {
         "items": items,
         "total": total,
         "limit": limit,
@@ -2797,6 +2908,42 @@ def api_v1_mixes(
         "next_offset": offset + limit if offset + limit < total else None,
         "generated_at": utc_now(),
     }
+    if include_debug:
+        response["generation"] = ensure_diagnostics
+    return response
+
+
+@app.get("/api/v1/mixes/settings", response_model=None)
+def api_v1_mix_settings() -> dict[str, object]:
+    _store, settings = context()
+    return {"settings": generated_mix_settings(settings)}
+
+
+@app.get("/api/v1/mixes/status", response_model=None)
+def api_v1_mix_status() -> dict[str, object]:
+    store, settings = context()
+    mix_settings = generated_mix_settings(settings)
+    plan = dashboard_mix_generation_plan(store, mix_settings)
+    diagnostics = dict(plan.diagnostics)
+    diagnostics["embedding_count"] = store.count_embeddings(str(mix_settings.get("mix_model") or "discogs_multi"))
+    diagnostics["mixes"] = [
+        generated_mix_summary_dict(store, mix)
+        for mix in store.list_generated_mixes(statuses=["active", "saved"], limit=int(mix_settings.get("mix_dashboard_count", 8)))
+    ]
+    return {"generation": diagnostics}
+
+
+@app.put("/api/v1/mixes/settings", response_model=None)
+def api_v1_update_mix_settings(request: GeneratedMixSettingsRequest) -> dict[str, object]:
+    _store, settings = context()
+    runtime = load_runtime_settings(settings.data_dir)
+    saved = runtime.get("generated_mixes", {})
+    saved = saved if isinstance(saved, dict) else {}
+    patch = request.model_dump(exclude_unset=True) if hasattr(request, "model_dump") else request.dict(exclude_unset=True)
+    saved.update({key: value for key, value in patch.items() if value is not None})
+    runtime["generated_mixes"] = saved
+    save_runtime_settings(settings.data_dir, runtime)
+    return {"settings": generated_mix_settings(settings)}
 
 
 @app.get("/api/v1/mixes/{mix_id}", response_model=None)
@@ -2814,13 +2961,28 @@ def api_v1_mix_detail(mix_id: str, include_debug: bool = False) -> dict[str, obj
     return detail
 
 
+@app.get("/api/v1/mixes/{mix_id}/cover", response_model=None)
+def api_v1_mix_cover(mix_id: str) -> FileResponse | JSONResponse:
+    store, _settings = context()
+    mix = store.get_generated_mix(mix_id)
+    if mix is None:
+        return api_error(404, "not_found", "Generated mix not found")
+    if not mix.cover_path:
+        return api_error(404, "not_found", "Generated mix has no cover")
+    path = Path(mix.cover_path)
+    if not path.exists() or not path.is_file():
+        return api_error(404, "not_found", "Generated mix cover not found")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
 @app.post("/api/v1/mixes/generate", response_model=None)
 def api_v1_generate_mixes(request: MixGenerateRequest) -> dict[str, object] | JSONResponse:
     store, settings = context()
+    request_settings = {**generated_mix_settings(settings), **request.settings}
     result = generate_mixes(
         store,
         settings,
-        request.settings,
+        request_settings,
         count=request.count,
         tracks_per_mix=request.tracks_per_mix,
         force=request.force,
@@ -2888,7 +3050,8 @@ def api_v1_dashboard(
     limit: int = Query(default=12, ge=1, le=50),
     include_debug: bool = False,
 ) -> dict[str, object]:
-    store, _settings = context()
+    store, settings = context()
+    ensure_diagnostics = ensure_dashboard_mixes_fast(store, settings)
     shelf_keys = ["mixes_for_you", "recently_added", "listen_again", "long_time_no_listen"]
     shelves = [
         shelf
@@ -2908,6 +3071,7 @@ def api_v1_dashboard(
             "visible_shelves": shelf_keys,
             "items_per_shelf": limit,
         },
+        **({"generation": {"mixes_for_you": ensure_diagnostics}} if include_debug else {}),
     }
 
 
@@ -2918,10 +3082,15 @@ def api_v1_dashboard_shelf(
     offset: int = Query(default=0, ge=0),
     include_debug: bool = False,
 ) -> dict[str, object] | JSONResponse:
-    store, _settings = context()
+    store, settings = context()
+    ensure_result = None
+    if key == "mixes_for_you":
+        ensure_result = ensure_dashboard_mixes_fast(store, settings)
     shelf = dashboard_shelf_response(store, key, limit=limit, offset=offset, include_debug=include_debug)
     if shelf is None:
         return api_error(404, "not_found", "Dashboard shelf not found")
+    if include_debug and ensure_result is not None:
+        shelf["generation"] = ensure_result
     return shelf
 
 
@@ -3582,6 +3751,141 @@ def get_instant_mix_request(request_id: str) -> dict[str, object]:
     return instant_mix_request_dict(request, include_results=True, store=store)
 
 
+@app.post("/tracks/{track_id}/instant-mix")
+def create_track_instant_mix(track_id: int) -> dict[str, object]:
+    started = perf_counter()
+    request_id = str(uuid4())
+    store, settings = context()
+    mix_settings = instant_mix_settings(settings)
+    model = str(mix_settings["model"])
+    effective_count = int(mix_settings["count"])
+    min_similarity = mix_settings["min_similarity"]
+    effective_max_per_artist = int(mix_settings["max_per_artist"])
+    effective_exclude_same_album = bool(mix_settings["exclude_same_album"])
+    effective_count_collaboration_artists = bool(mix_settings["count_collaboration_artists"])
+    seed = store.get_track(track_id)
+    seed_item_id = store.external_id_for_track("navidrome", track_id) or f"track:{track_id}"
+    if seed is None:
+        logger.warning("Instant mix requested for missing track track_id=%s", track_id)
+        raise HTTPException(status_code=404, detail="Track not found")
+    try:
+        candidates = Recommender(store, settings, model).similar(
+            seed,
+            k=effective_count,
+            max_per_artist=effective_max_per_artist,
+            exclude_same_album=effective_exclude_same_album,
+            count_collaboration_artists=effective_count_collaboration_artists,
+        )
+    except FileNotFoundError as exc:
+        record_instant_mix_request(
+            store,
+            request_id=request_id,
+            item_id=seed_item_id,
+            seed_track_id=seed.id,
+            model=model,
+            requested_model=None,
+            requested_count=None,
+            effective_count=effective_count,
+            max_per_artist=effective_max_per_artist,
+            exclude_same_album=effective_exclude_same_album,
+            count_collaboration_artists=effective_count_collaboration_artists,
+            min_similarity=min_similarity,
+            status="failed",
+            results=[],
+            skipped_without_external_id=0,
+            duration_ms=(perf_counter() - started) * 1000,
+            provider="local",
+            error=str(exc),
+        )
+        logger.warning("Track instant mix index missing track_id=%s model=%s error=%s", track_id, model, exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LookupError as exc:
+        record_instant_mix_request(
+            store,
+            request_id=request_id,
+            item_id=seed_item_id,
+            seed_track_id=seed.id,
+            model=model,
+            requested_model=None,
+            requested_count=None,
+            effective_count=effective_count,
+            max_per_artist=effective_max_per_artist,
+            exclude_same_album=effective_exclude_same_album,
+            count_collaboration_artists=effective_count_collaboration_artists,
+            min_similarity=min_similarity,
+            status="failed",
+            results=[],
+            skipped_without_external_id=0,
+            duration_ms=(perf_counter() - started) * 1000,
+            provider="local",
+            error=str(exc),
+        )
+        logger.warning("Track instant mix lookup failed track_id=%s model=%s error=%s", track_id, model, exc)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    results: list[NavidromeSimilarItem] = []
+    for candidate in sorted(candidates, key=lambda item: item.similarity, reverse=True):
+        if min_similarity is not None and candidate.similarity < float(min_similarity):
+            continue
+        external_id = store.external_id_for_track("navidrome", candidate.track.id)
+        results.append(
+            NavidromeSimilarItem(
+                item_id=external_id or f"track:{candidate.track.id}",
+                track_id=candidate.track.id,
+                artist=candidate.track.artist,
+                title=candidate.track.title,
+                album=candidate.track.album,
+                distance=candidate.distance,
+                similarity=candidate.similarity,
+            )
+        )
+        if len(results) >= effective_count:
+            break
+    record_instant_mix_request(
+        store,
+        request_id=request_id,
+        item_id=seed_item_id,
+        seed_track_id=seed.id,
+        model=model,
+        requested_model=None,
+        requested_count=None,
+        effective_count=effective_count,
+        max_per_artist=effective_max_per_artist,
+        exclude_same_album=effective_exclude_same_album,
+        count_collaboration_artists=effective_count_collaboration_artists,
+        min_similarity=min_similarity,
+        status="completed",
+        results=results,
+        skipped_without_external_id=0,
+        duration_ms=(perf_counter() - started) * 1000,
+        provider="local",
+    )
+    result_track_ids = [item.track_id for item in results if item.track_id is not None]
+    queue_track_ids = [seed.id] + [track_id for track_id in result_track_ids if track_id != seed.id]
+    session, _queue = store.create_playback_session(
+        source_type="track",
+        source_id=seed.id,
+        source_label=f"Instant Mix: {seed.artist or ''} - {seed.title or Path(seed.path).stem}".strip(" -"),
+        mode="radio",
+        track_ids=queue_track_ids,
+        autoplay_enabled=True,
+        settings=playback_session_settings(
+            {
+                "instant_mix_request_id": request_id,
+                "instant_mix_seed_track_id": seed.id,
+                "instant_mix_model": model,
+            }
+        ),
+        state={"instant_mix": True},
+    )
+    request = store.get_instant_mix_request(request_id)
+    return {
+        "request_id": request_id,
+        "request": instant_mix_request_dict(request, include_results=True, store=store) if request else None,
+        **playback_session_response(store, session),
+    }
+
+
 @app.get("/models/head-pack")
 def get_head_pack() -> dict[str, object]:
     store, settings = context()
@@ -3854,34 +4158,137 @@ def get_track_analysis(track_id: int) -> dict[str, object]:
     }
 
 
+@app.head("/tracks/{track_id}/audio")
 @app.get("/tracks/{track_id}/audio")
-def get_track_audio(track_id: int) -> FileResponse:
+def get_track_audio(track_id: int, request: Request) -> Response:
     store, settings = context()
     track = store.get_track(track_id)
     if track is None:
         logger.warning("Audio requested for missing track track_id=%s", track_id)
         raise HTTPException(status_code=404, detail="Track not found")
-    if is_navidrome_track(track):
+    item_id = navidrome_item_id_for_track(store, track)
+    if item_id is not None:
         try:
-            manager = track_audio_path(store, settings, track)
-            path = manager.__enter__()
+            response = navidrome_audio_stream_response(
+                settings,
+                item_id,
+                range_header=request.headers.get("range"),
+                method=request.method,
+            )
         except Exception as exc:
             logger.warning(
-                "Navidrome audio unavailable track_id=%s path=%s",
+                "Navidrome audio stream unavailable track_id=%s item_id=%s path=%s",
                 track_id,
+                item_id,
                 track.path,
                 exc_info=True,
             )
+            if isinstance(exc, HTTPException):
+                raise
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         store.mark_track_available(track_id)
-        return FileResponse(path, background=BackgroundTask(manager.__exit__, None, None, None))
+        return response
     path = Path(track.path)
     if not path.exists() or not path.is_file():
         logger.warning("Audio file missing track_id=%s path=%s", track_id, path)
         store.mark_track_missing(track_id)
         raise HTTPException(status_code=410, detail="Audio file not mounted or no longer exists")
     store.mark_track_available(track_id)
-    return FileResponse(path)
+    return FileResponse(path, media_type=audio_response_media_type(path))
+
+
+def navidrome_audio_stream_response(
+    settings: Settings,
+    item_id: str,
+    *,
+    range_header: str | None = None,
+    method: str = "GET",
+) -> StreamingResponse:
+    client = NavidromeClient(settings.navidrome)
+    headers = {"Accept": "*/*"}
+    if range_header:
+        headers["Range"] = range_header
+    method = "HEAD" if method.upper() == "HEAD" else "GET"
+    request = UrlRequest(client.url("stream", {"id": item_id}), headers=headers, method=method)
+    try:
+        upstream = urlopen(request, timeout=float(settings.navidrome.timeout_seconds))
+    except HTTPError as exc:
+        raise HTTPException(
+            status_code=exc.code,
+            detail=f"Navidrome stream unavailable: {exc.reason}",
+        ) from exc
+    except (OSError, URLError) as exc:
+        raise RuntimeError(f"Navidrome stream unavailable: {exc}") from exc
+
+    response_headers = navidrome_stream_headers(upstream.headers)
+    content_type = normalize_audio_media_type(upstream.headers.get("Content-Type", ""))
+    status_code = int(getattr(upstream, "status", None) or upstream.getcode() or 200)
+
+    if method == "HEAD":
+        upstream.close()
+        return Response(
+            status_code=status_code,
+            media_type=content_type,
+            headers=response_headers,
+        )
+
+    def body():
+        try:
+            while True:
+                chunk = upstream.read(1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            upstream.close()
+
+    return StreamingResponse(
+        body(),
+        status_code=status_code,
+        media_type=content_type,
+        headers=response_headers,
+    )
+
+
+def navidrome_stream_headers(headers) -> dict[str, str]:
+    passthrough = {
+        "Accept-Ranges",
+        "Content-Length",
+        "Content-Range",
+        "ETag",
+        "Last-Modified",
+        "X-Content-Duration",
+        "X-Content-Type-Options",
+    }
+    return {
+        name: value
+        for name in passthrough
+        if (value := headers.get(name)) is not None
+    }
+
+
+def audio_response_media_type(path: Path) -> str | None:
+    suffix = path.suffix.lower()
+    if suffix == ".flac":
+        return "audio/flac"
+    if suffix == ".mp3":
+        return "audio/mpeg"
+    if suffix in {".m4a", ".mp4", ".aac"}:
+        return "audio/mp4"
+    if suffix == ".ogg":
+        return "audio/ogg"
+    if suffix == ".opus":
+        return "audio/opus"
+    if suffix == ".wav":
+        return "audio/wav"
+    return None
+
+
+def normalize_audio_media_type(content_type: str) -> str:
+    media_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if media_type == "audio/x-flac":
+        return "audio/flac"
+    return media_type or "application/octet-stream"
 
 
 def cached_cover_response(cache_key: tuple[str, int]) -> tuple[bytes, str] | None:
@@ -4767,7 +5174,7 @@ def get_worker_task_audio(task_id: str) -> FileResponse:
             retryable=False,
         )
         raise HTTPException(status_code=409, detail="Task file identity is stale")
-    if is_navidrome_track(track):
+    if has_navidrome_audio_source(store, track):
         try:
             manager = track_audio_path(store, settings, track)
             path = manager.__enter__()
@@ -4781,7 +5188,11 @@ def get_worker_task_audio(task_id: str) -> FileResponse:
                 retryable=True,
             )
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return FileResponse(path, background=BackgroundTask(manager.__exit__, None, None, None))
+        return FileResponse(
+            path,
+            media_type=audio_response_media_type(path),
+            background=BackgroundTask(manager.__exit__, None, None, None),
+        )
     path = Path(track.path)
     if not path.exists() or not path.is_file():
         store.mark_track_missing(track.id)
@@ -4793,7 +5204,7 @@ def get_worker_task_audio(task_id: str) -> FileResponse:
             retryable=False,
         )
         raise HTTPException(status_code=410, detail="Audio file not mounted or no longer exists")
-    return FileResponse(path)
+    return FileResponse(path, media_type=audio_response_media_type(path))
 
 
 @app.post("/workers/results")
@@ -5818,7 +6229,7 @@ def _prepare_analyze_audio_path(
                 track_id=track.id,
                 path=track.path,
                 status="failed",
-                **analyze_failure_fields(exc, "navidrome-download" if is_navidrome_track(track) else embedding_failure_stage(exc)),
+                **analyze_failure_fields(exc, "navidrome-download" if has_navidrome_audio_source(store, track) else embedding_failure_stage(exc)),
             ),
         )
 
@@ -6747,19 +7158,33 @@ UI_HTML = r"""
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>discocs</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
   <style>
     :root {
       color-scheme: light dark;
-      --bg: #101214;
-      --panel: #171b1f;
-      --panel-2: #20262b;
+      --surface-0: #0b0d0f;
+      --surface-1: #111315;
+      --surface-2: #171a1d;
+      --surface-3: #242629;
+      --surface-4: #34373b;
+      --surface-hover: #2b2d30;
+      --surface-current: #3a3a3a;
+      --stroke: #2d3033;
+      --stroke-soft: #222426;
+      --menu-bg: #242629;
+      --menu-player-bg: #111;
+      --menu-hover: #33363a;
+      --player-bg: #111;
+      --bg: var(--surface-0);
+      --panel: var(--surface-2);
+      --panel-2: var(--surface-3);
       --text: #eef2f3;
       --muted: #aeb8bc;
-      --line: #30383f;
-      --accent: #59c3a6;
-      --accent-2: #e0b15a;
+      --line: var(--stroke);
+      --accent: #ff2a6d;
+      --accent-2: #c8c8c8;
       --bad: #e27373;
-      --blue: #7aa7ff;
+      --blue: #9aa0a6;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     * { box-sizing: border-box; }
@@ -6776,16 +7201,16 @@ UI_HTML = r"""
     button:disabled { opacity: .55; cursor: not-allowed; }
     input, select {
       min-height: 36px; border: 1px solid var(--line); border-radius: 6px; padding: 0 10px;
-      background: #0d0f11; color: var(--text);
+      background: var(--surface-0); color: var(--text);
     }
     .app {
       display: grid; grid-template-columns: 220px minmax(0, 1fr);
       flex: 1; min-height: 0; height: 100vh; padding-bottom: 92px;
     }
-    aside { border-right: 1px solid var(--line); background: #111518; padding: 18px; overflow-y: auto; min-height: 0; }
+    aside { border-right: 1px solid var(--line); background: var(--surface-1); padding: 18px; overflow-y: auto; min-height: 0; }
     main {
       padding: 18px; display: flex; flex-direction: column; gap: 16px;
-      min-height: 0; overflow-y: auto; padding-bottom: 124px;
+      min-height: 0; overflow-y: auto;
     }
     h1 { font-size: 22px; margin: 0 0 16px; letter-spacing: 0; }
     h2 { font-size: 16px; margin: 0 0 10px; letter-spacing: 0; }
@@ -6882,7 +7307,7 @@ UI_HTML = r"""
     .list { display: grid; gap: 8px; align-content: start; }
     .track {
       display: grid; gap: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 10px;
-      background: #14181b;
+      background: var(--surface-2);
     }
     .track:has(.track-body) {
       grid-template-columns: 112px minmax(0, 1fr); grid-template-rows: auto auto;
@@ -6907,7 +7332,7 @@ UI_HTML = r"""
     .cover {
       grid-column: 1; grid-row: 1 / span 2; align-self: stretch;
       width: 112px; min-height: 112px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
-      background: linear-gradient(135deg, #20272b, #111518); display: grid; place-items: center; color: var(--muted);
+      background: linear-gradient(135deg, var(--surface-3), var(--surface-1)); display: grid; place-items: center; color: var(--muted);
       font-size: 11px; font-weight: 700; position: relative;
     }
     .cover::before { content: "ART"; }
@@ -6936,9 +7361,9 @@ UI_HTML = r"""
     }
     .score { color: var(--accent-2); font-weight: 700; }
     .jobs { display: grid; gap: 8px; }
-    .job { border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: #14181b; }
+    .job { border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: var(--surface-2); }
     .job pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 0; }
-    .bar { height: 6px; background: #0b0d0f; border-radius: 999px; overflow: hidden; margin-top: 8px; }
+    .bar { height: 6px; background: var(--surface-0); border-radius: 999px; overflow: hidden; margin-top: 8px; }
     .fill { height: 100%; background: var(--accent); width: 0%; }
     .status-deferred .fill { background: var(--accent-2); }
     .status-failed .fill { background: var(--bad); }
@@ -6946,8 +7371,8 @@ UI_HTML = r"""
     .bad-pill { border: 1px solid var(--bad); color: var(--bad); background: transparent; }
     .player {
       position: fixed; left: 0; right: 0; bottom: 0; z-index: 25;
-      min-height: 82px; border-top: 1px solid var(--line); background: #111;
-      padding: 0 18px 10px; display: grid; grid-template-columns: auto minmax(260px, 1fr) auto;
+      min-height: 82px; border-top: 1px solid var(--line); background: var(--player-bg);
+      padding: 0 18px 10px; display: grid; grid-template-columns: minmax(260px, 1fr) minmax(320px, 42vw) minmax(260px, 1fr);
       grid-template-rows: 16px 56px; column-gap: 18px; align-items: center; box-shadow: 0 -12px 30px rgba(0,0,0,.28);
     }
     .player-seek { grid-column:1 / -1; height:16px; margin:0 -18px; position:relative; display:flex; align-items:start; }
@@ -6956,42 +7381,77 @@ UI_HTML = r"""
       -webkit-appearance:none; appearance:none; cursor:pointer;
     }
     .player-seek input[type="range"]:focus { outline:0; box-shadow:none; }
-    .player-seek input[type="range"]::-webkit-slider-runnable-track { height:4px; background:linear-gradient(to right, #ff2a6d var(--seek-progress, 0%), #4a4a4a var(--seek-progress, 0%)); }
-    .player-seek input[type="range"]::-moz-range-track { height:4px; background:#4a4a4a; }
-    .player-seek input[type="range"]::-moz-range-progress { height:4px; background:#ff2a6d; }
+    .player-seek input[type="range"]::-webkit-slider-runnable-track { height:4px; background:linear-gradient(to right, var(--accent) var(--seek-progress, 0%), var(--surface-4) var(--seek-progress, 0%)); }
+    .player-seek input[type="range"]::-moz-range-track { height:4px; background:var(--surface-4); }
+    .player-seek input[type="range"]::-moz-range-progress { height:4px; background:var(--accent); }
     .player-seek input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance:none; appearance:none; width:16px; height:16px; border-radius:999px;
-      background:#ff2a6d; border:0; margin-top:-6px;
+      background:var(--accent); border:0; margin-top:-6px;
     }
-    .player-seek input[type="range"]::-moz-range-thumb { width:16px; height:16px; border-radius:999px; background:#ff2a6d; border:0; }
+    .player-seek input[type="range"]::-moz-range-thumb { width:16px; height:16px; border-radius:999px; background:var(--accent); border:0; }
     .player-seek-bubble {
       position:absolute; top:-34px; transform:translateX(-50%); min-width:44px; padding:5px 8px;
-      border-radius:4px; background:#333; color:#fff; text-align:center; font-size:12px; font-weight:700;
+      border-radius:4px; background:var(--surface-4); color:#fff; text-align:center; font-size:12px; font-weight:700;
       opacity:0; pointer-events:none;
     }
     .player-seek:hover .player-seek-bubble, .player-seek.scrubbing .player-seek-bubble { opacity:1; }
     .player-controls, .player-actions, .player-inline-actions { display:flex; gap:8px; align-items:center; }
-    .player-controls button, .player-actions button, .player-inline-actions button { width:38px; padding:0; border-radius:999px; border:0; background:#2d2d2d; }
-    .player-controls button.player-play { width:52px; height:52px; font-size:26px; background:#f1f1f1; color:#111; }
-    .player-now { display:grid; grid-template-columns:48px minmax(0,1fr); gap:10px; align-items:center; min-width:0; }
+    .player-controls { justify-self:start; }
+    .player-controls button, .player-actions button, .player-inline-actions button {
+      width:38px; height:38px; padding:0; border-radius:999px; border:0; background:transparent;
+      color:#d8d8d8; display:inline-grid; place-items:center; font-size:22px;
+    }
+    .player-controls button:hover, .player-actions button:hover, .player-inline-actions button:hover,
+    .player-actions button.active {
+      background:var(--surface-hover); color:#fff;
+    }
+    .player-controls button.player-play { width:52px; height:52px; font-size:30px; color:#fff; }
+    .player-now {
+      display:inline-grid; grid-template-columns:48px minmax(0, max-content); gap:12px; align-items:center; min-width:0;
+      justify-self:center; max-width:100%;
+    }
+    .player-now > div:last-child { min-width:0; max-width:min(520px, calc(42vw - 72px)); }
     .player-cover {
       width:48px; aspect-ratio:1; border:1px solid var(--line); border-radius:6px;
-      background:#111518; overflow:hidden; display:grid; place-items:center; color:var(--muted); font-size:10px; font-weight:800;
+      background:var(--surface-1); overflow:hidden; display:grid; place-items:center; color:var(--muted); font-size:10px; font-weight:800;
     }
     .player-cover img { width:100%; height:100%; object-fit:cover; display:block; }
     .player-title, .player-subtitle { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .player-title { display:flex; align-items:center; gap:14px; }
+    .player-title { display:flex; align-items:center; justify-content:flex-start; gap:14px; text-align:left; }
     .player-title strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .player-inline-actions button { width:auto; min-width:30px; height:30px; color:#d8d8d8; background:transparent; font-weight:800; }
-    .player-inline-actions button:hover { background:#2d2d2d; }
-    .player-actions { justify-content:flex-end; }
+    .player-subtitle { text-align:left; }
+    .player-inline-actions button { width:34px; min-width:34px; height:34px; font-size:18px; }
+    .player-actions { justify-content:flex-end; justify-self:end; }
     .player-actions button[disabled] { opacity:.65; cursor:default; }
+    .player-actions button.active { opacity:1; }
+    .player-volume {
+      display:flex; flex-direction:row-reverse; align-items:center; gap:10px; height:38px;
+    }
+    .player-volume-slider {
+      width:0; opacity:0; pointer-events:none; transition:width .16s ease, opacity .16s ease;
+    }
+    .player-volume:hover .player-volume-slider,
+    .player-volume:focus-within .player-volume-slider {
+      width:120px; opacity:1; pointer-events:auto;
+    }
+    .player-volume-slider input[type="range"] {
+      width:120px; min-height:22px; padding:0; margin:0; border:0; background:transparent;
+      -webkit-appearance:none; appearance:none; cursor:pointer;
+    }
+    .player-volume-slider input[type="range"]::-webkit-slider-runnable-track { height:4px; background:#b8b8b8; }
+    .player-volume-slider input[type="range"]::-moz-range-track { height:4px; background:#b8b8b8; }
+    .player-volume-slider input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance:none; appearance:none; width:18px; height:18px; border-radius:999px;
+      background:#f1f1f1; border:0; margin-top:-7px;
+    }
+    .player-volume-slider input[type="range"]::-moz-range-thumb { width:18px; height:18px; border-radius:999px; background:#f1f1f1; border:0; }
+    .navidrome-debug { display:none; }
     .player-progress { display:none; }
     .player-time { display:flex; justify-content:space-between; gap:12px; color:var(--muted); font-size:12px; }
     .player audio { display:none; }
     .expanded-player {
       position:fixed; left:220px; right:0; top:0; bottom:82px; z-index:24;
-      background:#070707; box-shadow:0 -16px 42px rgba(0,0,0,.38);
+      background:var(--surface-0); box-shadow:0 -16px 42px rgba(0,0,0,.38);
       padding:34px 64px; display:none; grid-template-columns:minmax(420px, 1fr) minmax(360px, 560px); gap:72px; overflow:hidden;
     }
     .expanded-player.open { display:grid; }
@@ -7003,7 +7463,7 @@ UI_HTML = r"""
     .expanded-art img { width:100%; height:100%; object-fit:contain; display:block; }
     .expanded-track-text { width:min(72vh, 760px); max-width:100%; }
     .queue-panel { border:0; border-radius:0; background:transparent; padding:0 4px 34px 0; display:grid; gap:14px; align-content:start; min-height:0; overflow:auto; }
-    .queue-tabs { display:grid; grid-template-columns:1fr 1fr 1fr; gap:0; border-bottom:1px solid #242424; }
+    .queue-tabs { display:grid; grid-template-columns:1fr 1fr 1fr; gap:0; border-bottom:1px solid var(--stroke-soft); }
     .queue-tabs button { border:0; border-bottom:2px solid transparent; border-radius:0; background:transparent; color:#777; font-weight:800; }
     .queue-tabs button.active { border-bottom-color:#d8d8d8; color:#f0f0f0; }
     .autoplay-prep { display:grid; gap:4px; color:var(--muted); }
@@ -7013,22 +7473,33 @@ UI_HTML = r"""
     .toggle-pill.active { background:#dcecff; opacity:1; }
     .toggle-pill.active::after { left:auto; right:3px; background:#0f86d8; }
     .chip-row { display:flex; gap:10px; row-gap:10px; flex-wrap:wrap; padding:10px 0 20px; margin:0; }
-    .chip-row button { min-height:34px; border:0; border-radius:7px; background:#2e2e2e; font-weight:700; color:#d0d0d0; }
+    .chip-row button { min-height:34px; border:0; border-radius:7px; background:var(--surface-3); font-weight:700; color:#d0d0d0; }
     .chip-row button.active { background:#eee; color:#111; }
     .queue-list { display:block; min-height:0; }
-    .autoplay-pool-section { display:block; clear:both; margin-top:28px; padding-top:20px; border-top:1px solid #2a2a2a; }
+    .autoplay-pool-section { display:block; clear:both; margin-top:28px; padding-top:20px; border-top:1px solid var(--stroke-soft); }
     .autoplay-pool-list { display:block; margin-top:2px; }
     .autoplay-pool-header { display:block; margin:0 0 2px; font-weight:800; text-transform:none; }
     .queue-item {
-      border:0; border-bottom:1px solid #232323; border-radius:0; padding:10px 0; min-height:62px; background:transparent;
-      cursor:pointer; display:grid; grid-template-columns:40px minmax(0,1fr) auto; gap:12px; align-items:center;
+      border:0; border-bottom:1px solid var(--stroke-soft); border-radius:0; padding:10px 0; min-height:62px; background:transparent;
+      cursor:pointer; display:grid; grid-template-columns:40px minmax(0,1fr) auto auto; gap:12px; align-items:center;
     }
     .queue-item.prepared { cursor:default; opacity:.92; }
-    .queue-item.current { background:#2d2d2d; padding-left:8px; padding-right:8px; }
-    .queue-item-cover { width:34px; aspect-ratio:1; background:#222; overflow:hidden; display:grid; place-items:center; color:var(--muted); font-size:9px; }
+    .queue-item.current { background:var(--surface-current); padding-left:8px; padding-right:8px; }
+    .queue-item-cover { width:34px; aspect-ratio:1; background:var(--surface-3); overflow:hidden; display:grid; place-items:center; color:var(--muted); font-size:9px; }
     .queue-item-cover img { width:100%; height:100%; object-fit:cover; display:block; }
     .queue-item-title, .queue-item-subtitle { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .queue-track-name { font-weight:800; }
+    .queue-track-link, .queue-artist-link { cursor:pointer; }
     .queue-item-duration { color:var(--muted); font-weight:700; }
+    .queue-item-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; min-width:86px; }
+    .queue-item-actions .navidrome-like-button {
+      width:28px; min-width:28px; min-height:26px; padding:0;
+      background:transparent !important; border:0 !important; box-shadow:none !important;
+      color:var(--muted);
+    }
+    .queue-item-actions .navidrome-like-button:hover,
+    .queue-item-actions .navidrome-like-button:focus { background:transparent !important; color:var(--text); }
+    .queue-item-actions .navidrome-like-button.like-active { color:var(--accent); }
     .settings-page { display:grid; gap:14px; }
     .settings-tabs { display:flex; gap:8px; flex-wrap:wrap; position:sticky; top:0; z-index:2; background:var(--panel); padding-bottom:8px; }
     .settings-tabs button.active { border-color:var(--accent); color:var(--accent); }
@@ -7042,6 +7513,23 @@ UI_HTML = r"""
     .error { color: var(--bad); min-height: 20px; }
     .active-track { border-color: var(--blue); }
     .icon-button { width: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+    .track-menu-button {
+      flex:0 0 auto; background:transparent !important; border:0 !important; color:var(--muted);
+      box-shadow:none !important;
+    }
+    .track-menu-button:hover, .track-menu-button:focus { background:transparent !important; color:var(--text); }
+    .track-action-menu {
+      position:fixed; z-index:40; display:none; min-width:170px; padding:6px;
+      border:0; border-radius:7px; background:var(--menu-bg);
+      box-shadow:0 14px 36px rgba(0,0,0,.42);
+    }
+    .track-action-menu.player-menu { background:var(--menu-player-bg); }
+    .track-action-menu.open { display:grid; gap:4px; }
+    .track-action-menu button {
+      width:100%; min-height:34px; justify-content:flex-start; border:0; background:transparent;
+      color:var(--text); text-align:left; border-radius:5px; padding:0 10px;
+    }
+    .track-action-menu button:hover { background:var(--menu-hover); }
     .icon-tablet {
       width: 16px; height: 20px; border: 2px solid currentColor; border-radius: 3px; position: relative;
       display: inline-block;
@@ -7080,7 +7568,10 @@ UI_HTML = r"""
       .cover { width: 80px; min-height: 80px; }
       .track-card-line { display: block; }
       .track-card-right { text-align: left; white-space: normal; }
-      .player { grid-template-columns:1fr; }
+      .player { grid-template-columns:1fr; min-height:154px; grid-template-rows:16px auto auto auto; row-gap:6px; }
+      .player-controls, .player-now, .player-actions { justify-self:center; }
+      .player-now > div:last-child { max-width:calc(100vw - 104px); }
+      .player-actions { flex-wrap:wrap; justify-content:center; }
       .expanded-player { left:0; grid-template-columns:1fr; }
     }
     .metrics-layout { display:grid; grid-template-columns:minmax(260px, 340px) minmax(0, 1fr); gap:16px; height:100%; min-height:0; }
@@ -7143,6 +7634,40 @@ UI_HTML = r"""
     .surface-subtitle a, .entity-link { color:var(--text); text-decoration:none; }
     .surface-subtitle a:hover, .entity-link:hover { color:var(--accent); }
     .surface-grid { display:grid; gap:32px; }
+    #artistSurface > .panel.panel-fill,
+    #releaseSurface > .panel.panel-fill,
+    #mixSurface > .panel.panel-fill {
+      border:0; border-radius:0; background:transparent; padding:0;
+    }
+    .mix-page {
+      display:grid; grid-template-columns:minmax(260px, 340px) minmax(0, 1fr);
+      gap:42px; align-items:start; min-height:0;
+    }
+    .mix-hero {
+      position:sticky; top:0; display:grid; justify-items:center; gap:16px; text-align:center;
+      padding-top:8px;
+    }
+    .mix-art {
+      width:min(280px, 100%); aspect-ratio:1; border:1px solid var(--line); border-radius:8px;
+      background:linear-gradient(135deg, #20272b, #111518); overflow:hidden;
+      display:grid; place-items:center; color:var(--muted); font-weight:800;
+      box-shadow:0 22px 60px rgba(0,0,0,.35);
+    }
+    .mix-art img { width:100%; height:100%; object-fit:cover; display:block; }
+    .mix-title { font-size:30px; line-height:1.05; margin:0; overflow-wrap:anywhere; }
+    .mix-description { max-width:310px; }
+    .mix-actions { display:flex; gap:12px; justify-content:center; align-items:center; flex-wrap:wrap; }
+    .mix-actions button { border-radius:999px; min-width:44px; }
+    .mix-play-button {
+      width:64px; height:64px; padding:0; display:grid; place-items:center;
+      font-size:28px; border-radius:999px;
+    }
+    .mix-track-list { display:grid; gap:0; min-width:0; }
+    .mix-track-list .queue-item {
+      grid-template-columns:48px minmax(0,1fr) minmax(48px, auto) auto;
+      min-height:70px; padding:12px 0;
+    }
+    .mix-track-list .queue-item-cover { width:40px; border-radius:5px; }
     .shelf { display:grid; gap:14px; min-width:0; }
     .shelf-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap; }
     .shelf-head h2 { font-size:26px; margin:0; }
@@ -7214,6 +7739,8 @@ UI_HTML = r"""
       .metric-filter-scroll { max-height:none; }
       .surface-header { grid-template-columns:1fr; }
       .surface-art { width:160px; }
+      .mix-page { grid-template-columns:1fr; gap:26px; }
+      .mix-hero { position:static; }
     }
   </style>
 </head>
@@ -7327,6 +7854,13 @@ UI_HTML = r"""
         <div class="panel panel-fill">
           <div id="releaseSurfaceContent" class="surface-grid">
             <div class="meta">Loading release...</div>
+          </div>
+        </div>
+      </section>
+      <section id="mixSurface" class="section section-fill">
+        <div class="panel panel-fill">
+          <div id="mixSurfaceContent" class="surface-grid">
+            <div class="meta">Loading mix...</div>
           </div>
         </div>
       </section>
@@ -7844,6 +8378,68 @@ UI_HTML = r"""
         </label>
         </div>
         <div class="settings-pane" data-settings-pane="mixes">
+        <h3>Generated Mixes</h3>
+        <label><span class="label-title">Dashboard mixes <span class="info" tabindex="0" data-tooltip="How many finite generated mixes are kept on the Home dashboard. This controls the number of taste regions selected, not tracks inside each mix.">(i)</span></span>
+          <input id="generatedMixDashboardCount" type="number" min="1" max="20" value="8">
+        </label>
+        <label><span class="label-title">Tracks per mix <span class="info" tabindex="0" data-tooltip="Target final playlist length for each generated mix. Tracks are selected from the candidate pool after scoring, familiar/discovery balancing, and artist/release caps.">(i)</span></span>
+          <input id="generatedMixTracksPerMix" type="number" min="1" max="300" value="100">
+        </label>
+        <label><span class="label-title">Update cadence <span class="info" tabindex="0" data-tooltip="How often new listening preferences may trigger automatic regeneration. Daily waits at least 1 day after the newest active mix; weekly waits 7 days; manual disables preference-triggered refresh.">(i)</span></span>
+          <select id="generatedMixUpdateCadence">
+            <option value="daily">daily</option>
+            <option value="weekly">weekly</option>
+            <option value="manual">manual</option>
+          </select>
+        </label>
+        <label><span class="label-title">Seed source <span class="info" tabindex="0" data-tooltip="Which user signals define taste regions. Listening history uses Navidrome/local plays plus likes and completions; track likes only ignores plays; positive history keeps the older liked/completed/replayed/score signals.">(i)</span></span>
+          <select id="generatedMixSeedSource">
+            <option value="listening_history">listening_history</option>
+            <option value="track_likes_only">track_likes_only</option>
+            <option value="positive_history">positive_history</option>
+          </select>
+        </label>
+        <label><span class="label-title">Region threshold <span class="info" tabindex="0" data-tooltip="Similarity cutoff used while clustering listened/liked tracks into taste regions. Lower values make larger, broader regions; higher values make smaller, tighter regions. Try 0.76-0.78 if a mix is too narrow.">(i)</span></span>
+          <input id="generatedMixRegionThreshold" type="number" min="0" max="1" step="0.01" value="0.82">
+        </label>
+        <label><span class="label-title">Discovery ratio <span class="info" tabindex="0" data-tooltip="Target share of final mix tracks that are new rather than already present in your listening/like signals. 0 allows mostly known tracks; 1 tries to fill the mix with new nearby tracks.">(i)</span></span>
+          <input id="generatedMixDiscoveryRatio" type="number" min="0" max="1" step="0.05" value="0.75">
+        </label>
+        <label><span class="label-title">Novelty weight <span class="info" tabindex="0" data-tooltip="How strongly candidate scoring prefers unheard or long-unplayed tracks over recently heard tracks. This is separate from Discovery ratio: ratio controls known/new count, novelty weight controls ranking inside the candidate pool. 0 ignores novelty; 1 strongly favors fresher discoveries.">(i)</span></span>
+          <input id="generatedMixNoveltyWeight" type="number" min="0" max="1" step="0.05" value="0.6">
+        </label>
+        <label><span class="label-title">Max per artist <span class="info" tabindex="0" data-tooltip="Maximum tracks by the same artist in the final generated mix. This is applied after candidate scoring, not to the candidate pool. Lower values increase variety but may reject very close matches.">(i)</span></span>
+          <input id="generatedMixMaxPerArtist" type="number" min="1" max="50" value="4">
+        </label>
+        <label><span class="label-title">Max per release <span class="info" tabindex="0" data-tooltip="Maximum tracks from the same album/release in the final generated mix. This is applied after candidate scoring, not to the candidate pool. Use 1 for stronger album variety.">(i)</span></span>
+          <input id="generatedMixMaxPerRelease" type="number" min="1" max="50" value="2">
+        </label>
+        <label><span class="label-title">Candidate pool <span class="info" tabindex="0" data-tooltip="Maximum nearest-neighbor candidates considered per mix before final selection. Larger values give caps and discovery balancing more room, but generation is slower. This is not the final playlist length.">(i)</span></span>
+          <input id="generatedMixCandidatePool" type="number" min="10" max="5000" value="1200">
+        </label>
+        <label><span class="label-title">Duplicate strictness <span class="info" tabindex="0" data-tooltip="Strict prevents the same track from appearing in multiple generated mixes in one generation run. Soft allows overlap when regions are close or the catalog is sparse.">(i)</span></span>
+          <select id="generatedMixDuplicateStrictness">
+            <option value="strict">strict</option>
+            <option value="soft">soft</option>
+          </select>
+        </label>
+        <label><span class="label-title">Mix model <span class="info" tabindex="0" data-tooltip="Embedding model used for taste regions and candidate search. The selected model needs embeddings and preferably a ready index.">(i)</span></span>
+          <select id="generatedMixModel">
+            <option value="discogs_multi">discogs_multi</option>
+            <option value="discogs_track">discogs_track</option>
+            <option value="discogs_release">discogs_release</option>
+            <option value="discogs_label">discogs_label</option>
+            <option value="muq_mulan">muq_mulan</option>
+          </select>
+        </label>
+        <div class="actions">
+          <button class="primary" onclick="saveGeneratedMixSettings()">Save generated mix settings</button>
+          <button id="regenerateMixesBtn" onclick="forceRegenerateGeneratedMixes()">Regenerate now</button>
+          <button onclick="loadGeneratedMixStatus()">Refresh status</button>
+        </div>
+        <div class="meta" id="generatedMixStatus">Generated mix settings not loaded yet.</div>
+        <pre class="meta" id="generatedMixDiagnostics"></pre>
+        <h3>Similarity Recommendations</h3>
         <label><span class="label-title">Results <span class="info" tabindex="0" data-tooltip="Number of similar tracks requested for the current seed. Higher values return a wider list but may include weaker matches.">(i)</span></span>
           <input id="k" type="number" min="1" max="100" value="30">
         </label>
@@ -7901,6 +8497,9 @@ UI_HTML = r"""
       <div id="analysisContent" class="analysis-grid"></div>
     </div>
   </div>
+  <div class="track-action-menu" id="trackActionMenu" role="menu">
+    <button type="button" role="menuitem" onclick="startInstantMixFromOpenMenu()">Instant Mix</button>
+  </div>
   <div class="expanded-player" id="expandedPlayer">
     <div class="expanded-main">
       <div class="expanded-art" id="expandedPlayerArt">ART</div>
@@ -7935,9 +8534,9 @@ UI_HTML = r"""
       <div class="player-seek-bubble" id="playerSeekBubble">0:00</div>
     </div>
     <div class="player-controls">
-      <button onclick="playPreviousQueueItem()" title="Previous" aria-label="Previous">&#9664;&#9664;</button>
-      <button class="player-play" onclick="toggleAudioPlayback()" title="Play/Pause" aria-label="Play/Pause">&#9654;</button>
-      <button onclick="skipCurrentTrack()" title="Skip" aria-label="Skip">&#9654;&#9654;</button>
+      <button onclick="playPreviousQueueItem()" title="Previous" aria-label="Previous"><i class="bi bi-skip-start-fill" aria-hidden="true"></i></button>
+      <button id="playerPlayButton" class="player-play" onclick="toggleAudioPlayback()" title="Play/Pause" aria-label="Play/Pause"><i class="bi bi-play-fill" aria-hidden="true"></i></button>
+      <button onclick="skipCurrentTrack()" title="Skip" aria-label="Skip"><i class="bi bi-skip-end-fill" aria-hidden="true"></i></button>
     </div>
     <div class="player-now">
       <div class="player-cover" id="playerCover">ART</div>
@@ -7945,9 +8544,9 @@ UI_HTML = r"""
         <div class="player-title">
           <strong id="nowPlaying">No track loaded</strong>
           <div class="player-inline-actions">
-            <button onclick="recordCurrentPreference('liked')" title="Like" aria-label="Like">^</button>
-            <button onclick="recordCurrentPreference('disliked')" title="Dislike" aria-label="Dislike">v</button>
-            <button disabled title="Track menu placeholder" aria-label="Track menu placeholder">...</button>
+            <button id="playerNavidromeLikeButton" class="navidrome-like-button" data-navidrome-like="1" onclick="toggleCurrentNavidromeLike(event)" title="Like in Navidrome" aria-label="Like in Navidrome"><i class="bi bi-hand-thumbs-up" aria-hidden="true"></i></button>
+            <button onclick="recordCurrentPreference('disliked')" title="Dislike" aria-label="Dislike"><i class="bi bi-hand-thumbs-down" aria-hidden="true"></i></button>
+            <button id="playerTrackMenuButton" class="track-menu-button" onclick="openCurrentTrackMenu(event)" title="Track menu" aria-label="Track menu"><i class="bi bi-three-dots-vertical" aria-hidden="true"></i></button>
           </div>
         </div>
         <div class="player-subtitle meta" id="nowPlayingMeta">Persistent player is ready.</div>
@@ -7963,16 +8562,22 @@ UI_HTML = r"""
       <div class="player-time"><span id="playerElapsed">0:00</span><span id="playerDuration">0:00</span></div>
     </div>
     <div class="player-actions">
-      <button disabled title="Volume placeholder" aria-label="Volume placeholder">Vol</button>
-      <button disabled title="Repeat placeholder" aria-label="Repeat placeholder">Rpt</button>
-      <button disabled title="Shuffle placeholder" aria-label="Shuffle placeholder">Shf</button>
-      <button onclick="toggleAutoplay()" title="Toggle autoplay" aria-label="Toggle autoplay">Aut</button>
-      <button onclick="toggleExpandedPlayer()" title="Expand player" aria-label="Expand player">&#9650;</button>
+      <div class="player-volume">
+        <button id="volumeButton" onclick="toggleMute()" title="Mute" aria-label="Mute"><i class="bi bi-volume-up" aria-hidden="true"></i></button>
+        <div class="player-volume-slider">
+          <input id="volumeSlider" type="range" min="0" max="100" value="100" aria-label="Volume">
+        </div>
+      </div>
+      <button id="repeatOneButton" onclick="toggleRepeatOne()" title="Repeat one" aria-label="Repeat one"><i class="bi bi-repeat-1" aria-hidden="true"></i></button>
+      <button id="shuffleButton" onclick="toggleShuffleMode()" title="Shuffle" aria-label="Shuffle"><i class="bi bi-shuffle" aria-hidden="true"></i></button>
+      <button onclick="toggleExpandedPlayer()" title="Expand player" aria-label="Expand player"><i class="bi bi-caret-up-fill" aria-hidden="true"></i></button>
     </div>
   </div>
   <script>
     const SETTINGS_KEY = "discocs.settings.v1";
+    const PLAYER_STATE_KEY = "discocs.playerState.v1";
     const BLEND_EXTRA_KEY = "discocs.blendExtra.v1";
+    const UI_BUILD_ID = "player-stream-debug-20260623-0825";
     const SETTINGS_FIELDS = [
       "model", "limit", "analyzeExecutionMode", "workers", "tfThreads", "audioFeatureWorkers", "audioFeaturesExtractor",
       "workerServerUrl", "workerId", "workerClaimBatchSize", "workerMaxInflightTasks",
@@ -7993,6 +8598,7 @@ UI_HTML = r"""
     let activeQueueItemId = null;
     let lastAutoplayStatus = null;
     let progressEventSent = false;
+    let playerState = {volume: 1, muted: false, shuffle: false, repeatOne: false};
     let currentSimilarTracks = [];
     let lastJobs = [];
     let seedBasket = [];
@@ -8001,6 +8607,7 @@ UI_HTML = r"""
     let navidromeLikeLastDebug = "idle";
     let extraBlendIds = [];
     let currentInstantMixRequestId = null;
+    let openTrackActionTrackId = null;
     let textSearchRecentQueries = [];
     let evaluationIndex = -1;
     let browseFilters = {};
@@ -8029,6 +8636,83 @@ UI_HTML = r"""
       return String(value ?? "").replace(/[&<>"']/g, char => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
       }[char]));
+    }
+    function trackMenuButton(trackId, compact = false) {
+      const id = Number(trackId);
+      if (!Number.isFinite(id)) return "";
+      const classes = compact ? "stat-icon-button track-menu-button" : "icon-button track-menu-button";
+      return `<button class="${classes}" onclick="openTrackMenu(event, ${id})" title="Track menu" aria-label="Track menu">
+        <i class="bi bi-three-dots-vertical" aria-hidden="true"></i>
+      </button>`;
+    }
+    function closeTrackMenu() {
+      const menu = document.getElementById("trackActionMenu");
+      if (menu) menu.classList.remove("open");
+      openTrackActionTrackId = null;
+    }
+    function openTrackMenu(event, trackId) {
+      event.preventDefault();
+      event.stopPropagation();
+      const id = Number(trackId);
+      if (!Number.isFinite(id)) return;
+      const menu = document.getElementById("trackActionMenu");
+      if (!menu) return;
+      openTrackActionTrackId = id;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const playerTone = Boolean(event.currentTarget.closest(".player") || event.currentTarget.closest(".expanded-player"));
+      menu.classList.toggle("player-menu", playerTone);
+      menu.classList.add("open");
+      const width = menu.offsetWidth || 170;
+      const height = menu.offsetHeight || 40;
+      const left = Math.min(window.innerWidth - width - 8, Math.max(8, rect.right - width));
+      const preferAbove = rect.top - height - 8 >= 8;
+      const belowTop = rect.bottom + 6;
+      const aboveTop = rect.top - height - 8;
+      const top = Math.min(
+        window.innerHeight - height - 8,
+        Math.max(8, preferAbove && aboveTop >= 8 ? aboveTop : belowTop)
+      );
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
+    }
+    function openCurrentTrackMenu(event) {
+      const item = currentQueueItem();
+      const trackId = item?.track_id || activeTrackId;
+      if (!trackId) return;
+      openTrackMenu(event, trackId);
+    }
+    async function startInstantMixForTrack(trackId) {
+      const id = Number(trackId);
+      if (!Number.isFinite(id)) return;
+      closeTrackMenu();
+      document.getElementById("playerError").textContent = "";
+      lastAutoplayStatus = "Instant Mix is loading...";
+      renderPlayerState();
+      try {
+        const data = await json(`/tracks/${id}/instant-mix`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          timeoutMs: 60000,
+        });
+        activePlaybackSession = data.session;
+        activePlaybackQueue = data.queue;
+        lastAutoplayStatus = `Instant Mix ready - ${(data.queue?.items || []).length} tracks.`;
+        const firstItem = data.queue?.current_item || data.queue?.items?.[0];
+        activeQueueItemId = firstItem?.id || null;
+        renderPlayerState();
+        if (firstItem?.track_id) {
+          await playTrack(Number(firstItem.track_id), encodedArg(queueTrackLabel(firstItem)), {queueItemId: activeQueueItemId});
+        }
+        scheduleAutoplayRefill();
+      } catch (err) {
+        setInstantMixStatus(`Instant mix failed: ${err.message}`, true);
+        document.getElementById("playerError").textContent = `Instant mix failed: ${err.message}`;
+        lastAutoplayStatus = null;
+        renderPlayerState();
+      }
+    }
+    function startInstantMixFromOpenMenu() {
+      if (openTrackActionTrackId !== null) startInstantMixForTrack(openTrackActionTrackId);
     }
     function label(t) { return `${text(t.artist)} - ${text(t.title) || t.path}`.replace(/^ - /, ""); }
     function encodedArg(value) { return encodeURIComponent(value).replace(/'/g, "%27"); }
@@ -8096,6 +8780,110 @@ UI_HTML = r"""
         element.addEventListener("input", saveSettings);
       });
     }
+    function readSavedPlayerState() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(PLAYER_STATE_KEY) || "{}");
+        return saved && typeof saved === "object" ? saved : {};
+      } catch (_err) {
+        return {};
+      }
+    }
+    function savePlayerState() {
+      localStorage.setItem(PLAYER_STATE_KEY, JSON.stringify(playerState));
+    }
+    function loadPlayerState() {
+      const saved = readSavedPlayerState();
+      const volume = Number(saved.volume);
+      playerState = {
+        volume: Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1,
+        muted: Boolean(saved.muted),
+        shuffle: Boolean(saved.shuffle),
+        repeatOne: Boolean(saved.repeatOne),
+      };
+      applyPlayerVolume();
+      renderPlaybackButtons();
+    }
+    function activeShuffleEnabled() {
+      return Boolean(activePlaybackSession?.shuffle_enabled ?? playerState.shuffle);
+    }
+    function activeRepeatOneEnabled() {
+      return (activePlaybackSession?.repeat_mode || (playerState.repeatOne ? "one" : "off")) === "one";
+    }
+    function applyPlayerVolume() {
+      const player = document.getElementById("audioPlayer");
+      const slider = document.getElementById("volumeSlider");
+      const button = document.getElementById("volumeButton");
+      if (player) {
+        player.volume = playerState.volume;
+        player.muted = playerState.muted || playerState.volume <= 0;
+      }
+      if (slider) slider.value = String(Math.round(playerState.volume * 100));
+      if (button) {
+        const muted = playerState.muted || playerState.volume <= 0;
+        const icon = muted ? "bi-volume-mute" : (playerState.volume < 0.5 ? "bi-volume-down" : "bi-volume-up");
+        button.classList.toggle("active", muted);
+        button.innerHTML = `<i class="bi ${icon}" aria-hidden="true"></i>`;
+        button.title = muted ? "Unmute" : "Mute";
+        button.setAttribute("aria-label", muted ? "Unmute" : "Mute");
+      }
+    }
+    function renderPlaybackButtons() {
+      const player = document.getElementById("audioPlayer");
+      const playButton = document.getElementById("playerPlayButton");
+      if (playButton) {
+        const playing = player && !player.paused && !player.ended;
+        playButton.innerHTML = `<i class="bi ${playing ? "bi-pause-fill" : "bi-play-fill"}" aria-hidden="true"></i>`;
+        playButton.classList.toggle("active", playing);
+      }
+      const repeatButton = document.getElementById("repeatOneButton");
+      if (repeatButton) repeatButton.classList.toggle("active", activeRepeatOneEnabled());
+      const shuffleButton = document.getElementById("shuffleButton");
+      if (shuffleButton) shuffleButton.classList.toggle("active", activeShuffleEnabled());
+      applyPlayerVolume();
+    }
+    function setPlayerVolume(rawValue) {
+      const value = Math.max(0, Math.min(1, Number(rawValue || 0) / 100));
+      playerState.volume = value;
+      playerState.muted = value <= 0 ? true : false;
+      savePlayerState();
+      applyPlayerVolume();
+    }
+    function toggleMute() {
+      playerState.muted = !(playerState.muted || playerState.volume <= 0);
+      if (!playerState.muted && playerState.volume <= 0) playerState.volume = 0.6;
+      savePlayerState();
+      applyPlayerVolume();
+    }
+    async function patchPlaybackMode(payload) {
+      if (!activePlaybackSession?.id) {
+        renderPlaybackButtons();
+        return;
+      }
+      try {
+        const data = await json(`/api/v1/playback/sessions/${activePlaybackSession.id}`, {
+          method: "PATCH",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload),
+        });
+        activePlaybackSession = data.session;
+        activePlaybackQueue = data.queue;
+      } catch (err) {
+        document.getElementById("playerError").textContent = `Playback mode failed: ${err.message}`;
+      }
+      renderPlayerState();
+    }
+    async function toggleRepeatOne() {
+      const enabled = !activeRepeatOneEnabled();
+      playerState.repeatOne = enabled;
+      savePlayerState();
+      await patchPlaybackMode({repeat_mode: enabled ? "one" : "off"});
+    }
+    async function toggleShuffleMode() {
+      const enabled = !activeShuffleEnabled();
+      playerState.shuffle = enabled;
+      savePlayerState();
+      await patchPlaybackMode({shuffle_enabled: enabled});
+    }
     function workerSetting(id, fallback) {
       const element = document.getElementById(id);
       return element && element.value ? element.value : fallback;
@@ -8139,6 +8927,7 @@ UI_HTML = r"""
       listenerSearch: "listenerSearch",
       artist: "artistSurface",
       release: "releaseSurface",
+      mix: "mixSurface",
       library: "library",
       browse: "browse",
       metrics: "metrics",
@@ -8169,6 +8958,7 @@ UI_HTML = r"""
     function viewForSection(sectionId) {
       if (sectionId === "artistSurface") return "artist";
       if (sectionId === "releaseSurface") return "release";
+      if (sectionId === "mixSurface") return "mix";
       if (sectionId === "jobsPage") return "jobs";
       if (sectionId === "workersPage") return "workers";
       return sectionId;
@@ -8178,13 +8968,16 @@ UI_HTML = r"""
       let pathView = "dashboard";
       const artistMatch = location.pathname.match(/^\/artists\/(\d+)\/?$/);
       const releaseMatch = location.pathname.match(/^\/releases\/(\d+)\/?$/);
+      const mixMatch = location.pathname.match(/^\/mixes\/([^/]+)\/?$/);
       if (location.pathname === "/search") pathView = "listenerSearch";
       else if (location.pathname === "/settings") pathView = "settings";
       else if (artistMatch) pathView = "artist";
       else if (releaseMatch) pathView = "release";
+      else if (mixMatch) pathView = "mix";
       const params = {view: raw.view || pathView};
       if (artistMatch && raw.artist_id === undefined) params.artist_id = artistMatch[1];
       if (releaseMatch && raw.release_id === undefined) params.release_id = releaseMatch[1];
+      if (mixMatch && raw.mix_id === undefined) params.mix_id = mixMatch[1];
       Object.entries(raw).forEach(([key, value]) => {
         if (value === "" || value === undefined || value === null) return;
         params[key] = value;
@@ -8297,6 +9090,8 @@ UI_HTML = r"""
           await loadArtistSurface(Number(params.artist_id || params.id || 0));
         } else if (sectionId === "releaseSurface") {
           await loadReleaseSurface(Number(params.release_id || params.id || 0));
+        } else if (sectionId === "mixSurface") {
+          await loadMixSurface(params.mix_id || params.id || "");
         } else if (sectionId === "library") {
           if (params.query !== undefined) document.getElementById("query").value = params.query;
           if (params.embedding_status) document.getElementById("embeddingStatus").value = params.embedding_status;
@@ -8359,6 +9154,7 @@ UI_HTML = r"""
           await refreshWorkers();
         } else if (sectionId === "settings") {
           await loadAudioFeaturesSettings();
+          await loadGeneratedMixSettings();
         }
       } finally {
         applyingRoute = false;
@@ -8423,11 +9219,11 @@ UI_HTML = r"""
       const subtitle = item.subtitle || entityArtistsHtml(item.artists || []);
       const artwork = item.artwork || item.image || {};
       const url = artwork.url || "";
-      const target = item.action?.target || (type === "artist" ? `/artists/${id}` : `/releases/${id}`);
+      const target = item.action?.target || (type === "artist" ? `/artists/${id}` : (type === "generated_mix" ? `/mixes/${id}` : `/releases/${id}`));
       const coverClass = type === "artist" ? "media-card-cover artist-avatar" : "media-card-cover";
       const placeholder = type === "artist" ? esc((title || "?").slice(0, 1).toUpperCase()) : esc(type);
       const play = item.play_action
-        ? `<button onclick="event.stopPropagation(); playSource('${esc(item.play_action.source_type)}', ${Number(item.play_action.source_id)}, '${encodedArg(title)}')" title="Play" aria-label="Play">&#9654;</button>`
+        ? `<button onclick="event.stopPropagation(); playCardAction('${encodedArg(JSON.stringify(item.play_action))}', '${encodedArg(title)}')" title="Play" aria-label="Play">&#9654;</button>`
         : "";
       return `<div class="media-card" role="button" tabindex="0" onclick="navigateEntityTarget('${encodedArg(target)}')" onkeydown="if(event.key === 'Enter') navigateEntityTarget('${encodedArg(target)}')">
         <div class="${coverClass}">
@@ -8438,6 +9234,26 @@ UI_HTML = r"""
         ${item.reason ? `<div class="meta media-card-reason">${esc(item.reason)}</div>` : ""}
         ${play ? `<div class="media-card-actions">${play}</div>` : ""}
       </div>`;
+    }
+    async function playCardAction(encodedAction, encodedLabel) {
+      const action = JSON.parse(decodeURIComponent(encodedAction || "{}"));
+      if (action.endpoint) {
+        try {
+          const data = await json(action.endpoint, {method: "POST"});
+          activePlaybackSession = data.session;
+          activePlaybackQueue = data.queue;
+          lastAutoplayStatus = null;
+          const firstItem = data.queue?.current_item || data.queue?.items?.[0];
+          activeQueueItemId = firstItem?.id || null;
+          renderPlayerState();
+          if (firstItem?.track_id) await playTrack(Number(firstItem.track_id), encodedArg(firstItem.track?.title || data.session?.source_label || "Mix"), {queueItemId: activeQueueItemId});
+          scheduleAutoplayRefill();
+        } catch (err) {
+          document.getElementById("playerError").textContent = `Playback session failed: ${err.message}`;
+        }
+        return;
+      }
+      return playSource(action.source_type, Number(action.source_id), encodedLabel);
     }
     function trackCoverCell(track) {
       const artwork = track.artwork || {};
@@ -8463,12 +9279,13 @@ UI_HTML = r"""
         <td><strong>${esc(track.title || `track #${track.id}`)}</strong><div class="meta">${artists}</div></td>
         <td>${releaseLink}</td>
         <td>${entityDuration(track.duration)}</td>
+        <td>${trackMenuButton(track.id, true)}</td>
       </tr>`;
     }
     function trackTable(tracks, options = {}) {
       if (!tracks.length) return `<div class="meta">No tracks available.</div>`;
       return `<table class="track-table">
-        <thead><tr><th>#</th><th></th><th class="search-track-cover"></th><th>Track</th><th>Release</th><th>Duration</th></tr></thead>
+        <thead><tr><th>#</th><th></th><th class="search-track-cover"></th><th>Track</th><th>Release</th><th>Duration</th><th></th></tr></thead>
         <tbody>${tracks.map(track => trackRow(track, options)).join("")}</tbody>
       </table>`;
     }
@@ -8477,6 +9294,9 @@ UI_HTML = r"""
     }
     function openRelease(id) {
       return routeTo({view: "release", release_id: id}, {reset: true});
+    }
+    function openMix(id) {
+      return routeTo({view: "mix", mix_id: id}, {reset: true});
     }
     function searchListenerForEncoded(encodedQuery) {
       return routeTo({view: "listenerSearch", q: decodeURIComponent(encodedQuery || "")}, {reset: true});
@@ -8489,20 +9309,36 @@ UI_HTML = r"""
       const target = decodeURIComponent(encodedTarget || "");
       const artistMatch = target.match(/^\/artists\/(\d+)/);
       const releaseMatch = target.match(/^\/releases\/(\d+)/);
+      const mixMatch = target.match(/^\/mixes\/([^/?#]+)/);
       if (artistMatch) return openArtist(Number(artistMatch[1]));
       if (releaseMatch) return openRelease(Number(releaseMatch[1]));
+      if (mixMatch) return openMix(mixMatch[1]);
       if (target.includes("view=recommendations")) return routeTo({view: "recommendations"}, {reset: true});
       return routeTo({view: "listenerSearch"}, {reset: true});
     }
     function queueTrackLabel(item) {
       const track = item?.track || {};
-      const artists = (track.artists || []).map(artist => artist.name).filter(Boolean).join(", ");
-      return artists ? `${artists} - ${track.title || `track #${item.track_id}`}` : (track.title || `track #${item.track_id}`);
+      return track.title || `track #${item.track_id}`;
     }
     function queueTrackSubtitle(item) {
       const track = item?.track || {};
+      return (track.artists || []).map(artist => artist.name).filter(Boolean).join(", ") || track.artist || "";
+    }
+    function queueTrackReleaseLink(item) {
+      const track = item?.track || {};
       const release = track.release || {};
-      return release.title || item?.origin || "";
+      const title = queueTrackLabel(item);
+      const label = `<span class="queue-track-name">${esc(title)}</span>`;
+      if (!release.id) return label;
+      return `<a class="entity-link queue-track-link" href="/releases/${release.id}" onclick="event.preventDefault(); event.stopPropagation(); openRelease(${release.id})">${label}</a>`;
+    }
+    function queueTrackArtistLinks(item) {
+      const artists = item?.track?.artists || [];
+      const links = artists
+        .filter(artist => artist?.id && artist?.name)
+        .map(artist => `<a class="entity-link queue-artist-link" href="/artists/${artist.id}" onclick="event.preventDefault(); event.stopPropagation(); openArtist(${artist.id})">${esc(artist.name)}</a>`);
+      if (links.length) return links.join(", ");
+      return esc(queueTrackSubtitle(item) || item?.origin || "");
     }
     function sizedArtworkUrl(url, size) {
       if (!url) return "";
@@ -8521,6 +9357,15 @@ UI_HTML = r"""
       const seconds = item?.track?.duration;
       return seconds || seconds === 0 ? entityDuration(seconds) : "";
     }
+    function mixQueueItem(mixItem, mixId) {
+      const track = mixItem.track || {};
+      return {
+        id: `${mixId}:${mixItem.position}:${mixItem.track_id}`,
+        track_id: mixItem.track_id,
+        track,
+        origin: "generated_mix",
+      };
+    }
     function currentQueueItem() {
       const items = activePlaybackQueue?.items || [];
       return items.find(item => item.id === activeQueueItemId)
@@ -8531,15 +9376,22 @@ UI_HTML = r"""
     function renderQueueListItem(queueItem, options = {}) {
       const currentClass = queueItem.id === activeQueueItemId ? "current" : "";
       const preparedClass = options.prepared ? "prepared" : "";
-      const click = options.prepared ? "" : ` onclick="jumpToQueueItem('${esc(queueItem.id)}')"`;
+      const click = options.onClick
+        ? ` onclick="${options.onClick}"`
+        : (options.prepared ? "" : ` onclick="jumpToQueueItem('${esc(queueItem.id)}')"`);
+      const actionTrack = {...(queueItem.track || {}), id: queueItem.track?.id || queueItem.track_id};
       return `
         <div class="queue-item ${currentClass} ${preparedClass}"${click}>
           <div class="queue-item-cover"><img src="${esc(queueTrackArtwork(queueItem, 96))}" alt="" onerror="this.remove()"></div>
           <div>
-            <div class="queue-item-title"><strong>${esc(queueTrackLabel(queueItem))}</strong></div>
-            <div class="queue-item-subtitle meta">${esc(queueTrackSubtitle(queueItem))}</div>
+            <div class="queue-item-title">${queueTrackReleaseLink(queueItem)}</div>
+            <div class="queue-item-subtitle meta">${queueTrackArtistLinks(queueItem)}</div>
           </div>
           <div class="queue-item-duration">${esc(queueTrackDuration(queueItem))}</div>
+          <div class="queue-item-actions" onclick="event.stopPropagation()">
+            ${navidromeLikeButton(actionTrack, {compact: true})}
+            ${trackMenuButton(queueItem.track_id, true)}
+          </div>
         </div>
       `;
     }
@@ -8554,11 +9406,32 @@ UI_HTML = r"""
       const title = item ? queueTrackLabel(item) : (activeTrackId ? `Track #${activeTrackId}` : "No track loaded");
       const subtitle = item ? queueTrackSubtitle(item) : "Persistent player is ready.";
       const artwork = item ? queueTrackArtwork(item, 600) : "";
-      document.getElementById("nowPlaying").textContent = title;
-      document.getElementById("nowPlayingMeta").textContent = subtitle;
+      document.getElementById("nowPlaying").innerHTML = item ? queueTrackReleaseLink(item) : esc(title);
+      document.getElementById("nowPlayingMeta").innerHTML = item ? queueTrackArtistLinks(item) : esc(subtitle);
       document.getElementById("expandedPlayerTitle").textContent = title;
       document.getElementById("expandedPlayerSubtitle").textContent = subtitle;
       document.getElementById("queueSourceLabel").textContent = activePlaybackSession?.source_label || activePlaybackSession?.source_type || "No active playback session";
+      const playerTrackMenuButton = document.getElementById("playerTrackMenuButton");
+      if (playerTrackMenuButton) {
+        const hasTrack = Boolean(item?.track_id || activeTrackId);
+        playerTrackMenuButton.disabled = !hasTrack;
+        playerTrackMenuButton.title = hasTrack ? "Track menu" : "Track menu unavailable";
+        playerTrackMenuButton.setAttribute("aria-label", playerTrackMenuButton.title);
+      }
+      const playerLikeButton = document.getElementById("playerNavidromeLikeButton");
+      if (playerLikeButton) {
+        const trackId = item?.track_id || activeTrackId;
+        const navidromeKnownMissing = Boolean(item?.track) && !item.track.navidrome_item_id;
+        const available = Boolean(trackId) && !navidromeKnownMissing;
+        playerLikeButton.dataset.trackId = trackId || "";
+        playerLikeButton.dataset.navidromeUnavailable = available ? "" : "1";
+        playerLikeButton.disabled = !available;
+        playerLikeButton.classList.toggle("like-active", false);
+        playerLikeButton.innerHTML = bootstrapLikeIcon(false);
+        playerLikeButton.title = available ? "Like in Navidrome" : "Navidrome like unavailable";
+        playerLikeButton.setAttribute("aria-label", playerLikeButton.title);
+        if (available) scheduleNavidromeLikeIdsRefresh();
+      }
       const coverHtml = artwork ? `<img src="${esc(artwork)}" alt="" onerror="this.remove()">` : "ART";
       document.getElementById("playerCover").innerHTML = coverHtml;
       document.getElementById("expandedPlayerArt").innerHTML = coverHtml;
@@ -8583,6 +9456,7 @@ UI_HTML = r"""
       document.getElementById("autoplayStatus").textContent = autoplayEnabled
         ? (lastAutoplayStatus || `Autoplay ready - ${generatedCount} in queue, ${poolCount} prepared.`)
         : "Autoplay is off for this session.";
+      renderPlaybackButtons();
     }
     function toggleExpandedPlayer() {
       document.getElementById("expandedPlayer").classList.toggle("open");
@@ -8609,6 +9483,29 @@ UI_HTML = r"""
       player.currentTime = player.duration * fraction;
       updatePlayerClock();
     }
+    let autoplayRefillInFlight = null;
+    function reportBackgroundError(label, err) {
+      const target = document.getElementById("playerError");
+      if (target) target.textContent = `${label} failed: ${err.message}`;
+    }
+    function runPlayerBackground(label, task) {
+      Promise.resolve()
+        .then(task)
+        .catch(err => reportBackgroundError(label, err));
+    }
+    function scheduleAutoplayRefill() {
+      if (!activePlaybackSession?.id || activePlaybackSession.autoplay_enabled === false) return;
+      if (autoplayRefillInFlight) return;
+      autoplayRefillInFlight = refillAutoplay()
+        .catch(err => reportBackgroundError("Autoplay refill", err))
+        .finally(() => {
+          autoplayRefillInFlight = null;
+        });
+    }
+    function refreshPlaybackSurfaces() {
+      runPlayerBackground("Library refresh", () => searchTracks({updateUrl: false}));
+      if (seedId) runPlayerBackground("Similar refresh", () => loadSimilar(seedId));
+    }
     async function recordPlaybackEvent(eventType, extra = {}) {
       if (!activeTrackId && !extra.track_id) return;
       try {
@@ -8625,7 +9522,7 @@ UI_HTML = r"""
           }),
         });
         if (["completed", "skipped", "liked", "disliked", "replayed", "removed_from_queue"].includes(eventType)) {
-          await refillAutoplay();
+          scheduleAutoplayRefill();
         }
       } catch (err) {
         document.getElementById("playerError").textContent = `Playback event failed: ${err.message}`;
@@ -8741,20 +9638,69 @@ UI_HTML = r"""
       const item = items[index + offset];
       if (item) await jumpToQueueItem(item.id);
     }
+    async function playRandomQueueItem() {
+      const items = (activePlaybackQueue?.items || []).filter(item => item.id !== activeQueueItemId);
+      if (!items.length) return false;
+      const item = items[Math.floor(Math.random() * items.length)];
+      await jumpToQueueItem(item.id);
+      return true;
+    }
     function playPreviousQueueItem() {
       return playQueueOffset(-1);
     }
     function toggleAudioPlayback() {
       const player = document.getElementById("audioPlayer");
       if (!player.src) return;
-      if (player.paused) player.play().catch(() => {
-        document.getElementById("playerError").textContent = "Click play in the audio controls if autoplay is blocked.";
-      });
-      else player.pause();
+      if (player.paused) {
+        player.play()
+          .then(renderPlaybackButtons)
+          .catch(async err => {
+            document.getElementById("playerError").textContent = await playbackErrorMessage(err);
+            renderPlaybackButtons();
+          });
+      } else {
+        player.pause();
+        renderPlaybackButtons();
+      }
+    }
+    async function playbackErrorMessage(err) {
+      const player = document.getElementById("audioPlayer");
+      const mediaError = player?.error;
+      const code = mediaError?.code ? ` media=${mediaError.code}` : "";
+      const detail = [err?.name, err?.message].filter(Boolean).join(": ");
+      const base = detail
+        ? `Playback failed: ${detail}${code}`
+        : (code ? `Playback failed:${code}` : "Click play in the audio controls if autoplay is blocked.");
+      const debug = await audioSourceDebug(player);
+      return debug ? `${base} | ${debug}` : base;
+    }
+    async function audioSourceDebug(player) {
+      if (!player) return "";
+      const src = player.currentSrc || player.src || "";
+      const parts = [
+        `build=${UI_BUILD_ID}`,
+        `rs=${player.readyState}`,
+        `ns=${player.networkState}`,
+        `flac=${player.canPlayType ? (player.canPlayType("audio/flac") || "no") : "na"}`,
+        `mpeg=${player.canPlayType ? (player.canPlayType("audio/mpeg") || "no") : "na"}`,
+        `src=${src || "none"}`,
+      ];
+      if (src) {
+        try {
+          const response = await fetch(src, {method: "HEAD", headers: {"Range": "bytes=0-63"}});
+          parts.push(`head=${response.status}`);
+          parts.push(`type=${response.headers.get("content-type") || "none"}`);
+          parts.push(`range=${response.headers.get("content-range") || "none"}`);
+          parts.push(`len=${response.headers.get("content-length") || "none"}`);
+        } catch (debugErr) {
+          parts.push(`head_error=${debugErr?.message || debugErr}`);
+        }
+      }
+      return parts.join(" ");
     }
     async function skipCurrentTrack() {
       const player = document.getElementById("audioPlayer");
-      await recordPlaybackEvent("skipped", {
+      recordPlaybackEvent("skipped", {
         position_seconds: Number.isFinite(player.currentTime) ? player.currentTime : null,
         duration_seconds: Number.isFinite(player.duration) ? player.duration : null,
       });
@@ -8768,7 +9714,14 @@ UI_HTML = r"""
         const data = await json("/api/v1/playback/sessions", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({source_type: sourceType, source_id: Number(sourceId), source_label: decodeURIComponent(encodedLabel || "")})
+          body: JSON.stringify({
+            source_type: sourceType,
+            source_id: Number(sourceId),
+            source_label: decodeURIComponent(encodedLabel || ""),
+            mode: playerState.shuffle ? "shuffle" : "linear",
+            shuffle_enabled: playerState.shuffle,
+            repeat_mode: playerState.repeatOne ? "one" : "off"
+          })
         });
         activePlaybackSession = data.session;
         activePlaybackQueue = data.queue;
@@ -8780,7 +9733,7 @@ UI_HTML = r"""
         const labelText = decodeURIComponent(encodedLabel || "") || data.session?.source_label || `${sourceType} #${sourceId}`;
         renderPlayerState();
         if (first) await playTrack(Number(first), encodedArg(preferredItem ? queueTrackLabel(preferredItem) : labelText), {queueItemId: activeQueueItemId});
-        await refillAutoplay();
+        scheduleAutoplayRefill();
       } catch (err) {
         document.getElementById("playerError").textContent = `Playback session failed: ${err.message}`;
       }
@@ -8925,6 +9878,88 @@ UI_HTML = r"""
         `;
       } catch (err) {
         target.innerHTML = `<div class="error">Release failed to load: ${esc(err.message)}</div>`;
+      }
+    }
+    async function saveMix(mixId) {
+      mixId = decodeURIComponent(String(mixId || ""));
+      try {
+        await json(`/api/v1/mixes/${encodeURIComponent(mixId)}/save`, {method: "POST"});
+        const status = document.getElementById("mixSurfaceStatus");
+        if (status) status.textContent = "Saved";
+      } catch (err) {
+        const status = document.getElementById("mixSurfaceStatus");
+        if (status) status.textContent = `Save failed: ${err.message}`;
+      }
+    }
+    async function playMix(mixId, preferredTrackId = null) {
+      mixId = decodeURIComponent(String(mixId || ""));
+      try {
+        const data = await json(`/api/v1/mixes/${encodeURIComponent(mixId)}/play`, {method: "POST"});
+        activePlaybackSession = data.session;
+        activePlaybackQueue = data.queue;
+        lastAutoplayStatus = null;
+        const preferredItem = preferredTrackId
+          ? (data.queue?.items || []).find(item => Number(item.track_id) === Number(preferredTrackId))
+          : null;
+        const firstItem = preferredItem || data.queue?.current_item || data.queue?.items?.[0];
+        activeQueueItemId = firstItem?.id || null;
+        renderPlayerState();
+        if (firstItem?.track_id) {
+          await playTrack(Number(firstItem.track_id), encodedArg(queueTrackLabel(firstItem)), {queueItemId: activeQueueItemId});
+        }
+        scheduleAutoplayRefill();
+      } catch (err) {
+        document.getElementById("playerError").textContent = `Playback session failed: ${err.message}`;
+      }
+    }
+    function renderMixTrack(mixItem, mixId) {
+      const queueItem = mixQueueItem(mixItem, mixId);
+      return renderQueueListItem(queueItem, {
+        onClick: `playMix('${encodedArg(mixId)}', ${Number(mixItem.track_id)})`,
+      });
+    }
+    async function loadMixSurface(mixId) {
+      mixId = decodeURIComponent(String(mixId || ""));
+      const target = document.getElementById("mixSurfaceContent");
+      if (!mixId) {
+        target.innerHTML = `<div class="error">Mix id is missing.</div>`;
+        return;
+      }
+      target.innerHTML = `<div class="meta">Loading mix...</div>`;
+      try {
+        const mix = await json(`/api/v1/mixes/${encodeURIComponent(mixId)}`);
+        const items = mix.items || [];
+        const tracks = items.filter(item => item.track);
+        const artwork = mix.artwork || {};
+        const firstItemArtwork = tracks.length ? queueTrackArtwork(mixQueueItem(tracks[0], mix.id), 600) : "";
+        const artworkUrl = artwork.url ? sizedArtworkUrl(artwork.url, 600) : firstItemArtwork;
+        const totalDuration = tracks.reduce((sum, item) => sum + (Number(item.track?.duration) || 0), 0);
+        const representative = [mix.anchor?.representative_artist, mix.anchor?.representative_album].filter(Boolean).join(" - ");
+        const description = representative || mix.subtitle || "";
+        target.innerHTML = `
+          <div class="mix-page">
+            <div class="mix-hero">
+              <div class="mix-art">${artworkUrl ? `<img src="${esc(artworkUrl)}" alt="" onerror="this.remove()">` : "MIX"}</div>
+              <div>
+                <div class="meta">${esc(mix.mix_type || "Generated mix")}</div>
+                <h2 class="mix-title">${esc(mix.title || "Mix")}</h2>
+              </div>
+              <div class="meta">${items.length} tracks${totalDuration ? ` - ${entityDuration(totalDuration)}` : ""}</div>
+              ${description ? `<div class="meta mix-description">${esc(description)}</div>` : ""}
+              <div class="mix-actions">
+                <button onclick="saveMix('${encodedArg(mix.id)}')" title="Save" aria-label="Save"><i class="bi bi-bookmark" aria-hidden="true"></i></button>
+                <button class="primary mix-play-button" onclick="playMix('${encodedArg(mix.id)}')" title="Play" aria-label="Play"><i class="bi bi-play-fill" aria-hidden="true"></i></button>
+                <button onclick="loadMixSurface('${encodedArg(mix.id)}')" title="Refresh" aria-label="Refresh"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i></button>
+              </div>
+              <div class="meta" id="mixSurfaceStatus">${esc(mix.status || "")}</div>
+            </div>
+            <div class="mix-track-list">
+              ${tracks.map(item => renderMixTrack(item, mix.id)).join("") || `<div class="meta">No tracks available.</div>`}
+            </div>
+          </div>
+        `;
+      } catch (err) {
+        target.innerHTML = `<div class="error">Mix failed to load: ${esc(err.message)}</div>`;
       }
     }
     async function loadListenerDashboard() {
@@ -9146,6 +10181,152 @@ UI_HTML = r"""
         setNavidromeStatus(`Navidrome sync failed: ${err.message}`, true);
       }
     }
+    function setGeneratedMixStatus(message, isError = false) {
+      const target = document.getElementById("generatedMixStatus");
+      if (!target) return;
+      target.textContent = message;
+      target.classList.toggle("error", isError);
+    }
+    function generatedMixSettingsPayload() {
+      return {
+        mix_dashboard_count: Number(document.getElementById("generatedMixDashboardCount").value || 8),
+        mix_tracks_per_mix: Number(document.getElementById("generatedMixTracksPerMix").value || 100),
+        mix_update_cadence: document.getElementById("generatedMixUpdateCadence").value || "daily",
+        mix_seed_source: document.getElementById("generatedMixSeedSource").value || "listening_history",
+        mix_region_threshold: Number(document.getElementById("generatedMixRegionThreshold").value || 0.82),
+        mix_discovery_ratio: Number(document.getElementById("generatedMixDiscoveryRatio").value || 0.75),
+        mix_novelty_weight: Number(document.getElementById("generatedMixNoveltyWeight").value || 0.6),
+        mix_max_per_artist: Number(document.getElementById("generatedMixMaxPerArtist").value || 4),
+        mix_max_per_release: Number(document.getElementById("generatedMixMaxPerRelease").value || 2),
+        mix_duplicate_strictness: document.getElementById("generatedMixDuplicateStrictness").value || "strict",
+        mix_candidate_pool: Number(document.getElementById("generatedMixCandidatePool").value || 1200),
+        mix_model: document.getElementById("generatedMixModel").value || "discogs_multi",
+      };
+    }
+    function renderGeneratedMixDiagnostics(generation) {
+      const target = document.getElementById("generatedMixDiagnostics");
+      if (!target) return;
+      if (!generation) {
+        target.textContent = "";
+        return;
+      }
+      const summary = {
+        reason: generation.reason,
+        should_generate: generation.should_generate,
+        generation_count: generation.generation_count,
+        existing_visible_count: generation.existing_visible_count,
+        active_count: generation.active_count,
+        saved_count: generation.saved_count,
+        expired_active_count: generation.expired_active_count,
+        preference_refresh_due: generation.preference_refresh_due,
+        newest_active_at: generation.newest_active_at,
+        embedding_count: generation.embedding_count,
+        settings: generation.settings,
+        preference_state: generation.preference_state,
+        mixes: (generation.mixes || []).map(item => ({
+          title: item.title,
+          status: item.status,
+          track_count: item.track_count,
+          representative: {
+            title: item.anchor?.representative_title,
+            artist: item.anchor?.representative_artist,
+            album: item.anchor?.representative_album,
+          },
+          label_artists: item.anchor?.label_artists,
+          seed_examples: item.anchor?.seed_examples,
+          region: item.score_summary ? {
+            seed_count: item.score_summary.seed_count,
+            signal_strength: item.score_summary.signal_strength,
+            candidate_id_count: item.score_summary.candidate_id_count,
+            candidate_count: item.score_summary.candidate_count,
+            selected_count: item.score_summary.selected_count,
+            known_selected: item.score_summary.known_selected,
+            new_selected: item.score_summary.new_selected,
+            discovery_target: item.score_summary.discovery_target,
+            novelty_weight: item.score_summary.novelty_weight,
+            average_novelty: item.score_summary.average_novelty,
+            novelty_distribution: item.score_summary.novelty_distribution,
+            skipped_artist_cap: item.score_summary.skipped_artist_cap,
+            skipped_release_cap: item.score_summary.skipped_release_cap,
+            skipped_known_quota: item.score_summary.skipped_known_quota,
+            skipped_cross_mix_duplicate: item.score_summary.skipped_cross_mix_duplicate,
+          } : null,
+        })),
+      };
+      target.textContent = JSON.stringify(summary, null, 2);
+    }
+    async function loadGeneratedMixSettings() {
+      try {
+        const data = await json("/api/v1/mixes/settings");
+        const settings = data.settings || {};
+        document.getElementById("generatedMixDashboardCount").value = settings.mix_dashboard_count ?? 8;
+        document.getElementById("generatedMixTracksPerMix").value = settings.mix_tracks_per_mix ?? 100;
+        document.getElementById("generatedMixUpdateCadence").value = settings.mix_update_cadence || "daily";
+        document.getElementById("generatedMixSeedSource").value = settings.mix_seed_source || "listening_history";
+        document.getElementById("generatedMixRegionThreshold").value = settings.mix_region_threshold ?? 0.82;
+        document.getElementById("generatedMixDiscoveryRatio").value = settings.mix_discovery_ratio ?? 0.75;
+        document.getElementById("generatedMixNoveltyWeight").value = settings.mix_novelty_weight ?? 0.6;
+        document.getElementById("generatedMixMaxPerArtist").value = settings.mix_max_per_artist ?? 4;
+        document.getElementById("generatedMixMaxPerRelease").value = settings.mix_max_per_release ?? 2;
+        document.getElementById("generatedMixDuplicateStrictness").value = settings.mix_duplicate_strictness || "strict";
+        document.getElementById("generatedMixCandidatePool").value = settings.mix_candidate_pool ?? 1200;
+        document.getElementById("generatedMixModel").value = settings.mix_model || "discogs_multi";
+        setGeneratedMixStatus("Generated mix settings loaded.");
+        await loadGeneratedMixStatus();
+      } catch (err) {
+        setGeneratedMixStatus(`Failed to load generated mix settings: ${err.message}`, true);
+      }
+    }
+    async function loadGeneratedMixStatus() {
+      try {
+        const data = await json("/api/v1/mixes/status");
+        renderGeneratedMixDiagnostics(data.generation);
+        const generation = data.generation || {};
+        setGeneratedMixStatus(`Generated mixes: ${generation.reason || "unknown"}; visible ${generation.existing_visible_count ?? "?"}; cadence ${(generation.settings || {}).update_cadence || "?"}.`);
+      } catch (err) {
+        setGeneratedMixStatus(`Generated mix status failed: ${err.message}`, true);
+      }
+    }
+    async function saveGeneratedMixSettings() {
+      try {
+        await json("/api/v1/mixes/settings", {
+          method: "PUT",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(generatedMixSettingsPayload()),
+        });
+        setGeneratedMixStatus("Generated mix settings saved.");
+        await loadGeneratedMixSettings();
+      } catch (err) {
+        setGeneratedMixStatus(`Save failed: ${err.message}`, true);
+      }
+    }
+    async function forceRegenerateGeneratedMixes() {
+      const button = document.getElementById("regenerateMixesBtn");
+      if (button) button.disabled = true;
+      setGeneratedMixStatus("Regenerating generated mixes...");
+      try {
+        const settings = generatedMixSettingsPayload();
+        const result = await json("/api/v1/mixes/generate", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          timeoutMs: 120000,
+          body: JSON.stringify({
+            count: settings.mix_dashboard_count,
+            tracks_per_mix: settings.mix_tracks_per_mix,
+            force: true,
+            settings,
+          }),
+        });
+        setGeneratedMixStatus(`Regenerated ${result.items?.length || 0} mixes.`);
+        renderGeneratedMixDiagnostics(result.diagnostics);
+        await loadGeneratedMixStatus();
+        if (document.getElementById("dashboard").classList.contains("active")) await loadDashboard();
+      } catch (err) {
+        setGeneratedMixStatus(`Regeneration failed: ${err.message}`, true);
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
     function setInstantMixStatus(message, isError = false) {
       const target = document.getElementById("instantMixStatus");
       if (!target) return;
@@ -9288,13 +10469,8 @@ UI_HTML = r"""
       if (target) target.textContent = `Navidrome likes debug: ${navidromeLikeLastDebug}`;
       console.info("[discocs navidrome likes]", message, detail ?? "");
     }
-    function bootstrapHeartIcon(filled) {
-      const path = filled
-        ? "M8 1.314C12.438-3.248 23.534 4.735 8 15-7.534 4.736 3.562-3.248 8 1.314z"
-        : "m8 2.748-.717-.737C5.6.281 2.514.878 1.4 3.053.918 3.995.78 5.323 1.508 6.692c.681 1.28 1.997 2.67 3.889 4.068.698.516 1.426.999 2.603 1.774 1.177-.775 1.905-1.258 2.603-1.774 1.892-1.398 3.208-2.788 3.889-4.068.728-1.369.59-2.697.108-3.639-1.114-2.175-4.2-2.772-5.883-1.042L8 2.748zM8 15C-7.333 4.868 3.279-3.04 7.824 1.143c.06.055.119.112.176.171a3.12 3.12 0 0 1 .176-.17C12.72-3.042 23.333 4.867 8 15z";
-      return `<svg class="bi ${filled ? "bi-heart-fill" : "bi-heart"}" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="${path}"></path>
-      </svg>`;
+    function bootstrapLikeIcon(filled) {
+      return `<i class="bi bi-hand-thumbs-up${filled ? "-fill" : ""}" aria-hidden="true"></i>`;
     }
     function scheduleNavidromeLikeIdsRefresh() {
       if (navidromeLikeIdsRefreshScheduled) return;
@@ -9304,28 +10480,35 @@ UI_HTML = r"""
         fetchAndApplyNavidromeLikeIds({silent: true});
       }, 0);
     }
-    function navidromeLikeButton(t) {
+    function navidromeLikeButton(t, options = {}) {
       if (!t.navidrome_item_id) return "";
+      const classes = `${options.compact ? "stat-icon-button " : ""}navidrome-like-button`;
       scheduleNavidromeLikeIdsRefresh();
       return `<button
-        class="navidrome-like-button"
+        class="${classes}"
         data-track-id="${t.id}"
         data-navidrome-like="1"
-        onclick="toggleNavidromeLike(${t.id})"
+        onclick="event.preventDefault(); event.stopPropagation(); toggleNavidromeLike(${t.id})"
         title="Like in Navidrome"
         aria-label="Like in Navidrome"
-      >${bootstrapHeartIcon(false)}</button>`;
+      >${bootstrapLikeIcon(false)}</button>`;
     }
     function applyNavidromeLikeIds(data) {
       const likedTrackIds = new Set((data?.track_ids || []).map(Number));
       document.querySelectorAll(".navidrome-like-button").forEach(button => {
+        if (button.dataset.navidromeUnavailable === "1") {
+          button.classList.toggle("like-active", false);
+          button.innerHTML = bootstrapLikeIcon(false);
+          button.disabled = true;
+          return;
+        }
         const trackId = Number(button.dataset.trackId);
         const liked = likedTrackIds.has(trackId);
         button.classList.toggle("like-active", liked);
         const label = liked ? "Liked" : "Like";
         button.title = `${label} in Navidrome`;
         button.setAttribute("aria-label", `${label} in Navidrome`);
-        button.innerHTML = bootstrapHeartIcon(liked);
+        button.innerHTML = bootstrapLikeIcon(liked);
         button.disabled = false;
       });
     }
@@ -9375,13 +10558,29 @@ UI_HTML = r"""
         buttons.forEach(button => button.disabled = false);
       }
     }
+    function toggleCurrentNavidromeLike(event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      const item = currentQueueItem();
+      const trackId = item?.track_id || activeTrackId;
+      if (!trackId) return;
+      toggleNavidromeLike(trackId);
+    }
     document.addEventListener("click", event => {
+      if (!event.target.closest("#trackActionMenu") && !event.target.closest(".track-menu-button")) {
+        closeTrackMenu();
+      }
       const button = event.target.closest(".navidrome-like-button");
       if (!button || !button.dataset.navidromeLike) return;
       if (button.hasAttribute("onclick")) return;
       event.preventDefault();
       event.stopPropagation();
       toggleNavidromeLike(button.dataset.trackId);
+    });
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape") closeTrackMenu();
     });
     function renderRecommendationTrack(t, {seedTrackId = null, rank = null, allowRating = true} = {}) {
       const prefix = rank === null || rank === undefined ? "" : `${rank + 1}. `;
@@ -9418,6 +10617,7 @@ UI_HTML = r"""
             <button onclick="addSeed(${t.id})">Add seed</button>
             <button onclick="addToBlendExtra(${t.id})">Add to blend</button>
             <button onclick="setSeed(${t.id})">Seed</button>
+            ${trackMenuButton(t.id)}
           </div>
         </div>
       </div>`;
@@ -9506,6 +10706,7 @@ UI_HTML = r"""
             ${addSeedButton}
             ${addBlendButton}
             <button onclick="setSeed(${t.id})">Seed</button>
+            ${trackMenuButton(t.id)}
           </div>
         </div>
       </div>`;
@@ -10501,26 +11702,40 @@ UI_HTML = r"""
       document.getElementById("playerError").textContent = "";
       document.getElementById("nowPlaying").textContent = decodeURIComponent(encodedLabel);
       const player = document.getElementById("audioPlayer");
-      player.src = `/tracks/${id}/audio`;
+      player.pause();
+      player.removeAttribute("src");
+      player.load();
+      player.src = `/tracks/${id}/audio?player=${encodeURIComponent(UI_BUILD_ID)}`;
+      applyPlayerVolume();
+      player.load();
       renderPlayerState();
-      if (recordStarted) await recordPlaybackEvent("track_started");
       try {
         await player.play();
+        renderPlaybackButtons();
+        if (recordStarted) recordPlaybackEvent("track_started");
       } catch (err) {
-        document.getElementById("playerError").textContent = "Click play in the audio controls if autoplay is blocked.";
+        document.getElementById("playerError").textContent = await playbackErrorMessage(err);
+        renderPlaybackButtons();
       }
-      await searchTracks({updateUrl: false});
-      if (seedId) await loadSimilar(seedId);
+      refreshPlaybackSurfaces();
     }
     async function refreshSimilarTracks() {
       if (seedId) await loadSimilar(seedId, {updateUrl: true});
     }
     async function playNextSimilarTrack() {
       if (activePlaybackQueue?.items?.length) {
+        if (activeShuffleEnabled() && await playRandomQueueItem()) return;
         await playQueueOffset(1);
         return;
       }
       const index = currentSimilarTracks.findIndex(track => track.id === activeTrackId);
+      if (activeShuffleEnabled()) {
+        const candidates = currentSimilarTracks.filter(track => track.id !== activeTrackId);
+        if (!candidates.length) return;
+        const next = candidates[Math.floor(Math.random() * candidates.length)];
+        await playTrack(next.id, encodedArg(next.label));
+        return;
+      }
       if (index < 0 || index >= currentSimilarTracks.length - 1) return;
       const next = currentSimilarTracks[index + 1];
       await playTrack(next.id, encodedArg(next.label));
@@ -10814,6 +12029,7 @@ UI_HTML = r"""
       await loadNavidromeSettings();
       await loadAudioFeaturesSettings();
       await fetchAndApplyNavidromeLikeIds({silent: true});
+      await loadGeneratedMixSettings();
       await loadInstantMixSettings();
       renderSeedBasket();
       loadExtraBlendIds();
@@ -10838,6 +12054,7 @@ UI_HTML = r"""
         await loadNavidromeSettings();
         await loadAudioFeaturesSettings();
         await fetchAndApplyNavidromeLikeIds({silent: true});
+        await loadGeneratedMixSettings();
         await loadInstantMixSettings();
         loadExtraBlendIds();
         renderLikedExtraSummary();
@@ -10849,6 +12066,7 @@ UI_HTML = r"""
       await loadNavidromeSettings();
       await loadAudioFeaturesSettings();
       await fetchAndApplyNavidromeLikeIds({silent: true});
+      await loadGeneratedMixSettings();
       await loadInstantMixSettings();
       loadExtraBlendIds();
       renderLikedExtraSummary();
@@ -10890,6 +12108,14 @@ UI_HTML = r"""
     });
     document.getElementById("audioPlayer").addEventListener("error", () => {
       document.getElementById("playerError").textContent = "file not mounted";
+      renderPlaybackButtons();
+    });
+    document.getElementById("audioPlayer").addEventListener("play", renderPlaybackButtons);
+    document.getElementById("audioPlayer").addEventListener("pause", renderPlaybackButtons);
+    document.getElementById("audioPlayer").addEventListener("volumechange", renderPlaybackButtons);
+    document.getElementById("audioPlayer").addEventListener("emptied", renderPlaybackButtons);
+    document.getElementById("volumeSlider").addEventListener("input", event => {
+      setPlayerVolume(event.currentTarget.value);
     });
     document.getElementById("audioPlayer").addEventListener("timeupdate", event => {
       const player = event.currentTarget;
@@ -10905,11 +12131,19 @@ UI_HTML = r"""
     document.getElementById("audioPlayer").addEventListener("loadedmetadata", updatePlayerClock);
     document.getElementById("audioPlayer").addEventListener("ended", async event => {
       const player = event.currentTarget;
-      await recordPlaybackEvent("completed", {
+      recordPlaybackEvent("completed", {
         position_seconds: Number.isFinite(player.duration) ? player.duration : player.currentTime,
         duration_seconds: Number.isFinite(player.duration) ? player.duration : null,
         play_fraction: 1,
       });
+      if (activeRepeatOneEnabled()) {
+        player.currentTime = 0;
+        player.play().catch(async err => {
+          document.getElementById("playerError").textContent = await playbackErrorMessage(err);
+          renderPlaybackButtons();
+        });
+        return;
+      }
       await playNextSimilarTrack();
     });
     document.getElementById("playerSeek").addEventListener("input", event => {
@@ -10924,6 +12158,7 @@ UI_HTML = r"""
       document.getElementById("playerSeekWrap").classList.remove("scrubbing");
     });
     loadSettings();
+    loadPlayerState();
     bindSettingsAutosave();
     renderTextSearchRecent();
     refreshWorkerCommand();

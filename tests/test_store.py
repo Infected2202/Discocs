@@ -532,6 +532,31 @@ def test_store_tracks_file_availability_and_delete_missing(tmp_path: Path):
     assert store.get_track(missing_id) is None
 
 
+def test_file_availability_treats_navidrome_tracks_as_available(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=Path("navidrome://song-1"),
+            artist="Artist",
+            title="Remote",
+            album="Album",
+            duration=123.0,
+            file_size=100,
+            mtime=1,
+        )
+    )
+    store.upsert_external_track("navidrome", "song-1", track_id)
+    store.mark_track_missing(track_id)
+
+    checked, missing_count = store.check_file_availability()
+
+    assert checked == 1
+    assert missing_count == 0
+    assert store.get_track(track_id).missing_at is None
+    assert store.count_missing_files() == 0
+
+
 def test_store_missing_tracks_pagination_and_delete_all(tmp_path: Path):
     store = Store(tmp_path / "app.db")
     store.init()
