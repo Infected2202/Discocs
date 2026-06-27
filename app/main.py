@@ -286,6 +286,38 @@ from app.services.dashboard import (  # noqa: E402
     ensure_dashboard_mixes_fast,
 )
 
+from app.api.deps import (  # noqa: E402
+    _bounded_int,
+    _navidrome_client,
+    _optional_bounded_float,
+    api_error,
+    context,
+    generated_mix_settings,
+    instant_mix_request_dict,
+    instant_mix_result_dict,
+    instant_mix_settings,
+    model_to_dict,
+    playback_session_settings,
+    playback_settings_defaults,
+    record_instant_mix_request,
+    request_field_names,
+    text_search_embedder,
+)
+from app.serializers.tracks import (  # noqa: E402
+    audio_bitrate,
+    audio_format,
+    enriched_feature_track_dict,
+    enriched_similar_track_dict,
+    enriched_track_dict,
+    enriched_track_listing_dict,
+    feature_dict,
+    feature_track_dict,
+    first_prediction_dict,
+    navidrome_raw_metadata,
+    prediction_dict,
+    track_card_metadata,
+)
+
 
 
 def should_log_http_request(path: str) -> bool:
@@ -336,232 +368,6 @@ async def log_http_request(request: Request, call_next):
 
 
 
-
-def context() -> tuple[Store, Settings]:
-    settings = Settings.from_env()
-    store = Store(settings.db_path)
-    store.init()
-    return store, settings
-
-
-def instant_mix_settings(settings: Settings) -> dict[str, object]:
-    saved = load_runtime_settings(settings.data_dir).get("instant_mix", {})
-    saved = saved if isinstance(saved, dict) else {}
-    return {
-        "model": str(saved.get("model") or "discogs_multi"),
-        "count": _bounded_int(saved.get("count"), default=50, minimum=1, maximum=500),
-        "min_similarity": _optional_bounded_float(
-            saved.get("min_similarity"),
-            default=None,
-            minimum=0.0,
-            maximum=1.0,
-        ),
-        "max_per_artist": _bounded_int(
-            saved.get("max_per_artist"),
-            default=2,
-            minimum=1,
-            maximum=100,
-        ),
-        "exclude_same_album": bool(saved.get("exclude_same_album", True)),
-        "count_collaboration_artists": bool(saved.get("count_collaboration_artists", True)),
-    }
-
-
-def generated_mix_settings(settings: Settings) -> dict[str, object]:
-    runtime = load_runtime_settings(settings.data_dir)
-    saved = runtime.get("generated_mixes", runtime.get("mixes", {}))
-    saved = saved if isinstance(saved, dict) else {}
-    return {**generated_mix_default_settings(), **saved}
-
-
-def playback_settings_defaults() -> dict[str, object]:
-    settings = {
-        "meaningful_listen_seconds": MEANINGFUL_LISTEN_SECONDS,
-        "meaningful_listen_fraction": MEANINGFUL_LISTEN_FRACTION,
-        "early_skip_seconds": EARLY_SKIP_SECONDS,
-        "early_skip_fraction": EARLY_SKIP_FRACTION,
-        "late_skip_fraction": LATE_SKIP_FRACTION,
-        "completion_fraction": COMPLETION_FRACTION,
-        "progress_event_frequency_seconds": 10,
-        "visible_queue_size": 25,
-    }
-    settings.update(autoplay_default_settings())
-    settings.update(generated_mix_default_settings())
-    return settings
-
-
-def playback_session_settings(request_settings: dict[str, object]) -> dict[str, object]:
-    settings = playback_settings_defaults()
-    settings.update(request_settings)
-    return settings
-
-
-def request_field_names(model: BaseModel) -> set[str]:
-    if hasattr(model, "model_fields_set"):
-        return set(model.model_fields_set)
-    return set(getattr(model, "__fields_set__", set()))
-
-
-def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        number = default
-    return max(minimum, min(maximum, number))
-
-
-def _optional_bounded_float(
-    value: object,
-    *,
-    default: float | None,
-    minimum: float,
-    maximum: float,
-) -> float | None:
-    if value is None:
-        return default
-    if value == "":
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return default
-    return max(minimum, min(maximum, number))
-
-
-def instant_mix_result_dict(
-    store: Store,
-    raw: dict[str, object],
-    ratings: dict[int, int],
-) -> dict[str, object]:
-    track_id = raw.get("track_id")
-    try:
-        parsed_track_id = int(track_id) if track_id is not None else None
-    except (TypeError, ValueError):
-        parsed_track_id = None
-    if parsed_track_id is None:
-        return raw
-    track = store.get_track(parsed_track_id)
-    if track is None:
-        return raw
-    data = enriched_track_dict(store, track)
-    data["item_id"] = raw.get("item_id")
-    data["distance"] = raw.get("distance")
-    data["similarity"] = raw.get("similarity")
-    data["rating"] = ratings.get(parsed_track_id)
-    data["has_embedding"] = True
-    return data
-
-
-def instant_mix_request_dict(
-    request: InstantMixRequest,
-    *,
-    include_results: bool,
-    store: Store | None = None,
-) -> dict[str, object]:
-    data: dict[str, object] = {
-        "id": request.id,
-        "provider": request.provider,
-        "seed_item_id": request.seed_item_id,
-        "seed_track_id": request.seed_track_id,
-        "model": request.model_name,
-        "requested_count": request.requested_count,
-        "effective_count": request.effective_count,
-        "max_per_artist": request.max_per_artist,
-        "exclude_same_album": request.exclude_same_album,
-        "min_similarity": request.min_similarity,
-        "status": request.status,
-        "result_count": request.result_count,
-        "skipped_without_external_id": request.skipped_without_external_id,
-        "duration_ms": request.duration_ms,
-        "error": request.error,
-        "created_at": request.created_at,
-        "params": json.loads(request.params_json or "{}"),
-    }
-    if store is not None and request.seed_track_id is not None:
-        seed_track = store.get_track(request.seed_track_id)
-        if seed_track is not None:
-            data["seed_track"] = enriched_track_dict(store, seed_track)
-    if include_results:
-        results = json.loads(request.results_json or "[]")
-        if store is not None and request.seed_track_id is not None:
-            ratings = store.feedback_for_seed(request.seed_track_id, request.model_name)
-            results = [
-                instant_mix_result_dict(store, result, ratings)
-                if isinstance(result, dict)
-                else result
-                for result in results
-            ]
-        data["results"] = results
-    return data
-
-
-def record_instant_mix_request(
-    store: Store,
-    *,
-    request_id: str,
-    item_id: str,
-    seed_track_id: int | None,
-    model: str,
-    requested_model: str | None,
-    requested_count: int | None,
-    effective_count: int,
-    max_per_artist: int,
-    exclude_same_album: bool,
-    count_collaboration_artists: bool,
-    min_similarity: float | None,
-    status: str,
-    results: list[NavidromeSimilarItem],
-    skipped_without_external_id: int,
-    duration_ms: float | None,
-    requested_max_per_artist: int | None = None,
-    requested_exclude_same_album: bool | None = None,
-    provider: str = "navidrome",
-    error: str | None = None,
-) -> None:
-    params = {
-        "requested_model": requested_model,
-        "effective_model": model,
-        "requested_count": requested_count,
-        "requested_max_per_artist": requested_max_per_artist,
-        "requested_exclude_same_album": requested_exclude_same_album,
-        "effective_count": effective_count,
-        "max_per_artist": max_per_artist,
-        "exclude_same_album": exclude_same_album,
-        "count_collaboration_artists": count_collaboration_artists,
-        "min_similarity": min_similarity,
-    }
-    store.record_instant_mix_request(
-        request_id=request_id,
-        provider=provider,
-        seed_item_id=item_id,
-        seed_track_id=seed_track_id,
-        model_name=model,
-        requested_count=requested_count,
-        effective_count=effective_count,
-        max_per_artist=max_per_artist,
-        exclude_same_album=exclude_same_album,
-        min_similarity=min_similarity,
-        status=status,
-        result_count=len(results),
-        skipped_without_external_id=skipped_without_external_id,
-        duration_ms=duration_ms,
-        error=error,
-        params_json=json.dumps(params, ensure_ascii=True, sort_keys=True),
-        results_json=json.dumps([model_to_dict(item) for item in results], ensure_ascii=True),
-    )
-
-
-def model_to_dict(model: BaseModel) -> dict[str, object]:
-    if hasattr(model, "model_dump"):
-        return model.model_dump()
-    return model.dict()
-
-
-def api_error(status_code: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code,
-        content={"error": {"code": code, "message": message}},
-    )
 
 
 @app.exception_handler(RequestValidationError)
@@ -793,144 +599,6 @@ def analysis_error_count(store: Store) -> int:
             """
         ).fetchone()[0]
 
-
-def prediction_dict(prediction) -> dict[str, object]:
-    return {
-        "label": prediction.label,
-        "score": prediction.score,
-        "rank": prediction.rank,
-    }
-
-
-def feature_dict(feature) -> dict[str, object]:
-    return {
-        "name": feature.name,
-        "value": feature.value,
-        "text_value": feature.text_value,
-        "unit": feature.unit,
-        "confidence": feature.confidence,
-        "extractor": feature.extractor,
-    }
-
-
-def feature_track_dict(item: FeatureTrack) -> dict[str, object]:
-    data = track_dict(item.track)
-    data["features"] = [feature_dict(feature) for feature in item.features]
-    return data
-
-
-def enriched_feature_track_dict(store: Store, item: FeatureTrack) -> dict[str, object]:
-    data = feature_track_dict(item)
-    data.update(track_card_metadata(store, item.track))
-    return data
-
-
-def track_card_metadata(store: Store, track: Track) -> dict[str, object]:
-    features = store.load_features(track.id, AUDIO_FEATURE_EXTRACTOR)
-    feature_by_name = {feature.name: feature for feature in features}
-    navidrome_item_id = store.external_id_for_track("navidrome", track.id)
-    raw = navidrome_raw_metadata(store, track)
-    return {
-        "navidrome_item_id": navidrome_item_id,
-        "card_features": {
-            name: feature_dict(feature)
-            for name, feature in feature_by_name.items()
-            if name in {"bpm", "key", "scale"}
-        },
-        "genre_discogs400": [
-            prediction_dict(prediction)
-            for prediction in store.load_predictions(track.id, "genre_discogs400", limit=3)
-        ],
-        "approachability_3c": first_prediction_dict(
-            store.load_predictions(track.id, "approachability_3c", limit=3),
-            "approachable",
-        ),
-        "engagement_3c": first_prediction_dict(
-            store.load_predictions(track.id, "engagement_3c", limit=3),
-            "engaging",
-        ),
-        "audio_format": audio_format(track, raw),
-        "bitrate": audio_bitrate(track, raw),
-    }
-
-
-def first_prediction_dict(
-    predictions: list[TrackPrediction],
-    preferred_label: str,
-) -> dict[str, object] | None:
-    preferred = preferred_label.strip().lower()
-    for prediction in predictions:
-        if prediction.label.strip().lower() == preferred:
-            return prediction_dict(prediction)
-    return None
-
-
-def navidrome_raw_metadata(store: Store, track: Track) -> dict[str, object]:
-    external_id = store.external_id_for_track("navidrome", track.id)
-    if external_id is None:
-        return {}
-    mapping = store.get_external_track("navidrome", external_id)
-    if mapping is None or not mapping.raw_json:
-        return {}
-    try:
-        parsed = json.loads(mapping.raw_json)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def audio_format(track: Track, raw: dict[str, object]) -> str | None:
-    suffix = raw.get("suffix") or raw.get("format")
-    if suffix:
-        return str(suffix).strip(". ").upper() or None
-    content_type = raw.get("contentType") or raw.get("content_type")
-    if content_type:
-        clean = str(content_type).split("/")[-1].strip()
-        return clean.upper() if clean else None
-    path_suffix = Path(track.path).suffix
-    return path_suffix.strip(".").upper() if path_suffix else None
-
-
-def audio_bitrate(track: Track, raw: dict[str, object]) -> int | None:
-    for key in ("bitRate", "bitrate", "bit_rate"):
-        value = raw.get(key)
-        if value is None:
-            continue
-        try:
-            bitrate = int(float(value))
-        except (TypeError, ValueError):
-            continue
-        if bitrate > 0:
-            return bitrate
-    if track.duration and track.file_size > 0:
-        return max(1, round((track.file_size * 8) / (float(track.duration) * 1000)))
-    return None
-
-
-def enriched_track_dict(store: Store, track: Track) -> dict[str, object]:
-    data = track_dict(track)
-    data.update(track_card_metadata(store, track))
-    return data
-
-
-def enriched_track_listing_dict(store: Store, listing) -> dict[str, object]:
-    data = track_listing_dict(listing)
-    data["navidrome_item_id"] = store.external_id_for_track("navidrome", listing.track.id)
-    return data
-
-
-def enriched_similar_track_dict(store: Store, result) -> dict[str, object]:
-    data = similar_track_dict(result)
-    data.update(track_card_metadata(store, result.track))
-    return data
-
-
-def text_search_embedder(settings: Settings) -> MuqMulanEmbedder:
-    global TEXT_SEARCH_EMBEDDER
-    with TEXT_SEARCH_EMBEDDER_LOCK:
-        if TEXT_SEARCH_EMBEDDER is None:
-            TEXT_SEARCH_EMBEDDER = MuqMulanEmbedder(settings)
-        return TEXT_SEARCH_EMBEDDER
 
 
 def analysis_task_dict(task: AnalysisTask) -> dict[str, object]:
@@ -3062,12 +2730,6 @@ def get_similar_mix_tracks(
         "results": [enriched_similar_track_dict(store, result) for result in results],
     }
 
-
-def _navidrome_client(settings: Settings) -> NavidromeClient:
-    try:
-        return NavidromeClient(settings.navidrome)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/navidrome/starred")
