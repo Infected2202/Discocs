@@ -4,7 +4,7 @@ import logging
 import json
 import sqlite3
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Lock
 from uuid import uuid4
@@ -5925,4 +5925,4 @@ def similar_track_dict(result: SimilarTrack) -> dict[str, object]:
     data["distance"] = result.distance
     data["similarity"] = result.similarity
     data["rating"] = result.rating
-    return data
+ 
