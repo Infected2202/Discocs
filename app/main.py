@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import socket
 import sqlite3
-from threading import Event, Lock, Thread
+from threading import Thread
 import time
 from time import perf_counter
 from datetime import UTC, datetime, timedelta
@@ -104,41 +104,44 @@ analysis_logger = get_analysis_logger()
 navidrome_logger = logging.getLogger("discocs.navidrome")
 navidrome_plugin_logger = get_navidrome_plugin_logger()
 app = FastAPI(title="discocs", version="0.1.0")
-MAINTENANCE_STOP = Event()
-JOBS_LOCK = Lock()
-JOBS: dict[str, "JobStatus"] = {}
-DEFERRED_JOBS_LOCK = Lock()
-DEFERRED_JOB_ORDER: list[str] = []
-DEFERRED_JOB_STARTERS: dict[str, Callable[[], None]] = {}
-ANALYZE_EXECUTORS_LOCK = Lock()
-ANALYZE_EXECUTORS: set[ProcessPoolExecutor] = set()
-SHUTDOWN_REQUESTED = False
-MAX_MIX_SEEDS = 50
-MAX_ANALYZE_WORKERS = max(1, os.cpu_count() or 1)
-DEFAULT_ANALYZE_WORKERS = min(4, MAX_ANALYZE_WORKERS)
-MAX_ANALYZE_TF_THREADS = MAX_ANALYZE_WORKERS
-DEFAULT_ANALYZE_TF_THREADS = min(4, MAX_ANALYZE_TF_THREADS)
-MAX_AUDIO_FEATURE_WORKERS = max(32, MAX_ANALYZE_WORKERS)
-DEFAULT_AUDIO_FEATURE_WORKERS = min(8, MAX_AUDIO_FEATURE_WORKERS)
-COVER_TIMEOUT_SECONDS = 5
-WORKER_HEARTBEAT_WRITE_INTERVAL_SECONDS = 60
-WORKER_CONNECTED_TTL_SECONDS = WORKER_HEARTBEAT_WRITE_INTERVAL_SECONDS * 3
-COVER_CACHE_TTL_SECONDS = 3600
-COVER_ERROR_CACHE_TTL_SECONDS = 300
-COVER_CACHE_MAX_ITEMS = 512
-COVER_CACHE_LOCK = Lock()
-COVER_CACHE: dict[tuple[str, int], tuple[float, bytes, str]] = {}
-COVER_ERROR_CACHE: dict[tuple[str, int], tuple[float, str]] = {}
-STATS_CACHE_TTL_SECONDS = 10
-STATS_CACHE_LOCK = Lock()
-STATS_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
-AUTO_INDEX_LOCK = Lock()
-AUTO_INDEX_ANALYSIS_JOBS: set[str] = set()
-ACTIVE_JOB_STATUSES = {"queued", "running"}
-TEXT_SEARCH_EMBEDDER_LOCK = Lock()
-TEXT_SEARCH_EMBEDDER: MuqMulanEmbedder | None = None
-MIX_GENERATION_LOCK = Lock()
-UI_BUILD_ID = "mix-cover-mosaic-20260624-2215"
+
+from app.state import (  # noqa: E402  (import after app init to avoid circular issues)
+    ACTIVE_JOB_STATUSES,
+    ANALYZE_EXECUTORS,
+    ANALYZE_EXECUTORS_LOCK,
+    AUTO_INDEX_ANALYSIS_JOBS,
+    AUTO_INDEX_LOCK,
+    COVER_CACHE,
+    COVER_CACHE_LOCK,
+    COVER_CACHE_MAX_ITEMS,
+    COVER_CACHE_TTL_SECONDS,
+    COVER_ERROR_CACHE,
+    COVER_ERROR_CACHE_TTL_SECONDS,
+    COVER_TIMEOUT_SECONDS,
+    DEFAULT_ANALYZE_TF_THREADS,
+    DEFAULT_ANALYZE_WORKERS,
+    DEFAULT_AUDIO_FEATURE_WORKERS,
+    DEFERRED_JOB_ORDER,
+    DEFERRED_JOB_STARTERS,
+    DEFERRED_JOBS_LOCK,
+    JOBS,
+    JOBS_LOCK,
+    MAINTENANCE_STOP,
+    MAX_ANALYZE_TF_THREADS,
+    MAX_ANALYZE_WORKERS,
+    MAX_AUDIO_FEATURE_WORKERS,
+    MAX_MIX_SEEDS,
+    MIX_GENERATION_LOCK,
+    SHUTDOWN_REQUESTED,
+    STATS_CACHE,
+    STATS_CACHE_LOCK,
+    STATS_CACHE_TTL_SECONDS,
+    TEXT_SEARCH_EMBEDDER,
+    TEXT_SEARCH_EMBEDDER_LOCK,
+    UI_BUILD_ID,
+    WORKER_CONNECTED_TTL_SECONDS,
+    WORKER_HEARTBEAT_WRITE_INTERVAL_SECONDS,
+)
 
 
 class ApiErrorDetail(BaseModel):
