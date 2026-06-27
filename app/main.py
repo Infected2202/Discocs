@@ -68,7 +68,7 @@ from app.navidrome_starred import (
 )
 from app.navidrome_sync import sync_navidrome_catalog
 from app.recommender import Recommender, build_index, index_metadata_path
-from app.store import (
+from app.models import (
     AnalysisTask,
     Artist,
     ArtistSummaryRow,
@@ -83,16 +83,18 @@ from app.store import (
     MEANINGFUL_LISTEN_SECONDS,
     ReleaseSummaryRow,
     ReleaseTrackRow,
-    Store,
     Track,
     TrackFeature,
     TrackPrediction,
+    utc_now,
+)
+from app.store import (
+    Store,
     row_to_track,
     playback_event_is_completion,
     similar_track_dict,
     track_dict,
     track_listing_dict,
-    utc_now,
 )
 
 
@@ -1868,6 +1870,64 @@ def _dashboard_long_time_no_listen(store: Store, limit: int, offset: int, includ
     return items, int(total_row["total"] if total_row else 0)
 
 
+def _discover_track_shelf_item(store: Store, track: Track, artists: list[Artist], reason: str | None = None) -> dict[str, object]:
+    summary = track_summary_dict(store, track, artists)
+    release = summary.get("release") if isinstance(summary.get("release"), dict) else None
+    target = f"/releases/{release['id']}" if release and release.get("id") else f"?view=recommendations&seed={track.id}"
+    item = dashboard_shelf_item(
+        "track",
+        track.id,
+        str(summary["title"]),
+        _compact_artist_names(list(summary.get("artists") or [])),
+        target,
+        artwork_url=f"/tracks/{track.id}/cover?size=512",
+        play_source_type="track",
+        play_source_id=track.id,
+        reason=reason,
+        badges=[str(release["title"])] if release and release.get("title") else [],
+    )
+    # Automatically trigger instant-mix for discover-random tracks on play click
+    item["play_action"] = {
+        "type": "post",
+        "endpoint": f"/tracks/{track.id}/instant-mix"
+    }
+    return item
+
+
+def _dashboard_discover_random(store: Store, limit: int, offset: int, include_debug: bool = False) -> tuple[list[dict[str, object]], int]:
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT t.*
+            FROM tracks t
+            LEFT JOIN user_track_preferences p ON p.track_id = t.id
+            WHERE t.missing_at IS NULL
+              AND (p.track_id IS NULL OR (p.disliked = 0 AND p.play_count = 0 AND p.last_played_at IS NULL))
+            ORDER BY RANDOM()
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+        total_row = conn.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM tracks t
+            LEFT JOIN user_track_preferences p ON p.track_id = t.id
+            WHERE t.missing_at IS NULL
+              AND (p.track_id IS NULL OR (p.disliked = 0 AND p.play_count = 0 AND p.last_played_at IS NULL))
+            """
+        ).fetchone()
+    tracks = [row_to_track(row) for row in rows]
+    artists_by_track = store.artists_for_tracks([track.id for track in tracks])
+    items: list[dict[str, object]] = []
+    for track in tracks:
+        item = _discover_track_shelf_item(store, track, artists_by_track.get(track.id, []), "Never played before")
+        if include_debug:
+            item["debug"] = {"random": True}
+        items.append(item)
+    return items, int(total_row["total"] if total_row else 0)
+
+
 def dashboard_shelf_response(
     store: Store,
     key: str,
@@ -1881,6 +1941,7 @@ def dashboard_shelf_response(
         "listen_again": ("Listen Again", "Tracks with positive listening history"),
         "long_time_no_listen": ("Long Time No Listen", "Good tracks that fell out of rotation"),
         "mixes_for_you": ("Mixes For You", "Generated finite mixes from taste regions"),
+        "discover_random": ("Discover Random", "Tracks you haven't played yet"),
     }
     if key not in titles:
         return None
@@ -1890,6 +1951,8 @@ def dashboard_shelf_response(
         items, total = _dashboard_listen_again(store, limit, offset, include_debug)
     elif key == "long_time_no_listen":
         items, total = _dashboard_long_time_no_listen(store, limit, offset, include_debug)
+    elif key == "discover_random":
+        items, total = _dashboard_discover_random(store, limit, offset, include_debug)
     else:
         items, total = _dashboard_generated_mixes(store, limit, offset, include_debug)
     title, subtitle = titles[key]
@@ -3052,7 +3115,7 @@ def api_v1_dashboard(
 ) -> dict[str, object]:
     store, settings = context()
     ensure_diagnostics = ensure_dashboard_mixes_fast(store, settings)
-    shelf_keys = ["mixes_for_you", "recently_added", "listen_again", "long_time_no_listen"]
+    shelf_keys = ["mixes_for_you", "recently_added", "discover_random", "listen_again", "long_time_no_listen"]
     shelves = [
         shelf
         for key in shelf_keys
