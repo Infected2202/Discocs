@@ -259,6 +259,33 @@ from app.serializers.search import (  # noqa: E402
     search_top_result,
 )
 
+from app.services.jobs import (  # noqa: E402
+    JobStatus,
+    create_job,
+    create_deferred_job_if_busy,
+    finish_job,
+    has_active_job,
+    maybe_start_next_deferred_job,
+    sync_memory_jobs_from_durable_jobs,
+    update_job,
+)
+from app.services.cover import (  # noqa: E402
+    cached_cover_error,
+    cached_cover_response,
+    cover_response,
+    remember_cover,
+    remember_cover_error,
+)
+from app.services.dashboard import (  # noqa: E402
+    _dashboard_discover_random,
+    _dashboard_generated_mixes,
+    _dashboard_listen_again,
+    _dashboard_long_time_no_listen,
+    _dashboard_recently_added,
+    dashboard_shelf_response,
+    ensure_dashboard_mixes_fast,
+)
+
 
 
 def should_log_http_request(path: str) -> bool:
@@ -308,25 +335,6 @@ async def log_http_request(request: Request, call_next):
     return response
 
 
-@dataclass
-class JobStatus:
-    id: str
-    kind: str
-    status: str
-    message: str
-    total: int | None = None
-    done: int = 0
-    failed: int = 0
-    current: str | None = None
-    elapsed_seconds: float = 0.0
-    tracks_per_min: float | None = None
-    eta_seconds: float | None = None
-    error_detail: str | None = None
-    started_at: float = 0.0
-    created_at_epoch: float = 0.0
-    finished_at: float | None = None
-
-
 
 
 def context() -> tuple[Store, Settings]:
@@ -364,52 +372,6 @@ def generated_mix_settings(settings: Settings) -> dict[str, object]:
     saved = runtime.get("generated_mixes", runtime.get("mixes", {}))
     saved = saved if isinstance(saved, dict) else {}
     return {**generated_mix_default_settings(), **saved}
-
-
-def ensure_dashboard_mixes_fast(store: Store, settings: Settings) -> dict[str, object]:
-    mix_settings = generated_mix_settings(settings)
-    model = str(mix_settings.get("mix_model") or "discogs_multi")
-    embedding_count = store.count_embeddings(model)
-    plan = dashboard_mix_generation_plan(store, mix_settings)
-    if not plan.should_generate:
-        diagnostics = dict(plan.diagnostics)
-        diagnostics.update({"background": False, "embedding_count": embedding_count})
-        return diagnostics
-    if embedding_count <= 5000:
-        return ensure_dashboard_mixes(store, settings, mix_settings).diagnostics
-    started = _start_dashboard_mix_generation(settings.db_path, settings)
-    diagnostics = dict(plan.diagnostics)
-    diagnostics.update({
-        "reason": "scheduled" if started else "already_running",
-        "generated_count": 0,
-        "background": True,
-        "embedding_count": embedding_count,
-    })
-    return diagnostics
-
-
-def _start_dashboard_mix_generation(db_path: Path, settings: Settings) -> bool:
-    if not MIX_GENERATION_LOCK.acquire(blocking=False):
-        return False
-
-    def run() -> None:
-        try:
-            logger.info("Background generated mix refresh started db_path=%s", db_path)
-            background_store = Store(db_path)
-            background_store.init()
-            result = ensure_dashboard_mixes(background_store, settings, generated_mix_settings(settings))
-            logger.info(
-                "Background generated mix refresh finished generated=%s reason=%s",
-                result.diagnostics.get("generated_count"),
-                result.diagnostics.get("reason"),
-            )
-        except Exception:
-            logger.exception("Background generated mix refresh failed")
-        finally:
-            MIX_GENERATION_LOCK.release()
-
-    Thread(target=run, name="generated-mix-refresh", daemon=True).start()
-    return True
 
 
 def playback_settings_defaults() -> dict[str, object]:
@@ -617,223 +579,6 @@ async def api_v1_validation_exception_handler(
         detail = str(first.get("msg") or message)
         message = f"{location}: {detail}" if location else detail
     return api_error(422, "invalid_request", message)
-
-
-def _dashboard_discover_random(store: Store, limit: int, offset: int, include_debug: bool = False) -> tuple[list[dict[str, object]], int]:
-    with store.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT t.*
-            FROM tracks t
-            LEFT JOIN user_track_preferences p ON p.track_id = t.id
-            WHERE t.missing_at IS NULL
-              AND (p.track_id IS NULL OR (p.disliked = 0 AND p.play_count = 0 AND p.last_played_at IS NULL))
-            ORDER BY RANDOM()
-            LIMIT ? OFFSET ?
-            """,
-            (limit, offset),
-        ).fetchall()
-        total_row = conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM tracks t
-            LEFT JOIN user_track_preferences p ON p.track_id = t.id
-            WHERE t.missing_at IS NULL
-              AND (p.track_id IS NULL OR (p.disliked = 0 AND p.play_count = 0 AND p.last_played_at IS NULL))
-            """
-        ).fetchone()
-    tracks = [row_to_track(row) for row in rows]
-    artists_by_track = store.artists_for_tracks([track.id for track in tracks])
-    items: list[dict[str, object]] = []
-    for track in tracks:
-        item = _discover_track_shelf_item(store, track, artists_by_track.get(track.id, []), "Never played before")
-        if include_debug:
-            item["debug"] = {"random": True}
-        items.append(item)
-    return items, int(total_row["total"] if total_row else 0)
-
-
-def dashboard_shelf_response(
-    store: Store,
-    key: str,
-    *,
-    limit: int,
-    offset: int,
-    include_debug: bool = False,
-) -> dict[str, object] | None:
-    titles = {
-        "recently_added": ("Recently Added", "New in your collection"),
-        "listen_again": ("Listen Again", "Tracks with positive listening history"),
-        "long_time_no_listen": ("Long Time No Listen", "Good tracks that fell out of rotation"),
-        "mixes_for_you": ("Mixes For You", "Generated finite mixes from taste regions"),
-        "discover_random": ("Discover Random", "Tracks you haven't played yet"),
-    }
-    if key not in titles:
-        return None
-    if key == "recently_added":
-        items, total = _dashboard_recently_added(store, limit, offset, include_debug)
-    elif key == "listen_again":
-        items, total = _dashboard_listen_again(store, limit, offset, include_debug)
-    elif key == "long_time_no_listen":
-        items, total = _dashboard_long_time_no_listen(store, limit, offset, include_debug)
-    elif key == "discover_random":
-        items, total = _dashboard_discover_random(store, limit, offset, include_debug)
-    else:
-        items, total = _dashboard_generated_mixes(store, limit, offset, include_debug)
-    title, subtitle = titles[key]
-    next_offset = offset + limit if offset + limit < total else None
-    return {
-        "key": key,
-        "title": title,
-        "subtitle": subtitle,
-        "items": items,
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-        "next_offset": next_offset,
-        "available": True,
-    }
-
-
-def create_job(kind: str, message: str) -> str:
-    job_id = str(uuid4())
-    now_epoch = time.time()
-    with JOBS_LOCK:
-        JOBS[job_id] = JobStatus(
-            id=job_id,
-            kind=kind,
-            status="queued",
-            message=message,
-            started_at=perf_counter(),
-            created_at_epoch=now_epoch,
-        )
-    logger.info("Created job job_id=%s kind=%s message=%s", job_id, kind, message)
-    return job_id
-
-
-def update_job(job_id: str, **changes: object) -> None:
-    with JOBS_LOCK:
-        job = JOBS[job_id]
-        for key, value in changes.items():
-            setattr(job, key, value)
-
-
-def finish_job(job_id: str, status: str, message: str, error_detail: str | None = None) -> None:
-    finished_at = perf_counter()
-    with JOBS_LOCK:
-        job = JOBS.get(job_id)
-        elapsed_seconds = max(0.0, finished_at - job.started_at) if job else 0.0
-    update_job(
-        job_id,
-        status=status,
-        message=message,
-        current=None,
-        elapsed_seconds=elapsed_seconds,
-        eta_seconds=None,
-        error_detail=error_detail,
-        finished_at=finished_at,
-    )
-    log = logger.error if status == "failed" else logger.info
-    log("Finished job job_id=%s status=%s message=%s", job_id, status, message)
-    maybe_start_next_deferred_job()
-
-
-def has_active_job(store: Store | None = None) -> bool:
-    with JOBS_LOCK:
-        if any(job.status in {"queued", "running"} for job in JOBS.values()):
-            return True
-    if store is None:
-        try:
-            store, _settings = context()
-        except Exception:
-            logger.exception("Failed to inspect durable jobs while checking active queue state")
-            return True
-    return store.has_active_analysis_job()
-
-
-def create_deferred_job_if_busy(
-    kind: str,
-    message: str,
-    starter_factory: Callable[[str], Callable[[], None]],
-    *,
-    store: Store | None = None,
-) -> tuple[str | None, bool]:
-    with DEFERRED_JOBS_LOCK:
-        if not has_active_job(store):
-            return None, False
-        job_id = create_job(kind, message)
-        DEFERRED_JOB_STARTERS[job_id] = starter_factory(job_id)
-        DEFERRED_JOB_ORDER.append(job_id)
-    update_job(
-        job_id,
-        status="deferred",
-        message=f"Waiting for previous job: {message}",
-        current=None,
-    )
-    logger.info("Deferred job job_id=%s kind=%s message=%s", job_id, kind, message)
-    return job_id, True
-
-
-def _run_deferred_job(job_id: str) -> None:
-    with DEFERRED_JOBS_LOCK:
-        starter = DEFERRED_JOB_STARTERS.get(job_id)
-    if starter is None:
-        return
-    try:
-        starter()
-    finally:
-        with DEFERRED_JOBS_LOCK:
-            DEFERRED_JOB_STARTERS.pop(job_id, None)
-            if job_id in DEFERRED_JOB_ORDER:
-                DEFERRED_JOB_ORDER.remove(job_id)
-        maybe_start_next_deferred_job()
-
-
-def maybe_start_next_deferred_job() -> str | None:
-    with DEFERRED_JOBS_LOCK:
-        if has_active_job():
-            return None
-        next_job_id = None
-        for candidate in list(DEFERRED_JOB_ORDER):
-            with JOBS_LOCK:
-                job = JOBS.get(candidate)
-                is_waiting = job is not None and job.status == "deferred"
-            if candidate in DEFERRED_JOB_STARTERS and is_waiting:
-                next_job_id = candidate
-                DEFERRED_JOB_ORDER.remove(candidate)
-                break
-            DEFERRED_JOB_STARTERS.pop(candidate, None)
-            DEFERRED_JOB_ORDER.remove(candidate)
-    if next_job_id is None:
-        return None
-    update_job(
-        next_job_id,
-        status="queued",
-        message="Starting deferred job",
-        current=None,
-        started_at=perf_counter(),
-    )
-    Thread(target=_run_deferred_job, args=(next_job_id,), daemon=True).start()
-    logger.info("Started deferred job job_id=%s", next_job_id)
-    return next_job_id
-
-
-def sync_memory_jobs_from_durable_jobs(jobs: list[object]) -> None:
-    with JOBS_LOCK:
-        for durable_job in jobs:
-            memory_job = JOBS.get(durable_job.id)
-            if memory_job is None:
-                continue
-            memory_job.status = durable_job.status
-            memory_job.message = durable_job.message
-            memory_job.total = durable_job.total
-            memory_job.done = durable_job.done
-            memory_job.failed = durable_job.failed
-            if durable_job.status not in {"queued", "running"}:
-                memory_job.current = None
-                memory_job.eta_seconds = None
-                if memory_job.finished_at is None:
-                    memory_job.finished_at = perf_counter()
 
 
 def schedule_auto_index_for_analysis(
@@ -3077,57 +2822,6 @@ def normalize_audio_media_type(content_type: str) -> str:
     if media_type == "audio/x-flac":
         return "audio/flac"
     return media_type or "application/octet-stream"
-
-
-def cached_cover_response(cache_key: tuple[str, int]) -> tuple[bytes, str] | None:
-    now = time.time()
-    with COVER_CACHE_LOCK:
-        cached = COVER_CACHE.get(cache_key)
-        if cached is None:
-            return None
-        cached_at, payload, content_type = cached
-        if now - cached_at > COVER_CACHE_TTL_SECONDS:
-            COVER_CACHE.pop(cache_key, None)
-            return None
-        return payload, content_type
-
-
-def cached_cover_error(cache_key: tuple[str, int]) -> str | None:
-    now = time.time()
-    with COVER_CACHE_LOCK:
-        cached = COVER_ERROR_CACHE.get(cache_key)
-        if cached is None:
-            return None
-        cached_at, message = cached
-        if now - cached_at > COVER_ERROR_CACHE_TTL_SECONDS:
-            COVER_ERROR_CACHE.pop(cache_key, None)
-            return None
-        return message
-
-
-def remember_cover(cache_key: tuple[str, int], payload: bytes, content_type: str) -> None:
-    with COVER_CACHE_LOCK:
-        COVER_CACHE[cache_key] = (time.time(), payload, content_type)
-        COVER_ERROR_CACHE.pop(cache_key, None)
-        while len(COVER_CACHE) > COVER_CACHE_MAX_ITEMS:
-            oldest_key = next(iter(COVER_CACHE))
-            COVER_CACHE.pop(oldest_key, None)
-
-
-def remember_cover_error(cache_key: tuple[str, int], message: str) -> None:
-    with COVER_CACHE_LOCK:
-        COVER_ERROR_CACHE[cache_key] = (time.time(), message)
-        while len(COVER_ERROR_CACHE) > COVER_CACHE_MAX_ITEMS:
-            oldest_key = next(iter(COVER_ERROR_CACHE))
-            COVER_ERROR_CACHE.pop(oldest_key, None)
-
-
-def cover_response(payload: bytes, content_type: str) -> Response:
-    return Response(
-        content=payload,
-        media_type=content_type,
-        headers={"Cache-Control": "private, max-age=86400"},
-    )
 
 
 @app.get("/tracks/{track_id}/cover")
