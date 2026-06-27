@@ -268,7 +268,7 @@ from app.analysis_helpers import (  # noqa: E402
     head_pack_status,
     recommender_index_status,
 )
-from app.analysis_jobs import terminate_process_pool  # noqa: E402
+from app.services.analysis import terminate_process_pool  # noqa: E402
 
 from app.services.jobs import (  # noqa: E402
     JobStatus,
@@ -432,4 +432,4 @@ def debug_ui() -> dict[str, object]:
     }
 
 
-UI_HTML = (Path(__file__).parent / "ui.html").read_text()
+UI_HTML = (Path(__file__).parent / "ui.html").read_tex
