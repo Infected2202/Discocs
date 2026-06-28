@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react"
 import { Link } from "react-router"
 import {
   Play, Pause, SkipBack, SkipForward,
@@ -31,6 +32,8 @@ function hiresUrl(url: string | null | undefined): string | undefined {
 }
 
 export default function ExpandedPlayer() {
+  const [mobileTab, setMobileTab] = useState<"player" | "queue">("player")
+
   const expanded           = usePlayerStore((s) => s.expanded)
   const currentTrack       = usePlayerStore((s) => s.currentTrack)
   const currentTrackId     = usePlayerStore((s) => s.currentTrackId)
@@ -56,6 +59,10 @@ export default function ExpandedPlayer() {
   const jumpToAutoplayItem   = usePlayerStore((s) => s.jumpToAutoplayItem)
   const playFromEnvelope     = usePlayerStore((s) => s.playFromEnvelope)
   const recordEvent        = usePlayerStore((s) => s.recordEvent)
+
+  useEffect(() => {
+    if (!expanded) setMobileTab("player")
+  }, [expanded])
 
   const isLiked    = useNavidromeStore((s) => s.isLiked)
   const toggleLike = useNavidromeStore((s) => s.toggleLike)
@@ -104,7 +111,19 @@ export default function ExpandedPlayer() {
         <button onClick={toggleExpanded} className={iconBtn}>
           <ChevronDown size={20} />
         </button>
-        <p className="text-sm font-medium text-muted-foreground truncate px-4 max-w-xs">
+        {/* Mobile: tab switcher */}
+        <div className="flex md:hidden gap-1 bg-muted rounded-lg p-0.5">
+          <button
+            onClick={() => setMobileTab("player")}
+            className={cn("px-3 py-1 text-sm rounded-md transition-colors", mobileTab === "player" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
+          >Now Playing</button>
+          <button
+            onClick={() => setMobileTab("queue")}
+            className={cn("px-3 py-1 text-sm rounded-md transition-colors", mobileTab === "queue" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
+          >Queue</button>
+        </div>
+        {/* Desktop: source label */}
+        <p className="hidden md:block text-sm font-medium text-muted-foreground truncate px-4 max-w-xs">
           {session?.source_label ?? "Now Playing"}
         </p>
         <DropdownMenu>
@@ -119,15 +138,18 @@ export default function ExpandedPlayer() {
         </DropdownMenu>
       </div>
 
-      {/* Body — flex row */}
+      {/* Body — flex row on desktop, single column on mobile */}
       <div className="flex flex-1 min-h-0 gap-0">
 
         {/* ── LEFT: artwork + controls ── */}
-        <div className="flex flex-col items-center flex-1 min-w-0 min-h-0 gap-4 px-8 py-6">
+        <div className={cn(
+          "flex flex-col items-center flex-1 min-w-0 min-h-0 px-8 py-6",
+          mobileTab === "queue" ? "hidden md:flex" : "flex",
+        )}>
 
-          {/* Artwork — h-full forces square bounded by panel height */}
-          <div className="flex-1 min-h-0 w-full max-h-[65%]">
-            <div className="h-full aspect-square mx-auto rounded-xl overflow-hidden shadow-2xl">
+          {/* Artwork — on mobile natural square, on desktop fills remaining height */}
+          <div className="w-full md:flex-1 md:min-h-0 flex items-center justify-center mb-4">
+            <div className="w-full md:w-auto md:h-full aspect-square max-w-full md:max-h-full rounded-xl overflow-hidden shadow-2xl">
               <ArtworkImage
                 src={hiresUrl(currentTrack?.artwork?.url)}
                 alt={currentTrack?.title ?? ""}
@@ -137,98 +159,107 @@ export default function ExpandedPlayer() {
             </div>
           </div>
 
-          {/* Track info + like */}
-          <div className="w-full max-w-sm">
-            <div className="flex items-start gap-3">
-              <div className="flex-1 min-w-0">
-                <h2 className="text-xl font-bold truncate leading-tight">
-                  {currentTrack?.title ?? "—"}
-                </h2>
-                <div className="flex flex-wrap items-center gap-x-1 text-sm text-muted-foreground mt-0.5">
-                  {currentTrack?.artists?.map((a, i) => (
-                    <span key={a.id}>
-                      {i > 0 && <span className="mr-0.5">,</span>}
-                      <Link to={`/artists/${a.id}`} onClick={toggleExpanded}
-                        className="hover:text-foreground hover:underline">{a.name}</Link>
-                    </span>
-                  ))}
-                  {currentTrack?.release && (
-                    <>
-                      <span className="text-muted-foreground/50">·</span>
-                      <Link to={`/releases/${currentTrack.release.id}`} onClick={toggleExpanded}
-                        className="hover:text-foreground hover:underline">{currentTrack.release.title}</Link>
-                    </>
-                  )}
+          {/* Bottom group: info + seekbar + controls + volume */}
+          <div className="w-full flex flex-col gap-4 shrink-0">
+
+            {/* Track info + like */}
+            <div className="w-full max-w-sm mx-auto">
+              <div className="flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-xl font-bold truncate leading-tight">
+                    {currentTrack?.title ?? "—"}
+                  </h2>
+                  <div className="flex flex-wrap items-center gap-x-1 text-sm text-muted-foreground mt-0.5">
+                    {currentTrack?.artists?.map((a, i) => (
+                      <span key={a.id}>
+                        {i > 0 && <span className="mr-0.5">,</span>}
+                        <Link to={`/artists/${a.id}`} onClick={toggleExpanded}
+                          className="hover:text-foreground hover:underline">{a.name}</Link>
+                      </span>
+                    ))}
+                    {currentTrack?.release && (
+                      <>
+                        <span className="text-muted-foreground/50">·</span>
+                        <Link to={`/releases/${currentTrack.release.id}`} onClick={toggleExpanded}
+                          className="hover:text-foreground hover:underline">{currentTrack.release.title}</Link>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {currentTrackId && (
+                  <button
+                    onClick={() => toggleLike(currentTrackId)}
+                    className={cn("p-1.5 rounded transition-colors shrink-0 mt-0.5",
+                      liked ? "text-primary" : "text-muted-foreground hover:text-foreground")}
+                  >
+                    <ThumbsUp size={18} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Seek bar */}
+            <div className="w-full max-w-sm mx-auto space-y-1">
+              <div className="h-1 w-full bg-muted rounded cursor-pointer group/seek relative"
+                onClick={handleSeekClick}>
+                <div className="h-full bg-primary rounded transition-[width] duration-100"
+                  style={{ width: `${progress * 100}%` }} />
+                <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary opacity-0 group-hover/seek:opacity-100 transition-opacity shadow"
+                  style={{ left: `calc(${progress * 100}% - 6px)` }} />
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
+                <span>{formatTime(currentTime)}</span>
+                <span>{formatTime(duration)}</span>
+              </div>
+            </div>
+
+            {/* Controls */}
+            <div className="flex items-center gap-2 justify-center">
+              <button onClick={() => toggleShuffle()} className={cn(iconBtn, shuffle && activeBtn)}><Shuffle size={18} /></button>
+              <button onClick={() => skipPrevious()} disabled={!currentTrack} className={iconBtn}><SkipBack size={22} /></button>
+              <button
+                onClick={togglePlay}
+                disabled={!currentTrack}
+                className="w-14 h-14 rounded-full bg-foreground text-background flex items-center justify-center hover:scale-105 transition-transform disabled:opacity-30 shadow-lg mx-1"
+              >
+                {isLoading
+                  ? <span className="w-5 h-5 border-2 border-background border-t-transparent rounded-full animate-spin" />
+                  : isPlaying
+                    ? <Pause size={22} fill="currentColor" strokeWidth={0} />
+                    : <Play size={22} fill="currentColor" strokeWidth={0} className="translate-x-0.5" />
+                }
+              </button>
+              <button onClick={() => skipNext()} disabled={!currentTrack} className={iconBtn}><SkipForward size={22} /></button>
+              <button onClick={() => toggleRepeatOne()} className={cn(iconBtn, repeatOne && activeBtn)}><Repeat1 size={18} /></button>
+            </div>
+
+            {/* Volume + autoplay */}
+            <div className="flex items-center gap-2 w-full max-w-xs mx-auto">
+              <button onClick={() => toggleAutoplay()} className={cn("p-1 rounded transition-colors shrink-0",
+                autoplay ? "text-primary" : "text-muted-foreground hover:text-foreground")}>
+                <Infinity size={15} />
+              </button>
+              <div className="flex-1 flex items-center gap-2">
+                <button onClick={toggleMute} className="text-muted-foreground hover:text-foreground shrink-0">
+                  {effective === 0 ? <VolumeX size={16} /> : effective < 0.5 ? <Volume1 size={16} /> : <Volume2 size={16} />}
+                </button>
+                <div className="flex-1 h-1.5 bg-muted rounded cursor-pointer relative group/vol" onClick={handleVolumeClick}>
+                  <div className="h-full bg-foreground/80 rounded" style={{ width: `${effective * 100}%` }} />
+                  <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-foreground opacity-0 group-hover/vol:opacity-100 transition-opacity"
+                    style={{ left: `calc(${effective * 100}% - 6px)` }} />
                 </div>
               </div>
-              {currentTrackId && (
-                <button
-                  onClick={() => toggleLike(currentTrackId)}
-                  className={cn("p-1.5 rounded transition-colors shrink-0 mt-0.5",
-                    liked ? "text-primary" : "text-muted-foreground hover:text-foreground")}
-                >
-                  <ThumbsUp size={18} />
-                </button>
-              )}
             </div>
-          </div>
 
-          {/* Seek bar */}
-          <div className="w-full max-w-sm space-y-1">
-            <div className="h-1 w-full bg-muted rounded cursor-pointer group/seek relative"
-              onClick={handleSeekClick}>
-              <div className="h-full bg-primary rounded transition-[width] duration-100"
-                style={{ width: `${progress * 100}%` }} />
-              <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary opacity-0 group-hover/seek:opacity-100 transition-opacity shadow"
-                style={{ left: `calc(${progress * 100}% - 6px)` }} />
-            </div>
-            <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
-              <span>{formatTime(currentTime)}</span>
-              <span>{formatTime(duration)}</span>
-            </div>
-          </div>
-
-          {/* Controls */}
-          <div className="flex items-center gap-2">
-            <button onClick={() => toggleShuffle()} className={cn(iconBtn, shuffle && activeBtn)}><Shuffle size={18} /></button>
-            <button onClick={() => skipPrevious()} disabled={!currentTrack} className={iconBtn}><SkipBack size={22} /></button>
-            <button
-              onClick={togglePlay}
-              disabled={!currentTrack}
-              className="w-14 h-14 rounded-full bg-foreground text-background flex items-center justify-center hover:scale-105 transition-transform disabled:opacity-30 shadow-lg mx-1"
-            >
-              {isLoading
-                ? <span className="w-5 h-5 border-2 border-background border-t-transparent rounded-full animate-spin" />
-                : isPlaying
-                  ? <Pause size={22} fill="currentColor" strokeWidth={0} />
-                  : <Play size={22} fill="currentColor" strokeWidth={0} className="translate-x-0.5" />
-              }
-            </button>
-            <button onClick={() => skipNext()} disabled={!currentTrack} className={iconBtn}><SkipForward size={22} /></button>
-            <button onClick={() => toggleRepeatOne()} className={cn(iconBtn, repeatOne && activeBtn)}><Repeat1 size={18} /></button>
-          </div>
-
-          {/* Volume + autoplay */}
-          <div className="flex items-center gap-2 w-full max-w-xs">
-            <button onClick={() => toggleAutoplay()} className={cn("p-1 rounded transition-colors shrink-0",
-              autoplay ? "text-primary" : "text-muted-foreground hover:text-foreground")}>
-              <Infinity size={15} />
-            </button>
-            <div className="flex-1 flex items-center gap-2">
-              <button onClick={toggleMute} className="text-muted-foreground hover:text-foreground shrink-0">
-                {effective === 0 ? <VolumeX size={16} /> : effective < 0.5 ? <Volume1 size={16} /> : <Volume2 size={16} />}
-              </button>
-              <div className="flex-1 h-1.5 bg-muted rounded cursor-pointer relative group/vol" onClick={handleVolumeClick}>
-                <div className="h-full bg-foreground/80 rounded" style={{ width: `${effective * 100}%` }} />
-                <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-foreground opacity-0 group-hover/vol:opacity-100 transition-opacity"
-                  style={{ left: `calc(${effective * 100}% - 6px)` }} />
-              </div>
-            </div>
           </div>
         </div>
 
         {/* ── RIGHT: queue panel ── */}
-        <div className="w-[440px] shrink-0 flex flex-col border-l border-border overflow-hidden">
+        <div className={cn(
+          "flex flex-col border-l border-border overflow-hidden",
+          "md:w-[440px] md:shrink-0",
+          mobileTab === "queue" ? "flex flex-1 w-full border-l-0" : "hidden md:flex",
+        )}>
           {/* Header — source + autoplay toggle */}
           <div className="px-4 py-3 shrink-0 border-b border-border space-y-2">
             {session?.source_label && (

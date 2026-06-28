@@ -1,7 +1,6 @@
 import { Outlet } from "react-router"
 import Sidebar from "./Sidebar"
 import TopBar from "./TopBar"
-import MobileTabBar from "./MobileTabBar"
 import PlayerBar from "@/components/player/PlayerBar"
 import ExpandedPlayer from "@/components/player/ExpandedPlayer"
 import ErrorBoundary from "@/components/common/ErrorBoundary"
@@ -15,8 +14,8 @@ export default function AppShell() {
 
   return (
     <div className="flex flex-col h-svh overflow-hidden bg-background">
-      {/* TopBar — desktop only */}
-      <div className="hidden md:block shrink-0">
+      {/* TopBar — always visible */}
+      <div className="shrink-0">
         <TopBar />
       </div>
 
@@ -28,7 +27,7 @@ export default function AppShell() {
         </div>
 
         {/* Main column: scrollable content */}
-        <main className="flex-1 overflow-y-auto pb-[92px] md:pb-[92px] max-md:pb-[148px]">
+        <main className="flex-1 overflow-y-auto pb-[92px]">
           <ErrorBoundary>
             <PageTransition>
               <Outlet />
@@ -36,9 +35,6 @@ export default function AppShell() {
           </ErrorBoundary>
         </main>
       </div>
-
-      {/* Mobile tab bar — above player */}
-      <MobileTabBar />
 
       {/* Player — always mounted, never unmounts */}
       <PlayerBar />
