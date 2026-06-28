@@ -10,7 +10,7 @@ export interface MediaCardProps {
   title: string
   subtitle?: string | null
   reason?: string | null
-  artwork: ImageRef
+  artwork?: ImageRef | null
   onPlay?: () => void
   className?: string
 }
@@ -43,7 +43,7 @@ export default function MediaCard({ id, type, title, subtitle, reason, artwork, 
       {/* Artwork */}
       <div className="relative mb-3">
         <ArtworkImage
-          src={artwork.url}
+          src={artwork?.url}
           alt={title}
           className={cn("w-full aspect-square", type === "artist" ? "rounded-full" : "rounded-md")}
           fallbackLetter={title[0]}

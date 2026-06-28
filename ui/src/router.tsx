@@ -5,6 +5,7 @@ import SearchPage from "@/pages/SearchPage"
 import ArtistPage from "@/pages/ArtistPage"
 import ReleasePage from "@/pages/ReleasePage"
 import MixPage from "@/pages/MixPage"
+import SettingsPage from "@/pages/SettingsPage"
 
 export const router = createBrowserRouter([
   {
@@ -15,6 +16,7 @@ export const router = createBrowserRouter([
       { path: "artists/:id", Component: ArtistPage },
       { path: "releases/:id", Component: ReleasePage },
       { path: "mixes/:id", Component: MixPage },
+      { path: "settings", Component: SettingsPage },
     ],
   },
 ])

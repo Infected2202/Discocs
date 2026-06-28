@@ -1,10 +1,11 @@
 import { useState } from "react"
 import { Link } from "react-router"
-import { Play, Pause } from "lucide-react"
+import { Play, Pause, ThumbsUp } from "lucide-react"
 import { cn } from "@/lib/utils"
 import ArtworkImage from "./ArtworkImage"
 import TrackMenu from "./TrackMenu"
 import { usePlayerStore } from "@/store/playerStore"
+import { useNavidromeStore } from "@/store/navidromeStore"
 import type { TrackSummary, ReleaseTrackItem } from "@/api/types"
 
 function formatDuration(seconds: number | null | undefined): string {
@@ -35,12 +36,15 @@ export default function TrackRow({
 
   // Individual selectors — avoids infinite loop from object selector in React 19
   const currentTrackId = usePlayerStore((s) => s.currentTrackId)
-  const playbackState = usePlayerStore((s) => s.playbackState)
-  const playSource = usePlayerStore((s) => s.playSource)
-  const togglePlay = usePlayerStore((s) => s.togglePlay)
+  const playbackState  = usePlayerStore((s) => s.playbackState)
+  const playSource     = usePlayerStore((s) => s.playSource)
+  const togglePlay     = usePlayerStore((s) => s.togglePlay)
+  const isLiked        = useNavidromeStore((s) => s.isLiked)
+  const toggleLike     = useNavidromeStore((s) => s.toggleLike)
 
-  const isActive = currentTrackId === track.id
+  const isActive  = currentTrackId === track.id
   const isPlaying = isActive && playbackState === "playing"
+  const liked     = isLiked(track.id)
 
   function handlePlay(e: React.MouseEvent) {
     e.stopPropagation()
@@ -125,6 +129,21 @@ export default function TrackRow({
       {/* Duration */}
       <td className="py-2 pr-2 text-right text-xs text-muted-foreground tabular-nums w-14">
         {formatDuration(track.duration)}
+      </td>
+
+      {/* Like */}
+      <td className="py-2 w-8">
+        <button
+          onClick={(e) => { e.stopPropagation(); toggleLike(track.id) }}
+          className={cn(
+            "flex h-7 w-7 items-center justify-center rounded transition-colors mx-auto",
+            liked
+              ? "text-primary opacity-100"
+              : "text-muted-foreground opacity-0 group-hover/row:opacity-100 hover:text-foreground",
+          )}
+        >
+          <ThumbsUp size={13} />
+        </button>
       </td>
 
       {/* Menu */}

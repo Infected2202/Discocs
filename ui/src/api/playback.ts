@@ -21,7 +21,7 @@ export function createSession(params: CreateSessionParams): Promise<PlaybackEnve
       mode: "linear",
       autoplay_enabled: true,
       shuffle_enabled: false,
-      repeat_mode: "none",
+      repeat_mode: "off",
       ...params,
     }),
   })

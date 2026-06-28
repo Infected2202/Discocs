@@ -27,6 +27,7 @@ export default function TrackTable({
         {showRelease && <col className="hidden md:table-column w-[180px]" />}
         <col className="w-14" />
         <col className="w-8" />
+        <col className="w-8" />
       </colgroup>
       <tbody>
         {tracks.map((track, i) => (

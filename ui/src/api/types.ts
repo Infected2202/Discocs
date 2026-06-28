@@ -169,12 +169,17 @@ export interface SearchResponse {
 export type ShelfItemType = "artist" | "release" | "generated_mix"
 
 export interface ShelfItem {
-  id: number | string
-  type: ShelfItemType
+  id: string                // e.g. "artist:1", "release:5", "generated_mix:abc"
+  entity_type: ShelfItemType
+  entity_id: number | string
   title: string
   subtitle: string | null
   artwork: ImageRef
   reason: string | null
+  play_action:
+    | { type: "play"; source_type: string; source_id: number | string; source_label?: string }
+    | { type: "post"; endpoint: string }
+    | null
 }
 
 export interface Shelf {
@@ -250,6 +255,14 @@ export interface PlaybackSession {
   state: Record<string, unknown>
 }
 
+export interface AutoplayPoolItem {
+  id: string
+  track_id: number
+  track: TrackSummary | null
+  origin: string
+  score: number | null
+}
+
 export interface QueueItem {
   id: string
   session_id: string
@@ -276,7 +289,7 @@ export interface PlaybackQueue {
   played: QueueItem[]
   source_items: QueueItem[]
   generated_items: QueueItem[]
-  autoplay_pool: unknown[]
+  autoplay_pool: AutoplayPoolItem[]
 }
 
 export interface PlaybackEnvelope {

@@ -103,6 +103,11 @@ class AudioEngine {
       this.callbacks?.onPlaybackStateChange("playing")
     })
 
+    // "playing" fires after buffering resumes — fixes spinner stuck after "waiting"
+    this.el.addEventListener("playing", () => {
+      this.callbacks?.onPlaybackStateChange("playing")
+    })
+
     this.el.addEventListener("pause", () => {
       if (!this.el.ended) this.callbacks?.onPlaybackStateChange("paused")
     })

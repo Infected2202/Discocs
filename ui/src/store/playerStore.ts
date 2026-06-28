@@ -41,6 +41,7 @@ interface PlayerState {
   // Server state
   session: PlaybackSession | null
   queue: PlaybackQueue | null
+  playedHistory: QueueItem[]   // client-side accumulation — never cleared by server responses
   currentTrackId: number | null
   currentQueueItemId: string | null
   currentTrack: TrackSummary | null
@@ -60,6 +61,7 @@ interface PlayerState {
   playSource(type: string, id: number, label: string, preferredTrackId?: number): Promise<void>
   playTrack(trackId: number, opts?: { queueItemId?: string; recordStarted?: boolean }): Promise<void>
   jumpToQueueItem(queueItemId: string): Promise<void>
+  jumpToAutoplayItem(poolItemId: string): Promise<void>
   togglePlay(): void
   seek(fraction: number): void
   skipNext(): Promise<void>
@@ -73,6 +75,7 @@ interface PlayerState {
   refreshQueue(): Promise<void>
   recordEvent(eventType: string, extra?: Record<string, unknown>): Promise<void>
   handleTrackEnded(): Promise<void>
+  playFromEnvelope(envelope: PlaybackEnvelope): Promise<void>
   toggleExpanded(): void
 
   // Internal — called by AudioEngine callbacks
@@ -95,12 +98,23 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
   audioEngine.setVolume(initVolume)
   audioEngine.setMuted(initMuted)
 
-  function applyEnvelope(envelope: PlaybackEnvelope) {
+  function addCurrentToHistory() {
+    const { queue, currentQueueItemId } = get()
+    if (!queue || !currentQueueItemId) return
+    const item = queue.items.find((i) => i.id === currentQueueItemId)
+    if (!item) return
+    const existing = get().playedHistory
+    if (existing.some((i) => i.id === item.id)) return
+    set({ playedHistory: [...existing, item] })
+  }
+
+  function applyEnvelope(envelope: PlaybackEnvelope, resetHistory = false) {
     const { session, queue } = envelope
     const currentItem = queue.current_item ?? queue.items[0] ?? null
     set({
       session,
       queue,
+      ...(resetHistory ? { playedHistory: [] } : {}),
       currentTrackId: session.current_track_id,
       currentQueueItemId: currentItem?.id ?? null,
       currentTrack: (currentItem?.track as TrackSummary | null) ?? null,
@@ -132,6 +146,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
   return {
     session: null,
     queue: null,
+    playedHistory: [],
     currentTrackId: null,
     currentQueueItemId: null,
     currentTrack: null,
@@ -150,7 +165,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       try {
         const { session } = get()
         const shuffle = session?.shuffle_enabled ?? false
-        const repeatMode = session?.repeat_mode ?? "none"
+        const repeatMode = session?.repeat_mode ?? "off"
 
         const envelope = await createSession({
           source_type: type,
@@ -162,7 +177,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           autoplay_enabled: true,
         } satisfies CreateSessionParams)
 
-        const { queue, currentItem } = applyEnvelope(envelope)
+        const { queue, currentItem } = applyEnvelope(envelope, true)
 
         const preferred = preferredTrackId
           ? queue.items.find((item) => item.track_id === preferredTrackId)
@@ -218,6 +233,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     async jumpToQueueItem(queueItemId) {
       const { session } = get()
       if (!session?.id) return
+      addCurrentToHistory()
       try {
         const envelope = await patchQueue(session.id, {
           operation: "jump",
@@ -230,6 +246,25 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
             recordStarted: false,
           })
         }
+      } catch (err) {
+        set({ error: (err as Error).message })
+      }
+    },
+
+    async jumpToAutoplayItem(poolItemId) {
+      const { session, queue } = get()
+      if (!session?.id || !queue) return
+      const idx = queue.autoplay_pool.findIndex((i) => i.id === poolItemId)
+      if (idx === -1) return
+      const trackIds = queue.autoplay_pool.slice(0, idx + 1).map((i) => i.track_id)
+      try {
+        // Add all pool items up to (and including) the clicked one into the queue
+        const envelope = await patchQueue(session.id, { operation: "add", track_ids: trackIds })
+        applyEnvelope(envelope)
+        // Find the added item for the target track (search upcoming from the end)
+        const targetTrackId = queue.autoplay_pool[idx].track_id
+        const target = [...envelope.queue.upcoming].reverse().find((i) => i.track_id === targetTrackId)
+        if (target) await get().jumpToQueueItem(target.id)
       } catch (err) {
         set({ error: (err as Error).message })
       }
@@ -296,7 +331,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     async toggleRepeatOne() {
       const { session } = get()
       if (!session?.id) return
-      const newMode = session.repeat_mode === "one" ? "none" : "one"
+      const newMode = session.repeat_mode === "one" ? "off" : "one"
       try {
         const envelope = await patchSession(session.id, { repeat_mode: newMode })
         applyEnvelope(envelope)
@@ -378,6 +413,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     async handleTrackEnded() {
       const { session, queue, currentQueueItemId } = get()
 
+      addCurrentToHistory()
+
       await get().recordEvent("completed", {
         position_seconds: audioEngine.duration,
         duration_seconds: audioEngine.duration,
@@ -405,6 +442,23 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       // Queue exhausted
       set({ playbackState: "idle" })
       scheduleAutoplayRefill("completed")
+    },
+
+    async playFromEnvelope(envelope) {
+      set({ error: null })
+      try {
+        const { queue, currentItem } = applyEnvelope(envelope, true)
+        const first = currentItem ?? queue.items[0] ?? null
+        if (first) {
+          await get().playTrack(first.track_id, {
+            queueItemId: first.id,
+            recordStarted: true,
+          })
+        }
+        scheduleAutoplayRefill()
+      } catch (err) {
+        set({ error: (err as Error).message })
+      }
     },
 
     toggleExpanded() {

@@ -1,11 +1,109 @@
 import { useParams } from "react-router"
+import { Play } from "lucide-react"
+import { useArtist, useArtistDiscography } from "@/api/hooks/useArtist"
+import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
+import ArtworkImage from "@/components/media/ArtworkImage"
+import Shelf from "@/components/media/Shelf"
+import { usePlayerStore } from "@/store/playerStore"
+import type { ReleaseSummary } from "@/api/types"
+
+function releaseSummaryToCard(r: ReleaseSummary, onPlay: () => void) {
+  return {
+    id: r.id,
+    type: "release" as const,
+    title: r.title,
+    subtitle: r.release_year ? String(r.release_year) : null,
+    artwork: r.artwork,
+    onPlay,
+  }
+}
+
+function ArtistPageSkeleton() {
+  return (
+    <div className="space-y-8">
+      <div className="px-6 pt-8 flex gap-6 items-end">
+        <Skeleton className="w-36 h-36 rounded-full shrink-0" />
+        <div className="space-y-3 pb-2">
+          <Skeleton className="h-9 w-64" />
+          <Skeleton className="h-4 w-40" />
+        </div>
+      </div>
+      <div className="px-6 space-y-3">
+        {[1, 2, 3, 4, 5].map((i) => (
+          <Skeleton key={i} className="h-12 w-full rounded-md" />
+        ))}
+      </div>
+    </div>
+  )
+}
 
 export default function ArtistPage() {
   const { id } = useParams<{ id: string }>()
+  const artistId = Number(id)
+  const { data: artistData, isLoading: artistLoading, error } = useArtist(artistId)
+  const { data: discoData, isLoading: discoLoading } = useArtistDiscography(artistId)
+  const playSource = usePlayerStore((s) => s.playSource)
+
+  const isLoading = artistLoading || discoLoading
+
+  if (isLoading) return <ArtistPageSkeleton />
+  if (error || !artistData) {
+    return (
+      <div className="p-8">
+        <p className="text-destructive text-sm">Artist not found.</p>
+      </div>
+    )
+  }
+
+  const { artist } = artistData
+  const stats = artist.library_stats
+
   return (
-    <div className="p-8">
-      <h1 className="text-2xl font-semibold">Artist #{id}</h1>
-      <p className="text-muted-foreground mt-2">Coming in Phase 5</p>
+    <div className="space-y-8 pb-8">
+      {/* Header */}
+      <div className="px-6 pt-8 flex gap-6 items-end">
+        <ArtworkImage
+          src={artist.image?.url}
+          alt={artist.name}
+          size={144}
+          className="rounded-full shrink-0"
+          fallbackLetter={artist.name[0]}
+        />
+        <div className="pb-2 min-w-0">
+          <h1 className="text-3xl font-bold truncate">{artist.name}</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {stats.tracks.toLocaleString()} tracks
+            {stats.releases > 0 && ` · ${stats.releases.toLocaleString()} releases`}
+            {stats.plays > 0 && ` · ${stats.plays.toLocaleString()} plays`}
+          </p>
+          <div className="mt-4">
+            <Button
+              size="sm"
+              onClick={() => playSource("artist", artistId, artist.name)}
+              className="gap-2"
+            >
+              <Play size={14} fill="currentColor" strokeWidth={0} />
+              Play
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Discography */}
+      {discoData?.groups.map((group) => {
+        if (group.items.length === 0) return null
+        return (
+          <Shelf
+            key={group.key}
+            title={group.title}
+            total={group.items.length}
+            items={(group.items as ReleaseSummary[]).map((r) =>
+              releaseSummaryToCard(r, () => playSource("release", r.id, r.title))
+            )}
+          />
+        )
+      })}
     </div>
   )
 }

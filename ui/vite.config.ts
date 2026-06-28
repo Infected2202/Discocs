@@ -3,7 +3,7 @@ import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 
-const BACKEND = "http://localhost:7752"
+const BACKEND = "http://localhost:8711"
 
 const proxyPaths = [
   "/api",
