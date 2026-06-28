@@ -1,4 +1,0 @@
-# comment
-/music/a.flac
-
-/music/b.flac

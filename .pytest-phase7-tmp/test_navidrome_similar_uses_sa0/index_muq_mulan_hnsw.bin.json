@@ -1,7 +1,0 @@
-{
-  "count": 2,
-  "dim": 2,
-  "model_name": "muq_mulan",
-  "path": "C:\\Users\\nexus\\scripts\\discocs\\.pytest-phase7-tmp\\test_navidrome_similar_uses_sa0\\index_muq_mulan_hnsw.bin",
-  "space": "cosine"
-}

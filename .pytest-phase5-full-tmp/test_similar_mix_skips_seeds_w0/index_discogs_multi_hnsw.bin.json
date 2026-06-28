@@ -1,7 +1,0 @@
-{
-  "count": 2,
-  "dim": 2,
-  "model_name": "discogs_multi",
-  "path": "C:\\Users\\nexus\\scripts\\discocs\\.pytest-phase5-full-tmp\\test_similar_mix_skips_seeds_w0\\index_discogs_multi_hnsw.bin",
-  "space": "cosine"
-}

@@ -1,0 +1,19 @@
+{
+  "include": ["app", "tests"],
+  "exclude": [
+    ".venv",
+    "venv",
+    ".qwen",
+    ".codex",
+    "data",
+    "models",
+    "eval/results",
+    "build",
+    "dist",
+    "**/__pycache__"
+  ],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": "none"
+}

@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.py[cod]
+.venv/
+.venv-linux/
+venv/
+data/
+*.egg-info/
+dist/
+build/
+*.conf
+*.conf.bak

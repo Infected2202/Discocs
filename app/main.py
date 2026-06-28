@@ -432,4 +432,4 @@ def debug_ui() -> dict[str, object]:
     }
 
 
-UI_HTML = (Path(__file__).parent / "ui.html").read_tex
+UI_HTML = (Path(__file__).parent / "ui.html").read_text()

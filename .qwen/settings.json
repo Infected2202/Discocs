@@ -1,0 +1,12 @@
+{
+  "memory": {
+    "enableManagedAutoMemory": true,
+    "enableManagedAutoDream": true,
+    "enableAutoSkill": true,
+    "autoSkillConfirm": true
+  },
+  "tools": {
+    "approvalMode": "auto"
+  },
+  "$version": 4
+}
