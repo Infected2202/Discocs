@@ -34,6 +34,14 @@ models/*.json
 models/muq/
 eval/results/
 
+# Screenshot artifacts from UI testing sessions
+/mobile-*.png
+/desktop-*.png
+/phase8-*.png
+
+# Playwright MCP session artifacts
+.playwright-mcp/
+
 # Local Codex/test secrets
 .codex/local-secrets.env
 .env.local

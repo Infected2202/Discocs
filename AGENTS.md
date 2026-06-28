@@ -30,6 +30,34 @@ python -m pip install -e ".[dev,essentia]"
 
 `essentia-tensorflow` is a heavy/fragile dependency. Use Docker or an environment with Essentia installed for real embedding extraction. Keep imports lazy and do not require Essentia for unit tests that do not actually run model inference.
 
+## Web Interfaces
+
+В проекте существуют **два** веб-интерфейса:
+
+| | Путь в репо | URL | Стек |
+|---|---|---|---|
+| **Новый UI** (основной) | `ui/` | `http://<host>:8711/app` | React + Vite + TypeScript |
+| **Старая админка** | `app/ui.html` | `http://<host>:8711/admin` | Ванильный JS, SPA в одном файле |
+
+**По умолчанию вся работа по UI ведётся в новом интерфейсе (`ui/`).**
+
+Трогать `app/ui.html` и роуты `/admin/*` в `app/main.py` следует **только если пользователь явно указал «админка»** или сослался на `/admin`.
+
+Структура нового UI:
+```text
+ui/
+  src/
+    api/          — клиент и хуки для обращения к FastAPI
+    components/   — общие компоненты (layout, player, media, ui)
+    pages/        — страницы (Dashboard, Search, Artist, Release, Mix, Settings)
+    store/        — Zustand-сторы (player, navidrome, ui)
+    engine/       — AudioEngine (Web Audio)
+    router.tsx    — TanStack Router
+    main.tsx      — точка входа
+```
+
+Новый UI собирается командой `pnpm build` из директории `ui/`, артефакты попадают в `ui/dist/` и раздаются по маршруту `/app`.
+
 ## Codex Environment
 
 Use this default app URL for browser/API checks and configuration:
