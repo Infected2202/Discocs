@@ -71,6 +71,7 @@ def test_list_songs_calls_search3_and_parses_song_list():
                     {
                       "id": "song-1",
                       "title": "Track One",
+                      "artistId": "artist-1",
                       "artist": "Artist",
                       "album": "Album",
                       "duration": 321,
@@ -94,6 +95,7 @@ def test_list_songs_calls_search3_and_parses_song_list():
             id="song-1",
             title="Track One",
             artist="Artist",
+            artist_id="artist-1",
             album="Album",
             duration=321,
             size=12345,
@@ -102,6 +104,7 @@ def test_list_songs_calls_search3_and_parses_song_list():
             raw={
                 "id": "song-1",
                 "title": "Track One",
+                "artistId": "artist-1",
                 "artist": "Artist",
                 "album": "Album",
                 "duration": 321,
@@ -118,6 +121,38 @@ def test_list_songs_calls_search3_and_parses_song_list():
     assert query["songCount"] == ["25"]
     assert query["songOffset"] == ["50"]
     assert query["p"] == ["secret"]
+
+
+def test_get_artist_info2_returns_artist_info_payload():
+    seen_urls: list[str] = []
+
+    def opener(request, timeout):
+        seen_urls.append(request.full_url)
+        return FakeResponse(
+            b"""
+            {
+              "subsonic-response": {
+                "status": "ok",
+                "artistInfo2": {
+                  "largeImageUrl": "https://lastfm.example/artist-large.jpg",
+                  "mediumImageUrl": "https://lastfm.example/artist-medium.jpg",
+                  "biography": {"summary": "Artist bio"}
+                }
+              }
+            }
+            """
+        )
+
+    client = NavidromeClient(settings(auth_mode="plain"), opener=opener)
+
+    info = client.get_artist_info2("artist-1")
+
+    assert info["largeImageUrl"] == "https://lastfm.example/artist-large.jpg"
+    parsed = urlparse(seen_urls[0])
+    assert parsed.path == "/rest/getArtistInfo2.view"
+    query = parse_qs(parsed.query)
+    assert query["id"] == ["artist-1"]
+    assert query["count"] == ["0"]
 
 
 def test_download_track_falls_back_to_stream(tmp_path: Path):
@@ -280,3 +315,50 @@ def test_star_and_unstar_song_call_subsonic_endpoints():
     assert [path for path, _query in seen] == ["/rest/star.view", "/rest/unstar.view"]
     assert [query["id"] for _path, query in seen] == [["song-1"], ["song-1"]]
     assert [query["p"] for _path, query in seen] == [["secret"], ["secret"]]
+
+
+def test_scrobble_song_calls_subsonic_endpoint():
+    seen: list[tuple[str, dict[str, list[str]]]] = []
+
+    def opener(request, timeout):
+        parsed = urlparse(request.full_url)
+        seen.append((parsed.path, parse_qs(parsed.query)))
+        return FakeResponse(
+            b"""
+            {
+              "subsonic-response": {
+                "status": "ok"
+              }
+            }
+            """
+        )
+
+    client = NavidromeClient(settings(auth_mode="plain"), opener=opener)
+
+    client.scrobble_song("song-1", played_at_ms=1700000000000, submission=True)
+
+    assert seen[0][0] == "/rest/scrobble.view"
+    query = seen[0][1]
+    assert query["id"] == ["song-1"]
+    assert query["time"] == ["1700000000000"]
+    assert query["submission"] == ["true"]
+
+
+def test_parse_song_reads_play_history_and_starred():
+    parsed = songs_from_starred_payload(
+        {
+            "starred2": {
+                "song": {
+                    "id": "song-1",
+                    "title": "Played",
+                    "playCount": 7,
+                    "played": "2026-06-01T10:00:00Z",
+                    "starred": "2026-06-02T10:00:00Z",
+                }
+            }
+        }
+    )[0]
+
+    assert parsed.play_count == 7
+    assert parsed.last_played_at == "2026-06-01T10:00:00Z"
+    assert parsed.starred_at == "2026-06-02T10:00:00Z"

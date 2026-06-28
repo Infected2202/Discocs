@@ -17,7 +17,31 @@ class FakeNavidromeClient:
         yield from songs
 
 
-def song(item_id: str, title: str, size: int = 100) -> NavidromeSong:
+def song(
+    item_id: str,
+    title: str,
+    size: int = 100,
+    *,
+    play_count: int | None = None,
+    played: str | None = None,
+    starred: str | None = None,
+) -> NavidromeSong:
+    raw = {
+        "id": item_id,
+        "title": title,
+        "size": size,
+        "albumId": "album-1",
+        "albumArtist": "Album Artist",
+        "track": 1,
+        "discNumber": 1,
+        "coverArt": "cover-1",
+    }
+    if play_count is not None:
+        raw["playCount"] = play_count
+    if played is not None:
+        raw["played"] = played
+    if starred is not None:
+        raw["starred"] = starred
     return NavidromeSong(
         id=item_id,
         title=title,
@@ -29,7 +53,10 @@ def song(item_id: str, title: str, size: int = 100) -> NavidromeSong:
         content_type="audio/flac",
         genre="Techno",
         year=2001,
-        raw={"id": item_id, "title": title, "size": size},
+        play_count=play_count,
+        last_played_at=played,
+        starred_at=starred,
+        raw=raw,
     )
 
 
@@ -90,8 +117,62 @@ def test_sync_navidrome_catalog_imports_all_songs(tmp_path):
     assert first.year == 2001
     assert store.external_id_for_track(NAVIDROME_PROVIDER, first.id) == "song-1"
     assert store.get_external_track(NAVIDROME_PROVIDER, "song-1").raw_json == (
-        '{"id": "song-1", "size": 100, "title": "One"}'
+        '{"albumArtist": "Album Artist", "albumId": "album-1", "coverArt": "cover-1", '
+        '"discNumber": 1, "id": "song-1", "size": 100, "title": "One", "track": 1}'
     )
+    status = store.normalization_status()
+    assert status.releases == 1
+    assert status.artists == 2
+    release = store.search_entities("Album")["releases"]["items"][0].release
+    assert release.identity_key == "provider:navidrome:release:album-1"
+    assert release.cover_art_id == "cover-1"
+
+
+def test_sync_navidrome_catalog_imports_play_history_and_starred(tmp_path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+
+    sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient(
+            [
+                song(
+                    "song-1",
+                    "One",
+                    play_count=4,
+                    played="2026-06-01T10:00:00Z",
+                    starred="2026-06-02T10:00:00Z",
+                )
+            ]
+        ),  # type: ignore[arg-type]
+    )
+    track = store.get_track_by_external_id(NAVIDROME_PROVIDER, "song-1")
+
+    assert track is not None
+    pref = store.get_track_preference(track.id)
+    assert pref is not None
+    assert pref.play_count == 4
+    assert pref.last_played_at == "2026-06-01T10:00:00Z"
+    assert pref.liked is True
+
+    sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient(
+            [
+                song(
+                    "song-1",
+                    "One",
+                    play_count=6,
+                    played="2026-06-03T10:00:00Z",
+                )
+            ]
+        ),  # type: ignore[arg-type]
+    )
+    refreshed = store.get_track_preference(track.id)
+    assert refreshed is not None
+    assert refreshed.play_count == 6
+    assert refreshed.last_played_at == "2026-06-03T10:00:00Z"
+    assert refreshed.liked is True
 
 
 def test_sync_navidrome_catalog_is_idempotent_and_updates_metadata(tmp_path):
@@ -141,6 +222,64 @@ def test_sync_navidrome_catalog_skips_unchanged_existing_tracks(tmp_path):
     assert refreshed.title == "One"
     assert store.count_tracks() == 1
     assert store.count_external_tracks(NAVIDROME_PROVIDER) == 1
+
+
+def test_sync_navidrome_catalog_marks_unchanged_seen_track_available(tmp_path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    item = song("song-1", "One")
+    sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([item]),  # type: ignore[arg-type]
+    )
+    track = store.get_track_by_external_id(NAVIDROME_PROVIDER, "song-1")
+    store.mark_track_missing(track.id)
+
+    result = sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([item]),  # type: ignore[arg-type]
+    )
+
+    refreshed = store.get_track_by_external_id(NAVIDROME_PROVIDER, "song-1")
+    assert result.imported_count == 0
+    assert result.updated_count == 0
+    assert refreshed.id == track.id
+    assert refreshed.missing_at is None
+
+
+def test_sync_navidrome_catalog_repairs_unchanged_normalized_sidecars(tmp_path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    item = song("song-1", "One")
+    sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([item]),  # type: ignore[arg-type]
+    )
+    with store.connect() as conn:
+        conn.execute("DELETE FROM external_ids")
+        conn.execute("DELETE FROM release_artists")
+        conn.execute("DELETE FROM track_artists")
+        conn.execute("DELETE FROM release_tracks")
+        conn.execute("DELETE FROM releases")
+        conn.execute("DELETE FROM artists")
+
+    result = sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([item]),  # type: ignore[arg-type]
+    )
+
+    assert result.imported_count == 0
+    assert result.updated_count == 0
+    status = store.normalization_status()
+    assert status.tracks_with_release == 1
+    assert status.tracks_with_artist == 1
+    assert status.releases == 1
+    assert status.artists == 2
+    track = store.get_track_by_external_id(NAVIDROME_PROVIDER, "song-1")
+    assert track is not None
+    assert store.external_id_for_track(NAVIDROME_PROVIDER, track.id) == "song-1"
+    release = store.search_entities("Album")["releases"]["items"][0].release
+    assert store.external_id_for_entity(NAVIDROME_PROVIDER, "release", release.id) == "album-1"
 
 
 def test_sync_navidrome_catalog_preserves_migrated_external_mapping(tmp_path):

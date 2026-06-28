@@ -7,6 +7,7 @@ import sqlite3
 from typing import Callable
 
 from app.navidrome import NavidromeClient, NavidromeSong
+from app.library import envelope_from_navidrome_song
 from app.scanner import ScannedTrack
 from app.store import Store, utc_now
 
@@ -87,15 +88,35 @@ def sync_navidrome_catalog(
                     if str(mapped_path).startswith("navidrome://"):
                         raw_changed = existing_mapping["raw_json"] != raw_json
                         if not raw_changed and _track_matches(existing_mapping, scanned):
+                            _mark_track_available(conn, track_id)
+                            store._upsert_normalized_track_sidecars(
+                                conn,
+                                track_id,
+                                envelope_from_navidrome_song(song, raw_json),
+                            )
+                            _sync_song_play_state(store, conn, track_id, song)
                             continue
                         track_id, changed = _upsert_track(conn, scanned)
                     elif existing_mapping["raw_json"] == raw_json:
+                        _mark_track_available(conn, track_id)
+                        store._upsert_normalized_track_sidecars(
+                            conn,
+                            track_id,
+                            envelope_from_navidrome_song(song, raw_json),
+                        )
+                        _sync_song_play_state(store, conn, track_id, song)
                         continue
                 else:
                     track_id, changed = _upsert_track(conn, scanned)
 
                 raw_changed = existing_mapping is not None and existing_mapping["raw_json"] != raw_json
                 _upsert_external_track(conn, song.id, track_id, raw_json)
+                store._upsert_normalized_track_sidecars(
+                    conn,
+                    track_id,
+                    envelope_from_navidrome_song(song, raw_json),
+                )
+                _sync_song_play_state(store, conn, track_id, song)
                 if existing_mapping is None:
                     imported_count += 1
                 elif changed or raw_changed:
@@ -128,6 +149,21 @@ def sync_navidrome_catalog(
     return result
 
 
+def _sync_song_play_state(
+    store: Store,
+    conn: sqlite3.Connection,
+    track_id: int,
+    song: NavidromeSong,
+) -> None:
+    store._import_external_track_play_state(
+        conn,
+        track_id,
+        play_count=song.play_count,
+        last_played_at=song.last_played_at,
+        liked=True if song.starred_at else None,
+    )
+
+
 def _song_to_scanned_track(song: NavidromeSong) -> ScannedTrack:
     return ScannedTrack(
         path=f"navidrome://{song.id}",  # type: ignore[arg-type]
@@ -137,6 +173,10 @@ def _song_to_scanned_track(song: NavidromeSong) -> ScannedTrack:
         genre=song.genre,
         year=song.year,
         duration=float(song.duration) if song.duration is not None else None,
+        album_artist=(song.raw or {}).get("albumArtist") if song.raw else None,
+        track_number=_optional_int((song.raw or {}).get("track")) if song.raw else None,
+        disc_number=_optional_int((song.raw or {}).get("discNumber")) if song.raw else None,
+        total_tracks=_optional_int((song.raw or {}).get("totalTracks")) if song.raw else None,
         file_size=song.size or 0,
         mtime=0,
     )
@@ -200,6 +240,16 @@ def _optional_float(value: object) -> float | None:
     return None if value is None else float(value)
 
 
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    text = str(value).split("/", 1)[0].strip()
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
 def _upsert_track(conn: sqlite3.Connection, scanned: ScannedTrack) -> tuple[int, bool]:
     now = utc_now()
     path = str(scanned.path)
@@ -246,9 +296,9 @@ def _upsert_track(conn: sqlite3.Connection, scanned: ScannedTrack) -> tuple[int,
         """
         INSERT INTO tracks (
             path, artist, title, album, genre, year, duration, file_size, mtime,
-            missing_at, last_seen_at, created_at, updated_at
+            missing_at, last_seen_at, added_at, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
         """,
         (
             path,
@@ -260,6 +310,7 @@ def _upsert_track(conn: sqlite3.Connection, scanned: ScannedTrack) -> tuple[int,
             scanned.duration,
             scanned.file_size,
             scanned.mtime,
+            now,
             now,
             now,
             now,
@@ -304,6 +355,14 @@ def _mark_track_missing(conn: sqlite3.Connection, track_id: int) -> None:
     now = utc_now()
     conn.execute(
         "UPDATE tracks SET missing_at = ?, updated_at = ? WHERE id = ?",
+        (now, now, track_id),
+    )
+
+
+def _mark_track_available(conn: sqlite3.Connection, track_id: int) -> None:
+    now = utc_now()
+    conn.execute(
+        "UPDATE tracks SET missing_at = NULL, last_seen_at = ?, updated_at = ? WHERE id = ?",
         (now, now, track_id),
     )
 

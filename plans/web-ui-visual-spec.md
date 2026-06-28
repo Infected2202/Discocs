@@ -144,6 +144,8 @@ Behavior:
 
 Top:
 
+- Search entry at or near the top of Home. Submitting or typing into it routes
+  into the full Search page while preserving the current player.
 - Large Flow card/button above shelves.
 - Flow should feel like the main daily action.
 - It can use richer visual treatment than normal shelves.
@@ -155,6 +157,9 @@ Shelves:
 - Optional "More" action and left/right arrows on right.
 - Items are cover-first cards.
 - Different shelves share visual structure even when recommendation logic differs.
+- Shelf cards are not management cards. Do not show large permanent Open/Play
+  buttons at the bottom; use card click and hover/secondary controls.
+- The Home dashboard is separate from operational analysis/status pages.
 
 Default shelves:
 

@@ -13,9 +13,13 @@ def test_scan_music_folder_includes_genre_and_year(tmp_path: Path, monkeypatch):
             artist="Artist",
             title="Title",
             album="Album",
+            album_artist="Album Artist",
             genre="Techno",
             year=1998,
             duration=123.0,
+            track_number=2,
+            disc_number=1,
+            total_tracks=10,
         )
 
     monkeypatch.setattr(scanner, "read_audio_metadata", fake_metadata)
@@ -25,6 +29,10 @@ def test_scan_music_folder_includes_genre_and_year(tmp_path: Path, monkeypatch):
     assert len(scanned) == 1
     assert scanned[0].genre == "Techno"
     assert scanned[0].year == 1998
+    assert scanned[0].album_artist == "Album Artist"
+    assert scanned[0].track_number == 2
+    assert scanned[0].disc_number == 1
+    assert scanned[0].total_tracks == 10
 
 
 def test_iter_audio_files_includes_wma_and_ape(tmp_path: Path):

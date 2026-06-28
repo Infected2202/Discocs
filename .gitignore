@@ -2,17 +2,19 @@ __pycache__/
 *.py[cod]
 *.log
 .pytest_cache/
-.pytest-tmp/
+.pytest-*/
 .pt/
 .ruff_cache/
 .mypy_cache/
 .venv/
 venv/
+.codex/bootstrap-venv/
 dist/
 build/
 *.egg-info/
 plugins/navidrome-instant-mix/tools/binaryen/
 NDH6SA~M/
+DRFY38~X/
 
 data/
 *.flac
@@ -31,3 +33,8 @@ models/*.onnx
 models/*.json
 models/muq/
 eval/results/
+
+# Local Codex/test secrets
+.codex/local-secrets.env
+.env.local
+

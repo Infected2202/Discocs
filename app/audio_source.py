@@ -18,6 +18,17 @@ def is_navidrome_track(track: Track) -> bool:
     return str(track.path).startswith(NAVIDROME_URI_PREFIX)
 
 
+def navidrome_item_id_for_track(store: Store, track: Track) -> str | None:
+    item_id = store.external_id_for_track(NAVIDROME_PROVIDER, track.id)
+    if item_id is not None:
+        return item_id
+    return navidrome_item_id_from_path(str(track.path))
+
+
+def has_navidrome_audio_source(store: Store, track: Track) -> bool:
+    return navidrome_item_id_for_track(store, track) is not None
+
+
 def navidrome_item_id_from_path(path: str) -> str | None:
     if not path.startswith(NAVIDROME_URI_PREFIX):
         return None
@@ -31,15 +42,10 @@ def track_audio_path(
     settings: Settings,
     track: Track,
 ) -> Iterator[Path]:
-    if not is_navidrome_track(track):
+    item_id = navidrome_item_id_for_track(store, track)
+    if item_id is None:
         yield Path(track.path)
         return
-
-    item_id = store.external_id_for_track(NAVIDROME_PROVIDER, track.id)
-    if item_id is None:
-        item_id = navidrome_item_id_from_path(track.path)
-    if item_id is None:
-        raise ValueError(f"No Navidrome external ID for track {track.id}")
 
     downloaded = NavidromeClient(settings.navidrome).download_track(
         item_id,

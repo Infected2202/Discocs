@@ -1,0 +1,16 @@
+{
+  "python": {
+    "command": "cmd.exe",
+    "args": [
+      "/c",
+      "C:\\Users\\nexus\\AppData\\Local\\Volta\\bin\\pyright-langserver.cmd",
+      "--stdio"
+    ],
+    "extensionToLanguage": {
+      ".py": "python"
+    },
+    "startupTimeout": 30000,
+    "restartOnCrash": true,
+    "maxRestarts": 3
+  }
+}

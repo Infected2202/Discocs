@@ -10,14 +10,22 @@ Phase 3 creates the foundation for:
 - expanded player/queue;
 - first-party skip tracking;
 - meaningful listen/completion tracking;
+- Navidrome scrobble/play-history bridge;
 - Flow session state later;
 - Autoplay from any source later;
 - Listen Again and Long Time No Listen dashboard shelves;
 - album/release quality metrics;
 - user preferences by track, release, and artist.
 
+Navidrome is the source of truth for cross-client listening history and library
+likes/starred state. Discocs remains the source of truth for local session
+telemetry that Navidrome cannot reliably provide: explicit skips, early/mid/late
+skip strength, queue clicks, removed queue items, Flow/autoplay reasons, and
+debug scoring.
+
 Navidrome cannot reliably provide the skip and queue behavior needed for Flow.
-The future web player must capture these events itself.
+The future web player must capture those local telemetry events itself, while
+reporting real plays back to Navidrome.
 
 ## Current State
 
@@ -266,7 +274,7 @@ Meaning:
 
 Reason:
 
-- raw events are source of truth;
+- raw events are the source of truth for local Discocs telemetry;
 - UI needs fresh like/play/skip state;
 - Flow/autoplay later need session feedback quickly.
 
@@ -488,7 +496,38 @@ keys and defaults.
 - Playback APIs store and expose state; they do not need to proxy audio.
 - Existing `/feedback` endpoint can remain; later it may be bridged to
   playback events.
-- Navidrome sync/starred integration remains separate.
+
+## Navidrome Playback Bridge
+
+Source-of-truth contract:
+
+- Navidrome is canonical for `play_count`, `last_played_at`, and library
+  `starred/liked` state because listening can happen in Symfonium, Navidrome UI,
+  and other Subsonic clients.
+- Discocs stores local playback events for recommendation behavior, session
+  state, Flow/autoplay adaptation, skip interpretation, and local dislikes.
+- Imported Navidrome history materializes into local preference aggregates so
+  dashboard shelves and scorers can query one local shape.
+- Local counters may be updated optimistically for UI, but Navidrome sync
+  reconciles play counts and last-played timestamps.
+
+When Discocs web plays a Navidrome-mapped track:
+
+- send Subsonic/Navidrome `scrobble` once the track reaches the meaningful
+  listen threshold;
+- use `submission=true` for counted listens;
+- include event time when available;
+- never send scrobble for duplicate client events;
+- Navidrome failure must not fail local playback/event recording.
+
+When syncing Navidrome catalog/history:
+
+- import `playCount` into local `user_track_preferences.play_count` using a
+  non-decreasing merge;
+- import `played`/`lastPlayed` into `last_played_at` using newest timestamp;
+- import `starred` as the library liked/starred truth when present;
+- do not clear local dislikes/skips from Navidrome data, because Navidrome has
+  no equivalent signal.
 
 ## Testing Plan
 
@@ -606,6 +645,10 @@ Tests:
 - started/progress/threshold/completed/skipped events accepted;
 - aggregates update through API;
 - invalid event types rejected.
+- Navidrome-mapped meaningful listens call `scrobble` once;
+- duplicate playback events do not double-scrobble;
+- Navidrome sync imports `playCount`, `played`/`lastPlayed`, and `starred`
+  into local preference aggregates without deleting local skip/dislike signals.
 
 Recommended grouping:
 
@@ -629,3 +672,12 @@ Defaults can be changed later through settings:
 - completion threshold;
 - progress event frequency;
 - visible queue size.
+
+## Audit Follow-Up Queue
+
+These items are intentionally parked until the full phase audit is complete:
+
+- decide whether a `completed` event without any progress, position, or duration should be trusted as a natural end;
+- tune implicit release/artist scoring weights for skips, likes, saves, and queue removal after real playback data exists;
+- decide whether `removed_from_queue` should remain a negative preference signal or only queue hygiene;
+- decide whether playback response models should be expanded into fully nested typed entity contracts or keep nested track/release/artist payloads as existing shared dictionaries.

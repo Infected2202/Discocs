@@ -5,11 +5,13 @@ import sqlite3
 import socket
 from threading import Event
 from urllib.error import URLError
+from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 from fastapi.testclient import TestClient
 
 import app.main as main_module
+import app.mixes as mixes_module
 import app.store as store_module
 from app.cli import normalize_worker_models, worker_failure_retryable
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR
@@ -110,6 +112,911 @@ def test_health():
     assert response.json() == {"status": "ok"}
 
 
+def test_api_v1_search_artist_release_and_track_groups(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path / "album" / "one.flac", title="One", artist="Solee", album="Grind")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/search?q=Solee")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["query"] == "Solee"
+    assert data["top_result"]["entity_type"] == "artist"
+    groups = {group["type"]: group for group in data["groups"]}
+    assert groups["artists"]["items"][0]["name"] == "Solee"
+    assert groups["tracks"]["items"][0]["title"] == "One"
+    assert groups["releases"]["items"][0]["title"] == "Grind"
+
+
+def test_api_v1_search_track_summaries_include_normalized_artists(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(
+        store,
+        tmp_path / "album" / "duo.flac",
+        title="Duo Track",
+        artist="Alpha & Beta",
+        album="Collab",
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/search?q=Duo%20Track")
+
+    assert response.status_code == 200
+    groups = {group["type"]: group for group in response.json()["groups"]}
+    track = groups["tracks"]["items"][0]
+    assert track["title"] == "Duo Track"
+    assert [artist["name"] for artist in track["artists"]] == ["Alpha", "Beta"]
+
+
+def test_api_v1_search_enriches_artist_image_from_navidrome(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path / "album" / "one.flac", title="One", artist="Solee", album="Grind")
+    artist_id = store.search_entities("Solee")["artists"]["items"][0].artist.id
+    with store.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO external_ids (provider, entity_type, entity_id, external_id, raw_json, synced_at)
+            VALUES ('navidrome', 'artist', ?, 'artist-solee', NULL, '2026-01-01T00:00:00+00:00')
+            """,
+            (artist_id,),
+        )
+
+    class FakeNavidromeClient:
+        def __init__(self, _settings):
+            pass
+
+        def get_artist_info2(self, artist_id: str, *, count: int = 0):
+            assert artist_id == "artist-solee"
+            assert count == 0
+            return {
+                "largeImageUrl": "https://lastfm.example/solee-large.jpg",
+                "biography": {"summary": "Solee bio"},
+            }
+
+    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    client = TestClient(app)
+
+    response = client.get("/api/v1/search?q=Solee")
+    image_response = client.get(f"/api/v1/artists/{artist_id}/image")
+
+    assert response.status_code == 200
+    artist = response.json()["groups"][0]["items"][0]
+    assert artist["image"]["url"] == "https://lastfm.example/solee-large.jpg"
+    assert response.json()["top_result"]["entity"]["image"]["url"] == "https://lastfm.example/solee-large.jpg"
+    assert image_response.status_code == 200
+    assert image_response.json()["image"]["url"] == "https://lastfm.example/solee-large.jpg"
+    assert store.get_artist(artist_id).artist.image_url == "https://lastfm.example/solee-large.jpg"  # type: ignore[union-attr]
+
+
+def test_api_v1_release_and_tracks_contract(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path / "album" / "01.flac", title="First", artist="Alpha", album="Release")
+    release_id = store.search_entities("Release")["releases"]["items"][0].release.id
+    client = TestClient(app)
+
+    release_response = client.get(f"/api/v1/releases/{release_id}")
+    tracks_response = client.get(f"/api/v1/releases/{release_id}/tracks")
+    recommendations_response = client.get(f"/api/v1/releases/{release_id}/recommendations")
+
+    assert release_response.status_code == 200
+    release = release_response.json()["release"]
+    assert release["title"] == "Release"
+    assert release["release_type"] == "unknown"
+    assert release["artists"] == [{"id": release["artists"][0]["id"], "name": "Alpha"}]
+    assert tracks_response.status_code == 200
+    assert tracks_response.json()["items"][0]["title"] == "First"
+    assert recommendations_response.json()["available"] is False
+
+
+def test_api_v1_artist_discography_groups_unknown_releases(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path / "album" / "one.flac", title="One", artist="Alpha", album="Unknown Type")
+    artist_id = store.search_entities("Alpha")["artists"]["items"][0].artist.id
+    client = TestClient(app)
+
+    artist_response = client.get(f"/api/v1/artists/{artist_id}")
+    discography_response = client.get(f"/api/v1/artists/{artist_id}/discography")
+    top_tracks_response = client.get(f"/api/v1/artists/{artist_id}/top-tracks")
+    similar_response = client.get(f"/api/v1/artists/{artist_id}/similar")
+
+    assert artist_response.status_code == 200
+    assert artist_response.json()["artist"]["name"] == "Alpha"
+    groups = {group["key"]: group for group in discography_response.json()["groups"]}
+    assert groups["releases"]["items"][0]["title"] == "Unknown Type"
+    assert top_tracks_response.json()["available"] is False
+    assert similar_response.json()["basis"] == "not_available"
+
+
+def test_api_v1_search_prefers_exact_release_top_result(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path / "artist" / "one.flac", title="Loose Match", artist="Exact Release Artist", album="Other")
+    add_track(store, tmp_path / "release" / "one.flac", title="One", artist="Alpha", album="Exact Release")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/search?q=Exact%20Release")
+
+    assert response.status_code == 200
+    assert response.json()["top_result"]["entity_type"] == "release"
+
+
+def test_api_v1_validation_errors_use_error_envelope(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.get("/api/v1/search?limit=0")
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert "limit" in response.json()["error"]["message"]
+
+
+def test_api_v1_artist_discography_include_tracks_and_explicit_groups(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path / "album" / "one.flac", title="Album Track", artist="Alpha", album="Album Release")
+    add_track(store, tmp_path / "ep" / "one.flac", title="EP Track", artist="Alpha", album="EP Release")
+    add_track(store, tmp_path / "single" / "one.flac", title="Single Track", artist="Alpha", album="Single Release")
+    add_track(store, tmp_path / "feature" / "one.flac", title="Feature Track", artist="Beta & Alpha", album="Beta Album")
+    feature_release_id = store.search_entities("Beta Album")["releases"]["items"][0].release.id
+    with store.connect() as conn:
+        for title, release_type in [
+            ("Album Release", "album"),
+            ("EP Release", "ep"),
+            ("Single Release", "single"),
+        ]:
+            conn.execute("UPDATE releases SET release_type = ? WHERE title = ?", (release_type, title))
+        beta_id = store.search_entities("Beta")["artists"]["items"][0].artist.id
+        conn.execute("DELETE FROM release_artists WHERE release_id = ?", (feature_release_id,))
+        conn.execute(
+            """
+            INSERT INTO release_artists (release_id, artist_id, role, position, credit_text, confidence, created_at)
+            VALUES (?, ?, 'primary', 0, 'Beta', 'explicit', '2026-01-01T00:00:00+00:00')
+            """,
+            (feature_release_id, beta_id),
+        )
+    artist_id = store.search_entities("Alpha")["artists"]["items"][0].artist.id
+    client = TestClient(app)
+
+    response = client.get(f"/api/v1/artists/{artist_id}/discography?include_tracks=true")
+
+    assert response.status_code == 200
+    groups = {group["key"]: group for group in response.json()["groups"]}
+    assert groups["albums"]["items"][0]["title"] == "Album Release"
+    assert groups["albums"]["items"][0]["tracks"][0]["title"] == "Album Track"
+    assert groups["eps"]["items"][0]["title"] == "EP Release"
+    assert groups["singles"]["items"][0]["title"] == "Single Release"
+    assert groups["featured_in"]["items"][0]["title"] == "Beta Album"
+
+
+def test_api_v1_release_related_discography_uses_track_participants(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    collab_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=tmp_path / "collab" / "one.flac",
+            artist="Alpha & Beta",
+            title="Collab Track",
+            album="Collab Release",
+            album_artist="Alpha",
+            duration=123.0,
+            file_size=100,
+            mtime=1,
+        )
+    )
+    add_track(store, tmp_path / "beta" / "one.flac", title="Beta Track", artist="Beta", album="Beta Release")
+    release = store.search_entities("Collab Release")["releases"]["items"][0].release
+    assert collab_id in [item.track.id for item in store.list_release_tracks(release.id)]
+    client = TestClient(app)
+
+    response = client.get(f"/api/v1/releases/{release.id}/related-discography")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert [artist["name"] for artist in data["context_artists"]] == ["Alpha", "Beta"]
+    assert [item["title"] for item in data["items"]] == ["Beta Release"]
+
+
+def test_api_v1_missing_entity_uses_error_envelope(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.get("/api/v1/releases/999")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": {"code": "not_found", "message": "Release not found"}
+    }
+
+
+def test_api_v1_playback_create_get_and_patch_release_session(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path / "album" / "01.flac", title="One", artist="Alpha", album="Playback")
+    add_track(store, tmp_path / "album" / "02.flac", title="Two", artist="Alpha", album="Playback")
+    release_id = store.search_entities("Playback")["releases"]["items"][0].release.id
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/v1/playback/sessions",
+        json={
+            "source_type": "release",
+            "source_id": release_id,
+            "source_label": "Playback",
+            "autoplay_enabled": True,
+            "settings": {"visible_queue_size": 5},
+        },
+    )
+
+    assert created.status_code == 200
+    body = created.json()
+    session_id = body["session"]["id"]
+    assert body["session"]["source_type"] == "release"
+    assert body["session"]["autoplay_enabled"] is True
+    assert [item["track"]["title"] for item in body["queue"]["items"]] == ["One", "Two"]
+
+    restored = client.get(f"/api/v1/playback/sessions/{session_id}")
+    assert restored.status_code == 200
+    assert restored.json()["queue"]["current_index"] == 0
+
+    patched = client.patch(
+        f"/api/v1/playback/sessions/{session_id}",
+        json={"status": "paused", "shuffle_enabled": True, "repeat_mode": "all"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["session"]["status"] == "paused"
+    assert patched.json()["session"]["shuffle_enabled"] is True
+    assert patched.json()["session"]["repeat_mode"] == "all"
+
+    cleared = client.patch(
+        f"/api/v1/playback/sessions/{session_id}",
+        json={"current_track_id": None, "current_queue_item_id": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["session"]["current_track_id"] is None
+    assert cleared.json()["session"]["current_queue_item_id"] is None
+
+
+def test_api_v1_playback_settings_and_missing_tracks_are_explicit(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    first_id = add_track(store, tmp_path / "queue" / "01.flac", title="First")
+    client = TestClient(app)
+
+    settings = client.get("/api/v1/playback/settings")
+    assert settings.status_code == 200
+    assert settings.json()["settings"]["completion_fraction"] == 0.9
+    assert settings.json()["settings"]["autoplay_visible_buffer"] == 5
+    assert settings.json()["settings"]["autoplay_candidate_count"] == 200
+
+    created = client.post(
+        "/api/v1/playback/sessions",
+        json={"source_type": "track", "source_id": first_id, "settings": {"visible_queue_size": 7}},
+    )
+    assert created.status_code == 200
+    assert created.json()["session"]["autoplay_enabled"] is True
+    assert created.json()["session"]["settings"]["completion_fraction"] == 0.9
+    assert created.json()["session"]["settings"]["visible_queue_size"] == 7
+
+    missing_create = client.post(
+        "/api/v1/playback/sessions",
+        json={"source_type": "track", "source_id": 999},
+    )
+    assert missing_create.status_code == 400
+    assert "Tracks not found: 999" in missing_create.json()["error"]["message"]
+
+    session_id = created.json()["session"]["id"]
+    missing_add = client.patch(
+        f"/api/v1/playback/sessions/{session_id}/queue",
+        json={"operation": "add", "track_id": 999},
+    )
+    assert missing_add.status_code == 400
+    assert "Tracks not found: 999" in missing_add.json()["error"]["message"]
+
+
+def test_api_v1_autoplay_refill_adds_generated_queue_items(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    seed_id = add_track(store, tmp_path / "autoplay" / "seed.flac", title="Seed", artist="Seed", album="Seed")
+    near_id = add_track(store, tmp_path / "autoplay" / "near.flac", title="Near", artist="Near", album="Near")
+    far_id = add_track(store, tmp_path / "autoplay" / "far.flac", title="Far", artist="Far", album="Far")
+    prepared_id = add_track(store, tmp_path / "autoplay" / "prepared.flac", title="Prepared", artist="Prepared", album="Prepared")
+    store.save_embedding(seed_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    store.save_embedding(near_id, "discogs_multi", np.array([0.98, 0.02], dtype=np.float32))
+    store.save_embedding(far_id, "discogs_multi", np.array([0.7, 0.3], dtype=np.float32))
+    store.save_embedding(prepared_id, "discogs_multi", np.array([0.6, 0.4], dtype=np.float32))
+    main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
+    client = TestClient(app)
+    session_id = client.post(
+        "/api/v1/playback/sessions",
+        json={"source_type": "track", "source_id": seed_id},
+    ).json()["session"]["id"]
+
+    response = client.post(
+        "/api/v1/autoplay/refill",
+        json={
+            "session_id": session_id,
+            "visible_buffer": 2,
+            "candidate_count": 10,
+            "settings": {"source_weight": 0.8, "personal_weight": 0.2},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["track_id"] for item in body["added_items"]] == [near_id, far_id]
+    assert [item["origin"] for item in body["added_items"]] == ["autoplay", "autoplay"]
+    assert body["added_items"][0]["source_type"] == "track"
+    assert body["added_items"][0]["debug"] is None
+    assert body["debug"] is None
+    queue_response = client.get(f"/api/v1/playback/sessions/{session_id}/queue")
+    assert queue_response.status_code == 200
+    assert [item["track_id"] for item in queue_response.json()["queue"]["autoplay_pool"]] == [prepared_id]
+
+    debug_response = client.post(
+        "/api/v1/autoplay/refill?include_debug=true",
+        json={"session_id": session_id, "visible_buffer": 3, "candidate_count": 10},
+    )
+    assert debug_response.status_code == 200
+    assert debug_response.json()["debug"]["needed"] == 1
+    assert [item["track_id"] for item in debug_response.json()["added_items"]] == [prepared_id]
+
+
+def test_api_v1_autoplay_refill_respects_disabled_session(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    seed_id = add_track(store, tmp_path / "autoplay" / "seed.flac", title="Seed")
+    client = TestClient(app)
+    session_id = client.post(
+        "/api/v1/playback/sessions",
+        json={"source_type": "track", "source_id": seed_id, "autoplay_enabled": False},
+    ).json()["session"]["id"]
+
+    response = client.post("/api/v1/autoplay/refill", json={"session_id": session_id})
+
+    assert response.status_code == 200
+    assert response.json()["added_items"] == []
+
+
+def test_api_v1_playback_queue_patch_jump_records_navigation_not_skip(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    first_id = add_track(store, tmp_path / "queue" / "01.flac", title="First")
+    second_id = add_track(store, tmp_path / "queue" / "02.flac", title="Second")
+    third_id = add_track(store, tmp_path / "queue" / "03.flac", title="Third")
+    client = TestClient(app)
+    session_id = client.post(
+        "/api/v1/playback/sessions",
+        json={"source_type": "track", "source_id": first_id},
+    ).json()["session"]["id"]
+
+    added = client.patch(
+        f"/api/v1/playback/sessions/{session_id}/queue",
+        json={"operation": "add", "track_ids": [second_id, third_id]},
+    )
+    assert added.status_code == 200
+    assert [item["track_id"] for item in added.json()["queue"]["items"]] == [first_id, second_id, third_id]
+    third_item_id = added.json()["queue"]["items"][2]["id"]
+
+    moved = client.patch(
+        f"/api/v1/playback/sessions/{session_id}/queue",
+        json={"operation": "move", "queue_item_id": third_item_id, "position": 1},
+    )
+    assert moved.status_code == 200
+    assert [item["track_id"] for item in moved.json()["queue"]["items"]] == [first_id, third_id, second_id]
+
+    jumped = client.patch(
+        f"/api/v1/playback/sessions/{session_id}/queue",
+        json={"operation": "jump", "queue_item_id": third_item_id},
+    )
+    assert jumped.status_code == 200
+    assert jumped.json()["session"]["current_track_id"] == third_id
+    assert store.get_track_preference(third_id) is None
+    events = store.list_playback_events(session_id)
+    assert [event.event_type for event in events] == ["queue_click"]
+
+
+def test_api_v1_playback_queue_remove_and_include_debug(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    first_id = add_track(store, tmp_path / "queue" / "01.flac", title="First")
+    second_id = add_track(store, tmp_path / "queue" / "02.flac", title="Second")
+    client = TestClient(app)
+    session_id = client.post(
+        "/api/v1/playback/sessions",
+        json={"source_type": "track", "source_id": first_id},
+    ).json()["session"]["id"]
+
+    added = client.patch(
+        f"/api/v1/playback/sessions/{session_id}/queue",
+        json={
+            "operation": "add",
+            "items": [{"track_id": second_id, "debug": {"source": "test"}}],
+        },
+    )
+    assert added.status_code == 200
+    second_item_id = added.json()["queue"]["items"][1]["id"]
+
+    debug_queue = client.get(f"/api/v1/playback/sessions/{session_id}/queue?include_debug=true")
+    assert debug_queue.status_code == 200
+    assert debug_queue.json()["queue"]["items"][1]["debug"] == {"source": "test"}
+
+    removed = client.patch(
+        f"/api/v1/playback/sessions/{session_id}/queue",
+        json={"operation": "remove", "queue_item_id": second_item_id},
+    )
+    assert removed.status_code == 200
+    assert [item["track_id"] for item in removed.json()["queue"]["items"]] == [first_id]
+    assert store.list_playback_events(session_id)[0].event_type == "removed_from_queue"
+
+
+def test_api_v1_playback_event_ingest_updates_preferences_and_is_idempotent(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    track_id = add_track(store, tmp_path / "signals.flac", title="Signals", artist="Alpha")
+    client = TestClient(app)
+
+    threshold = client.post(
+        "/api/v1/playback/events",
+        json={
+            "track_id": track_id,
+            "event_type": "play_threshold_reached",
+            "position_seconds": 31.0,
+            "duration_seconds": 120.0,
+            "client_event_id": "threshold-1",
+        },
+    )
+    duplicate = client.post(
+        "/api/v1/playback/events",
+        json={"track_id": track_id, "event_type": "play_threshold_reached", "client_event_id": "threshold-1"},
+    )
+    skipped = client.post(
+        "/api/v1/playback/events",
+        json={
+            "track_id": track_id,
+            "event_type": "skipped",
+            "position_seconds": 8.0,
+            "duration_seconds": 120.0,
+            "client_event_id": "skip-1",
+        },
+    )
+
+    assert threshold.status_code == 200
+    assert threshold.json()["accepted"] is True
+    assert duplicate.status_code == 200
+    assert duplicate.json()["duplicate"] is True
+    assert skipped.status_code == 200
+    pref = store.get_track_preference(track_id)
+    assert pref.play_count == 1
+    assert pref.skip_count == 1
+    assert pref.early_skip_count == 1
+
+
+def test_api_v1_playback_event_scrobbles_mapped_navidrome_track(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    track_id = add_track(store, tmp_path / "signals.flac", title="Signals", artist="Alpha")
+    store.upsert_external_track("navidrome", "nav-song-1", track_id)
+    monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome.example")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_USER", "user")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_PASSWORD", "secret")
+    calls: list[tuple[str, int | None, bool]] = []
+
+    class FakeNavidromeClient:
+        def __init__(self, _settings):
+            pass
+
+        def scrobble_song(self, item_id: str, *, played_at_ms: int | None = None, submission: bool = True):
+            calls.append((item_id, played_at_ms, submission))
+            return {}
+
+    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/playback/events",
+        json={
+            "track_id": track_id,
+            "event_type": "play_threshold_reached",
+            "position_seconds": 31.0,
+            "duration_seconds": 120.0,
+            "client_event_id": "threshold-scrobble",
+        },
+    )
+    duplicate = client.post(
+        "/api/v1/playback/events",
+        json={
+            "track_id": track_id,
+            "event_type": "play_threshold_reached",
+            "client_event_id": "threshold-scrobble",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["navidrome_scrobble"]["status"] == "ok"
+    assert response.json()["navidrome_scrobble"]["mode"] == "submission"
+    assert duplicate.status_code == 200
+    assert duplicate.json()["duplicate"] is True
+    assert duplicate.json()["navidrome_scrobble"]["status"] == "skipped"
+    assert len(calls) == 1
+    assert calls[0][0] == "nav-song-1"
+    assert calls[0][1] is not None
+    assert calls[0][2] is True
+
+
+def test_api_v1_track_started_sends_navidrome_now_playing(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    track_id = add_track(store, tmp_path / "signals.flac", title="Signals", artist="Alpha")
+    store.upsert_external_track("navidrome", "nav-song-1", track_id)
+    monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome.example")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_USER", "user")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_PASSWORD", "secret")
+    calls: list[tuple[str, int | None, bool]] = []
+
+    class FakeNavidromeClient:
+        def __init__(self, _settings):
+            pass
+
+        def scrobble_song(self, item_id: str, *, played_at_ms: int | None = None, submission: bool = True):
+            calls.append((item_id, played_at_ms, submission))
+            return {}
+
+    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/playback/events",
+        json={
+            "track_id": track_id,
+            "event_type": "track_started",
+            "client_event_id": "started-scrobble",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["navidrome_scrobble"]["status"] == "ok"
+    assert response.json()["navidrome_scrobble"]["mode"] == "now_playing"
+    assert calls == [("nav-song-1", calls[0][1], False)]
+    assert calls[0][1] is not None
+    assert store.get_track_preference(track_id) is None
+
+
+def test_api_v1_playback_low_completion_does_not_count(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    track_id = add_track(store, tmp_path / "completion.flac", title="Completion", artist="Alpha")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/playback/events",
+        json={
+            "track_id": track_id,
+            "event_type": "completed",
+            "play_fraction": 0.5,
+            "client_event_id": "low-completion",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert store.get_track_preference(track_id).completion_count == 0
+
+
+def test_api_v1_playback_event_rejects_invalid_event_type(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/playback/events",
+        json={"event_type": "not_a_real_event", "track_id": 1},
+    )
+
+    assert response.status_code == 422
+
+
+def test_api_v1_dashboard_shelves_use_library_and_playback_history(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    old_id = add_track(store, tmp_path / "old" / "01.flac", title="Old One", artist="Alpha", album="Old Release")
+    new_id = add_track(store, tmp_path / "new" / "01.flac", title="New One", artist="Beta", album="New Release")
+    with store.connect() as conn:
+        conn.execute(
+            "UPDATE tracks SET created_at = ?, added_at = ? WHERE id = ?",
+            ("2024-01-01T00:00:00+00:00", "2024-01-01T00:00:00+00:00", old_id),
+        )
+        conn.execute(
+            "UPDATE tracks SET created_at = ?, added_at = ? WHERE id = ?",
+            ("2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00", new_id),
+        )
+        conn.execute(
+            """
+            UPDATE releases
+            SET added_at = (
+                SELECT MAX(t.added_at)
+                FROM release_tracks rt
+                JOIN tracks t ON t.id = rt.track_id
+                WHERE rt.release_id = releases.id
+            )
+            """
+        )
+    store.record_playback_event(
+        track_id=old_id,
+        event_type="play_threshold_reached",
+        created_at="2024-02-01T00:00:00+00:00",
+    )
+    store.record_playback_event(
+        track_id=old_id,
+        event_type="completed",
+        created_at="2024-02-01T00:03:00+00:00",
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/dashboard?limit=5")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["hero"]["title"] == "Flow"
+    shelves = {shelf["key"]: shelf for shelf in data["shelves"]}
+    assert shelves["recently_added"]["items"][0]["title"] == "New Release"
+    assert shelves["listen_again"]["items"][0]["title"] == "Old One"
+    assert shelves["long_time_no_listen"]["items"][0]["title"] == "Old One"
+
+    shelf_response = client.get("/api/v1/dashboard/shelves/listen_again?limit=1")
+    assert shelf_response.status_code == 200
+    assert shelf_response.json()["next_offset"] is None
+
+    started = client.post(
+        "/api/v1/playback/events",
+        json={"track_id": old_id, "event_type": "track_started", "client_event_id": "old-started"},
+    )
+    long_time = client.get("/api/v1/dashboard/shelves/long_time_no_listen?limit=1")
+    assert started.status_code == 200
+    assert long_time.status_code == 200
+    assert long_time.json()["items"][0]["title"] == "Old One"
+
+    missing_response = client.get("/api/v1/dashboard/shelves/not_real")
+    assert missing_response.status_code == 404
+
+
+def test_api_v1_dashboard_shelves_use_imported_navidrome_history(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    track_id = add_track(store, tmp_path / "history" / "one.flac", title="Played Elsewhere", artist="Alpha")
+    store.import_external_track_play_state(
+        track_id,
+        play_count=5,
+        last_played_at="2026-01-01T00:00:00+00:00",
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/dashboard/shelves/listen_again?limit=5")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert items[0]["title"] == "Played Elsewhere"
+    assert items[0]["reason"] == "Played 5 times"
+    assert items[0]["artwork"]["url"].endswith("/cover?size=512")
+
+
+def test_api_v1_dashboard_auto_generates_mixes_for_you(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "generated_mixes": {
+                    "mix_dashboard_count": 2,
+                    "mix_tracks_per_mix": 2,
+                    "mix_region_threshold": 0.9,
+                    "mix_max_per_artist": 1,
+                    "mix_max_per_release": 1,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    ids = [
+        add_track(store, tmp_path / "auto-mix" / "seed-a.flac", title="Seed A", artist="Alpha", album="A1"),
+        add_track(store, tmp_path / "auto-mix" / "near-a.flac", title="Near A", artist="Beta", album="B1"),
+        add_track(store, tmp_path / "auto-mix" / "seed-c.flac", title="Seed C", artist="Gamma", album="C1"),
+        add_track(store, tmp_path / "auto-mix" / "near-c.flac", title="Near C", artist="Delta", album="D1"),
+    ]
+    vectors = [
+        [1.0, 0.0],
+        [0.98, 0.02],
+        [0.0, 1.0],
+        [0.02, 0.98],
+    ]
+    for track_id, vector in zip(ids, vectors, strict=True):
+        store.save_embedding(track_id, "discogs_multi", np.array(vector, dtype=np.float32))
+    for track_id in [ids[0], ids[2]]:
+        store.record_playback_event(
+            track_id=track_id,
+            event_type="completed",
+            position_seconds=123.0,
+            duration_seconds=123.0,
+            play_fraction=1.0,
+        )
+    client = TestClient(app)
+
+    response = client.get("/api/v1/dashboard?limit=5&include_debug=true")
+
+    assert response.status_code == 200
+    shelves = {shelf["key"]: shelf for shelf in response.json()["shelves"]}
+    mix_shelf = shelves["mixes_for_you"]
+    assert mix_shelf["total"] == 2
+    assert len(mix_shelf["items"]) == 2
+    assert response.json()["generation"]["mixes_for_you"]["generated_count"] == 2
+    assert store.count_generated_mixes(["active"]) == 2
+    assert all(
+        len(store.list_generated_mix_items(item["entity_id"])) == 2
+        for item in mix_shelf["items"]
+    )
+
+
+def test_api_v1_generated_mix_settings_round_trip(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    defaults = client.get("/api/v1/mixes/settings")
+    assert defaults.status_code == 200
+    assert defaults.json()["settings"]["mix_update_cadence"] == "daily"
+    assert defaults.json()["settings"]["mix_seed_source"] == "listening_history"
+    assert defaults.json()["settings"]["mix_discovery_ratio"] == 0.75
+    assert defaults.json()["settings"]["mix_novelty_weight"] == 0.6
+
+    updated = client.put(
+        "/api/v1/mixes/settings",
+        json={
+            "mix_dashboard_count": 3,
+            "mix_tracks_per_mix": 25,
+            "mix_update_cadence": "daily",
+            "mix_seed_source": "track_likes_only",
+            "mix_novelty_weight": 0.9,
+            "mix_candidate_pool": 250,
+            "mix_max_per_artist": 2,
+            "mix_max_per_release": 1,
+        },
+    )
+    loaded = client.get("/api/v1/mixes/settings")
+
+    assert updated.status_code == 200
+    assert updated.json()["settings"]["mix_dashboard_count"] == 3
+    assert updated.json()["settings"]["mix_tracks_per_mix"] == 25
+    assert updated.json()["settings"]["mix_update_cadence"] == "daily"
+    assert updated.json()["settings"]["mix_seed_source"] == "track_likes_only"
+    assert updated.json()["settings"]["mix_novelty_weight"] == 0.9
+    assert updated.json()["settings"]["mix_max_per_artist"] == 2
+    assert updated.json()["settings"]["mix_max_per_release"] == 1
+    assert loaded.status_code == 200
+    assert loaded.json()["settings"]["mix_candidate_pool"] == 250
+    assert loaded.json()["settings"]["mix_seed_source"] == "track_likes_only"
+    assert loaded.json()["settings"]["mix_novelty_weight"] == 0.9
+
+
+def test_api_v1_generated_mix_status_reports_generation_plan(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.get("/api/v1/mixes/status")
+
+    assert response.status_code == 200
+    generation = response.json()["generation"]
+    assert generation["settings"]["update_cadence"] == "daily"
+    assert generation["settings"]["seed_source"] == "listening_history"
+    assert generation["reason"] == "missing"
+    assert generation["should_generate"] is True
+    assert generation["existing_visible_count"] == 0
+    assert generation["mixes"] == []
+
+
+def test_api_v1_generated_mixes_generate_detail_save_play_and_dashboard(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    first_id = add_track(store, tmp_path / "mix" / "one.flac", title="One", artist="Alpha", album="First")
+    second_id = add_track(store, tmp_path / "mix" / "two.flac", title="Two", artist="Beta", album="Second")
+    store.save_embedding(first_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    store.save_embedding(second_id, "discogs_multi", np.array([0.95, 0.05], dtype=np.float32))
+    cover_calls = []
+
+    def fake_generate_mix_cover(store_arg, settings_arg, mix_id, track_ids):
+        cover_calls.append((mix_id, list(track_ids)))
+        cover_path = tmp_path / "covers" / f"{mix_id}.jpg"
+        cover_path.parent.mkdir(parents=True, exist_ok=True)
+        cover_path.write_bytes(b"fake-jpeg")
+        return cover_path
+
+    monkeypatch.setattr(mixes_module, "generate_mix_cover", fake_generate_mix_cover)
+    store.record_playback_event(
+        track_id=first_id,
+        event_type="completed",
+        position_seconds=123.0,
+        duration_seconds=123.0,
+        play_fraction=1.0,
+    )
+    client = TestClient(app)
+
+    generated = client.post(
+        "/api/v1/mixes/generate",
+        json={"count": 1, "tracks_per_mix": 2, "force": True},
+    )
+
+    assert generated.status_code == 200
+    mix_id = generated.json()["items"][0]["id"]
+    assert generated.json()["items"][0]["track_count"] == 2
+    assert cover_calls[0][0] == mix_id
+
+    listed = client.get("/api/v1/mixes")
+    assert listed.status_code == 200
+    listed_mix = next(item for item in listed.json()["items"] if item["id"] == mix_id)
+    assert listed_mix["artwork"]["url"] == f"/api/v1/mixes/{mix_id}/cover"
+    status = client.get("/api/v1/mixes/status")
+    assert status.status_code == 200
+    score_summary = status.json()["generation"]["mixes"][0]["score_summary"]
+    assert score_summary["selected_count"] == 2
+    assert score_summary["known_selected"] >= 1
+    assert score_summary["novelty_weight"] == 0.6
+    assert "average_novelty" in score_summary
+    assert "novelty_distribution" in score_summary
+
+    detail = client.get(f"/api/v1/mixes/{mix_id}?include_debug=true")
+    assert detail.status_code == 200
+    detail_track_ids = [item["track_id"] for item in detail.json()["items"]]
+    assert sorted(detail_track_ids) == [first_id, second_id]
+    assert detail.json()["items"][0]["score_breakdown"]
+    assert cover_calls == [(mix_id, detail_track_ids)]
+    cover = client.get(f"/api/v1/mixes/{mix_id}/cover")
+    assert cover.status_code == 200
+    assert cover.headers["content-type"].startswith("image/jpeg")
+    assert cover.content == b"fake-jpeg"
+
+    dashboard = client.get("/api/v1/dashboard?limit=5")
+    shelves = {shelf["key"]: shelf for shelf in dashboard.json()["shelves"]}
+    assert any(item["entity_id"] == mix_id for item in shelves["mixes_for_you"]["items"])
+
+    play = client.post(f"/api/v1/mixes/{mix_id}/play")
+    assert play.status_code == 200
+    assert play.json()["session"]["source_type"] == "generated_mix"
+    assert [item["track_id"] for item in play.json()["queue"]["items"]] == detail_track_ids
+
+    saved = client.post(f"/api/v1/mixes/{mix_id}/save")
+    assert saved.status_code == 200
+    assert saved.json()["status"] == "saved"
+
+
+def test_api_v1_dashboard_refreshes_expired_full_generated_mix_shelf(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    first_id = add_track(store, tmp_path / "expired-mix" / "one.flac", title="One", artist="Alpha", album="First")
+    second_id = add_track(store, tmp_path / "expired-mix" / "two.flac", title="Two", artist="Beta", album="Second")
+    store.save_embedding(first_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    store.save_embedding(second_id, "discogs_multi", np.array([0.95, 0.05], dtype=np.float32))
+    store.record_playback_event(
+        track_id=first_id,
+        event_type="completed",
+        position_seconds=123.0,
+        duration_seconds=123.0,
+        play_fraction=1.0,
+    )
+    client = TestClient(app)
+    client.put(
+        "/api/v1/mixes/settings",
+        json={"mix_dashboard_count": 1, "mix_tracks_per_mix": 2, "mix_update_cadence": "daily"},
+    )
+    generated = client.post("/api/v1/mixes/generate", json={"count": 1, "tracks_per_mix": 2, "force": True})
+    old_mix_id = generated.json()["items"][0]["id"]
+    with store.connect() as conn:
+        conn.execute(
+            "UPDATE generated_mixes SET expires_at = ?, updated_at = ? WHERE id = ?",
+            ("2020-01-01T00:00:00+00:00", "2020-01-01T00:00:00+00:00", old_mix_id),
+        )
+
+    dashboard = client.get("/api/v1/dashboard?limit=5&include_debug=true")
+
+    assert dashboard.status_code == 200
+    generation = dashboard.json()["generation"]["mixes_for_you"]
+    assert generation["reason"] == "expired"
+    assert generation["generated_count"] == 1
+    assert store.get_generated_mix(old_mix_id).status == "stale"
+
+
+def test_listener_surface_routes_serve_shell():
+    client = TestClient(app)
+
+    for path in ["/search", "/artists/1", "/releases/1", "/mixes/mix-1", "/settings"]:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "listenerSearch" in response.text
+        assert "artistSurface" in response.text
+        assert "releaseSurface" in response.text
+        assert "settingsTabs" in response.text
+
+
 def test_navidrome_sync_job_imports_catalog(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
 
@@ -128,7 +1035,7 @@ def test_navidrome_sync_job_imports_catalog(tmp_path: Path, monkeypatch):
                 duration=123,
                 size=100,
                 suffix="flac",
-                raw={"id": "song-1", "title": "One"},
+                raw={"id": "song-1", "title": "One", "artistId": "artist-1"},
             )
 
     monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
@@ -146,6 +1053,8 @@ def test_navidrome_sync_job_imports_catalog(tmp_path: Path, monkeypatch):
     imported = store.get_track_by_external_id("navidrome", "song-1")
     assert imported is not None
     assert imported.path == "navidrome://song-1"
+    artist_id = store.search_entities("Artist")["artists"]["items"][0].artist.id
+    assert store.external_id_for_entity("navidrome", "artist", artist_id) == "artist-1"
     jobs = client.get("/jobs?include_completed=true").json()["jobs"]
     sync_job = next(job for job in jobs if job["id"] == body["job_id"])
     assert sync_job["status"] == "completed"
@@ -159,7 +1068,43 @@ def test_test_ui_loads():
 
     assert response.status_code == 200
     assert "discocs" in response.text
-    assert "Dashboard" in response.text
+    assert "Home" in response.text
+    assert "Operations" in response.text
+    assert "homeSearchQuery" in response.text
+    assert "listenerDashboardShelves" in response.text
+    assert "/api/v1/dashboard?limit=8" in response.text
+    assert "Start Flow" in response.text
+    assert "listenerSearch" in response.text
+    assert "/api/v1/search" in response.text
+    assert "artistSurface" in response.text
+    assert "releaseSurface" in response.text
+    assert "playSource('release'" in response.text
+    assert "expandedPlayer" in response.text
+    assert "playerQueueList" in response.text
+    assert "playerSeek" in response.text
+    assert "player-seek-bubble" in response.text
+    assert '<audio id="audioPlayer" preload="none"></audio>' in response.text
+    assert "player-inline-actions" in response.text
+    assert "bootstrap-icons" in response.text
+    assert "volumeSlider" in response.text
+    assert "toggleMute()" in response.text
+    assert "repeatOneButton" in response.text
+    assert "toggleRepeatOne()" in response.text
+    assert "shuffleButton" in response.text
+    assert "toggleShuffleMode()" in response.text
+    assert "PLAYER_STATE_KEY" in response.text
+    assert "queueTrackArtwork(item, 600)" in response.text
+    assert "/api/v1/autoplay/refill" in response.text
+    assert "autoplay-pool-section" in response.text
+    assert "activePlaybackQueue?.autoplay_pool" in response.text
+    assert "async function refreshPlaybackQueue()" in response.text
+    assert "autoplayStatusFromRefill" in response.text
+    assert "renderAutoplayChipRow" in response.text
+    assert "autoplayToggle" in response.text
+    assert "recordPlaybackEvent(\"play_threshold_reached\"" in response.text
+    assert "operation: \"jump\"" in response.text
+    assert "settingsTabs" in response.text
+    assert "data-settings-pane=\"player\"" in response.text
     assert "Library" in response.text
     assert "Browse" in response.text
     assert "Metrics" in response.text
@@ -1526,6 +2471,117 @@ def test_track_audio_returns_clear_missing_file_error(tmp_path: Path, monkeypatc
     assert store.get_track(track_id).missing_at is not None
 
 
+def test_track_audio_uses_navidrome_mapping_for_local_path(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_USER", "tester")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_PASSWORD", "secret")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_AUTH_MODE", "plain")
+    track_id = add_track(store, tmp_path / "missing.flac")
+    store.upsert_external_track("navidrome", "song-1", track_id)
+    seen = {}
+
+    class FakeStreamResponse:
+        status = 206
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Length": "15",
+            "Content-Range": "bytes 0-14/15",
+            "Content-Type": "audio/x-flac",
+        }
+
+        def __init__(self):
+            self._chunks = [b"navidrome-", b"audio", b""]
+
+        def read(self, _size):
+            return self._chunks.pop(0)
+
+        def close(self):
+            seen["closed"] = True
+
+        def getcode(self):
+            return self.status
+
+    def fake_urlopen(request, timeout):
+        parsed = urlparse(request.full_url)
+        seen["path"] = parsed.path
+        seen["query"] = parse_qs(parsed.query)
+        seen["range"] = request.get_header("Range")
+        seen["timeout"] = timeout
+        return FakeStreamResponse()
+
+    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    client = TestClient(app)
+
+    response = client.get(f"/tracks/{track_id}/audio", headers={"Range": "bytes=0-14"})
+
+    assert response.status_code == 206
+    assert response.headers["content-type"].startswith("audio/flac")
+    assert response.headers["accept-ranges"] == "bytes"
+    assert response.headers["content-range"] == "bytes 0-14/15"
+    assert response.content == b"navidrome-audio"
+    assert seen["path"] == "/rest/stream.view"
+    assert seen["query"]["id"] == ["song-1"]
+    assert seen["query"]["u"] == ["tester"]
+    assert seen["query"]["p"] == ["secret"]
+    assert seen["range"] == "bytes=0-14"
+    assert seen["closed"] is True
+    assert store.get_track(track_id).missing_at is None
+    assert not (tmp_path / "tmp" / "navidrome").exists()
+
+
+def test_track_audio_head_proxies_navidrome_stream_headers(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_USER", "tester")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_PASSWORD", "secret")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_AUTH_MODE", "plain")
+    track_id = add_track(store, tmp_path / "missing.flac")
+    store.upsert_external_track("navidrome", "song-1", track_id)
+    seen = {}
+
+    class FakeHeadResponse:
+        status = 206
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Length": "64",
+            "Content-Range": "bytes 0-63/36798859",
+            "Content-Type": "audio/x-flac",
+            "X-Content-Duration": "304.62934",
+            "X-Content-Type-Options": "nosniff",
+        }
+
+        def read(self, _size):
+            raise AssertionError("HEAD response body should not be read")
+
+        def close(self):
+            seen["closed"] = True
+
+        def getcode(self):
+            return self.status
+
+    def fake_urlopen(request, timeout):
+        seen["method"] = request.get_method()
+        seen["range"] = request.get_header("Range")
+        return FakeHeadResponse()
+
+    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    client = TestClient(app)
+
+    response = client.head(f"/tracks/{track_id}/audio", headers={"Range": "bytes=0-63"})
+
+    assert response.status_code == 206
+    assert response.content == b""
+    assert response.headers["content-type"].startswith("audio/flac")
+    assert response.headers["accept-ranges"] == "bytes"
+    assert response.headers["content-range"] == "bytes 0-63/36798859"
+    assert response.headers["x-content-duration"] == "304.62934"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert seen["method"] == "HEAD"
+    assert seen["range"] == "bytes=0-63"
+    assert seen["closed"] is True
+
+
 def test_lost_files_list_paginates_and_delete_missing_tracks(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     present_path = tmp_path / "present.flac"
@@ -2254,6 +3310,44 @@ def test_navidrome_similar_filters_by_instant_mix_similarity_threshold(
     data = response.json()
     assert [item["item_id"] for item in data["results"]] == ["close"]
     assert data["min_similarity"] == 0.9
+
+
+def test_track_instant_mix_creates_local_history_request(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    seed_id = add_track(store, tmp_path / "seed.flac", title="Seed", album="One")
+    result_id = add_track(store, tmp_path / "result.flac", title="Result", album="Two")
+    store.save_embedding(seed_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    store.save_embedding(result_id, "discogs_multi", np.array([0.9, 0.1], dtype=np.float32))
+    main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
+    client = TestClient(app)
+    settings_response = client.put(
+        "/instant-mix/settings",
+        json={
+            "count": 1,
+            "min_similarity": 0.0,
+            "max_per_artist": 10,
+            "exclude_same_album": False,
+        },
+    )
+    assert settings_response.status_code == 200
+
+    response = client.post(f"/tracks/{seed_id}/instant-mix")
+
+    assert response.status_code == 200
+    data = response.json()
+    request_id = data["request_id"]
+    assert data["request"]["provider"] == "local"
+    assert data["request"]["seed_item_id"] == f"track:{seed_id}"
+    assert data["request"]["results"][0]["id"] == result_id
+    assert data["request"]["results"][0]["item_id"] == f"track:{result_id}"
+    assert data["session"]["source_type"] == "track"
+    assert data["session"]["source_id"] == seed_id
+    assert data["session"]["mode"] == "radio"
+    assert data["session"]["settings"]["instant_mix_request_id"] == request_id
+    assert [item["track_id"] for item in data["queue"]["items"]] == [seed_id, result_id]
+    detail_response = client.get(f"/instant-mix/requests/{request_id}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["provider"] == "local"
 
 
 def test_navidrome_similar_rejects_unsynced_seed(tmp_path: Path, monkeypatch):
