@@ -2,21 +2,32 @@
 
 See `PLAN_UI_ARCHITECTURE.md` for architecture decisions, component map, and stack rationale.
 
+## Available MCP servers
+
+The following MCP servers are connected and should be actively used during execution:
+
+- **shadcn** — look up shadcn/ui component APIs, props, and usage examples before adding or customising components
+- **context7** — fetch up-to-date docs for React Router v7, TanStack Query, Zustand, Radix UI, Tailwind v4, Vite — use this instead of relying on training data, library APIs change
+- **Playwright** — use in Phase 8 for E2E tests: player playback flow, page navigation, search
+
 ---
 
 ## Phase 0 — Project setup
 
 **Goal:** running dev server, blank page, proxy working.
 
-- [ ] Init `ui/` with `npm create vite@latest -- --template react-ts`
-- [ ] Install Tailwind CSS v4 + shadcn/ui: `npx shadcn@latest init` with answers:
-  - Style → **New York**
-  - Base color → **Zinc**
-  - CSS variables for theming → **Yes**
+- [ ] Confirm toolchain: **Node 24**, **pnpm 9** (latest 9.x)
+- [ ] Create `ui/.nvmrc` with content `24` so `nvm use` picks the right version automatically
+- [ ] Init `ui/` with `pnpm create vite@latest . --template react-ts` (run from inside `ui/`)
+- [ ] After init, add `"packageManager": "pnpm@9"` to `ui/package.json` engines field so the repo self-documents the toolchain
+- [ ] Run `pnpm install` to install initial deps, then `pnpm dlx shadcn@latest init` — shadcn detects the existing Vite project automatically:
+  - Template → **Vite**
+  - Component library → **Radix**
+  - Preset → **Rhea** (Inter font + Lucide icons — Inter already used in old UI)
   - All other prompts (paths, aliases) → accept defaults
-- [ ] Install deps: `react-router-dom`, `@tanstack/react-query`, `zustand`
-- [ ] Install openapi-typescript: `npm install -D openapi-typescript` — generates TypeScript types from FastAPI's `/openapi.json`; run with `npx openapi-typescript http://localhost:7752/openapi.json -o src/api/schema.d.ts` and re-run whenever the API changes
-- [ ] Add shadcn components needed from the start: `npx shadcn@latest add button dialog slider dropdown-menu popover tabs tooltip scroll-area skeleton badge`
+- [ ] Install deps: `pnpm add react-router-dom @tanstack/react-query zustand`
+- [ ] Install openapi-typescript: `pnpm add -D openapi-typescript` — generates TypeScript types from FastAPI's `/openapi.json`; run with `pnpm exec openapi-typescript http://localhost:7752/openapi.json -o src/api/schema.d.ts` and re-run whenever the API changes
+- [ ] Add shadcn components needed from the start: `pnpm dlx shadcn@latest add button dialog slider dropdown-menu popover tabs tooltip scroll-area skeleton badge`
 - [ ] `vite.config.ts`: proxy the following paths to `http://localhost:7752`:
   `/api`, `/tracks`, `/artists`, `/releases`, `/mixes`, `/settings`, `/stats`, `/jobs`, `/feedback`, `/navidrome`, `/dashboard`
 - [ ] `index.css`: configure shadcn theme variables to match discocs color palette (see `PLAN_UI_ARCHITECTURE.md` § Styles)

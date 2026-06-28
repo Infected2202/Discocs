@@ -4,6 +4,7 @@
 
 | Layer | Choice | Reason |
 |---|---|---|
+| Runtime | Node 24 + pnpm 9 | Node 24 is current stable; pnpm 9 is fast, strict, workspace-ready |
 | Build | Vite + TypeScript | Standard, fast HMR, simple prod build |
 | UI | React 19 | User requirement |
 | Routing | React Router v7 | Loader pattern, URL-driven state |
