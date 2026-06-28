@@ -6,14 +6,15 @@ import ExpandedPlayer from "@/components/player/ExpandedPlayer"
 
 export default function AppShell() {
   return (
-    <div className="flex h-svh overflow-hidden bg-background">
-      {/* Sidebar — fixed left column */}
-      <Sidebar />
+    <div className="flex flex-col h-svh overflow-hidden bg-background">
+      {/* TopBar — full width */}
+      <TopBar />
 
-      {/* Main column: topbar + scrollable content */}
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        <TopBar />
+      {/* Below: sidebar + content */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        <Sidebar />
 
+        {/* Main column: scrollable content */}
         <main className="flex-1 overflow-y-auto pb-[92px]">
           <Outlet />
         </main>
