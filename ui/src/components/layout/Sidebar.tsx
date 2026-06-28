@@ -22,11 +22,34 @@ export default function Sidebar() {
     <aside
       className={cn(
         "shrink-0 flex flex-col bg-sidebar border-r border-sidebar-border h-full pb-[92px] transition-[width] duration-200",
-        collapsed ? "w-16" : "w-[220px]",
+        collapsed ? "w-14" : "w-[220px]",
       )}
     >
+      {/* Collapse toggle — top */}
+      <div className="px-2 pt-3 pb-1 shrink-0">
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={toggleSidebar}
+                className={cn(
+                  "flex items-center rounded-md text-sm font-medium transition-colors text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 w-full",
+                  collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2",
+                )}
+              >
+                {collapsed ? <PanelLeftOpen size={18} strokeWidth={1.75} /> : <PanelLeftClose size={18} strokeWidth={1.75} />}
+                {!collapsed && <span>Collapse</span>}
+              </button>
+            </TooltipTrigger>
+            {collapsed && (
+              <TooltipContent side="right">Expand sidebar</TooltipContent>
+            )}
+          </Tooltip>
+        </TooltipProvider>
+      </div>
+
       {/* Nav */}
-      <nav className="flex-1 px-2 py-3 space-y-1">
+      <nav className="flex-1 px-2 py-1 space-y-1">
         <TooltipProvider delayDuration={200}>
           {NAV.map(({ to, label, icon: Icon, end }) => {
             const active = isactive(to, end)
@@ -60,29 +83,6 @@ export default function Sidebar() {
           })}
         </TooltipProvider>
       </nav>
-
-      {/* Collapse toggle */}
-      <div className="px-2 py-2 border-t border-sidebar-border">
-        <TooltipProvider delayDuration={200}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={toggleSidebar}
-                className={cn(
-                  "flex items-center rounded-md text-sm font-medium transition-colors text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 w-full",
-                  collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2",
-                )}
-              >
-                {collapsed ? <PanelLeftOpen size={18} strokeWidth={1.75} /> : <PanelLeftClose size={18} strokeWidth={1.75} />}
-                {!collapsed && <span>Collapse</span>}
-              </button>
-            </TooltipTrigger>
-            {collapsed && (
-              <TooltipContent side="right">Expand sidebar</TooltipContent>
-            )}
-          </Tooltip>
-        </TooltipProvider>
-      </div>
     </aside>
   )
 }
