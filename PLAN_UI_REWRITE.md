@@ -224,18 +224,33 @@ The following MCP servers are connected and should be actively used during execu
 
 ---
 
-## Phase 9 — Backend cutover
+## Phase 9 — Containerised deployment
 
-**Goal:** new UI is the default; old UI accessible at `/legacy`.
+**Goal:** frontend and backend run in separate containers behind nginx; new UI is the default at `/`.
 
-- [ ] `main.py`: move old HTML response routes to `/legacy`, `/legacy/search`, etc.
-- [ ] `main.py`: new catch-all at `/` and `/{path:path}` serves `ui/dist/index.html`
-- [ ] `main.py`: mount `ui/dist/assets` as StaticFiles at `/assets`
-- [ ] `ui/vite.config.ts`: set `base: '/'`
-- [ ] CI/CD: `npm run build` in `ui/` as part of deployment
-- [ ] Remove `UI_HTML = ...` from `main.py` once old routes are retired
+### 9a — Revert temporary Phase 0 backend changes
+- [ ] `app/main.py`: remove `StaticFiles` import and `/assets` mount
+- [ ] `app/main.py`: remove `/app` and `/app/{full_path}` catch-all routes
+- [ ] `app/main.py`: add `CORSMiddleware` with `allow_origins=["*"]` (tightened later per deploy env)
 
-**Done when:** visiting `/` shows the new React UI in production.
+### 9b — nginx config
+- [ ] `deploy/nginx/nginx.conf` — reverse proxy all API paths to `backend:7752`, SPA fallback for everything else (see Architecture doc for sketch)
+- [ ] `deploy/nginx/Dockerfile` — `FROM nginx:alpine`, `COPY nginx.conf`, run `pnpm build` in `ui/` and `COPY ui/dist /usr/share/nginx/html`
+
+### 9c — Backend Dockerfile
+- [ ] `deploy/backend/Dockerfile` — `FROM python:3.12-slim`, install deps, `CMD uvicorn app.main:app --host 0.0.0.0 --port 7752`
+
+### 9d — Docker Compose
+- [ ] `docker-compose.yml` at repo root
+  - `backend` service: builds from `deploy/backend/Dockerfile`, mounts `./data` volume for SQLite
+  - `nginx` service: builds from `deploy/nginx/Dockerfile`, ports `80:80`, depends_on backend
+- [ ] `.env.example` — document any env vars (DB path, API keys)
+
+### 9e — Old UI
+- [ ] `app/main.py`: old UI stays at `/admin` (already done in Phase 0) — no further changes needed
+- [ ] Add a visible warning banner to `app/ui.html`: `"Admin panel — operational tools only"`
+
+**Done when:** `docker compose up` → visiting `http://localhost` shows new React UI; `/admin` shows old UI; all API calls work through nginx proxy.
 
 ---
 
@@ -268,3 +283,4 @@ The following MCP servers are connected and should be actively used during execu
 - **Search:** 300ms debounce on input + Enter also triggers immediately
 - **Styles:** Tailwind CSS v4 + shadcn/ui, theme variables mapped to discocs palette
 - **Admin panel:** old UI moves to `/admin` with visible warning banner, no login required
+- **Deployment:** separate containers — nginx (static + reverse proxy) + backend (FastAPI); no StaticFiles in FastAPI; all fetch calls use relative paths so no `VITE_API_BASE_URL` needed
