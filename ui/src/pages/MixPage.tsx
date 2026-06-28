@@ -13,7 +13,7 @@ import type { TrackSummary } from "@/api/types"
 function MixPageSkeleton() {
   return (
     <div className="space-y-8">
-      <div className="px-6 pt-8 flex gap-6 items-end">
+      <div className="px-4 sm:px-6 pt-8 flex gap-6 items-end">
         <Skeleton className="w-44 h-44 rounded-lg shrink-0" />
         <div className="space-y-3 pb-2">
           <Skeleton className="h-4 w-20" />
@@ -24,7 +24,7 @@ function MixPageSkeleton() {
           </div>
         </div>
       </div>
-      <div className="px-6 space-y-2">
+      <div className="px-4 sm:px-6 space-y-2">
         {[1, 2, 3, 4, 5].map((i) => (
           <Skeleton key={i} className="h-12 w-full rounded-md" />
         ))}
@@ -63,7 +63,7 @@ export default function MixPage() {
   return (
     <div className="space-y-8 pb-8">
       {/* Header */}
-      <div className="px-6 pt-8 flex gap-6 items-end">
+      <div className="px-4 sm:px-6 pt-8 flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
         <ArtworkImage
           src={mix.artwork?.url}
           alt={mix.title}
@@ -71,7 +71,7 @@ export default function MixPage() {
           className="rounded-lg shrink-0"
           fallbackLetter="M"
         />
-        <div className="pb-2 min-w-0">
+        <div className="pb-0 sm:pb-2 min-w-0">
           <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
             Generated mix
           </p>
@@ -107,7 +107,7 @@ export default function MixPage() {
       </div>
 
       {/* Tracks */}
-      <div className="px-6">
+      <div className="px-4 sm:px-6">
         <TrackTable tracks={tracks} sourceLabel={mix.title} />
       </div>
     </div>

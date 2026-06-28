@@ -139,7 +139,7 @@ export default function TrackRow({
             "flex h-7 w-7 items-center justify-center rounded transition-colors mx-auto",
             liked
               ? "text-primary opacity-100"
-              : "text-muted-foreground opacity-0 group-hover/row:opacity-100 hover:text-foreground",
+              : "text-muted-foreground opacity-100 md:opacity-0 md:group-hover/row:opacity-100 hover:text-foreground",
           )}
         >
           <ThumbsUp size={13} />

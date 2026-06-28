@@ -111,3 +111,21 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #3d4347;
 }
+
+/* Horizontal shelf scroll — always show scrollbar */
+.shelf-scroll {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #3d4347 transparent;
+}
+.shelf-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+.shelf-scroll::-webkit-scrollbar-track {
+  background: rgba(45, 48, 51, 0.3);
+  border-radius: 2px;
+}
+.shelf-scroll::-webkit-scrollbar-thumb {
+  background: #3d4347;
+  border-radius: 2px;
+}

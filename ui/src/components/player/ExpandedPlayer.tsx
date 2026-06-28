@@ -60,8 +60,6 @@ export default function ExpandedPlayer() {
   const isLiked    = useNavidromeStore((s) => s.isLiked)
   const toggleLike = useNavidromeStore((s) => s.toggleLike)
 
-  if (!expanded) return null
-
   const isPlaying  = playbackState === "playing"
   const isLoading  = playbackState === "loading"
   const progress   = duration > 0 ? currentTime / duration : 0
@@ -97,7 +95,10 @@ export default function ExpandedPlayer() {
   const activeBtn = "text-primary hover:text-primary"
 
   return (
-    <div className="fixed inset-0 z-50 bg-background flex flex-col overflow-hidden">
+    <div className={cn(
+      "fixed inset-0 z-50 bg-background flex flex-col overflow-hidden transition-transform duration-300 ease-out will-change-transform",
+      expanded ? "translate-y-0" : "translate-y-full pointer-events-none",
+    )}>
       {/* Top bar */}
       <div className="flex items-center justify-between px-6 pt-3 pb-1 shrink-0">
         <button onClick={toggleExpanded} className={iconBtn}>

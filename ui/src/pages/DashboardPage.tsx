@@ -26,7 +26,7 @@ function DashboardSkeleton() {
     <div className="py-6 space-y-8">
       {[1, 2, 3].map((i) => (
         <div key={i} className="space-y-3">
-          <div className="px-6 flex gap-3 items-baseline">
+          <div className="px-4 sm:px-6 flex gap-3 items-baseline">
             <Skeleton className="h-5 w-36" />
             <Skeleton className="h-4 w-24" />
           </div>
@@ -77,7 +77,7 @@ export default function DashboardPage() {
   return (
     <div className="py-6 space-y-8">
       {/* Search bar */}
-      <div className="px-6">
+      <div className="px-4 sm:px-6">
         <form onSubmit={handleSearch}>
           <div className="relative max-w-xl">
             <Search
@@ -97,7 +97,7 @@ export default function DashboardPage() {
 
       {/* Flow hero — disabled */}
       {data?.hero && (
-        <div className="px-6">
+        <div className="px-4 sm:px-6">
           <div className="rounded-xl bg-muted/50 border border-border px-5 py-4 flex items-center justify-between opacity-50 cursor-not-allowed select-none">
             <div>
               <p className="font-semibold">{data.hero.title}</p>
@@ -112,7 +112,7 @@ export default function DashboardPage() {
       {isLoading && <DashboardSkeleton />}
 
       {error && (
-        <div className="px-6">
+        <div className="px-4 sm:px-6">
           <p className="text-sm text-destructive">Failed to load dashboard: {error.message}</p>
         </div>
       )}

@@ -90,7 +90,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="py-8 px-6 max-w-lg space-y-10">
+    <div className="py-8 px-4 sm:px-6 max-w-lg space-y-10">
       <div>
         <h1 className="text-2xl font-bold">Settings</h1>
         <p className="text-sm text-muted-foreground mt-1">Configure your discocs instance.</p>

@@ -160,7 +160,7 @@ export default function PlayerBar() {
             <SkipForward size={18} />
           </button>
 
-          <span className="text-xs text-muted-foreground tabular-nums ml-2 whitespace-nowrap">
+          <span className="text-xs text-muted-foreground tabular-nums ml-2 whitespace-nowrap hidden md:inline">
             {formatTime(currentTime)} / {formatTime(duration)}
           </span>
         </div>
@@ -233,28 +233,32 @@ export default function PlayerBar() {
               </button>
               <button
                 onClick={() => currentTrackId && toggleLike(currentTrackId)}
-                className={iconBtn}
+                className={cn(iconBtn, "hidden md:flex")}
                 title="Dislike"
               >
                 <ThumbsDown size={15} />
               </button>
-              <TrackMoreMenu trackId={currentTrackId} />
+              <div className="hidden md:block">
+                <TrackMoreMenu trackId={currentTrackId} />
+              </div>
             </div>
           )}
         </div>
 
         {/* ── RIGHT: volume + shuffle + repeat + autoplay + expand ── */}
         <div className="flex items-center gap-0.5 shrink-0">
-          <VolumeControl
-            volume={volume}
-            muted={muted}
-            onToggleMute={toggleMute}
-            onVolumeClick={handleVolumeClick}
-          />
+          <div className="hidden md:flex items-center">
+            <VolumeControl
+              volume={volume}
+              muted={muted}
+              onToggleMute={toggleMute}
+              onVolumeClick={handleVolumeClick}
+            />
+          </div>
 
           <button
             onClick={() => toggleRepeatOne()}
-            className={cn(iconBtn, repeatOne && activeBtn)}
+            className={cn(iconBtn, repeatOne && activeBtn, "hidden md:flex")}
             title="Repeat one"
           >
             <Repeat1 size={16} />
@@ -262,7 +266,7 @@ export default function PlayerBar() {
 
           <button
             onClick={() => toggleShuffle()}
-            className={cn(iconBtn, shuffle && activeBtn)}
+            className={cn(iconBtn, shuffle && activeBtn, "hidden md:flex")}
             title="Shuffle"
           >
             <Shuffle size={16} />
@@ -270,7 +274,7 @@ export default function PlayerBar() {
 
           <button
             onClick={() => toggleAutoplay()}
-            className={cn(iconBtn, autoplay && activeBtn)}
+            className={cn(iconBtn, autoplay && activeBtn, "hidden md:flex")}
             title="Autoplay"
           >
             <Infinity size={16} />

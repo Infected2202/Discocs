@@ -7,7 +7,7 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover"
 
-export default function ProfileButton() {
+export default function ProfileButton({ mobile = false }: { mobile?: boolean }) {
   const navigate = useNavigate()
   const { status, isLoading } = useNavidromeStatus()
 
@@ -33,7 +33,7 @@ export default function ProfileButton() {
           <CircleDot size={14} className={dotColor} />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-56 p-3">
+      <PopoverContent align={mobile ? "center" : "end"} className="w-56 p-3">
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <span className={cn("w-2 h-2 rounded-full shrink-0", dotColor)} />

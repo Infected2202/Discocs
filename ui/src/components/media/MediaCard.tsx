@@ -32,7 +32,7 @@ export default function MediaCard({ id, type, title, subtitle, reason, artwork, 
   return (
     <div
       className={cn(
-        "group relative w-44 shrink-0 cursor-pointer rounded-lg p-3 transition-colors hover:bg-muted/60",
+        "group relative w-36 sm:w-44 shrink-0 cursor-pointer rounded-lg p-3 transition-colors hover:bg-muted/60",
         className,
       )}
       onClick={handleClick}

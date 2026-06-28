@@ -21,7 +21,7 @@ function formatDuration(seconds: number | null | undefined): string {
 function ReleasePageSkeleton() {
   return (
     <div className="space-y-8">
-      <div className="px-6 pt-8 flex gap-6 items-end">
+      <div className="px-4 sm:px-6 pt-8 flex gap-6 items-end">
         <Skeleton className="w-44 h-44 rounded-lg shrink-0" />
         <div className="space-y-3 pb-2 flex-1">
           <Skeleton className="h-8 w-64" />
@@ -33,7 +33,7 @@ function ReleasePageSkeleton() {
           </div>
         </div>
       </div>
-      <div className="px-6 space-y-2">
+      <div className="px-4 sm:px-6 space-y-2">
         {[1, 2, 3, 4, 5, 6].map((i) => (
           <Skeleton key={i} className="h-12 w-full rounded-md" />
         ))}
@@ -69,7 +69,7 @@ export default function ReleasePage() {
   return (
     <div className="space-y-8 pb-8">
       {/* Header */}
-      <div className="px-6 pt-8 flex gap-6 items-end">
+      <div className="px-4 sm:px-6 pt-8 flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
         <ArtworkImage
           src={release.artwork?.url}
           alt={release.title}
@@ -77,7 +77,7 @@ export default function ReleasePage() {
           className="rounded-lg shrink-0"
           fallbackLetter={release.title[0]}
         />
-        <div className="pb-2 min-w-0">
+        <div className="pb-0 sm:pb-2 min-w-0">
           <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
             {release.release_type_label}
           </p>
@@ -124,7 +124,7 @@ export default function ReleasePage() {
       </div>
 
       {/* Tracks */}
-      <div className="px-6">
+      <div className="px-4 sm:px-6">
         <TrackTable
           tracks={tracks}
           showRelease={false}

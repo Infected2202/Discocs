@@ -13,7 +13,7 @@ type TabKey = "all" | "artists" | "releases" | "tracks"
 
 function ResultSkeleton() {
   return (
-    <div className="space-y-6 px-6 py-4">
+    <div className="space-y-6 px-4 sm:px-6 py-4">
       <Skeleton className="h-5 w-48" />
       <div className="flex gap-2">
         {[1, 2, 3, 4].map((i) => (
@@ -59,7 +59,7 @@ export default function SearchPage() {
   return (
     <div className="py-6 space-y-6">
       {/* Search bar */}
-      <div className="px-6">
+      <div className="px-4 sm:px-6">
         <form onSubmit={handleSubmit}>
           <div className="relative max-w-xl">
             <SearchIcon
@@ -80,7 +80,7 @@ export default function SearchPage() {
 
       {/* Empty / no query */}
       {!urlQuery && (
-        <p className="px-6 text-sm text-muted-foreground">Type something to search your library.</p>
+        <p className="px-4 sm:px-6 text-sm text-muted-foreground">Type something to search your library.</p>
       )}
 
       {/* Loading */}
@@ -88,12 +88,12 @@ export default function SearchPage() {
 
       {/* No results */}
       {!isLoading && urlQuery && !hasResults && (
-        <p className="px-6 text-sm text-muted-foreground">No results for "{urlQuery}".</p>
+        <p className="px-4 sm:px-6 text-sm text-muted-foreground">No results for "{urlQuery}".</p>
       )}
 
       {/* Results */}
       {hasResults && (
-        <Tabs value={tab} onValueChange={(v) => setTab(v as TabKey)} className="px-6">
+        <Tabs value={tab} onValueChange={(v) => setTab(v as TabKey)} className="px-4 sm:px-6">
           <TabsList>
             <TabsTrigger value="all">All</TabsTrigger>
             <TabsTrigger value="artists" disabled={artists.length === 0}>

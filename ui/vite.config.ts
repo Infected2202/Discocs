@@ -37,7 +37,15 @@ export default defineConfig({
     proxy: Object.fromEntries(
       proxyPaths.map((p) => [
         p,
-        { target: BACKEND, changeOrigin: true },
+        {
+          target: BACKEND,
+          changeOrigin: true,
+          // Only proxy API/XHR requests, not browser navigation (SPA routes)
+          bypass: (req) => {
+            const accept = req.headers.accept ?? ""
+            if (accept.includes("text/html")) return "/index.html"
+          },
+        },
       ])
     ),
   },

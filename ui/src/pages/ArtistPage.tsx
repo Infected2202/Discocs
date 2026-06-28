@@ -22,14 +22,14 @@ function releaseSummaryToCard(r: ReleaseSummary, onPlay: () => void) {
 function ArtistPageSkeleton() {
   return (
     <div className="space-y-8">
-      <div className="px-6 pt-8 flex gap-6 items-end">
+      <div className="px-4 sm:px-6 pt-8 flex gap-6 items-end">
         <Skeleton className="w-36 h-36 rounded-full shrink-0" />
         <div className="space-y-3 pb-2">
           <Skeleton className="h-9 w-64" />
           <Skeleton className="h-4 w-40" />
         </div>
       </div>
-      <div className="px-6 space-y-3">
+      <div className="px-4 sm:px-6 space-y-3">
         {[1, 2, 3, 4, 5].map((i) => (
           <Skeleton key={i} className="h-12 w-full rounded-md" />
         ))}
@@ -62,7 +62,7 @@ export default function ArtistPage() {
   return (
     <div className="space-y-8 pb-8">
       {/* Header */}
-      <div className="px-6 pt-8 flex gap-6 items-end">
+      <div className="px-4 sm:px-6 pt-8 flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
         <ArtworkImage
           src={artist.image?.url}
           alt={artist.name}
@@ -70,7 +70,7 @@ export default function ArtistPage() {
           className="rounded-full shrink-0"
           fallbackLetter={artist.name[0]}
         />
-        <div className="pb-2 min-w-0">
+        <div className="pb-0 sm:pb-2 min-w-0">
           <h1 className="text-3xl font-bold truncate">{artist.name}</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {stats.tracks.toLocaleString()} tracks
