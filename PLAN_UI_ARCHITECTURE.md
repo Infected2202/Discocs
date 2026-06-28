@@ -226,21 +226,79 @@ Scrollbar styling and a few complex layout rules go in `index.css` as regular CS
 
 ## Backend integration
 
-During development: Vite proxy forwards `/api`, `/tracks`, `/artists`, `/releases`, `/mixes`, `/settings`, `/stats`, `/jobs`, `/feedback` to `localhost:<backend_port>`.
+### Development
 
-Production: `main.py` mounts `ui/dist/` as a FastAPI `StaticFiles` app and adds a catch-all that serves `index.html`:
+Vite dev server (`localhost:5173`) proxies all API paths to the FastAPI backend (`localhost:7752`):
 
-```python
-from fastapi.staticfiles import StaticFiles
-
-app.mount("/assets", StaticFiles(directory="ui/dist/assets"), name="ui-assets")
-
-@app.get("/app/{full_path:path}", response_class=HTMLResponse)
-def new_ui(full_path: str) -> HTMLResponse:
-    return HTMLResponse((Path(__file__).parent.parent / "ui/dist/index.html").read_text())
+```
+/api, /tracks, /artists, /releases, /mixes, /settings,
+/stats, /jobs, /feedback, /navidrome, /dashboard, /workers, /metrics, /playback, /likes
 ```
 
-Old UI stays on `/` untouched. New UI lives on `/app` during development. Cutover = swap the routes.
+All fetch calls use relative paths (`/api/...`) — no `VITE_API_BASE_URL` needed.
+
+### Production — separate containers
+
+Frontend and backend run in separate containers, joined by nginx as a reverse proxy:
+
+```
+┌─────────────────────────────────────────┐
+│           nginx (port 80/443)           │
+│  /           → ui/dist/ (static files) │
+│  /api/*      → backend:7752            │
+│  /tracks/*   → backend:7752            │
+│  /artists/*  → backend:7752            │
+│  /releases/* → backend:7752            │
+│  /mixes/*    → backend:7752            │
+│  /settings/* → backend:7752            │
+│  /stats/*    → backend:7752            │
+│  /jobs/*     → backend:7752            │
+│  /feedback/* → backend:7752            │
+│  /navidrome/*→ backend:7752            │
+│  /dashboard* → backend:7752            │
+│  /workers/*  → backend:7752            │
+│  /metrics*   → backend:7752            │
+│  /playback/* → backend:7752            │
+│  /likes*     → backend:7752            │
+│  /health     → backend:7752            │
+└─────────────────────────────────────────┘
+```
+
+**Docker Compose services:**
+
+| Service | Image | Role |
+|---------|-------|------|
+| `backend` | `python:3.12-slim` | FastAPI on port 7752 |
+| `nginx` | `nginx:alpine` | reverse proxy + static files |
+
+`ui/dist/` is built during the nginx image build (`pnpm build`) and baked into the nginx image.
+FastAPI does **not** serve any static files — `StaticFiles` mount and `/app` catch-all added in Phase 0 will be reverted in Phase 9.
+
+**`nginx.conf` sketch:**
+
+```nginx
+server {
+    listen 80;
+
+    # SPA static files
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # All backend API paths
+    location ~ ^/(api|tracks|artists|releases|mixes|settings|stats|jobs|feedback|navidrome|dashboard|workers|metrics|playback|likes|health)(/|$) {
+        proxy_pass http://backend:7752;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # SPA fallback — all unknown paths → index.html
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+Old admin UI (`/admin`) stays on FastAPI — nginx routes `/admin*` to the backend as well.
 
 ---
 
