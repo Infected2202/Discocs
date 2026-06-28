@@ -25,6 +25,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import numpy as np
 from starlette.background import BackgroundTask
@@ -407,19 +408,37 @@ def shutdown_analyze_workers() -> None:
         terminate_process_pool(executor)
 
 
-@app.get("/", response_class=HTMLResponse)
-@app.get("/search", response_class=HTMLResponse)
-@app.get("/artists/{artist_id}", response_class=HTMLResponse)
-@app.get("/releases/{release_id}", response_class=HTMLResponse)
-@app.get("/mixes/{mix_id}", response_class=HTMLResponse)
-@app.get("/settings", response_class=HTMLResponse)
-def test_ui() -> HTMLResponse:
+@app.get("/admin", response_class=HTMLResponse)
+@app.get("/admin/search", response_class=HTMLResponse)
+@app.get("/admin/artists/{artist_id}", response_class=HTMLResponse)
+@app.get("/admin/releases/{release_id}", response_class=HTMLResponse)
+@app.get("/admin/mixes/{mix_id}", response_class=HTMLResponse)
+@app.get("/admin/settings", response_class=HTMLResponse)
+def admin_ui() -> HTMLResponse:
     return HTMLResponse(
         UI_HTML,
         headers={
             "Cache-Control": "no-store",
             "X-Discocs-UI-Build": UI_BUILD_ID,
         },
+    )
+
+
+_NEW_UI_DIR = Path(__file__).parent.parent / "ui" / "dist"
+_NEW_UI_INDEX = _NEW_UI_DIR / "index.html"
+
+if _NEW_UI_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=str(_NEW_UI_DIR / "assets")), name="ui-assets")
+
+
+@app.get("/app/{full_path:path}", response_class=HTMLResponse)
+@app.get("/app", response_class=HTMLResponse)
+def new_ui(full_path: str = "") -> HTMLResponse:
+    if not _NEW_UI_INDEX.exists():
+        return HTMLResponse("<h1>UI not built — run <code>pnpm build</code> in ui/</h1>", status_code=503)
+    return HTMLResponse(
+        _NEW_UI_INDEX.read_text(),
+        headers={"Cache-Control": "no-store"},
     )
 
 
