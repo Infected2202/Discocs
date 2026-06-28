@@ -1,7 +1,0 @@
-{
-  "count": 3,
-  "dim": 2,
-  "model_name": "discogs_multi",
-  "path": "C:\\Users\\nexus\\scripts\\discocs\\.pytest-phase3-full-tmp\\test_navidrome_similar_filters0\\index_discogs_multi_hnsw.bin",
-  "space": "cosine"
-}
