@@ -1,14 +1,10 @@
 import { NavLink } from "react-router"
-import { Home, Search, Settings } from "lucide-react"
+import { Home, Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const NAV = [
   { to: "/", label: "Home", icon: Home, end: true },
   { to: "/search", label: "Search", icon: Search, end: false },
-]
-
-const NAV_BOTTOM = [
-  { to: "/settings", label: "Settings", icon: Settings, end: false },
 ]
 
 export default function Sidebar() {
@@ -40,28 +36,6 @@ export default function Sidebar() {
           </NavLink>
         ))}
       </nav>
-
-      {/* Bottom nav */}
-      <div className="px-3 py-3 border-t border-sidebar-border space-y-0.5">
-        {NAV_BOTTOM.map(({ to, label, icon: Icon, end }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={end}
-            className={({ isActive }) =>
-              cn(
-                "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
-                isActive
-                  ? "bg-sidebar-accent text-foreground"
-                  : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50",
-              )
-            }
-          >
-            <Icon size={18} strokeWidth={1.75} />
-            {label}
-          </NavLink>
-        ))}
-      </div>
     </aside>
   )
 }
