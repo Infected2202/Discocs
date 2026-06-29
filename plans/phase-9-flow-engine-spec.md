@@ -258,6 +258,11 @@ Filters:
 
 - unavailable/lost tracks;
 - already played in session;
+- recently played across sessions (`exclude_played_days`, default 7) — keeps a
+  fresh Flow from replaying what the user heard in previous sessions. Backed by
+  `Store.recently_played_track_ids(within_days)`, which reads
+  `user_track_preferences.last_played_at`. Pass `settings.exclude_played_days`
+  to `/flow/start`; `0` disables it;
 - current track;
 - explicit dislikes;
 - recent hard skips;

@@ -14,6 +14,11 @@ from app.serializers.playback import playback_session_dict, queue_item_dict
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# Default window for cross-session recently-played exclusion (days). Tracks
+# heard within this window are kept out of fresh Flow pools so restarts stop
+# replaying the same already-heard tracks.
+_DEFAULT_EXCLUDE_PLAYED_DAYS = 7
+
 
 # ---------------------------------------------------------------------------
 # GET /api/v1/flow/profile  (Slice 6)
@@ -105,6 +110,7 @@ def _load_session_context(store, session_id: str, region_id: str, model_key: str
     ctx.session_artist_plays = {int(k): v for k, v in (state.get("session_artist_plays") or {}).items()}
     ctx.session_release_plays = {int(k): v for k, v in (state.get("session_release_plays") or {}).items()}
     ctx.exploration_level = float(state.get("exploration_level") or 0.10)
+    ctx.exclude_played_days = int(state.get("exclude_played_days") or 0)
     ctx.current_track_id = session.current_track_id
 
     # Already-played track IDs from queue
@@ -211,11 +217,16 @@ def api_v1_flow_start(request: FlowStartRequest) -> dict[str, object]:
         else adaptive_exploration_level(region.seed_count)
     )
 
+    exclude_played_days = int(
+        (request.settings or {}).get("exclude_played_days", _DEFAULT_EXCLUDE_PLAYED_DAYS)
+    )
+
     ctx = FlowSessionContext(
         session_id="__placeholder__",
         region_id=region.id,
         model_key=str(model_key),
         exploration_level=exploration_level,
+        exclude_played_days=exclude_played_days,
     )
 
     selected, score_summary = fill_flow_queue(
@@ -246,6 +257,7 @@ def api_v1_flow_start(request: FlowStartRequest) -> dict[str, object]:
         "session_artist_plays": {},
         "session_release_plays": {},
         "exploration_level": ctx.exploration_level,
+        "exclude_played_days": ctx.exclude_played_days,
     }
 
     session, queue = store.create_playback_session(

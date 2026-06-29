@@ -1007,6 +1007,31 @@ class PlaybackStoreMixin:
             ).fetchone()
         return row_to_user_track_preference(row) if row else None
 
+    def recently_played_track_ids(self, within_days: int) -> set[int]:
+        """Track IDs played within the last ``within_days`` days.
+
+        Compares ``user_track_preferences.last_played_at`` against a cutoff
+        timestamp. Timestamps come from two sources with slightly different
+        suffixes (local playback uses ``+00:00``, Navidrome uses ``Z``), but the
+        ``YYYY-MM-DDTHH:MM:SS`` prefix is lexically comparable for both, so a
+        suffix-free cutoff string is a correct second-resolution bound.
+        """
+        if within_days <= 0:
+            return set()
+        cutoff = (datetime.now(UTC) - timedelta(days=within_days)).strftime(
+            "%Y-%m-%dT%H:%M:%S"
+        )
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT track_id
+                FROM user_track_preferences
+                WHERE last_played_at IS NOT NULL AND last_played_at >= ?
+                """,
+                (cutoff,),
+            ).fetchall()
+        return {int(row["track_id"]) for row in rows}
+
     def import_external_track_play_state(
         self,
         track_id: int,

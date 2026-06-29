@@ -211,6 +211,43 @@ def test_diag_total_matches_pool_length():
     assert diag.total == len(pool)
 
 
+def test_recently_played_excluded_from_hnsw_pool():
+    # Cross-session: tracks played within the window must be passed into the
+    # HNSW exclude set so a fresh Flow does not replay already-heard tracks.
+    centroid = np.ones(64, dtype=np.float32)
+    store = _make_store(centroid=centroid, seed_track_ids=[1])
+    store.recently_played_track_ids.return_value = {500}
+
+    fake_instance = MagicMock()
+    fake_instance.similar_vector.return_value = []
+
+    session = _session()
+    session.exclude_played_days = 7
+
+    with patch("app.recommender.Recommender", return_value=fake_instance):
+        _, diag, _ = build_candidate_pool(store, MagicMock(), _make_region(), session)
+
+    store.recently_played_track_ids.assert_called_once_with(7)
+    assert diag.recently_played_excluded == 1
+    excluded = fake_instance.similar_vector.call_args.kwargs["exclude_track_ids"]
+    assert 500 in excluded
+
+
+def test_recently_played_not_queried_when_disabled():
+    centroid = np.ones(64, dtype=np.float32)
+    store = _make_store(centroid=centroid, seed_track_ids=[1])
+    fake_instance = MagicMock()
+    fake_instance.similar_vector.return_value = []
+
+    session = _session()  # exclude_played_days defaults to 0
+
+    with patch("app.recommender.Recommender", return_value=fake_instance):
+        _, diag, _ = build_candidate_pool(store, MagicMock(), _make_region(), session)
+
+    store.recently_played_track_ids.assert_not_called()
+    assert diag.recently_played_excluded == 0
+
+
 def test_fallback_empty_when_no_seeds():
     store = _make_store(centroid=None, seed_track_ids=[])
     pool, diag, source_map = build_candidate_pool(store, MagicMock(), _make_region(), _session())

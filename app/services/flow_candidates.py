@@ -104,6 +104,11 @@ class FlowSessionContext:
     # contrastive negative feedback).
     recent_skipped_vectors: list[np.ndarray] = field(default_factory=list)
 
+    # Exclude tracks played within this many days from the candidate pool, so a
+    # fresh Flow session does not replay what the user heard recently across
+    # *previous* sessions. 0 disables cross-session exclusion.
+    exclude_played_days: int = 0
+
 
 # ---------------------------------------------------------------------------
 # Scoring result
@@ -188,6 +193,7 @@ class PoolDiagnostics:
     hnsw_count: int = 0
     hnsw_error: str | None = None
     seeds_excluded: int = 0       # seed tracks kept OUT of the pool
+    recently_played_excluded: int = 0  # cross-session recently-played excluded
     accepted_added: int = 0
     fallback_used: bool = False
     total: int = 0
@@ -225,6 +231,12 @@ def build_candidate_pool(
     exclude = set(session.played_track_ids)
     if session.current_track_id is not None:
         exclude.add(session.current_track_id)
+    # Cross-session: drop tracks heard within the recent window so Flow stops
+    # serving the same already-played tracks on every restart.
+    if session.exclude_played_days > 0:
+        recent_played = store.recently_played_track_ids(session.exclude_played_days)
+        diag.recently_played_excluded = len(recent_played)
+        exclude |= recent_played
     hard_skipped = {
         tid for tid, cnt in session.session_skipped.items()
         if cnt >= _SESSION_HARD_SKIP_THRESHOLD
