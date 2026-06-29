@@ -127,6 +127,19 @@ def _load_session_context(store, session_id: str, region_id: str, model_key: str
         vecs = load_embeddings_batch(store, recent_accepted_ids, model_key)
         ctx.recent_accepted_vectors = [vecs[tid] for tid in recent_accepted_ids if tid in vecs]
 
+    # Load embeddings for skipped tracks → session negative centroid. Most-skipped
+    # first, capped, so a long session does not unbound the query.
+    recent_skipped_ids = sorted(
+        ctx.session_skipped.keys(),
+        key=lambda tid: ctx.session_skipped[tid],
+        reverse=True,
+    )[:15]
+    if recent_skipped_ids:
+        skip_vecs = load_embeddings_batch(store, recent_skipped_ids, model_key)
+        ctx.recent_skipped_vectors = [
+            skip_vecs[tid] for tid in recent_skipped_ids if tid in skip_vecs
+        ]
+
     return ctx
 
 

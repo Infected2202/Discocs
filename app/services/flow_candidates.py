@@ -48,6 +48,12 @@ _EXPLORE_CONFIDENT = 0.10     # lots of signal → mostly exploit
 _EXPLORE_UNCERTAIN = 0.35     # little signal → explore aggressively
 _SEED_CONFIDENCE_FULL = 20    # seed count at which taste is "well established"
 
+# Session negative feedback: candidates near the centroid of skipped tracks are
+# penalised. Skips ≈ dislike but noisy (Deezer), so this is a moderate nudge,
+# not a ban — only the part of the similarity above the threshold counts.
+_NEGATIVE_SIM_THRESHOLD = 0.50
+_NEGATIVE_PENALTY_STRENGTH = 0.30
+
 
 def adaptive_exploration_level(
     seed_count: int,
@@ -92,6 +98,12 @@ class FlowSessionContext:
     # Used for continuity_term without per-candidate embedding reads
     recent_accepted_vectors: list[np.ndarray] = field(default_factory=list)
 
+    # Embeddings of tracks skipped this session — loaded on context restore.
+    # Used to build a session "negative centroid": Flow steers candidates away
+    # from the direction the user has been skipping (inference-time analog of
+    # contrastive negative feedback).
+    recent_skipped_vectors: list[np.ndarray] = field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # Scoring result
@@ -110,7 +122,8 @@ class ScoredCandidate:
     session_skip_penalty: float
     fatigue_penalty: float
     repetition_penalty: float
-    score_breakdown: dict[str, float]
+    negative_penalty: float = 0.0
+    score_breakdown: dict[str, float] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +163,16 @@ def _recent_accepted_centroid(session: FlowSessionContext) -> np.ndarray | None:
     if not session.recent_accepted_vectors:
         return None
     vecs = np.vstack(session.recent_accepted_vectors).astype(np.float32)
+    c = vecs.mean(axis=0)
+    n = float(np.linalg.norm(c))
+    return c / n if n > 0 else c
+
+
+def _negative_centroid(session: FlowSessionContext) -> np.ndarray | None:
+    """L2-normalised centroid of tracks skipped this session, or None."""
+    if not session.recent_skipped_vectors:
+        return None
+    vecs = np.vstack(session.recent_skipped_vectors).astype(np.float32)
     c = vecs.mean(axis=0)
     n = float(np.linalg.norm(c))
     return c / n if n > 0 else c
@@ -389,10 +412,13 @@ def score_candidates(
 
     # Continuity centroid from pre-loaded accepted vectors (no per-candidate loads)
     recent_centroid = _recent_accepted_centroid(session)
+    # Negative centroid from skipped tracks — steer candidates away from it.
+    neg_centroid = _negative_centroid(session)
 
-    # Batch-load candidate embeddings only when continuity is active
+    # Batch-load candidate embeddings only when a vector term is active
+    # (continuity and/or negative penalty both need per-candidate vectors).
     candidate_vecs: dict[int, np.ndarray] = {}
-    if recent_centroid is not None:
+    if recent_centroid is not None or neg_centroid is not None:
         candidate_vecs = load_embeddings_batch(store, track_ids, session.model_key)
 
     scored: list[ScoredCandidate] = []
@@ -430,6 +456,21 @@ def score_candidates(
             vec = candidate_vecs.get(tid)
             if vec is not None:
                 continuity = max(0.0, _cosine(vec, recent_centroid)) * 0.20
+
+        # negative_penalty — proximity to the centroid of skipped tracks. Only
+        # the similarity above the threshold counts, so neutral candidates are
+        # untouched and only those genuinely close to "skip territory" suffer.
+        negative_penalty = 0.0
+        if neg_centroid is not None:
+            vec = candidate_vecs.get(tid)
+            if vec is not None:
+                neg_sim = _cosine(vec, neg_centroid)
+                if neg_sim > _NEGATIVE_SIM_THRESHOLD:
+                    negative_penalty = (
+                        (neg_sim - _NEGATIVE_SIM_THRESHOLD)
+                        / (1.0 - _NEGATIVE_SIM_THRESHOLD)
+                        * _NEGATIVE_PENALTY_STRENGTH
+                    )
 
         # short_term_session_fit
         session_fit = min(0.15, session.session_accepted.get(tid, 0) * 0.05)
@@ -472,6 +513,7 @@ def score_candidates(
             - session_penalty
             - fatigue_penalty
             - repetition_penalty
+            - negative_penalty
         ))
 
         scored.append(ScoredCandidate(
@@ -486,6 +528,7 @@ def score_candidates(
             session_skip_penalty=session_penalty,
             fatigue_penalty=fatigue_penalty,
             repetition_penalty=repetition_penalty,
+            negative_penalty=negative_penalty,
             score_breakdown={
                 "region_fit": round(region_fit, 4),
                 "track_pref": round(track_pref, 4),
@@ -495,6 +538,7 @@ def score_candidates(
                 "session_penalty": round(session_penalty, 4),
                 "fatigue_penalty": round(fatigue_penalty, 4),
                 "repetition_penalty": round(repetition_penalty, 4),
+                "negative_penalty": round(negative_penalty, 4),
                 "final": round(final, 4),
             },
         ))
