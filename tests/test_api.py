@@ -3002,16 +3002,23 @@ def test_navidrome_starred_catalog(tmp_path: Path, monkeypatch):
 def test_navidrome_starred_ids_maps_current_user_likes(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     _configure_navidrome_env(monkeypatch)
+    calls = 0
 
     class FakeNavidromeClient:
         def __init__(self, settings):
             self.settings = settings
 
-        def get_starred_songs(self):
-            return [
-                NavidromeSong(id="like-1", title="Like One", artist="A"),
-                NavidromeSong(id="ghost", title="Ghost", artist="C"),
-            ]
+        def get_starred_full(self):
+            nonlocal calls
+            calls += 1
+            return {
+                "songs": [
+                    {"id": "like-1", "title": "Like One", "artist": "A"},
+                    {"id": "ghost", "title": "Ghost", "artist": "C"},
+                ],
+                "albums": [],
+                "artists": [],
+            }
 
     monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
     track_id = add_navidrome_track(store, "like-1", title="Like One", artist="A")
@@ -3021,6 +3028,7 @@ def test_navidrome_starred_ids_maps_current_user_likes(tmp_path: Path, monkeypat
     response = client.get("/navidrome/starred/ids")
 
     assert response.status_code == 200
+    assert calls == 1
     assert response.json() == {
         "user": "alice",
         "count": 2,
@@ -3028,6 +3036,8 @@ def test_navidrome_starred_ids_maps_current_user_likes(tmp_path: Path, monkeypat
         "track_ids": [track_id],
         "item_ids": ["like-1", "ghost"],
         "not_synced_item_ids": ["ghost"],
+        "album_ids": [],
+        "artist_ids": [],
     }
 
 

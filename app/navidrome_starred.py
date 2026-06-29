@@ -84,7 +84,19 @@ def build_starred_track_ids(
     *,
     user: str,
 ) -> dict[str, Any]:
-    songs = client.get_starred_songs()
+    return build_starred_track_ids_from_songs(
+        store,
+        client.get_starred_songs(),
+        user=user,
+    )
+
+
+def build_starred_track_ids_from_songs(
+    store: Store,
+    songs: list[NavidromeSong],
+    *,
+    user: str,
+) -> dict[str, Any]:
     track_ids: list[int] = []
     item_ids: list[str] = []
     not_synced_item_ids: list[str] = []

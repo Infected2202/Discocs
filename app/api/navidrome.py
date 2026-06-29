@@ -17,9 +17,10 @@ from app.api.deps import (
     record_instant_mix_request,
 )
 from app.logging_config import get_navidrome_plugin_logger
+from app.navidrome import parse_song
 from app.navidrome_starred import (
     build_starred_catalog,
-    build_starred_track_ids,
+    build_starred_track_ids_from_songs,
     ready_tracks_from_starred_catalog,
 )
 from app.recommender import Recommender
@@ -54,8 +55,13 @@ def get_navidrome_starred_ids() -> dict[str, object]:
     store, settings = context()
     client = _navidrome_client(settings)
     try:
-        data = build_starred_track_ids(store, client, user=settings.navidrome.user)
         starred_full = client.get_starred_full()
+        songs = [parse_song(raw) for raw in starred_full["songs"]]
+        data = build_starred_track_ids_from_songs(
+            store,
+            songs,
+            user=settings.navidrome.user,
+        )
 
         album_external_ids = [a.get("id", "") for a in starred_full["albums"] if a.get("id")]
         artist_external_ids = [a.get("id", "") for a in starred_full["artists"] if a.get("id")]

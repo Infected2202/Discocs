@@ -44,6 +44,14 @@ Then copy the downloaded files into the server `models/` directory.
 The web Dashboard has a `Head models` details panel showing ready and missing
 model files.
 
+## Navidrome Likes
+
+`GET /navidrome/starred/ids` reads the current user's liked tracks, albums, and
+artists directly from Navidrome with one `getStarred2` request. The returned
+Navidrome IDs are mapped to existing local track, release, and artist IDs; likes
+whose catalog entities have not been synchronized are omitted from the local ID
+lists.
+
 ## SQLite Safety
 
 Avoid opening a live `data/app.db` through a network share while the service is

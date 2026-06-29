@@ -3,7 +3,11 @@ from pathlib import Path
 import numpy as np
 
 from app.navidrome import NavidromeSong
-from app.navidrome_starred import build_starred_catalog, ready_tracks_from_starred_catalog
+from app.navidrome_starred import (
+    build_starred_catalog,
+    build_starred_track_ids_from_songs,
+    ready_tracks_from_starred_catalog,
+)
 from app.scanner import ScannedTrack
 from app.store import Store
 
@@ -61,3 +65,38 @@ def test_build_starred_catalog_counts_statuses(tmp_path: Path):
 
     ready_tracks = ready_tracks_from_starred_catalog(catalog, store, "discogs_multi")
     assert [track.id for track in ready_tracks] == [track_ready]
+
+
+def test_build_starred_track_ids_from_prefetched_songs(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_id, _ = store.upsert_track(
+        ScannedTrack(
+            path="navidrome://like-ready",  # type: ignore[arg-type]
+            artist="A",
+            title="Ready",
+            album="Album",
+            duration=120.0,
+            file_size=1,
+            mtime=1,
+        )
+    )
+    store.upsert_external_track("navidrome", "like-ready", track_id)
+
+    result = build_starred_track_ids_from_songs(
+        store,
+        [
+            NavidromeSong(id="like-ready", title="Ready"),
+            NavidromeSong(id="not-synced", title="Ghost"),
+        ],
+        user="alice",
+    )
+
+    assert result == {
+        "user": "alice",
+        "count": 2,
+        "mapped_count": 1,
+        "track_ids": [track_id],
+        "item_ids": ["like-ready", "not-synced"],
+        "not_synced_item_ids": ["not-synced"],
+    }
