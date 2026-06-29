@@ -93,6 +93,68 @@ class _Seed:
     region_index: int = -1   # assigned after clustering
 
 
+# Seeds whose weight is below this are "weak" implicit signals (e.g. a track
+# played once). They refine existing taste regions but never start a new region
+# on their own — a single play is noise, not a new cluster of taste.
+_WEAK_SEED_WEIGHT = 1.0
+
+# Replay reliability saturates: Deezer found replay likelihood grows up to
+# ~10 plays, then overexposure sets in. We cap consistency at 10 effective plays.
+_CONSISTENCY_CAP = 10
+
+
+def _seed_weight(row) -> float:
+    """Signal weight for a seed, driven by consistency of engagement.
+
+    Research (Deezer, UMAP 2025): a single play is noisy and deserves near-floor
+    weight; reliability comes from *consistent repeats* (replays, repeated full
+    completions, explicit likes). Many early skips relative to plays drag the
+    weight back down. The weight controls how strongly the seed pulls its
+    region's centroid (see _weighted_centroid).
+    """
+    liked = bool(row["liked"])
+    play_count = int(row["play_count"] or 0)
+    replay_count = int(row["replay_count"] or 0)
+    completion_count = int(row["completion_count"] or 0)
+    early_skip = int(row["early_skip_count"] or 0)
+    score = float(row["score"] or 0)
+
+    weight = 0.0
+
+    # Implicit play consistency: saturating curve. A single play → ~0.37,
+    # ten+ plays → 1.0. Stays below _WEAK_SEED_WEIGHT so play-only tracks remain
+    # weak seeds that only refine existing regions.
+    if play_count > 0:
+        consistency = min(play_count, _CONSISTENCY_CAP) / _CONSISTENCY_CAP
+        weight = max(weight, 0.3 + consistency * 0.7)
+
+    # Replays are the strongest implicit reliability signal.
+    if replay_count >= 1:
+        weight = max(weight, 1.5 + min(replay_count, 8) * 0.125)  # 1.625 .. 2.5
+
+    # Repeated full completions.
+    if completion_count >= 3:
+        weight = max(weight, 2.0)
+    elif completion_count >= 2:
+        weight = max(weight, 1.5)
+
+    # Explicit positive score.
+    if score >= 2.0:
+        weight = max(weight, 1.5)
+
+    # Explicit like dominates everything.
+    if liked:
+        weight = max(weight, 3.0)
+
+    # Noisy engagement: many early skips relative to plays → down-weight, but
+    # never below the floor so the track still contributes a little.
+    if play_count > 0 and early_skip > 0:
+        skip_ratio = min(1.0, early_skip / play_count)
+        weight *= max(0.3, 1.0 - skip_ratio)
+
+    return max(weight, 0.1)
+
+
 def _collect_seeds(store: Store, settings: FlowSettings) -> list[_Seed]:
     """Load positive-signal tracks with embeddings, deduped, sorted by weight."""
     with store.connect() as conn:
@@ -105,16 +167,19 @@ def _collect_seeds(store: Store, settings: FlowSettings) -> list[_Seed]:
                 utp.completion_count,
                 utp.score,
                 utp.play_count,
+                utp.early_skip_count,
                 utp.last_played_at
             FROM user_track_preferences utp
             JOIN embeddings e ON e.track_id = utp.track_id AND e.model_name = ?
             JOIN tracks t ON t.id = utp.track_id
             WHERE t.missing_at IS NULL
+              AND utp.disliked = 0
               AND (
                   utp.liked = 1
                   OR utp.replay_count >= 1
                   OR utp.completion_count >= 2
                   OR utp.score >= ?
+                  OR utp.play_count >= 1
               )
             ORDER BY
                 utp.liked DESC,
@@ -136,18 +201,7 @@ def _collect_seeds(store: Store, settings: FlowSettings) -> list[_Seed]:
         vector = store.load_embedding(tid, settings.model_key)
         if vector is None:
             continue
-        # Weight assignment
-        weight = 1.0
-        if bool(row["liked"]):
-            weight = max(weight, 3.0)
-        if int(row["replay_count"] or 0) >= 1:
-            weight = max(weight, 2.5)
-        if int(row["completion_count"] or 0) >= 3:
-            weight = max(weight, 2.0)
-        elif int(row["completion_count"] or 0) >= 2:
-            weight = max(weight, 1.5)
-        if float(row["score"] or 0) >= 2.0:
-            weight = max(weight, 1.5)
+        weight = _seed_weight(row)
         seeds.append(_Seed(track_id=tid, vector=vector, weight=weight))
 
     seeds.sort(key=lambda s: s.weight, reverse=True)
@@ -175,6 +229,24 @@ class _Region:
     candidate_count: int = 0
 
 
+def _weighted_centroid(seeds: list[_Seed]) -> np.ndarray:
+    """Weight-weighted, L2-normalised mean of seed vectors.
+
+    Seed weight reflects engagement reliability, so a weakly-engaged track
+    (e.g. played once) nudges the centroid only slightly, while a liked track
+    dominates. This is what makes play_count a *weak* contributor rather than an
+    equal vote.
+    """
+    vecs = np.vstack([s.vector for s in seeds]).astype(np.float32)
+    w = np.array([max(0.0, s.weight) for s in seeds], dtype=np.float32)
+    if float(w.sum()) <= 0:
+        c = vecs.mean(axis=0)
+    else:
+        c = np.average(vecs, axis=0, weights=w)
+    norm = float(np.linalg.norm(c))
+    return c / norm if norm > 0 else c
+
+
 def _cluster_seeds(seeds: list[_Seed], threshold: float, max_regions: int) -> list[_Region]:
     regions: list[_Region] = []
     for seed in seeds:
@@ -184,20 +256,17 @@ def _cluster_seeds(seeds: list[_Seed], threshold: float, max_regions: int) -> li
             if _cosine(seed.vector, region.centroid) >= threshold:
                 region.seeds.append(seed)
                 seed.region_index = region.index
-                # Recompute centroid incrementally
-                vecs = np.vstack([s.vector for s in region.seeds]).astype(np.float32)
-                c = vecs.mean(axis=0)
-                norm = float(np.linalg.norm(c))
-                region.centroid = c / norm if norm > 0 else c
+                # Recompute centroid weighted by seed reliability.
+                region.centroid = _weighted_centroid(region.seeds)
                 assigned = True
                 break
-        if not assigned and len(regions) < max_regions:
+        # Weak (e.g. play-only) seeds refine existing regions but never spawn a
+        # new one — a single noisy play must not create a spurious taste region.
+        if not assigned and seed.weight >= _WEAK_SEED_WEIGHT and len(regions) < max_regions:
             r = _Region(index=len(regions))
             r.seeds.append(seed)
             seed.region_index = r.index
-            v = seed.vector.copy().astype(np.float32)
-            norm = float(np.linalg.norm(v))
-            r.centroid = v / norm if norm > 0 else v
+            r.centroid = _weighted_centroid(r.seeds)
             regions.append(r)
     return regions
 
