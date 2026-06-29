@@ -38,7 +38,7 @@ def api_v1_flow_profile(
     regions = store.list_flow_regions(profile.id)
     region_summaries = [_region_summary(r) for r in regions]
     resp: dict[str, object] = {
-        "available": profile.status == "ready",
+        "available": profile.status in ("ready", "cold_start"),
         "status": profile.status,
         "model_key": model_key,
         "profile_id": profile.id,
@@ -186,7 +186,7 @@ def api_v1_flow_start(request: FlowStartRequest) -> dict[str, object]:
         model_key = "discogs_multi"
 
     profile = store.get_flow_profile(str(model_key))
-    if profile is None or profile.status not in ("ready",):
+    if profile is None or profile.status not in ("ready", "cold_start"):
         raise HTTPException(
             status_code=409,
             detail=(

@@ -82,10 +82,12 @@ function FlowProfileSection() {
     not_built: "Not built",
     building: "Building…",
     ready: "Ready",
+    cold_start: "Exploring (cold start)",
     empty: "No eligible tracks",
   }
 
   const isBuilding = building || status?.status === "building"
+  const isBuilt = status?.status === "ready" || status?.status === "cold_start"
 
   return (
     <section className="space-y-5">
@@ -109,6 +111,8 @@ function FlowProfileSection() {
             <div className="flex items-center gap-2 text-sm font-medium">
               {status?.status === "ready" ? (
                 <CheckCircle2 size={14} className="text-green-500" />
+              ) : status?.status === "cold_start" ? (
+                <Radio size={14} className="text-blue-500" />
               ) : status?.status === "building" ? (
                 <Loader2 size={14} className="animate-spin text-muted-foreground" />
               ) : status?.status === "empty" ? (
@@ -116,7 +120,11 @@ function FlowProfileSection() {
               ) : (
                 <Activity size={14} className="text-muted-foreground" />
               )}
-              <span className={status?.status === "ready" ? "text-green-500" : "text-foreground"}>
+              <span className={
+                status?.status === "ready" ? "text-green-500"
+                  : status?.status === "cold_start" ? "text-blue-500"
+                    : "text-foreground"
+              }>
                 {statusLabel[status?.status ?? "not_built"] ?? status?.status ?? "Unknown"}
               </span>
             </div>
@@ -135,21 +143,28 @@ function FlowProfileSection() {
 
           <Button
             size="sm"
-            variant={status?.status === "ready" ? "outline" : "default"}
+            variant={isBuilt ? "outline" : "default"}
             disabled={isBuilding}
             onClick={() => rebuild()}
             className="gap-2"
           >
             {isBuilding
               ? <><Loader2 size={13} className="animate-spin" />Building…</>
-              : status?.status === "ready"
+              : isBuilt
                 ? "Rebuild Profile"
                 : "Build Profile"}
           </Button>
 
+          {status?.status === "cold_start" && (
+            <p className="text-xs text-muted-foreground">
+              No taste signal yet — Flow is exploring a diverse sample of your
+              library. Like tracks and rebuild to personalise.
+            </p>
+          )}
+
           {status?.status === "empty" && (
             <p className="text-xs text-muted-foreground">
-              No liked or completed tracks found. Like some tracks and try again.
+              No tracks with embeddings found. Analyze your library and try again.
             </p>
           )}
         </div>

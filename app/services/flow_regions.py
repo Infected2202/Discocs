@@ -45,6 +45,9 @@ class FlowSettings:
     max_seeds: int = 500
     # Candidate coverage estimation
     coverage_k: int = 200                # HNSW neighbours to query per centroid
+    # Cold start (no taste signal yet): diversity sample of the library
+    cold_start_sample_size: int = 1000   # random tracks to sample from catalogue
+    cold_start_regions: int = 8          # broad exploration regions to spread
     # Visible queue
     visible_buffer: int = 5
     # Candidate pool
@@ -320,6 +323,86 @@ def _estimate_candidate_coverage(
 
 
 # ---------------------------------------------------------------------------
+# Cold start: diversity sampling of the library
+# ---------------------------------------------------------------------------
+
+def _farthest_point_anchors(matrix: np.ndarray, k: int) -> list[int]:
+    """Greedy farthest-point sampling on unit vectors (cosine distance).
+
+    Returns row indices of `k` anchors spread across the embedding space, so
+    cold-start regions cover the catalogue rather than clumping in one genre.
+    """
+    n = int(matrix.shape[0])
+    if n <= k:
+        return list(range(n))
+    anchors = [0]
+    min_dist = 1.0 - (matrix @ matrix[0])
+    for _ in range(1, k):
+        idx = int(np.argmax(min_dist))
+        anchors.append(idx)
+        d = 1.0 - (matrix @ matrix[idx])
+        min_dist = np.minimum(min_dist, d)
+    return anchors
+
+
+def _build_cold_start_regions(store: Store, settings: FlowSettings) -> list[_Region]:
+    """Build broad exploration regions from a diversity sample of the library.
+
+    No taste signal exists yet (new user / empty profile), so rather than
+    disabling Flow we spread anchors across embedding space (farthest-point
+    sampling) and cluster a random catalogue sample around them. Flow then
+    explores neighbours of each anchor, maximising coverage. This is the
+    content-based analog of the bandit cold-start strategy used by Deezer/Spotify.
+    """
+    from app.services.flow_candidates import load_embeddings_batch
+
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT t.id
+            FROM tracks t
+            JOIN embeddings e ON e.track_id = t.id AND e.model_name = ?
+            WHERE t.missing_at IS NULL
+            ORDER BY RANDOM()
+            LIMIT ?
+            """,
+            (settings.model_key, settings.cold_start_sample_size),
+        ).fetchall()
+
+    track_ids = [int(r["id"]) for r in rows]
+    if not track_ids:
+        return []
+
+    vecs_map = load_embeddings_batch(store, track_ids, settings.model_key)
+    ids = [tid for tid in track_ids if tid in vecs_map]
+    if not ids:
+        return []
+
+    matrix = np.vstack([vecs_map[tid] for tid in ids]).astype(np.float32)
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    matrix = matrix / norms
+
+    k = min(settings.cold_start_regions, len(ids))
+    anchor_idx = _farthest_point_anchors(matrix, k)
+    anchors = matrix[anchor_idx]                 # (k, d)
+    assign = np.argmax(matrix @ anchors.T, axis=1)  # nearest anchor per track
+
+    regions: list[_Region] = []
+    for ri in range(len(anchor_idx)):
+        members = [i for i in range(len(ids)) if int(assign[i]) == ri]
+        if not members:
+            continue
+        region = _Region(index=len(regions))
+        region.seeds = [
+            _Seed(track_id=ids[i], vector=matrix[i], weight=1.0) for i in members
+        ]
+        region.centroid = _weighted_centroid(region.seeds)
+        regions.append(region)
+    return regions
+
+
+# ---------------------------------------------------------------------------
 # Profile builder
 # ---------------------------------------------------------------------------
 
@@ -344,15 +427,21 @@ def rebuild_flow_profile(
     seeds = _collect_seeds(store, settings)
     logger.info("Flow seeds collected: %d (model=%s)", len(seeds), settings.model_key)
 
-    if not seeds:
-        store.upsert_flow_profile(settings.model_key, "empty")
-        return {"status": "empty", "seed_count": 0, "region_count": 0}
-
-    regions = _cluster_seeds(seeds, settings.region_threshold, settings.max_regions)
-
-    # Filter regions below min_seeds
-    regions = [r for r in regions if len(r.seeds) >= settings.min_seeds_per_region]
-    logger.info("Flow regions after clustering: %d", len(regions))
+    # Cold start: no taste signal yet → diversity sample the library instead of
+    # disabling Flow. Regions get seed_count=0 so the engine treats them as
+    # maximally uncertain and explores aggressively (see adaptive_exploration_level).
+    cold_start = not seeds
+    if cold_start:
+        regions = _build_cold_start_regions(store, settings)
+        if not regions:
+            store.upsert_flow_profile(settings.model_key, "empty")
+            return {"status": "empty", "seed_count": 0, "region_count": 0}
+        logger.info("Flow cold-start regions: %d", len(regions))
+    else:
+        regions = _cluster_seeds(seeds, settings.region_threshold, settings.max_regions)
+        # Filter regions below min_seeds
+        regions = [r for r in regions if len(r.seeds) >= settings.min_seeds_per_region]
+        logger.info("Flow regions after clustering: %d", len(regions))
 
     # Finalize each region
     for region in regions:
@@ -368,22 +457,28 @@ def rebuild_flow_profile(
     for region in regions:
         assert region.centroid is not None
         total_weight = sum(s.weight for s in region.seeds)
-        # Region weight = total seed signal (normalised later across regions)
+        # Cold-start regions carry no taste signal: seed_count=0 marks them as
+        # maximally uncertain, and equal weight keeps the engine rotating across
+        # them. Their sampled tracks are persisted as representatives only, so
+        # the candidate pool does NOT exclude them (build_candidate_pool only
+        # excludes role="seed").
         db_region = store.upsert_flow_region(
             profile.id,
             region.index,
             medoid_track_id=region.medoid_track_id,
-            weight=total_weight,
-            seed_count=len(region.seeds),
+            weight=1.0 if cold_start else total_weight,
+            seed_count=0 if cold_start else len(region.seeds),
             candidate_count=region.candidate_count,
             summary_json=json.dumps({
                 "representative_track_ids": region.representative_track_ids,
                 "top_seed_ids": [s.track_id for s in region.seeds[:5]],
+                "cold_start": cold_start,
             }),
             quality_json=json.dumps({
-                "seed_count": len(region.seeds),
+                "seed_count": 0 if cold_start else len(region.seeds),
                 "candidate_count": region.candidate_count,
                 "total_seed_weight": round(total_weight, 3),
+                "cold_start": cold_start,
             }),
         )
 
@@ -393,18 +488,18 @@ def rebuild_flow_profile(
         # Save region tracks
         region_tracks: list[FlowRegionTrack] = []
         seed_set = {s.track_id for s in region.seeds}
-        for seed in region.seeds:
-            sim = _cosine(seed.vector, region.centroid)
-            role = "seed"
-            region_tracks.append(FlowRegionTrack(
-                region_id=db_region.id,
-                track_id=seed.track_id,
-                role=role,
-                weight=seed.weight,
-                distance=round(1.0 - sim, 5),
-            ))
+        if not cold_start:
+            for seed in region.seeds:
+                sim = _cosine(seed.vector, region.centroid)
+                region_tracks.append(FlowRegionTrack(
+                    region_id=db_region.id,
+                    track_id=seed.track_id,
+                    role="seed",
+                    weight=seed.weight,
+                    distance=round(1.0 - sim, 5),
+                ))
         for tid in region.representative_track_ids:
-            if tid not in seed_set:
+            if cold_start or tid not in seed_set:
                 region_tracks.append(FlowRegionTrack(
                     region_id=db_region.id,
                     track_id=tid,
@@ -414,11 +509,13 @@ def rebuild_flow_profile(
                 ))
         store.replace_flow_region_tracks(db_region.id, region_tracks)
 
-    store.upsert_flow_profile(settings.model_key, "ready", last_built_at=now)
+    final_status = "cold_start" if cold_start else "ready"
+    store.upsert_flow_profile(settings.model_key, final_status, last_built_at=now)
 
     region_count = len(regions)
     summary = {
-        "status": "ready",
+        "status": final_status,
+        "cold_start": cold_start,
         "seed_count": len(seeds),
         "region_count": region_count,
         "regions": [
