@@ -134,14 +134,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     try {
       if (engine === "flow") {
         if (sendEvent && currentTrackId) {
-          // fire-and-forget: accumulate signal, may switch region before refill
-          flowEvent({
-            session_id: session.id,
-            event_type: eventType!,
-            track_id: currentTrackId,
-            artist_id: (currentTrack as TrackSummary & { artist_id?: number })?.artist_id ?? null,
-            release_id: (currentTrack as TrackSummary & { release_id?: number })?.release_id ?? null,
-          }).catch(() => {})
+          // Apply the event BEFORE refilling: apply_flow_event persists skip
+          // penalties / region switches to session state, and /flow/refill reads
+          // that same state. Awaiting avoids a race where refill sees stale state.
+          // A failed event must not block the refill, so it has its own catch.
+          try {
+            await flowEvent({
+              session_id: session.id,
+              event_type: eventType!,
+              track_id: currentTrackId,
+              artist_id: currentTrack?.artists?.[0]?.id ?? null,
+              release_id: currentTrack?.release?.id ?? null,
+            })
+          } catch {
+            // best-effort feedback — continue to refill regardless
+          }
         }
         await flowRefill({ session_id: session.id, visible_buffer: 5 })
         await get().refreshQueue()
