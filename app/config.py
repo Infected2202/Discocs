@@ -35,6 +35,10 @@ class NavidromeSettings:
     timeout_seconds: int = 60
     download_mode: str = "download"
     temp_dir: Path = Path("data/tmp/navidrome")
+    # Lightweight periodic refresh of play_count/last_played_at from recently
+    # played albums. 0 disables the background refresh (full sync only).
+    play_state_refresh_seconds: int = 60
+    play_state_refresh_albums: int = 25
 
     @classmethod
     def from_env(cls, data_dir: Path) -> "NavidromeSettings":
@@ -60,6 +64,14 @@ class NavidromeSettings:
                     "DISCOCS_NAVIDROME_TEMP_DIR",
                     str(saved.get("temp_dir", data_dir / "tmp" / "navidrome")),
                 )
+            ),
+            play_state_refresh_seconds=_non_negative_int(
+                os.getenv("DISCOCS_NAVIDROME_PLAY_STATE_REFRESH_SECONDS"),
+                _non_negative_int(saved.get("play_state_refresh_seconds"), 60),
+            ),
+            play_state_refresh_albums=_positive_int(
+                os.getenv("DISCOCS_NAVIDROME_PLAY_STATE_REFRESH_ALBUMS"),
+                _positive_int(saved.get("play_state_refresh_albums"), 25),
             ),
         )
 
@@ -111,6 +123,16 @@ def _positive_int(value: str | None, default: int) -> int:
     except ValueError:
         return default
     return parsed if parsed > 0 else default
+
+
+def _non_negative_int(value: str | None, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (ValueError, TypeError):
+        return default
+    return parsed if parsed >= 0 else default
 
 
 def runtime_settings_path(data_dir: Path) -> Path:

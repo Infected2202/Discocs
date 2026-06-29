@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from threading import Thread
+from time import monotonic
 
 import app.state as _state
 from app.api.deps import context
@@ -14,6 +15,30 @@ from app.services.jobs import maybe_start_next_deferred_job, sync_memory_jobs_fr
 logger = logging.getLogger(__name__)
 
 _ALBUMS_FOR_YOU_REFRESH_HOURS = 6.0
+
+# Monotonic timestamp of the last Navidrome play-state refresh (throttling).
+_last_play_state_refresh: float | None = None
+
+
+def _maybe_refresh_navidrome_play_state(store, settings) -> None:
+    global _last_play_state_refresh
+    nav = settings.navidrome
+    interval = getattr(nav, "play_state_refresh_seconds", 0)
+    if interval <= 0 or not nav.url:
+        return
+    now = monotonic()
+    if _last_play_state_refresh is not None and now - _last_play_state_refresh < interval:
+        return
+    _last_play_state_refresh = now
+    try:
+        from app.navidrome import NavidromeClient  # noqa: PLC0415
+        from app.navidrome_sync import refresh_navidrome_play_state  # noqa: PLC0415
+        client = NavidromeClient(nav)
+        refresh_navidrome_play_state(
+            store, client, album_count=nav.play_state_refresh_albums,
+        )
+    except Exception:
+        logger.exception("Navidrome play-state background refresh failed")
 
 
 def _maybe_refresh_albums_for_you(store, settings) -> None:
@@ -35,6 +60,7 @@ def run_maintenance_tick(store=None) -> None:
     sync_memory_jobs_from_durable_jobs(store.recent_analysis_jobs(limit=100))
     maybe_start_next_deferred_job()
     _maybe_refresh_albums_for_you(store, settings)
+    _maybe_refresh_navidrome_play_state(store, settings)
 
 
 def maintenance_loop() -> None:

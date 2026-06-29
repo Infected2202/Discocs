@@ -69,6 +69,30 @@ recs build-index --model discogs_multi
 uvicorn app.main:app --host 0.0.0.0 --port 8711
 ```
 
+## Background play-state refresh
+
+`navidrome-sync` is a full catalog sync: it paginates the whole library, imports
+new tracks, and (optionally) marks missing ones stale. It is too heavy to run
+every minute, so it stays manual / occasional.
+
+For keeping **play history fresh** (the "Recently Played" shelf and Flow's
+recently-played exclusion), the API server runs a lightweight delta refresh
+inside its maintenance loop. It calls `getAlbumList2?type=recent`, expands those
+albums to their songs, and ratchets `play_count` / `last_played_at` for tracks
+that already map to Navidrome — it never imports new tracks or marks anything
+stale.
+
+Configuration (`NavidromeSettings`, via env or `data/settings.json`):
+
+| Setting | Env var | Default | Meaning |
+|---|---|---|---|
+| `play_state_refresh_seconds` | `DISCOCS_NAVIDROME_PLAY_STATE_REFRESH_SECONDS` | `60` | Min seconds between refreshes; `0` disables it. |
+| `play_state_refresh_albums` | `DISCOCS_NAVIDROME_PLAY_STATE_REFRESH_ALBUMS` | `25` | How many recently played albums to scan each tick. |
+
+The maintenance loop ticks every 15s and throttles the refresh to the configured
+interval, so you no longer need to run `navidrome-sync` by hand just to update
+play history.
+
 ## Build
 
 Build from the plugin directory:

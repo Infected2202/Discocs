@@ -160,6 +160,29 @@ class NavidromeClient:
         album = payload.get("album")
         return album if isinstance(album, dict) else {}
 
+    def iter_recent_played_songs(self, *, album_count: int = 25):
+        """Yield songs from recently played albums (lightweight delta refresh).
+
+        Uses getAlbumList2?type=recent — Navidrome orders these by most recent
+        play — then expands each album to its songs via getAlbum. Cheap enough
+        to run on a short interval, unlike a full catalog sync. Songs carry
+        playCount/played so play-state can be refreshed incrementally.
+        """
+        if album_count <= 0:
+            return
+        payload = self.request(
+            "getAlbumList2",
+            {"type": "recent", "size": album_count, "offset": 0},
+        )
+        albums = _as_list((payload.get("albumList2") or {}).get("album"))
+        for album in albums:
+            album_id = str(album.get("id") or "")
+            if not album_id:
+                continue
+            full = self.get_album(album_id)
+            for raw_song in _as_list(full.get("song")):
+                yield parse_song(raw_song)
+
     def iter_albums(self, *, page_size: int = 500):
         offset = 0
         while True:

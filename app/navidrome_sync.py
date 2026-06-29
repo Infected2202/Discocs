@@ -21,6 +21,7 @@ class NavidromeSyncResult:
     seen_count: int
     imported_count: int
     updated_count: int
+    preserved_release_count: int
     stale_count: int
     failed_count: int
     external_id_count: int
@@ -29,13 +30,66 @@ class NavidromeSyncResult:
     def summary(self) -> str:
         return (
             f"seen={self.seen_count} imported={self.imported_count} "
-            f"updated={self.updated_count} stale={self.stale_count} "
+            f"updated={self.updated_count} preserved_releases={self.preserved_release_count} "
+            f"stale={self.stale_count} "
             f"failed={self.failed_count} external_ids={self.external_id_count} "
             f"tracks_without_external_id={self.tracks_without_external_id}"
         )
 
 
 ProgressCallback = Callable[[int, NavidromeSong], None]
+
+
+@dataclass(frozen=True)
+class NavidromePlayStateRefreshResult:
+    seen_count: int
+    updated_count: int
+    unmapped_count: int
+
+    def summary(self) -> str:
+        return (
+            f"seen={self.seen_count} updated={self.updated_count} "
+            f"unmapped={self.unmapped_count}"
+        )
+
+
+def refresh_navidrome_play_state(
+    store: Store,
+    client: NavidromeClient,
+    *,
+    album_count: int = 25,
+) -> NavidromePlayStateRefreshResult:
+    """Cheap incremental refresh of play_count/last_played_at for recent plays.
+
+    Pulls songs from the most recently played albums and updates their play
+    state in place. Unlike sync_navidrome_catalog it does NOT paginate the whole
+    library, import new tracks, or mark anything stale — it only touches plays
+    that already map to known tracks. Safe to run on a short background interval.
+    """
+    seen = 0
+    updated = 0
+    unmapped = 0
+    with store.connect() as conn:
+        mappings = _load_existing_navidrome_mappings(conn)
+        for song in client.iter_recent_played_songs(album_count=album_count):
+            seen += 1
+            mapping = mappings.get(str(song.id))
+            if mapping is None or mapping["track_id"] is None:
+                unmapped += 1
+                continue
+            store._import_external_track_play_state(
+                conn,
+                int(mapping["track_id"]),
+                play_count=song.play_count,
+                last_played_at=song.last_played_at,
+                liked=True if song.starred_at else None,
+            )
+            updated += 1
+    result = NavidromePlayStateRefreshResult(
+        seen_count=seen, updated_count=updated, unmapped_count=unmapped
+    )
+    logger.info("Navidrome play-state refresh %s", result.summary())
+    return result
 
 
 def sync_navidrome_catalog(
@@ -71,6 +125,11 @@ def sync_navidrome_catalog(
     with store.connect() as conn:
         existing_mappings = _load_existing_navidrome_mappings(conn)
         existing_external_ids = set(existing_mappings)
+        preserved_release_count = (
+            _preserve_release_continuity(conn, songs, existing_mappings)
+            if limit is None
+            else 0
+        )
 
         for song in songs:
             try:
@@ -144,6 +203,7 @@ def sync_navidrome_catalog(
         seen_count=len(seen_external_ids),
         imported_count=imported_count,
         updated_count=updated_count,
+        preserved_release_count=preserved_release_count,
         stale_count=stale_count,
         failed_count=failed_count,
         external_id_count=external_id_count,
@@ -239,6 +299,13 @@ def _load_existing_navidrome_mappings(conn: sqlite3.Connection) -> dict[str, sql
             e.external_id,
             e.track_id,
             e.raw_json,
+            (
+                SELECT rt.release_id
+                FROM release_tracks rt
+                WHERE rt.track_id = e.track_id
+                ORDER BY rt.release_id
+                LIMIT 1
+            ) AS release_id,
             t.path,
             t.artist,
             t.title,
@@ -255,6 +322,80 @@ def _load_existing_navidrome_mappings(conn: sqlite3.Connection) -> dict[str, sql
         (NAVIDROME_PROVIDER,),
     ).fetchall()
     return {str(row["external_id"]): row for row in rows}
+
+
+def _preserve_release_continuity(
+    conn: sqlite3.Connection,
+    songs: list[NavidromeSong],
+    existing_mappings: dict[str, sqlite3.Row],
+) -> int:
+    """Keep an internal release ID for unambiguous old-to-new album ID changes.
+
+    Navidrome may replace an album ID after tag edits. Stable song mappings let
+    us identify a one-to-one transition without relying on title or track count.
+    Splits and merges are deliberately left to the normal create/move behavior.
+    """
+    old_to_new: dict[int, set[str]] = {}
+    new_to_old: dict[str, set[int]] = {}
+    for song in songs:
+        mapping = existing_mappings.get(song.id)
+        album_id = _song_album_id(song)
+        if mapping is None or not album_id or mapping["release_id"] is None:
+            continue
+        old_release_id = int(mapping["release_id"])
+        old_to_new.setdefault(old_release_id, set()).add(album_id)
+        new_to_old.setdefault(album_id, set()).add(old_release_id)
+
+    now = utc_now()
+    preserved = 0
+    for old_release_id, album_ids in old_to_new.items():
+        if len(album_ids) != 1:
+            continue
+        album_id = next(iter(album_ids))
+        if new_to_old.get(album_id) != {old_release_id}:
+            continue
+        identity_key = f"provider:{NAVIDROME_PROVIDER}:release:{album_id}"
+        current = conn.execute(
+            "SELECT id, identity_key FROM releases WHERE id = ?",
+            (old_release_id,),
+        ).fetchone()
+        if current is None or current["identity_key"] == identity_key:
+            continue
+        conflict = conn.execute(
+            "SELECT id FROM releases WHERE identity_key = ?",
+            (identity_key,),
+        ).fetchone()
+        if conflict is not None:
+            logger.info(
+                "Release continuity is ambiguous because target already exists "
+                "old_release_id=%s target_release_id=%s album_id=%s",
+                old_release_id,
+                conflict["id"],
+                album_id,
+            )
+            continue
+        conn.execute(
+            """
+            UPDATE releases
+            SET identity_key = ?, identity_confidence = 'provider', updated_at = ?
+            WHERE id = ?
+            """,
+            (identity_key, now, old_release_id),
+        )
+        preserved += 1
+        logger.info(
+            "Preserved release identity across Navidrome album ID change "
+            "release_id=%s album_id=%s",
+            old_release_id,
+            album_id,
+        )
+    return preserved
+
+
+def _song_album_id(song: NavidromeSong) -> str | None:
+    value = (song.raw or {}).get("albumId")
+    text = str(value).strip() if value is not None else ""
+    return text or None
 
 
 def _track_matches(row: sqlite3.Row, scanned: ScannedTrack) -> bool:
