@@ -690,4 +690,4 @@ def similar_track_dict(result: SimilarTrack) -> dict[str, object]:
     data["distance"] = result.distance
     data["similarity"] = result.similarity
     data["rating"] = result.rating
- 
+    return data

@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react"
-import { useQuery, useMutation } from "@tanstack/react-query"
-import { CheckCircle2, XCircle, Loader2, Radio } from "lucide-react"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { CheckCircle2, XCircle, Loader2, Radio, Activity } from "lucide-react"
 import { fetchNavidromeSettings, saveNavidromeSettings, pingNavidrome } from "@/api/settings"
+import { apiFetch, apiUrl } from "@/api/client"
 import { Button } from "@/components/ui/button"
 
 function Field({
@@ -46,6 +47,118 @@ function Input({
     />
   )
 }
+
+// ---------------------------------------------------------------------------
+// Flow Profile section
+// ---------------------------------------------------------------------------
+
+interface FlowProfileStatus {
+  model_key: string
+  status: string
+  region_count: number
+  last_built_at?: string | null
+}
+
+function FlowProfileSection() {
+  const qc = useQueryClient()
+
+  const { data: status, isLoading: loadingStatus } = useQuery<FlowProfileStatus>({
+    queryKey: ["flow-profile-status"],
+    queryFn: () => apiFetch(apiUrl("/api/v1/jobs/flow-profile/status")),
+    refetchInterval: (q) =>
+      q.state.data?.status === "building" ? 2000 : false,
+  })
+
+  const { mutate: rebuild, isPending: building } = useMutation({
+    mutationFn: () =>
+      apiFetch(apiUrl("/api/v1/jobs/flow-profile"), { method: "POST" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["flow-profile-status"] })
+      qc.invalidateQueries({ queryKey: ["flow-profile"] })
+    },
+  })
+
+  const statusLabel: Record<string, string> = {
+    not_built: "Not built",
+    building: "Building…",
+    ready: "Ready",
+    empty: "No eligible tracks",
+  }
+
+  const isBuilding = building || status?.status === "building"
+
+  return (
+    <section className="space-y-5">
+      <div>
+        <h2 className="text-base font-semibold">Flow Profile</h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Flow uses your listening history to build a personal taste profile.
+          Rebuild after you've added new music or want to refresh recommendations.
+        </p>
+      </div>
+
+      {loadingStatus ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 size={14} className="animate-spin" />
+          Loading…
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {/* Status card */}
+          <div className="rounded-md bg-muted px-4 py-3 space-y-1.5">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              {status?.status === "ready" ? (
+                <CheckCircle2 size={14} className="text-green-500" />
+              ) : status?.status === "building" ? (
+                <Loader2 size={14} className="animate-spin text-muted-foreground" />
+              ) : status?.status === "empty" ? (
+                <XCircle size={14} className="text-yellow-500" />
+              ) : (
+                <Activity size={14} className="text-muted-foreground" />
+              )}
+              <span className={status?.status === "ready" ? "text-green-500" : "text-foreground"}>
+                {statusLabel[status?.status ?? "not_built"] ?? status?.status ?? "Unknown"}
+              </span>
+            </div>
+
+            {status && status.status !== "not_built" && (
+              <div className="text-xs text-muted-foreground space-y-0.5">
+                {status.region_count > 0 && (
+                  <p>{status.region_count} taste region{status.region_count !== 1 ? "s" : ""}</p>
+                )}
+                {status.last_built_at && (
+                  <p>Last built {new Date(status.last_built_at).toLocaleString()}</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          <Button
+            size="sm"
+            variant={status?.status === "ready" ? "outline" : "default"}
+            disabled={isBuilding}
+            onClick={() => rebuild()}
+            className="gap-2"
+          >
+            {isBuilding
+              ? <><Loader2 size={13} className="animate-spin" />Building…</>
+              : status?.status === "ready"
+                ? "Rebuild Profile"
+                : "Build Profile"}
+          </Button>
+
+          {status?.status === "empty" && (
+            <p className="text-xs text-muted-foreground">
+              No liked or completed tracks found. Like some tracks and try again.
+            </p>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+// ---------------------------------------------------------------------------
 
 export default function SettingsPage() {
   const { data: saved, isLoading } = useQuery({
@@ -191,6 +304,9 @@ export default function SettingsPage() {
           </form>
         )}
       </section>
+
+      {/* Flow Profile */}
+      <FlowProfileSection />
     </div>
   )
 }

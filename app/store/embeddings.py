@@ -22,6 +22,7 @@ from uuid import uuid4
 
 import numpy as np
 
+from app.store._helpers import row_to_track
 from app.library import (
     ArtistCredit,
     TrackMetadataEnvelope,

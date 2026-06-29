@@ -22,6 +22,15 @@ from uuid import uuid4
 
 import numpy as np
 
+from app.store._helpers import (
+    _discography_group_key,
+    _envelope_from_track_with_external,
+    _require_external_value,
+    row_to_artist,
+    row_to_external_track,
+    row_to_release,
+    row_to_track,
+)
 from app.library import (
     ArtistCredit,
     TrackMetadataEnvelope,
@@ -341,6 +350,7 @@ class LibraryStoreMixin:
             title,
             normalized_title,
             release_type,
+            release_type,
             envelope.release_date,
             envelope.year,
             envelope.cover_art_id,
@@ -351,7 +361,8 @@ class LibraryStoreMixin:
             conn.execute(
                 """
                 UPDATE releases
-                SET title = ?, normalized_title = ?, release_type = ?,
+                SET title = ?, normalized_title = ?,
+                    release_type = CASE WHEN ? != 'unknown' THEN ? ELSE release_type END,
                     release_date = COALESCE(?, release_date),
                     release_year = COALESCE(?, release_year),
                     cover_art_id = COALESCE(?, cover_art_id),
@@ -464,6 +475,14 @@ class LibraryStoreMixin:
         if existing_explicit is not None:
             return
 
+        # Count total tracks and per-artist track counts to find the dominant artist.
+        # An artist present on ≥60% of tracks becomes the release artist;
+        # otherwise fall back to "Various Artists".
+        total_row = conn.execute(
+            "SELECT COUNT(*) FROM release_tracks WHERE release_id = ?", (release_id,)
+        ).fetchone()
+        total_tracks = total_row[0] if total_row else 0
+
         rows = conn.execute(
             """
             SELECT
@@ -472,26 +491,46 @@ class LibraryStoreMixin:
                 MIN(ta.credit_text) AS credit_text,
                 MIN(COALESCE(rt.position, rt.track_id)) AS release_position,
                 MIN(ta.position) AS artist_position,
-                MIN(a.name) AS artist_name
+                MIN(a.name) AS artist_name,
+                COUNT(DISTINCT rt.track_id) AS track_count
             FROM release_tracks rt
             JOIN track_artists ta ON ta.track_id = rt.track_id
             JOIN artists a ON a.id = ta.artist_id
             WHERE rt.release_id = ? AND ta.role = 'primary'
             GROUP BY ta.artist_id, ta.role
-            ORDER BY release_position, artist_position, artist_name
+            ORDER BY track_count DESC, release_position, artist_position, artist_name
             """,
             (release_id,),
         ).fetchall()
         conn.execute("DELETE FROM release_artists WHERE release_id = ?", (release_id,))
-        for position, row in enumerate(rows):
+
+        if not rows:
+            return
+
+        dominant = rows[0]
+        dominant_fraction = dominant["track_count"] / total_tracks if total_tracks else 0
+
+        if dominant_fraction >= 0.6:
+            # Single dominant artist covers most of the release
             credit = ArtistCredit(
-                name=str(row["artist_name"]),
-                role=str(row["role"]),
-                position=position,
-                credit_text=row["credit_text"],
+                name=str(dominant["artist_name"]),
+                role=str(dominant["role"]),
+                position=0,
+                credit_text=dominant["credit_text"],
                 confidence="derived",
             )
-            self._insert_release_artist(conn, release_id, int(row["artist_id"]), credit, now)
+            self._insert_release_artist(conn, release_id, int(dominant["artist_id"]), credit, now)
+        else:
+            # Too many different artists — use a synthetic "Various Artists" entry
+            va_id = self._upsert_artist(conn, "Various Artists", now)
+            credit = ArtistCredit(
+                name="Various Artists",
+                role="primary",
+                position=0,
+                credit_text=None,
+                confidence="derived",
+            )
+            self._insert_release_artist(conn, release_id, va_id, credit, now)
 
     def _upsert_external_id(
         self,
@@ -736,6 +775,21 @@ class LibraryStoreMixin:
             ).fetchone()
         return str(row["external_id"]) if row else None
 
+    def external_ids_for_tracks(self, provider: str, track_ids: list[int]) -> dict[int, str]:
+        if not track_ids:
+            return {}
+        provider = _require_external_value(provider, "provider")
+        placeholders = ",".join("?" for _ in track_ids)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT track_id, external_id FROM external_tracks
+                WHERE provider = ? AND track_id IN ({placeholders})
+                """,
+                [provider, *track_ids],
+            ).fetchall()
+        return {int(row["track_id"]): str(row["external_id"]) for row in rows}
+
     def list_external_tracks(self, provider: str | None = None) -> list[ExternalTrack]:
         params: list[object] = []
         where = ""
@@ -796,6 +850,21 @@ class LibraryStoreMixin:
                 (provider, entity_type, entity_id),
             ).fetchone()
         return str(row["external_id"]) if row else None
+
+    def entity_id_for_external_id(self, provider: str, entity_type: str, external_id: str) -> int | None:
+        provider = _require_external_value(provider, "provider")
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT entity_id
+                FROM external_ids
+                WHERE provider = ? AND entity_type = ? AND external_id = ?
+                ORDER BY synced_at DESC
+                LIMIT 1
+                """,
+                (provider, entity_type, external_id),
+            ).fetchone()
+        return int(row["entity_id"]) if row else None
 
     def update_artist_external_info(
         self,
@@ -987,6 +1056,22 @@ class LibraryStoreMixin:
                     artist_id
                 """,
                 (track_id,),
+            ).fetchall()
+        return [int(row["artist_id"]) for row in rows]
+
+    def artist_ids_for_release(self, release_id: int) -> list[int]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT artist_id
+                FROM release_artists
+                WHERE release_id = ?
+                ORDER BY
+                    CASE role WHEN 'primary' THEN 0 ELSE 1 END,
+                    position,
+                    artist_id
+                """,
+                (release_id,),
             ).fetchall()
         return [int(row["artist_id"]) for row in rows]
 

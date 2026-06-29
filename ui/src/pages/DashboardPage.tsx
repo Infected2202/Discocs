@@ -3,6 +3,7 @@ import { useNavigate } from "react-router"
 import { Search } from "lucide-react"
 import { useDashboard } from "@/api/hooks/useDashboard"
 import Shelf from "@/components/media/Shelf"
+import ForYouShelf from "@/components/media/ForYouShelf"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiFetch } from "@/api/client"
 import { usePlayerStore } from "@/store/playerStore"
@@ -15,6 +16,8 @@ function shelfItemToCard(item: ShelfItem, onPlay: (item: ShelfItem) => void): Me
     type: item.entity_type,
     title: item.title,
     subtitle: item.subtitle,
+    subtitleLinks: item.subtitle_links,
+    href: item.action?.target,
     reason: item.reason,
     artwork: item.artwork,
     onPlay: item.play_action ? () => onPlay(item) : undefined,
@@ -47,7 +50,7 @@ function DashboardSkeleton() {
 
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const { data, isLoading, error } = useDashboard(12)
+  const { data, isLoading, error } = useDashboard(16)
   const playSource = usePlayerStore((s) => s.playSource)
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
   const [query, setQuery] = useState("")
@@ -95,18 +98,8 @@ export default function DashboardPage() {
         </form>
       </div>
 
-      {/* Flow hero — disabled */}
-      {data?.hero && (
-        <div className="px-4 sm:px-6">
-          <div className="rounded-xl bg-muted/50 border border-border px-5 py-4 flex items-center justify-between opacity-50 cursor-not-allowed select-none">
-            <div>
-              <p className="font-semibold">{data.hero.title}</p>
-              <p className="text-sm text-muted-foreground">{data.hero.subtitle}</p>
-            </div>
-            <span className="text-xs text-muted-foreground">Coming soon</span>
-          </div>
-        </div>
-      )}
+      {/* For You shelf */}
+      <ForYouShelf />
 
       {/* Shelves */}
       {isLoading && <DashboardSkeleton />}
@@ -121,8 +114,7 @@ export default function DashboardPage() {
         <Shelf
           key={shelf.key}
           title={shelf.title}
-          subtitle={shelf.subtitle}
-          total={shelf.total}
+          shelfKey={shelf.key}
           items={shelf.items.map((item) => shelfItemToCard(item, handlePlayShelfItem))}
         />
       ))}

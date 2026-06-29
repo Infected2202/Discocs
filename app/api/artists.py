@@ -5,7 +5,7 @@ Extracted from app/main.py — Stage 6b.
 from __future__ import annotations
 
 from fastapi import APIRouter, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.api.deps import api_error, context
 from app.schemas.responses import (
@@ -104,6 +104,21 @@ def api_v1_artist_image(artist_id: int) -> dict[str, object] | JSONResponse:
     if not image.get("url"):
         return api_error(404, "not_found", "Artist image not available")
     return {"image": image}
+
+
+@router.get("/api/v1/artists/{artist_id}/cover", response_model=None)
+def api_v1_artist_cover(artist_id: int) -> JSONResponse | RedirectResponse:
+    """Redirect to the artist's image URL, fetching from Navidrome if not yet cached."""
+    store, settings = context()
+    artist = store.get_artist(artist_id)
+    if artist is None:
+        return api_error(404, "not_found", "Artist not found")
+    summary = artist_summary_with_external_image(store, settings, artist)
+    image = summary["image"] if isinstance(summary.get("image"), dict) else {}
+    url = image.get("url")
+    if not url:
+        return api_error(404, "not_found", "Artist image not available")
+    return RedirectResponse(url=str(url), status_code=302)
 
 
 @router.get("/api/v1/artists/{artist_id}/top-tracks", response_model=ArtistAvailabilityStubResponse)

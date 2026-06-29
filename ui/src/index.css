@@ -112,20 +112,14 @@
   background: #3d4347;
 }
 
-/* Horizontal shelf scroll — always show scrollbar */
-.shelf-scroll {
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-  scrollbar-color: #3d4347 transparent;
+/* Shelf page-flip animation */
+@keyframes shelf-from-right {
+  from { transform: translateX(32px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
 }
-.shelf-scroll::-webkit-scrollbar {
-  height: 4px;
+@keyframes shelf-from-left {
+  from { transform: translateX(-32px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
 }
-.shelf-scroll::-webkit-scrollbar-track {
-  background: rgba(45, 48, 51, 0.3);
-  border-radius: 2px;
-}
-.shelf-scroll::-webkit-scrollbar-thumb {
-  background: #3d4347;
-  border-radius: 2px;
-}
+.shelf-slide-right { animation: shelf-from-right 220ms ease; }
+.shelf-slide-left  { animation: shelf-from-left  220ms ease; }

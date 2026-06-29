@@ -6,6 +6,8 @@ import ArtistPage from "@/pages/ArtistPage"
 import ReleasePage from "@/pages/ReleasePage"
 import MixPage from "@/pages/MixPage"
 import SettingsPage from "@/pages/SettingsPage"
+import ShelfPage from "@/pages/ShelfPage"
+import PlaylistPage from "@/pages/PlaylistPage"
 
 export const router = createBrowserRouter([
   {
@@ -17,6 +19,8 @@ export const router = createBrowserRouter([
       { path: "releases/:id", Component: ReleasePage },
       { path: "mixes/:id", Component: MixPage },
       { path: "settings", Component: SettingsPage },
+      { path: "shelf/:key", Component: ShelfPage },
+      { path: "playlists/:id", Component: PlaylistPage },
     ],
   },
 ])

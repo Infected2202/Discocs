@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import logging
 import sqlite3
 from typing import Callable
 
 from app.navidrome import NavidromeClient, NavidromeSong
-from app.library import envelope_from_navidrome_song
+from app.library import envelope_from_navidrome_song, explicit_release_type
 from app.scanner import ScannedTrack
 from app.store import Store, utc_now
 
@@ -53,6 +53,9 @@ def sync_navidrome_catalog(
         limit,
         mark_stale,
     )
+    album_release_types = _fetch_album_release_types(client)
+    logger.info("Fetched release types for %d albums", len(album_release_types))
+
     songs: list[NavidromeSong] = []
     for song in client.iter_songs(page_size=page_size, limit=limit):
         if progress is not None:
@@ -76,6 +79,7 @@ def sync_navidrome_catalog(
                     logger.warning("Skipping Navidrome song without id raw=%s", song.raw)
                     continue
                 seen_external_ids.add(song.id)
+                song = _inject_album_release_type(song, album_release_types)
                 raw_json = _song_raw_json(song)
                 existing_mapping = existing_mappings.get(song.id)
                 scanned = _song_to_scanned_track(song)
@@ -162,6 +166,37 @@ def _sync_song_play_state(
         last_played_at=song.last_played_at,
         liked=True if song.starred_at else None,
     )
+
+
+def _fetch_album_release_types(client: NavidromeClient) -> dict[str, str]:
+    """Fetch releaseTypes for all albums via getAlbumList2 (paginated bulk fetch)."""
+    result: dict[str, str] = {}
+    try:
+        for album in client.iter_albums():
+            album_id = str(album.get("id") or "")
+            if not album_id:
+                continue
+            release_types = album.get("releaseTypes") or []
+            if isinstance(release_types, list) and release_types:
+                raw_type = str(release_types[0])
+            else:
+                raw_type = str(album.get("releaseType") or "")
+            release_type = explicit_release_type(raw_type)
+            if release_type != "unknown":
+                result[album_id] = release_type
+    except Exception:
+        logger.warning("Failed to fetch album list for release types; proceeding without")
+    return result
+
+
+def _inject_album_release_type(song: NavidromeSong, album_release_types: dict[str, str]) -> NavidromeSong:
+    """Inject releaseType into song.raw from the pre-fetched album map."""
+    if not song.raw or not album_release_types:
+        return song
+    album_id = str(song.raw.get("albumId") or "")
+    if not album_id or album_id not in album_release_types:
+        return song
+    return replace(song, raw={**song.raw, "releaseType": album_release_types[album_id]})
 
 
 def _song_to_scanned_track(song: NavidromeSong) -> ScannedTrack:

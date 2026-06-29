@@ -12,3 +12,7 @@ models
 *.log
 probe*.txt
 probe*.log
+
+ui/node_modules
+ui/dist
+ui/.vite

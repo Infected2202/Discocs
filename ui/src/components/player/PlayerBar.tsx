@@ -88,8 +88,8 @@ export default function PlayerBar() {
   const toggleExpanded  = usePlayerStore((s) => s.toggleExpanded)
 
   const currentTrackId  = usePlayerStore((s) => s.currentTrackId)
-  const isLiked         = useNavidromeStore((s) => s.isLiked)
   const toggleLike      = useNavidromeStore((s) => s.toggleLike)
+  const liked           = useNavidromeStore((s) => currentTrackId ? s.likedIds.has(currentTrackId) : false)
 
   const isPlaying  = playbackState === "playing"
   const isLoading  = playbackState === "loading"
@@ -98,7 +98,6 @@ export default function PlayerBar() {
   const shuffle    = session?.shuffle_enabled ?? false
   const repeatOne  = session?.repeat_mode === "one"
   const autoplay   = session?.autoplay_enabled ?? false
-  const liked      = currentTrackId ? isLiked(currentTrackId) : false
 
   const seekBarRef = useRef<HTMLDivElement>(null)
 

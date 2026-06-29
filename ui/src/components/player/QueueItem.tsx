@@ -1,4 +1,3 @@
-import { useState } from "react"
 import { useNavigate } from "react-router"
 import { ThumbsUp, MoreHorizontal, ListEnd, Radio, User, Disc3 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -30,16 +29,15 @@ export interface QueueItemProps {
 }
 
 export default function QueueItem({ track, trackId, isCurrent, dimmed, time, onClick }: QueueItemProps) {
-  const [hovered, setHovered] = useState(false)
+
   const navigate = useNavigate()
   const id = track?.id ?? trackId
   const sessionId      = usePlayerStore((s) => s.session?.id)
   const playSource     = usePlayerStore((s) => s.playSource)
   const refreshQueue   = usePlayerStore((s) => s.refreshQueue)
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
-  const isLiked        = useNavidromeStore((s) => s.isLiked)
   const toggleLike     = useNavidromeStore((s) => s.toggleLike)
-  const liked = track ? isLiked(track.id) : false
+  const liked          = useNavidromeStore((s) => track ? s.likedIds.has(track.id) : false)
 
   async function handleInstantMix() {
     if (!track) return
@@ -63,8 +61,6 @@ export default function QueueItem({ track, trackId, isCurrent, dimmed, time, onC
         isCurrent ? "bg-muted/50" : "hover:bg-muted/40",
         dimmed && "opacity-60",
       )}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
     >
       <button
         onClick={onClick}

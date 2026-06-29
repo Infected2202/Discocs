@@ -50,7 +50,6 @@ def _dashboard_generated_mixes(
             "action": summary["action"],
             "play_action": summary["play_action"],
             "badges": [str(summary["track_count"]) + " tracks", str(mix.status)],
-            "reason": "Generated from your taste regions",
         }
         if include_debug:
             item["debug"] = {
@@ -100,10 +99,45 @@ def _dashboard_recently_added(
         release = store.get_release(int(row["id"]))
         if release is None:
             continue
-        item = _release_shelf_item(release, "New in collection")
+        item = _release_shelf_item(release)
         if include_debug:
             item["debug"] = {"added_at": row["added_at"]}
         items.append(item)
+    return items, int(total_row["total"] if total_row else 0)
+
+
+def _dashboard_history(
+    store: Store,
+    limit: int,
+    offset: int,
+) -> tuple[list[dict[str, object]], int]:
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT t.*, p.last_played_at
+            FROM user_track_preferences p
+            JOIN tracks t ON t.id = p.track_id
+            WHERE t.missing_at IS NULL
+              AND p.last_played_at IS NOT NULL
+            ORDER BY p.last_played_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+        total_row = conn.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM user_track_preferences p
+            JOIN tracks t ON t.id = p.track_id
+            WHERE t.missing_at IS NULL AND p.last_played_at IS NOT NULL
+            """
+        ).fetchone()
+    tracks = [row_to_track(row) for row in rows]
+    artists_by_track = store.artists_for_tracks([track.id for track in tracks])
+    items = [
+        _track_shelf_item(store, track, artists_by_track.get(track.id, []), "")
+        for track in tracks
+    ]
     return items, int(total_row["total"] if total_row else 0)
 
 
@@ -128,10 +162,7 @@ def _dashboard_listen_again(
                     OR p.liked = 1
                     OR COALESCE(p.last_completed_at, p.last_played_at, p.updated_at) >= p.last_skipped_at
                   )
-            ORDER BY p.liked DESC,
-                     COALESCE(p.last_completed_at, p.last_played_at, p.updated_at) DESC,
-                     p.score DESC,
-                     t.id DESC
+            ORDER BY RANDOM()
             LIMIT ? OFFSET ?
             """,
             (limit, offset),
@@ -183,7 +214,7 @@ def _dashboard_long_time_no_listen(
     offset: int,
     include_debug: bool = False,
 ) -> tuple[list[dict[str, object]], int]:
-    cutoff = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=180)).isoformat()
     with store.connect() as conn:
         rows = conn.execute(
             """
@@ -197,7 +228,7 @@ def _dashboard_long_time_no_listen(
               AND p.last_played_at IS NOT NULL
               AND p.last_played_at < ?
               AND (p.last_skipped_at IS NULL OR p.last_skipped_at <= p.last_played_at OR p.liked = 1)
-            ORDER BY p.liked DESC, p.last_played_at ASC, p.score DESC, t.id DESC
+            ORDER BY RANDOM()
             LIMIT ? OFFSET ?
             """,
             (cutoff, limit, offset),
@@ -259,11 +290,145 @@ def _dashboard_discover_random(
     artists_by_track = store.artists_for_tracks([track.id for track in tracks])
     items: list[dict[str, object]] = []
     for track in tracks:
-        item = _discover_track_shelf_item(store, track, artists_by_track.get(track.id, []), "Never played before")
+        item = _discover_track_shelf_item(store, track, artists_by_track.get(track.id, []))
         if include_debug:
             item["debug"] = {"random": True}
         items.append(item)
     return items, int(total_row["total"] if total_row else 0)
+
+
+def _dashboard_liked_artists(
+    store: Store,
+    limit: int,
+    offset: int,
+    include_debug: bool = False,
+) -> tuple[list[dict[str, object]], int]:
+    from app.serializers.search import dashboard_shelf_item  # noqa: PLC0415
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT a.id, a.name
+            FROM user_artist_preferences p
+            JOIN artists a ON a.id = p.artist_id
+            WHERE p.liked = 1
+            ORDER BY p.updated_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+        total_row = conn.execute(
+            "SELECT COUNT(*) FROM user_artist_preferences WHERE liked = 1"
+        ).fetchone()
+    items: list[dict[str, object]] = []
+    for row in rows:
+        artwork_url = f"/api/v1/artists/{row['id']}/cover"
+        items.append(dashboard_shelf_item(
+            "artist",
+            int(row["id"]),
+            str(row["name"]),
+            "",
+            f"/artists/{row['id']}",
+            artwork_url=artwork_url,
+            play_source_type="artist",
+            play_source_id=int(row["id"]),
+        ))
+    return items, int(total_row[0] if total_row else 0)
+
+
+def _dashboard_liked_releases(
+    store: Store,
+    limit: int,
+    offset: int,
+    include_debug: bool = False,
+) -> tuple[list[dict[str, object]], int]:
+    from app.serializers.search import _release_shelf_item  # noqa: PLC0415
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT r.id
+            FROM user_release_preferences p
+            JOIN releases r ON r.id = p.release_id
+            WHERE p.liked = 1
+            ORDER BY p.updated_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+        total_row = conn.execute(
+            "SELECT COUNT(*) FROM user_release_preferences WHERE liked = 1"
+        ).fetchone()
+    items: list[dict[str, object]] = []
+    for row in rows:
+        release = store.get_release(int(row["id"]))
+        if release is None:
+            continue
+        items.append(_release_shelf_item(release))
+    return items, int(total_row[0] if total_row else 0)
+
+
+def _dashboard_new_releases(
+    store: Store,
+    limit: int,
+    offset: int,
+    include_debug: bool = False,
+) -> tuple[list[dict[str, object]], int]:
+    from app.serializers.search import _release_shelf_item  # noqa: PLC0415
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT r.id
+            FROM releases r
+            JOIN release_tracks rt ON rt.release_id = r.id
+            JOIN tracks t ON t.id = rt.track_id
+            WHERE t.missing_at IS NULL AND r.release_year IS NOT NULL AND r.release_year <= 2030
+            GROUP BY r.id
+            ORDER BY r.release_year DESC,
+                     COALESCE(MAX(r.added_at), MAX(r.created_at)) DESC,
+                     r.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+        total_row = conn.execute(
+            """
+            SELECT COUNT(DISTINCT r.id) AS total
+            FROM releases r
+            JOIN release_tracks rt ON rt.release_id = r.id
+            JOIN tracks t ON t.id = rt.track_id
+            WHERE t.missing_at IS NULL AND r.release_year IS NOT NULL AND r.release_year <= 2030
+            """,
+        ).fetchone()
+    items: list[dict[str, object]] = []
+    for row in rows:
+        release = store.get_release(int(row["id"]))
+        if release is None:
+            continue
+        item = _release_shelf_item(release)
+        items.append(item)
+    return items, int(total_row["total"] if total_row else 0)
+
+
+def _dashboard_albums_for_you(
+    store: Store,
+    limit: int,
+    offset: int,
+    include_debug: bool = False,
+) -> tuple[list[dict[str, object]], int]:
+    import json  # noqa: PLC0415
+    try:
+        from app.api.deps import context as _ctx  # noqa: PLC0415
+        _s, _settings = _ctx()
+        model_name = _settings.default_model
+    except Exception:
+        model_name = "discogs_multi"
+
+    cached = store.get_albums_for_you_cache(model_name)
+    if cached is None:
+        return [], 0
+
+    all_items: list[dict[str, object]] = json.loads(cached)
+    page = all_items[offset : offset + limit]
+    return page, len(all_items)
 
 
 def dashboard_shelf_response(
@@ -275,22 +440,37 @@ def dashboard_shelf_response(
     include_debug: bool = False,
 ) -> dict[str, object] | None:
     titles = {
-        "recently_added": ("Recently Added", "New in your collection"),
-        "listen_again": ("Listen Again", "Tracks with positive listening history"),
-        "long_time_no_listen": ("Long Time No Listen", "Good tracks that fell out of rotation"),
-        "mixes_for_you": ("Mixes For You", "Generated finite mixes from taste regions"),
-        "discover_random": ("Discover Random", "Tracks you haven't played yet"),
+        "recently_added": ("Recently Added", ""),
+        "history": ("Recently Played", ""),
+        "listen_again": ("Listen Again", ""),
+        "long_time_no_listen": ("Long Time No Listen", ""),
+        "mixes_for_you": ("Mixes For You", ""),
+        "albums_for_you": ("Albums For You", ""),
+        "discover_random": ("Discover Random", ""),
+        "new_releases": ("New Releases", ""),
+        "liked_artists": ("Favourite Artists", ""),
+        "liked_releases": ("Favourite Albums", ""),
     }
     if key not in titles:
         return None
     if key == "recently_added":
         items, total = _dashboard_recently_added(store, limit, offset, include_debug)
+    elif key == "history":
+        items, total = _dashboard_history(store, limit, offset)
     elif key == "listen_again":
         items, total = _dashboard_listen_again(store, limit, offset, include_debug)
     elif key == "long_time_no_listen":
         items, total = _dashboard_long_time_no_listen(store, limit, offset, include_debug)
+    elif key == "albums_for_you":
+        items, total = _dashboard_albums_for_you(store, limit, offset, include_debug)
     elif key == "discover_random":
         items, total = _dashboard_discover_random(store, limit, offset, include_debug)
+    elif key == "new_releases":
+        items, total = _dashboard_new_releases(store, limit, offset, include_debug)
+    elif key == "liked_artists":
+        items, total = _dashboard_liked_artists(store, limit, offset, include_debug)
+    elif key == "liked_releases":
+        items, total = _dashboard_liked_releases(store, limit, offset, include_debug)
     else:
         items, total = _dashboard_generated_mixes(store, limit, offset, include_debug)
     title, subtitle = titles[key]

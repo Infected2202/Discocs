@@ -55,17 +55,89 @@ def get_navidrome_starred_ids() -> dict[str, object]:
     client = _navidrome_client(settings)
     try:
         data = build_starred_track_ids(store, client, user=settings.navidrome.user)
+        starred_full = client.get_starred_full()
+
+        album_external_ids = [a.get("id", "") for a in starred_full["albums"] if a.get("id")]
+        artist_external_ids = [a.get("id", "") for a in starred_full["artists"] if a.get("id")]
+
+        album_ids: list[int] = []
+        for ext_id in album_external_ids:
+            entity_id = store.entity_id_for_external_id("navidrome", "release", ext_id)
+            if entity_id is not None:
+                album_ids.append(entity_id)
+
+        artist_ids: list[int] = []
+        for ext_id in artist_external_ids:
+            entity_id = store.entity_id_for_external_id("navidrome", "artist", ext_id)
+            if entity_id is not None:
+                artist_ids.append(entity_id)
+
+        data["album_ids"] = album_ids
+        data["artist_ids"] = artist_ids
+
         navidrome_logger.info(
-            "Navidrome starred ids user=%s count=%s mapped_count=%s track_ids=%s",
+            "Navidrome starred ids user=%s count=%s mapped_count=%s track_ids=%s album_ids=%s artist_ids=%s",
             data.get("user"),
             data.get("count"),
             data.get("mapped_count"),
             data.get("track_ids"),
+            album_ids,
+            artist_ids,
         )
         return data
     except Exception as exc:
         navidrome_logger.warning("Navidrome starred ids failed error=%s", exc)
         raise HTTPException(status_code=502, detail=f"Navidrome starred failed: {exc}") from exc
+
+
+@router.put("/releases/{release_id}/navidrome-star")
+def set_release_navidrome_star(release_id: int, request: NavidromeStarRequest) -> dict[str, object]:
+    store, settings = context()
+    item_id = store.external_id_for_entity("navidrome", "release", release_id)
+    if item_id is None:
+        raise HTTPException(status_code=404, detail="Release has no Navidrome mapping")
+    client = _navidrome_client(settings)
+    try:
+        if request.starred:
+            client.star_album(item_id)
+        else:
+            client.unstar_album(item_id)
+    except Exception as exc:
+        navidrome_logger.warning(
+            "Navidrome album star update failed release_id=%s item_id=%s starred=%s error=%s",
+            release_id, item_id, request.starred, exc,
+        )
+        raise HTTPException(status_code=502, detail=f"Navidrome star update failed: {exc}") from exc
+    navidrome_logger.info(
+        "Navidrome album star update ok release_id=%s item_id=%s starred=%s",
+        release_id, item_id, request.starred,
+    )
+    return {"release_id": release_id, "item_id": item_id, "starred": request.starred}
+
+
+@router.put("/artists/{artist_id}/navidrome-star")
+def set_artist_navidrome_star(artist_id: int, request: NavidromeStarRequest) -> dict[str, object]:
+    store, settings = context()
+    item_id = store.external_id_for_entity("navidrome", "artist", artist_id)
+    if item_id is None:
+        raise HTTPException(status_code=404, detail="Artist has no Navidrome mapping")
+    client = _navidrome_client(settings)
+    try:
+        if request.starred:
+            client.star_artist(item_id)
+        else:
+            client.unstar_artist(item_id)
+    except Exception as exc:
+        navidrome_logger.warning(
+            "Navidrome artist star update failed artist_id=%s item_id=%s starred=%s error=%s",
+            artist_id, item_id, request.starred, exc,
+        )
+        raise HTTPException(status_code=502, detail=f"Navidrome star update failed: {exc}") from exc
+    navidrome_logger.info(
+        "Navidrome artist star update ok artist_id=%s item_id=%s starred=%s",
+        artist_id, item_id, request.starred,
+    )
+    return {"artist_id": artist_id, "item_id": item_id, "starred": request.starred}
 
 
 @router.put("/tracks/{track_id}/navidrome-star")
@@ -99,6 +171,14 @@ def set_track_navidrome_star(track_id: int, request: NavidromeStarRequest) -> di
         item_id,
         request.starred,
     )
+    if request.starred:
+        store.import_external_track_play_state(track_id, liked=True)
+    else:
+        with store.connect() as conn:
+            conn.execute(
+                "UPDATE user_track_preferences SET liked = 0 WHERE track_id = ?",
+                (track_id,),
+            )
     return {
         "track_id": track_id,
         "item_id": item_id,

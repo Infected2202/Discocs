@@ -84,6 +84,7 @@ from app.models import (
     utc_now,
 )
 from app.scanner import ScannedTrack
+from app.store._helpers import row_to_track
 
 
 logger = logging.getLogger(__name__)

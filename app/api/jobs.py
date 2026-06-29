@@ -45,9 +45,12 @@ from app.schemas.requests import (
     IndexRequest,
     NavidromeSyncRequest,
 )
+from app.services.release_aggregates import run_release_aggregate_job
+from app.services.release_scoring import release_recommendation_defaults
 from app.services.jobs import (
     create_deferred_job_if_busy,
     create_job,
+    finish_job,
     maybe_start_next_deferred_job,
     sync_memory_jobs_from_durable_jobs,
     update_job,
@@ -161,6 +164,8 @@ def stats(model: str = "discogs_multi") -> dict[str, object]:
     else:
         model_path = settings.model_path(model)
         model_exists = model_path.exists()
+    agg_ready = store.count_release_aggregates(model)
+    agg_pending = store.count_releases_needing_aggregation(model)
     logger.info("Stats base_counts seconds=%.3f", perf_counter() - counts_started)
     data: dict[str, object] = {
         "db": str(settings.db_path),
@@ -179,6 +184,7 @@ def stats(model: str = "discogs_multi") -> dict[str, object]:
         "audio_features_complete_tracks": audio_status["complete_tracks"],
         "audio_features_missing_tracks": audio_status["missing_tracks"],
         "audio_features": audio_status,
+        "release_aggregates": {"ready": agg_ready, "pending": agg_pending},
         "model": model,
         "models": known_models,
         "model_stats": model_stats,
@@ -214,13 +220,18 @@ def start_analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks) ->
         local_executor_enabled = request.execution_mode in {"both", "local"} and request.local_executor_enabled
         if request.model == MUQ_MULAN_MODEL:
             local_executor_enabled = False
-        store, _settings = context()
-        durable_job = store.create_analysis_job(
-            request.model, request.limit, kind="analyze",
-            local_executor_enabled=local_executor_enabled,
-            workers=request.workers, tf_threads=request.tf_threads,
-            max_attempts=request.max_attempts, job_id=job_id,
-        )
+        try:
+            store, _settings = context()
+            durable_job = store.create_analysis_job(
+                request.model, request.limit, kind="analyze",
+                local_executor_enabled=local_executor_enabled,
+                workers=request.workers, tf_threads=request.tf_threads,
+                max_attempts=request.max_attempts, job_id=job_id,
+            )
+        except Exception:
+            logger.exception("Failed to create analysis job job_id=%s model=%s", job_id, request.model)
+            finish_job(job_id, "failed", f"Failed to create analysis job for {request.model}")
+            raise
         update_job(
             job_id,
             status="running" if durable_job.total else "completed",
@@ -631,6 +642,136 @@ def rebuild_index(request: IndexRequest) -> dict[str, object]:
         logger.warning("Index rebuild failed model=%s error=%s", request.model, exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "ok", "model": request.model, "index": str(path)}
+
+
+@router.post("/api/v1/jobs/release-aggregates")
+def api_v1_release_aggregates_job(
+    model_name: str = Query(default="discogs_multi"),
+    limit: int = Query(default=0, ge=0, description="Max releases to process (0 = all)"),
+) -> dict[str, object]:
+    """Trigger the release aggregate computation job.
+
+    Creates a tracked JobStatus entry and runs in a daemon thread.
+    Returns immediately with the job_id and status envelope.
+    """
+    from threading import Thread
+    store, _settings = context()
+    pending = store.count_releases_needing_aggregation(model_name)
+    if pending == 0:
+        return {"status": "ok", "message": "All releases already aggregated", "pending": 0, "model_name": model_name}
+
+    job_id = create_job("release_aggregates", f"Computing aggregates for {pending} releases (model={model_name})")
+
+    def _run() -> None:
+        run_release_aggregate_job(store, model_name, limit=limit, job_id=job_id)
+
+    Thread(target=_run, daemon=True, name=f"release-agg-{job_id[:8]}").start()
+    return {
+        "status": "started",
+        "job_id": job_id,
+        "message": f"Release aggregate job started for {pending} releases",
+        "pending": pending,
+        "model_name": model_name,
+    }
+
+
+@router.get("/api/v1/albums/settings")
+def api_v1_album_recommendation_settings() -> dict[str, object]:
+    """Return default album recommendation settings."""
+    return {"settings": release_recommendation_defaults()}
+
+
+@router.get("/api/v1/jobs/release-aggregates/status")
+def api_v1_release_aggregates_status(
+    model_name: str = Query(default="discogs_multi"),
+) -> dict[str, object]:
+    """Return current aggregate coverage for a model."""
+    store, _settings = context()
+    ready = store.count_release_aggregates(model_name)
+    pending = store.count_releases_needing_aggregation(model_name)
+    return {
+        "model_name": model_name,
+        "ready": ready,
+        "pending": pending,
+    }
+
+
+@router.post("/api/v1/jobs/albums-for-you")
+def api_v1_albums_for_you_job(
+    background_tasks: BackgroundTasks,
+) -> dict[str, object]:
+    """Recompute the Albums For You recommendation cache."""
+    store, settings = context()
+    model_name = settings.default_model
+
+    def _run() -> None:
+        from app.services.albums_for_you import refresh_albums_for_you  # noqa: PLC0415
+        from app.services.release_similarity import invalidate_cache  # noqa: PLC0415
+        invalidate_cache(model_name)
+        count = refresh_albums_for_you(store, model_name)
+        logger.info("albums_for_you manual refresh done count=%d model=%s", count, model_name)
+
+    background_tasks.add_task(_run)
+    age = store.albums_for_you_cache_age_hours(model_name)
+    return {
+        "status": "started",
+        "model_name": model_name,
+        "cache_age_hours": age,
+    }
+
+
+@router.get("/api/v1/jobs/albums-for-you/status")
+def api_v1_albums_for_you_status() -> dict[str, object]:
+    store, settings = context()
+    model_name = settings.default_model
+    age = store.albums_for_you_cache_age_hours(model_name)
+    cached = store.get_albums_for_you_cache(model_name)
+    import json  # noqa: PLC0415
+    count = len(json.loads(cached)) if cached else 0
+    return {
+        "model_name": model_name,
+        "cached_count": count,
+        "cache_age_hours": age,
+    }
+
+
+@router.post("/api/v1/jobs/flow-profile")
+def api_v1_flow_profile_rebuild_job(
+    background_tasks: BackgroundTasks,
+    model_key: str = Query(default="discogs_multi"),
+) -> dict[str, object]:
+    """Rebuild the Flow taste profile (seed collection + clustering)."""
+    store, settings = context()
+
+    def _run_rebuild() -> None:
+        from app.services.flow_regions import FlowSettings, rebuild_flow_profile
+        fs = FlowSettings(model_key=model_key)
+        try:
+            summary = rebuild_flow_profile(store, settings, fs)
+            logger.info("Flow profile rebuild complete: %s", summary)
+        except Exception:
+            logger.exception("Flow profile rebuild failed model=%s", model_key)
+
+    background_tasks.add_task(_run_rebuild)
+    return {"status": "started", "model_key": model_key}
+
+
+@router.get("/api/v1/jobs/flow-profile/status")
+def api_v1_flow_profile_status(
+    model_key: str = Query(default="discogs_multi"),
+) -> dict[str, object]:
+    """Return current Flow profile status."""
+    store, _settings = context()
+    profile = store.get_flow_profile(model_key)
+    if profile is None:
+        return {"model_key": model_key, "status": "not_built", "region_count": 0}
+    region_count = store.count_flow_regions(profile.id)
+    return {
+        "model_key": model_key,
+        "status": profile.status,
+        "region_count": region_count,
+        "last_built_at": profile.last_built_at,
+    }
 
 
 @router.post("/feedback")

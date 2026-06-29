@@ -14,6 +14,8 @@ from app.store.mixes import MixesStoreMixin
 from app.store.files import FilesStoreMixin
 from app.store.jobs import JobsStoreMixin
 from app.store.embeddings import EmbeddingsStoreMixin
+from app.store.release_aggregates import ReleaseAggregatesStoreMixin
+from app.store.flow import FlowStoreMixin
 from app.store._helpers import (
     playback_event_is_completion,
     playback_event_is_early_skip,
@@ -62,6 +64,11 @@ from app.models import (  # noqa: F401
     PlaybackSession,
     QueueItem,
     Release,
+    FlowGenerationRun,
+    FlowProfile,
+    FlowRegion,
+    FlowRegionTrack,
+    ReleaseAggregate,
     ReleaseSummaryRow,
     ReleaseTrackRow,
     SimilarTrack,
@@ -85,5 +92,7 @@ class Store(
     FilesStoreMixin,
     JobsStoreMixin,
     EmbeddingsStoreMixin,
+    ReleaseAggregatesStoreMixin,
+    FlowStoreMixin,
 ):
     """Assembled Store — all domain mixins composed into one class."""

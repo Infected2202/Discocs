@@ -23,6 +23,8 @@ from app.serializers.entities import (
     release_summary_dict,
     release_track_dict,
 )
+from app.serializers.search import _release_shelf_item
+from app.services.release_similarity import find_similar_releases
 
 logger = logging.getLogger(__name__)
 
@@ -75,17 +77,63 @@ def api_v1_release_related_discography(release_id: int) -> dict[str, object] | J
     }
 
 
-@router.get("/api/v1/releases/{release_id}/recommendations", response_model=ReleaseAvailabilityStubResponse)
-def api_v1_release_recommendations(release_id: int) -> dict[str, object] | JSONResponse:
-    store, _settings = context()
+@router.get("/api/v1/releases/{release_id}/recommendations", response_model=None)
+def api_v1_release_recommendations(
+    release_id: int,
+    limit: int = Query(default=12, ge=1, le=50),
+    include_debug: bool = False,
+) -> dict[str, object] | JSONResponse:
+    store, settings = context()
     release = store.get_release(release_id)
     if release is None:
         return api_error(404, "not_found", "Release not found")
+
+    model_name = settings.default_model
+    source_centroid = store.load_release_embedding(release_id, model_name)
+
+    if source_centroid is None:
+        return {
+            "release": {"id": release.release.id, "title": release.release.title},
+            "available": False,
+            "basis": "no_aggregate",
+            "items": [],
+        }
+
+    # Exclude the source release and all other releases by the same artist(s)
+    artist_ids = store.artist_ids_for_release(release_id)
+    exclude_ids: set[int] = {release_id}
+    if artist_ids:
+        with store.connect() as conn:
+            placeholders = ",".join("?" for _ in artist_ids)
+            rows = conn.execute(
+                f"SELECT DISTINCT release_id FROM release_artists WHERE artist_id IN ({placeholders})",
+                artist_ids,
+            ).fetchall()
+        exclude_ids.update(int(r[0]) for r in rows)
+
+    similar = find_similar_releases(
+        store,
+        model_name,
+        source_centroid,
+        exclude_release_ids=exclude_ids,
+        limit=limit,
+    )
+
+    items: list[dict[str, object]] = []
+    for rel_id, score in similar:
+        row = store.get_release(rel_id)
+        if row is None:
+            continue
+        item = _release_shelf_item(row)
+        if include_debug:
+            item["score"] = score
+        items.append(item)
+
     return {
         "release": {"id": release.release.id, "title": release.release.title},
-        "available": False,
-        "basis": "not_available",
-        "items": [],
+        "available": True,
+        "basis": "release_similarity",
+        "items": items,
     }
 
 

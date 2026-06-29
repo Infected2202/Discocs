@@ -89,6 +89,14 @@ def _compact_artist_names(artists: list[dict[str, object]]) -> str:
     return ", ".join(names) if names else "Unknown artist"
 
 
+def _artist_links(artists: list[dict[str, object]]) -> list[dict[str, str]]:
+    return [
+        {"label": str(a.get("name") or ""), "href": f"/artists/{a['id']}"}
+        for a in artists
+        if a.get("id") and a.get("name")
+    ]
+
+
 def dashboard_shelf_item(
     entity_type: str,
     entity_id: int,
@@ -101,6 +109,7 @@ def dashboard_shelf_item(
     play_source_id: int | None = None,
     reason: str | None = None,
     badges: list[str] | None = None,
+    subtitle_links: list[dict[str, str]] | None = None,
     debug: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
@@ -109,6 +118,7 @@ def dashboard_shelf_item(
         "entity_id": entity_id,
         "title": title,
         "subtitle": subtitle,
+        "subtitle_links": subtitle_links or [],
         "artwork": image_ref(artwork_url, "local" if artwork_url else "none"),
         "action": {"type": "open", "target": target},
         "play_action": {
@@ -117,25 +127,26 @@ def dashboard_shelf_item(
             "source_id": play_source_id or entity_id,
         },
         "badges": badges or [],
-        "reason": reason,
         "debug": debug,
     }
 
 
 def _release_shelf_item(row: ReleaseSummaryRow, reason: str | None = None) -> dict[str, object]:
     release = release_summary_dict(row)
+    artists = list(release.get("artists") or [])
     artwork = release.get("artwork") if isinstance(release.get("artwork"), dict) else {}
     return dashboard_shelf_item(
         "release",
         int(release["id"]),
         str(release["title"]),
-        _compact_artist_names(list(release.get("artists") or [])),
+        _compact_artist_names(artists),
         f"/releases/{release['id']}",
         artwork_url=str(artwork.get("url") or "") or None,
         play_source_type="release",
         play_source_id=int(release["id"]),
         reason=reason,
         badges=[str(release.get("release_type_label") or "Release")],
+        subtitle_links=_artist_links(artists),
     )
 
 
@@ -148,17 +159,19 @@ def _track_shelf_item(
     summary = track_summary_dict(store, track, artists)
     release = summary.get("release") if isinstance(summary.get("release"), dict) else None
     target = f"/releases/{release['id']}" if release and release.get("id") else f"?view=recommendations&seed={track.id}"
+    artist_objs = list(summary.get("artists") or [])
     return dashboard_shelf_item(
         "track",
         track.id,
         str(summary["title"]),
-        _compact_artist_names(list(summary.get("artists") or [])),
+        _compact_artist_names(artist_objs),
         target,
         artwork_url=f"/tracks/{track.id}/cover?size=512",
         play_source_type="track",
         play_source_id=track.id,
         reason=reason,
         badges=[str(release["title"])] if release and release.get("title") else [],
+        subtitle_links=_artist_links(artist_objs),
     )
 
 
@@ -171,17 +184,19 @@ def _discover_track_shelf_item(
     summary = track_summary_dict(store, track, artists)
     release = summary.get("release") if isinstance(summary.get("release"), dict) else None
     target = f"/releases/{release['id']}" if release and release.get("id") else f"?view=recommendations&seed={track.id}"
+    artist_objs = list(summary.get("artists") or [])
     item = dashboard_shelf_item(
         "track",
         track.id,
         str(summary["title"]),
-        _compact_artist_names(list(summary.get("artists") or [])),
+        _compact_artist_names(artist_objs),
         target,
         artwork_url=f"/tracks/{track.id}/cover?size=512",
         play_source_type="track",
         play_source_id=track.id,
         reason=reason,
         badges=[str(release["title"])] if release and release.get("title") else [],
+        subtitle_links=_artist_links(artist_objs),
     )
     # Automatically trigger instant-mix for discover-random tracks on play click
     item["play_action"] = {

@@ -230,8 +230,8 @@ class TextSearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
     count: int = Field(default=50, ge=1, le=500)
     min_similarity: float | None = Field(default=None, ge=0.0, le=1.0)
-    max_per_artist: int = Field(default=2, ge=1, le=100)
-    exclude_same_album: bool = True
+    max_per_artist: int = Field(default=100, ge=1, le=100)
+    exclude_same_album: bool = False
     count_collaboration_artists: bool = True
 
 
@@ -346,3 +346,27 @@ class MixGenerateRequest(BaseModel):
     tracks_per_mix: int = Field(default=100, ge=1, le=300)
     force: bool = False
     settings: dict[str, object] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Flow
+# ---------------------------------------------------------------------------
+
+class FlowStartRequest(BaseModel):
+    settings: dict[str, object] | None = None
+    include_debug: bool = False
+
+
+class FlowRefillRequest(BaseModel):
+    session_id: str
+    visible_buffer: int = Field(default=5, ge=1, le=50)
+    region_id: str | None = None
+    include_debug: bool = False
+
+
+class FlowEventRequest(BaseModel):
+    session_id: str
+    event_type: str
+    track_id: int | None = None
+    artist_id: int | None = None
+    release_id: int | None = None

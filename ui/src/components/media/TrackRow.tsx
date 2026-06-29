@@ -39,12 +39,11 @@ export default function TrackRow({
   const playbackState  = usePlayerStore((s) => s.playbackState)
   const playSource     = usePlayerStore((s) => s.playSource)
   const togglePlay     = usePlayerStore((s) => s.togglePlay)
-  const isLiked        = useNavidromeStore((s) => s.isLiked)
   const toggleLike     = useNavidromeStore((s) => s.toggleLike)
+  const liked          = useNavidromeStore((s) => s.likedIds.has(track.id))
 
   const isActive  = currentTrackId === track.id
   const isPlaying = isActive && playbackState === "playing"
-  const liked     = isLiked(track.id)
 
   function handlePlay(e: React.MouseEvent) {
     e.stopPropagation()
@@ -54,8 +53,6 @@ export default function TrackRow({
       playSource("track", track.id, sourceLabel ?? track.title)
     }
   }
-
-  const artists = track.artists.map((a) => a.name).join(", ")
 
   return (
     <tr
@@ -105,8 +102,21 @@ export default function TrackRow({
           <p className={cn("truncate text-sm font-medium", isActive && "text-primary")}>
             {track.title}
           </p>
-          {artists && (
-            <p className="truncate text-xs text-muted-foreground">{artists}</p>
+          {track.artists.length > 0 && (
+            <p className="truncate text-xs text-muted-foreground">
+              {track.artists.map((a, i) => (
+                <span key={a.id}>
+                  {i > 0 && ", "}
+                  <Link
+                    to={`/artists/${a.id}`}
+                    className="hover:text-foreground hover:underline transition-colors"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {a.name}
+                  </Link>
+                </span>
+              ))}
+            </p>
           )}
         </div>
       </td>

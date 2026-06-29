@@ -22,6 +22,11 @@ from uuid import uuid4
 
 import numpy as np
 
+from app.store._helpers import (
+    row_to_analysis_job,
+    row_to_analysis_task,
+    row_to_analysis_worker,
+)
 from app.library import (
     ArtistCredit,
     TrackMetadataEnvelope,

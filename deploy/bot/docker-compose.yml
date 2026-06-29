@@ -1,0 +1,20 @@
+services:
+  bot:
+    build:
+      context: ../..
+      dockerfile: deploy/bot/Dockerfile
+    restart: unless-stopped
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      ALLOWED_TELEGRAM_USER_IDS: ${ALLOWED_TELEGRAM_USER_IDS}
+      NAVIDROME_BASE_URL: ${NAVIDROME_BASE_URL}
+      NAVIDROME_USERNAME: ${NAVIDROME_USERNAME}
+      NAVIDROME_PASSWORD: ${NAVIDROME_PASSWORD}
+      DISCOCS_BASE_URL: ${DISCOCS_BASE_URL:-http://backend:7752}
+      SQLITE_PATH: /data/bot.sqlite
+      TEMP_DIR: /data/tmp
+    volumes:
+      - discocs-bot-data:/data
+
+volumes:
+  discocs-bot-data:

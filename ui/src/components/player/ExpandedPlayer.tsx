@@ -33,6 +33,7 @@ function hiresUrl(url: string | null | undefined): string | undefined {
 
 export default function ExpandedPlayer() {
   const [mobileTab, setMobileTab] = useState<"player" | "queue">("player")
+  const [artworkPulse, setArtworkPulse] = useState<"play" | "pause" | null>(null)
 
   const expanded           = usePlayerStore((s) => s.expanded)
   const currentTrack       = usePlayerStore((s) => s.currentTrack)
@@ -64,8 +65,8 @@ export default function ExpandedPlayer() {
     if (!expanded) setMobileTab("player")
   }, [expanded])
 
-  const isLiked    = useNavidromeStore((s) => s.isLiked)
   const toggleLike = useNavidromeStore((s) => s.toggleLike)
+  const liked      = useNavidromeStore((s) => currentTrackId ? s.likedIds.has(currentTrackId) : false)
 
   const isPlaying  = playbackState === "playing"
   const isLoading  = playbackState === "loading"
@@ -73,7 +74,6 @@ export default function ExpandedPlayer() {
   const shuffle    = session?.shuffle_enabled ?? false
   const repeatOne  = session?.repeat_mode === "one"
   const autoplay   = session?.autoplay_enabled ?? false
-  const liked      = currentTrackId ? isLiked(currentTrackId) : false
   const effective  = muted ? 0 : volume
 
   function handleSeekClick(e: React.MouseEvent<HTMLDivElement>) {
@@ -106,13 +106,21 @@ export default function ExpandedPlayer() {
       "fixed inset-0 z-50 bg-background flex flex-col overflow-hidden transition-transform duration-300 ease-out will-change-transform",
       expanded ? "translate-y-0" : "translate-y-full pointer-events-none",
     )}>
-      {/* Top bar */}
-      <div className="flex items-center justify-between px-6 pt-3 pb-1 shrink-0">
-        <button onClick={toggleExpanded} className={iconBtn}>
-          <ChevronDown size={20} />
-        </button>
-        {/* Mobile: tab switcher */}
-        <div className="flex md:hidden gap-1 bg-muted rounded-lg p-0.5">
+      {/* Artwork background */}
+      {currentTrack?.artwork?.url && (
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          <img
+            src={hiresUrl(currentTrack.artwork.url)}
+            aria-hidden
+            className="w-full h-full object-cover object-center"
+            style={{ filter: "blur(15px) brightness(0.3) saturate(1.4)", transform: "scale(1.05)", opacity: 0.65 }}
+          />
+          <div className="absolute inset-0" style={{ background: "linear-gradient(in oklab to bottom, rgb(11 13 15 / 0.3) 0%, rgb(11 13 15 / 0.7) 50%, rgb(11 13 15 / 0.95) 100%)" }} />
+        </div>
+      )}
+      {/* Mobile tab bar */}
+      <div className="relative z-10 flex md:hidden items-center px-4 pt-3 pb-1 shrink-0">
+        <div className="flex gap-1 bg-muted rounded-lg p-0.5 mr-auto">
           <button
             onClick={() => setMobileTab("player")}
             className={cn("px-3 py-1 text-sm rounded-md transition-colors", mobileTab === "player" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
@@ -122,40 +130,54 @@ export default function ExpandedPlayer() {
             className={cn("px-3 py-1 text-sm rounded-md transition-colors", mobileTab === "queue" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
           >Queue</button>
         </div>
-        {/* Desktop: source label */}
-        <p className="hidden md:block text-sm font-medium text-muted-foreground truncate px-4 max-w-xs">
-          {session?.source_label ?? "Now Playing"}
-        </p>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button className={iconBtn}><MoreHorizontal size={20} /></button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
-            <DropdownMenuItem onClick={handleInstantMix}>Instant mix</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => recordEvent("disliked")}>Don't play this</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <button onClick={toggleExpanded} className={iconBtn}>
+          <ChevronDown size={20} />
+        </button>
       </div>
 
       {/* Body — flex row on desktop, single column on mobile */}
-      <div className="flex flex-1 min-h-0 gap-0">
+      <div className="relative z-10 flex flex-1 min-h-0 gap-0">
 
         {/* ── LEFT: artwork + controls ── */}
-        <div className={cn(
-          "flex flex-col items-center flex-1 min-w-0 min-h-0 px-8 py-6",
-          mobileTab === "queue" ? "hidden md:flex" : "flex",
-        )}>
+        <div
+          className={cn(
+            "flex flex-col items-center flex-1 min-w-0 min-h-0 px-8 py-6",
+            mobileTab === "queue" ? "hidden md:flex" : "flex",
+          )}
+          onClick={(e) => {
+            // collapse if clicking empty space (not interactive children)
+            if (e.target === e.currentTarget) toggleExpanded()
+          }}
+        >
 
           {/* Artwork — on mobile natural square, on desktop fills remaining height */}
           <div className="w-full md:flex-1 md:min-h-0 flex items-center justify-center mb-4">
-            <div className="w-full md:w-auto md:h-full aspect-square max-w-full md:max-h-full rounded-xl overflow-hidden shadow-2xl">
+            <div
+              className="relative w-full md:w-auto md:h-full aspect-square max-w-full md:max-h-full rounded-xl overflow-hidden shadow-2xl cursor-pointer"
+              onClick={() => {
+                togglePlay()
+                setArtworkPulse(isPlaying ? "pause" : "play")
+                setTimeout(() => setArtworkPulse(null), 350)
+              }}
+            >
               <ArtworkImage
                 src={hiresUrl(currentTrack?.artwork?.url)}
                 alt={currentTrack?.title ?? ""}
                 className="w-full h-full object-cover"
                 fallbackLetter={currentTrack?.title?.[0]}
               />
+              {/* Play/pause flash */}
+              <div className={cn(
+                "absolute inset-0 flex items-center justify-center transition-opacity duration-300",
+                artworkPulse ? "opacity-100" : "opacity-0",
+              )}>
+                <div className="bg-black/50 rounded-full p-5">
+                  {artworkPulse === "pause"
+                    ? <Pause size={40} fill="white" strokeWidth={0} className="text-white" />
+                    : <Play size={40} fill="white" strokeWidth={0} className="text-white ml-1" />
+                  }
+                </div>
+              </div>
             </div>
           </div>
 
@@ -186,15 +208,27 @@ export default function ExpandedPlayer() {
                     )}
                   </div>
                 </div>
-                {currentTrackId && (
-                  <button
-                    onClick={() => toggleLike(currentTrackId)}
-                    className={cn("p-1.5 rounded transition-colors shrink-0 mt-0.5",
-                      liked ? "text-primary" : "text-muted-foreground hover:text-foreground")}
-                  >
-                    <ThumbsUp size={18} />
-                  </button>
-                )}
+                <div className="flex items-center gap-1 shrink-0 mt-0.5">
+                  {currentTrackId && (
+                    <button
+                      onClick={() => toggleLike(currentTrackId)}
+                      className={cn("p-1.5 rounded transition-colors",
+                        liked ? "text-primary" : "text-muted-foreground hover:text-foreground")}
+                    >
+                      <ThumbsUp size={18} />
+                    </button>
+                  )}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button className={cn(iconBtn, "p-1.5")}><MoreHorizontal size={18} /></button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-44">
+                      <DropdownMenuItem onClick={handleInstantMix}>Instant mix</DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => recordEvent("disliked")}>Don't play this</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               </div>
             </div>
 
@@ -260,13 +294,13 @@ export default function ExpandedPlayer() {
           "md:w-[440px] md:shrink-0",
           mobileTab === "queue" ? "flex flex-1 w-full border-l-0" : "hidden md:flex",
         )}>
-          {/* Header — source + autoplay toggle */}
-          <div className="px-4 py-3 shrink-0 border-b border-border space-y-2">
-            {session?.source_label && (
-              <p className="text-xs text-muted-foreground">
-                Source: <span className="text-foreground font-medium">{session.source_label}</span>
-              </p>
-            )}
+          {/* Header — collapse + autoplay toggle */}
+          <div className="px-4 pt-3 pb-3 shrink-0 border-b border-border">
+            <div className="flex justify-end mb-2">
+              <button onClick={toggleExpanded} className={iconBtn}>
+                <ChevronDown size={20} />
+              </button>
+            </div>
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium">Autoplay</p>

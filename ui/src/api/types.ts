@@ -120,7 +120,7 @@ export interface ReleaseAvailabilityStub {
   release: ReleaseLink
   available: boolean
   basis: string
-  items: unknown[]
+  items: ShelfItem[]
 }
 
 // ----------------------------------------------------------------------------
@@ -166,7 +166,12 @@ export interface SearchResponse {
 // Dashboard
 // ----------------------------------------------------------------------------
 
-export type ShelfItemType = "artist" | "release" | "generated_mix"
+export type ShelfItemType = "artist" | "release" | "generated_mix" | "track"
+
+export interface SubtitleLink {
+  label: string
+  href: string
+}
 
 export interface ShelfItem {
   id: string                // e.g. "artist:1", "release:5", "generated_mix:abc"
@@ -174,8 +179,10 @@ export interface ShelfItem {
   entity_id: number | string
   title: string
   subtitle: string | null
+  subtitle_links?: SubtitleLink[]
   artwork: ImageRef
   reason: string | null
+  action?: { type: string; target: string }
   play_action:
     | { type: "play"; source_type: string; source_id: number | string; source_label?: string }
     | { type: "post"; endpoint: string }

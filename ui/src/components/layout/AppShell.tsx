@@ -1,3 +1,4 @@
+import { useEffect } from "react"
 import { Outlet } from "react-router"
 import Sidebar from "./Sidebar"
 import TopBar from "./TopBar"
@@ -7,10 +8,14 @@ import ErrorBoundary from "@/components/common/ErrorBoundary"
 import PageTransition from "@/components/common/PageTransition"
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts"
 import { useTrackTitle } from "@/hooks/useTrackTitle"
+import { useNavidromeStore } from "@/store/navidromeStore"
 
 export default function AppShell() {
   useKeyboardShortcuts()
   useTrackTitle()
+
+  const fetchLikedIds = useNavidromeStore((s) => s.fetchLikedIds)
+  useEffect(() => { fetchLikedIds() }, [fetchLikedIds])
 
   return (
     <div className="flex flex-col h-svh overflow-hidden bg-background">

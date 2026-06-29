@@ -24,8 +24,8 @@ from uuid import uuid4
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import numpy as np
 from starlette.background import BackgroundTask
@@ -343,6 +343,8 @@ from app.api import (  # noqa: E402
     playback as _api_playback,
     workers as _api_workers,
     jobs as _api_jobs,
+    playlists as _api_playlists,
+    flow as _api_flow,
 )
 
 app.include_router(_api_dashboard.router)
@@ -357,11 +359,20 @@ app.include_router(_api_navidrome.router)
 app.include_router(_api_tracks.router)
 app.include_router(_api_workers.router)
 app.include_router(_api_jobs.router)
+app.include_router(_api_playlists.router)
+app.include_router(_api_flow.router)
 
 
 
 from app.api.middleware import log_http_request as _log_http_request  # noqa: E402
 app.middleware("http")(_log_http_request)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 
@@ -423,23 +434,6 @@ def admin_ui() -> HTMLResponse:
         },
     )
 
-
-_NEW_UI_DIR = Path(__file__).parent.parent / "ui" / "dist"
-_NEW_UI_INDEX = _NEW_UI_DIR / "index.html"
-
-if _NEW_UI_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=str(_NEW_UI_DIR / "assets")), name="ui-assets")
-
-
-@app.get("/app/{full_path:path}", response_class=HTMLResponse)
-@app.get("/app", response_class=HTMLResponse)
-def new_ui(full_path: str = "") -> HTMLResponse:
-    if not _NEW_UI_INDEX.exists():
-        return HTMLResponse("<h1>UI not built — run <code>pnpm build</code> in ui/</h1>", status_code=503)
-    return HTMLResponse(
-        _NEW_UI_INDEX.read_text(),
-        headers={"Cache-Control": "no-store"},
-    )
 
 
 @app.get("/debug/ui")

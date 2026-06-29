@@ -20,19 +20,25 @@ def api_v1_dashboard(
 ) -> dict[str, object]:
     store, settings = context()
     ensure_diagnostics = ensure_dashboard_mixes_fast(store, settings)
-    shelf_keys = ["mixes_for_you", "recently_added", "discover_random", "listen_again", "long_time_no_listen"]
+    shelf_keys = ["mixes_for_you", "albums_for_you", "history", "recently_added", "new_releases", "liked_artists", "liked_releases", "discover_random", "listen_again", "long_time_no_listen"]
     shelves = [
         shelf
         for key in shelf_keys
         if (shelf := dashboard_shelf_response(store, key, limit=limit, offset=0, include_debug=include_debug)) is not None
     ]
+    flow_profile = store.get_flow_profile(settings.default_model)
+    flow_available = flow_profile is not None and flow_profile.status == "ready"
     return {
         "hero": {
             "type": "flow",
             "title": "Flow",
-            "subtitle": "Start your personal stream",
-            "available": False,
-            "action": {"type": "start_flow", "enabled": False, "endpoint": None},
+            "subtitle": "Start your personal stream" if flow_available else "Build your profile to start",
+            "available": flow_available,
+            "action": {
+                "type": "start_flow",
+                "enabled": flow_available,
+                "endpoint": "/api/v1/flow/start" if flow_available else None,
+            },
         },
         "shelves": shelves,
         "settings": {

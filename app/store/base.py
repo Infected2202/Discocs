@@ -587,6 +587,114 @@ class StoreBase:
                 CREATE INDEX IF NOT EXISTS idx_track_features_extractor_track
                     ON track_features(extractor, track_id);
 
+                CREATE TABLE IF NOT EXISTS release_aggregates (
+                    release_id INTEGER PRIMARY KEY,
+                    track_count INTEGER NOT NULL DEFAULT 0,
+                    available_track_count INTEGER NOT NULL DEFAULT 0,
+                    duration REAL,
+                    centroid_model TEXT,
+                    medoid_track_id INTEGER,
+                    embedding_status TEXT NOT NULL DEFAULT 'pending',
+                    top_region_matches_json TEXT,
+                    audio_summary_json TEXT,
+                    preference_summary_json TEXT,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (release_id) REFERENCES releases(id) ON DELETE CASCADE,
+                    FOREIGN KEY (medoid_track_id) REFERENCES tracks(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS release_embeddings (
+                    release_id INTEGER NOT NULL,
+                    model_name TEXT NOT NULL,
+                    dim INTEGER NOT NULL,
+                    vector BLOB NOT NULL,
+                    vector_norm REAL NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (release_id, model_name),
+                    FOREIGN KEY (release_id) REFERENCES releases(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS flow_profiles (
+                    id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    model_key TEXT NOT NULL,
+                    settings_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_built_at TEXT
+                );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_flow_profiles_model_key
+                    ON flow_profiles(model_key);
+
+                CREATE TABLE IF NOT EXISTS flow_regions (
+                    id TEXT PRIMARY KEY,
+                    profile_id TEXT NOT NULL,
+                    region_index INTEGER NOT NULL,
+                    centroid_ref TEXT,
+                    medoid_track_id INTEGER,
+                    weight REAL NOT NULL DEFAULT 1.0,
+                    seed_count INTEGER NOT NULL DEFAULT 0,
+                    candidate_count INTEGER NOT NULL DEFAULT 0,
+                    summary_json TEXT,
+                    quality_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (profile_id) REFERENCES flow_profiles(id) ON DELETE CASCADE,
+                    FOREIGN KEY (medoid_track_id) REFERENCES tracks(id) ON DELETE SET NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_flow_regions_profile
+                    ON flow_regions(profile_id, region_index);
+
+                CREATE TABLE IF NOT EXISTS flow_region_tracks (
+                    region_id TEXT NOT NULL,
+                    track_id INTEGER NOT NULL,
+                    role TEXT NOT NULL,
+                    weight REAL,
+                    distance REAL,
+                    PRIMARY KEY (region_id, track_id, role),
+                    FOREIGN KEY (region_id) REFERENCES flow_regions(id) ON DELETE CASCADE,
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_flow_region_tracks_region_role
+                    ON flow_region_tracks(region_id, role);
+
+                CREATE TABLE IF NOT EXISTS flow_region_embeddings (
+                    region_id TEXT NOT NULL,
+                    model_name TEXT NOT NULL,
+                    dim INTEGER NOT NULL,
+                    vector BLOB NOT NULL,
+                    vector_norm REAL NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (region_id, model_name),
+                    FOREIGN KEY (region_id) REFERENCES flow_regions(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS flow_generation_runs (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT,
+                    profile_id TEXT,
+                    region_id TEXT,
+                    settings_json TEXT,
+                    candidate_count INTEGER,
+                    selected_count INTEGER,
+                    score_summary_json TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (profile_id) REFERENCES flow_profiles(id) ON DELETE SET NULL,
+                    FOREIGN KEY (region_id) REFERENCES flow_regions(id) ON DELETE SET NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_flow_generation_runs_session
+                    ON flow_generation_runs(session_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS albums_for_you_cache (
+                    model_name TEXT PRIMARY KEY,
+                    items_json TEXT NOT NULL,
+                    computed_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS analysis_workers (
                     worker_id TEXT PRIMARY KEY,
                     models TEXT NOT NULL,

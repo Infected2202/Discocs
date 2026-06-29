@@ -72,6 +72,77 @@ class Release:
     added_at: str | None = None
 
 
+@dataclass(frozen=True)
+class ReleaseAggregate:
+    release_id: int
+    track_count: int
+    available_track_count: int
+    duration: float | None
+    centroid_model: str | None
+    medoid_track_id: int | None
+    # 'pending' | 'ready' | 'unavailable'
+    embedding_status: str
+    top_region_matches_json: str | None
+    audio_summary_json: str | None
+    preference_summary_json: str | None
+    updated_at: str
+
+
+# ---------------------------------------------------------------------------
+# Flow engine
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class FlowProfile:
+    id: str
+    # 'pending' | 'building' | 'ready' | 'empty' | 'stale'
+    status: str
+    model_key: str
+    settings_json: str | None
+    created_at: str
+    updated_at: str
+    last_built_at: str | None
+
+
+@dataclass(frozen=True)
+class FlowRegion:
+    id: str
+    profile_id: str
+    region_index: int
+    centroid_ref: str | None
+    medoid_track_id: int | None
+    weight: float
+    seed_count: int
+    candidate_count: int
+    summary_json: str | None
+    quality_json: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class FlowRegionTrack:
+    region_id: str
+    track_id: int
+    # 'seed' | 'representative' | 'candidate' | 'accepted' | 'rejected'
+    role: str
+    weight: float | None
+    distance: float | None
+
+
+@dataclass(frozen=True)
+class FlowGenerationRun:
+    id: str
+    session_id: str | None
+    profile_id: str | None
+    region_id: str | None
+    settings_json: str | None
+    candidate_count: int | None
+    selected_count: int | None
+    score_summary_json: str | None
+    created_at: str
+
+
 # ---------------------------------------------------------------------------
 # Row / projection types
 # ---------------------------------------------------------------------------

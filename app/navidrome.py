@@ -117,6 +117,32 @@ class NavidromeClient:
     def unstar_song(self, item_id: str) -> dict[str, Any]:
         return self.request("unstar", {"id": item_id})
 
+    def star_album(self, album_id: str) -> dict[str, Any]:
+        return self.request("star", {"albumId": album_id})
+
+    def unstar_album(self, album_id: str) -> dict[str, Any]:
+        return self.request("unstar", {"albumId": album_id})
+
+    def star_artist(self, artist_id: str) -> dict[str, Any]:
+        return self.request("star", {"artistId": artist_id})
+
+    def unstar_artist(self, artist_id: str) -> dict[str, Any]:
+        return self.request("unstar", {"artistId": artist_id})
+
+    def get_starred_full(self) -> dict[str, list[dict[str, Any]]]:
+        """Return raw starred2 payload with songs, albums, artists."""
+        try:
+            payload = self.request("getStarred2")
+        except RuntimeError as exc:
+            logger.warning("Navidrome getStarred2 failed, falling back to getStarred: %s", exc)
+            payload = self.request("getStarred")
+        starred = payload.get("starred2") or payload.get("starred") or {}
+        return {
+            "songs": _as_list(starred.get("song")),
+            "albums": _as_list(starred.get("album")),
+            "artists": _as_list(starred.get("artist")),
+        }
+
     def scrobble_song(
         self,
         item_id: str,
@@ -128,6 +154,27 @@ class NavidromeClient:
         if played_at_ms is not None:
             params["time"] = played_at_ms
         return self.request("scrobble", params)
+
+    def get_album(self, album_id: str) -> dict[str, Any]:
+        payload = self.request("getAlbum", {"id": album_id})
+        album = payload.get("album")
+        return album if isinstance(album, dict) else {}
+
+    def iter_albums(self, *, page_size: int = 500):
+        offset = 0
+        while True:
+            payload = self.request(
+                "getAlbumList2",
+                {"type": "alphabeticalByName", "size": page_size, "offset": offset},
+            )
+            albums = _as_list((payload.get("albumList2") or {}).get("album"))
+            if not albums:
+                break
+            for album in albums:
+                yield album
+            offset += len(albums)
+            if len(albums) < page_size:
+                break
 
     def iter_songs(
         self,

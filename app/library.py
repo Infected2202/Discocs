@@ -157,7 +157,7 @@ def envelope_from_navidrome_song(song: Any, raw_json: str | None = None) -> Trac
     disc_number = _optional_int(_first_raw_value(raw, "discNumber", "disc_number"))
     total_tracks = _optional_int(_first_raw_value(raw, "totalTracks", "trackTotal", "total_tracks"))
     release_type = _normalize_release_type(
-        _first_raw_value(raw, "releaseType", "albumType", "mediaType")
+        _first_raw_value(raw, "releaseType", "releaseTypes", "albumType", "mediaType")
     )
     release_date = clean_display_text(_first_raw_value(raw, "releaseDate", "date"))
     return TrackMetadataEnvelope(
@@ -197,7 +197,7 @@ def explicit_release_type(value: str | None) -> str:
 
 
 def _split_artist_credit(value: str) -> list[str]:
-    pattern = re.compile(r"\s*(?:;|\s&\s|\sfeat\.\s|\sft\.\s|\sfeaturing\s)\s*", re.IGNORECASE)
+    pattern = re.compile(r"\s*(?:;|•|\s&\s|\sfeat\.\s|\sft\.\s|\sfeaturing\s)\s*", re.IGNORECASE)
     parts = [clean_display_text(part) for part in pattern.split(value)]
     return [part for part in parts if part]
 

@@ -1,13 +1,15 @@
 import { useParams } from "react-router"
 import { Link } from "react-router"
-import { Play, Shuffle } from "lucide-react"
-import { useRelease, useReleaseTracks, useReleaseRelated } from "@/api/hooks/useRelease"
+import { Play, Shuffle, Heart } from "lucide-react"
+import { useRelease, useReleaseTracks, useReleaseRelated, useReleaseRecommendations } from "@/api/hooks/useRelease"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import TrackTable from "@/components/media/TrackTable"
 import Shelf from "@/components/media/Shelf"
 import { usePlayerStore } from "@/store/playerStore"
+import { useNavidromeStore } from "@/store/navidromeStore"
+import { cn } from "@/lib/utils"
 import type { ReleaseSummary } from "@/api/types"
 
 function formatDuration(seconds: number | null | undefined): string {
@@ -48,8 +50,11 @@ export default function ReleasePage() {
   const { data: releaseData, isLoading: relLoading, error } = useRelease(releaseId)
   const { data: tracksData, isLoading: tracksLoading } = useReleaseTracks(releaseId)
   const { data: relatedData } = useReleaseRelated(releaseId)
+  const { data: recsData } = useReleaseRecommendations(releaseId)
   const playSource = usePlayerStore((s) => s.playSource)
   const patchSession = usePlayerStore((s) => s.toggleShuffle)
+  const toggleAlbumLike = useNavidromeStore((s) => s.toggleAlbumLike)
+  const liked = useNavidromeStore((s) => s.likedAlbumIds.has(releaseId))
 
   const isLoading = relLoading || tracksLoading
 
@@ -67,9 +72,26 @@ export default function ReleasePage() {
   const related = (relatedData?.items ?? []) as ReleaseSummary[]
 
   return (
-    <div className="space-y-8 pb-8">
+    <div className="relative pb-8">
+      {/* Decorative background — fixed height, spans header + first tracks */}
+      {release.artwork?.url && (
+        <div className="absolute inset-x-0 top-0 h-[440px] overflow-hidden pointer-events-none">
+          <img
+            src={release.artwork.url}
+            aria-hidden
+            className="w-full h-full object-cover object-bottom"
+            style={{ filter: "blur(28px) brightness(0.35) saturate(1.3)", transform: "scale(1.12)" }}
+          />
+          <div
+            className="absolute inset-0"
+            style={{ background: "linear-gradient(to bottom, transparent 20%, var(--background) 90%)" }}
+          />
+        </div>
+      )}
+
       {/* Header */}
-      <div className="px-4 sm:px-6 pt-8 flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
+      <div className="relative z-10 space-y-8">
+      <div className="px-4 sm:px-6 pt-8 pb-4 flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
         <ArtworkImage
           src={release.artwork?.url}
           alt={release.title}
@@ -98,7 +120,7 @@ export default function ReleasePage() {
             {release.duration && <span>· {formatDuration(release.duration)}</span>}
           </div>
 
-          <div className="flex gap-2 mt-4">
+          <div className="flex gap-2 mt-4 items-center">
             <Button
               size="sm"
               onClick={() => playSource("release", releaseId, release.title)}
@@ -119,6 +141,16 @@ export default function ReleasePage() {
               <Shuffle size={14} />
               Shuffle
             </Button>
+            <button
+              onClick={() => toggleAlbumLike(releaseId)}
+              title={liked ? "Unlike album" : "Like album"}
+              className={cn(
+                "p-1.5 rounded transition-colors",
+                liked ? "text-primary" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Heart size={18} fill={liked ? "currentColor" : "none"} />
+            </button>
           </div>
         </div>
       </div>
@@ -137,7 +169,6 @@ export default function ReleasePage() {
       {related.length > 0 && (
         <Shelf
           title="More from these artists"
-          total={related.length}
           items={related
             .filter((r) => r.id !== releaseId)
             .map((r) => ({
@@ -150,6 +181,28 @@ export default function ReleasePage() {
             }))}
         />
       )}
+
+      {/* Recommended albums */}
+      {recsData?.available && recsData.items.length > 0 && (
+        <Shelf
+          title="Recommended Albums"
+          shelfKey="release_recommendations"
+          items={recsData.items.map((item) => ({
+            id: item.entity_id,
+            type: "release" as const,
+            title: item.title,
+            subtitle: item.subtitle,
+            subtitleLinks: item.subtitle_links,
+            href: item.action?.target,
+            reason: item.reason,
+            artwork: item.artwork,
+            onPlay: item.play_action
+              ? () => playSource("release", Number(item.entity_id), item.title)
+              : undefined,
+          }))}
+        />
+      )}
+      </div>{/* /z-10 */}
     </div>
   )
 }
