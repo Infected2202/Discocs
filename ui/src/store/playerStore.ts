@@ -10,6 +10,8 @@ import {
   trackAudioUrl,
   type CreateSessionParams,
 } from "@/api/playback"
+import { flowRefill, flowEvent } from "@/api/flow"
+import { planRefill } from "./flowRefillRouting"
 import type { PlaybackEnvelope, PlaybackSession, PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
 
 const STORAGE_KEY = "discocs.playerState.v1"
@@ -124,20 +126,38 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
   async function scheduleAutoplayRefill(eventType?: string) {
     if (eventType && !REFILL_TRIGGER_EVENTS.has(eventType)) return
-    const { session } = get()
+    const { session, currentTrackId, currentTrack } = get()
     if (!session?.id || !session.autoplay_enabled) return
+
+    const { engine, sendEvent } = planRefill(session.source_type, eventType)
+
     try {
-      await refillAutoplay({
-        session_id: session.id,
-        visible_buffer: 5,
-        candidate_count: 50,
-        settings: {
-          autoplay_visible_buffer: 5,
-          autoplay_candidate_count: 50,
-          autoplay_preference_chip: session.settings?.autoplay_preference_chip ?? "All",
-        },
-      })
-      await get().refreshQueue()
+      if (engine === "flow") {
+        if (sendEvent && currentTrackId) {
+          // fire-and-forget: accumulate signal, may switch region before refill
+          flowEvent({
+            session_id: session.id,
+            event_type: eventType!,
+            track_id: currentTrackId,
+            artist_id: (currentTrack as TrackSummary & { artist_id?: number })?.artist_id ?? null,
+            release_id: (currentTrack as TrackSummary & { release_id?: number })?.release_id ?? null,
+          }).catch(() => {})
+        }
+        await flowRefill({ session_id: session.id, visible_buffer: 5 })
+        await get().refreshQueue()
+      } else {
+        await refillAutoplay({
+          session_id: session.id,
+          visible_buffer: 5,
+          candidate_count: 50,
+          settings: {
+            autoplay_visible_buffer: 5,
+            autoplay_candidate_count: 50,
+            autoplay_preference_chip: session.settings?.autoplay_preference_chip ?? "All",
+          },
+        })
+        await get().refreshQueue()
+      }
     } catch {
       // silently ignore refill errors — not user-facing
     }

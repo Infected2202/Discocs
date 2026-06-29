@@ -44,3 +44,32 @@ export async function startFlow(settings?: Record<string, unknown>): Promise<Flo
     body: JSON.stringify({ settings: settings ?? {} }),
   })
 }
+
+export interface FlowRefillParams {
+  session_id: string
+  visible_buffer?: number
+  region_id?: string
+  include_debug?: boolean
+}
+
+export interface FlowEventParams {
+  session_id: string
+  event_type: string
+  track_id?: number | null
+  artist_id?: number | null
+  release_id?: number | null
+}
+
+export function flowRefill(params: FlowRefillParams): Promise<unknown> {
+  return apiFetch("/api/v1/flow/refill", {
+    method: "POST",
+    body: JSON.stringify({ visible_buffer: 5, ...params }),
+  })
+}
+
+export function flowEvent(params: FlowEventParams): Promise<unknown> {
+  return apiFetch("/api/v1/flow/event", {
+    method: "POST",
+    body: JSON.stringify(params),
+  })
+}
