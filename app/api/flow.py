@@ -159,7 +159,11 @@ def api_v1_flow_start(request: FlowStartRequest) -> dict[str, object]:
     4. Create playback session with initial queue.
     5. Return session + queue + flow metadata.
     """
-    from app.services.flow_candidates import FlowSessionContext, fill_flow_queue
+    from app.services.flow_candidates import (
+        FlowSessionContext,
+        adaptive_exploration_level,
+        fill_flow_queue,
+    )
     from app.services.flow_regions import FlowSettings
 
     store, app_settings = context()
@@ -186,11 +190,19 @@ def api_v1_flow_start(request: FlowStartRequest) -> dict[str, object]:
     visible_buffer = int((request.settings or {}).get("visible_buffer", 5))
     pool_size = int((request.settings or {}).get("candidate_pool_size", 1000))
 
+    # Explicit caller value wins; otherwise adapt to the region's signal volume
+    # (few seeds → explore more, many seeds → exploit).
+    explicit_explore = (request.settings or {}).get("exploration_ratio")
+    exploration_level = (
+        float(explicit_explore) if explicit_explore is not None
+        else adaptive_exploration_level(region.seed_count)
+    )
+
     ctx = FlowSessionContext(
         session_id="__placeholder__",
         region_id=region.id,
         model_key=str(model_key),
-        exploration_level=float((request.settings or {}).get("exploration_ratio", 0.10)),
+        exploration_level=exploration_level,
     )
 
     selected, score_summary = fill_flow_queue(

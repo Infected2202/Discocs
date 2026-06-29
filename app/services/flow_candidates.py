@@ -40,6 +40,31 @@ _SESSION_HARD_SKIP_THRESHOLD = 2
 # Low on purpose: region_fit already encodes "in your taste"; track_pref is a nudge.
 _TRACK_PREF_WEIGHT = 0.10
 
+# Adaptive exploration: a region with little signal is an uncertain estimate of
+# taste, so Flow should explore more; a region built from many seeds is a
+# confident estimate, so Flow should exploit. Bandit intuition (Spotify, Deezer):
+# exploration ∝ uncertainty. Replaces the fixed 0.10 discovery ratio.
+_EXPLORE_CONFIDENT = 0.10     # lots of signal → mostly exploit
+_EXPLORE_UNCERTAIN = 0.35     # little signal → explore aggressively
+_SEED_CONFIDENCE_FULL = 20    # seed count at which taste is "well established"
+
+
+def adaptive_exploration_level(
+    seed_count: int,
+    *,
+    confident: float = _EXPLORE_CONFIDENT,
+    uncertain: float = _EXPLORE_UNCERTAIN,
+    full: int = _SEED_CONFIDENCE_FULL,
+) -> float:
+    """Initial discovery ratio from how much signal a region carries.
+
+    seed_count == 0  → fully uncertain → `uncertain`
+    seed_count >= full → fully confident → `confident`
+    linear in between. Per-session feedback then nudges this up/down.
+    """
+    confidence = min(1.0, max(0, seed_count) / max(1, full))
+    return round(uncertain - confidence * (uncertain - confident), 4)
+
 
 # ---------------------------------------------------------------------------
 # Session context

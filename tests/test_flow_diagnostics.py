@@ -11,6 +11,7 @@ from app.services.flow_candidates import (
     FlowSessionContext,
     PoolDiagnostics,
     ScoredCandidate,
+    adaptive_exploration_level,
     build_candidate_pool,
     select_tracks,
 )
@@ -251,3 +252,30 @@ def test_small_queue_no_forced_exploration():
     scored = [_scored(i, 1.0 - i * 0.1, artist_id=i) for i in range(6)]
     selected = select_tracks(scored, n=2, exploration_ratio=0.10)
     assert {c.track_id for c in selected} == {0, 1}
+
+
+# ---------------------------------------------------------------------------
+# adaptive_exploration_level — exploration ∝ uncertainty
+# ---------------------------------------------------------------------------
+
+def test_exploration_high_for_empty_region():
+    # No seeds → maximally uncertain → explore aggressively.
+    assert adaptive_exploration_level(0) == pytest.approx(0.35)
+
+
+def test_exploration_low_for_rich_region():
+    # Many seeds → confident → mostly exploit (floor value).
+    assert adaptive_exploration_level(20) == pytest.approx(0.10)
+    assert adaptive_exploration_level(100) == pytest.approx(0.10)
+
+
+def test_exploration_monotonic_decreasing():
+    # More signal must never increase exploration.
+    levels = [adaptive_exploration_level(n) for n in range(0, 25)]
+    assert all(b <= a for a, b in zip(levels, levels[1:]))
+
+
+def test_exploration_midpoint_between_bounds():
+    # Halfway to confidence sits between the two bounds.
+    mid = adaptive_exploration_level(10)
+    assert 0.10 < mid < 0.35
