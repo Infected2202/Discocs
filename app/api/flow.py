@@ -19,6 +19,52 @@ logger = logging.getLogger(__name__)
 # replaying the same already-heard tracks.
 _DEFAULT_EXCLUDE_PLAYED_DAYS = 7
 
+# If the profile was last built more than this many minutes ago, /flow/start
+# rebuilds it synchronously so fresh play signals (play_count/likes synced from
+# Navidrome) are reflected. 0 disables on-start rebuilds.
+_DEFAULT_REBUILD_MAX_AGE_MINUTES = 30
+
+
+def _profile_age_minutes(profile) -> float | None:
+    """Minutes since the profile was last built, or None if never built."""
+    stamp = getattr(profile, "last_built_at", None)
+    if not stamp:
+        return None
+    from datetime import datetime, timezone
+
+    try:
+        built = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if built.tzinfo is None:
+        built = built.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - built).total_seconds() / 60.0
+
+
+def _maybe_rebuild_stale_profile(store, app_settings, profile, request_settings):
+    """Rebuild the profile in place if it is older than the configured window.
+
+    Returns the (possibly refreshed) profile. Only refreshes an already-built
+    profile — a never-built one still goes through the not-ready path.
+    """
+    if profile is None or profile.status not in ("ready", "cold_start"):
+        return profile
+    max_age = int(request_settings.get("rebuild_max_age_minutes", _DEFAULT_REBUILD_MAX_AGE_MINUTES))
+    if max_age <= 0:
+        return profile
+    age = _profile_age_minutes(profile)
+    if age is not None and age < max_age:
+        return profile
+
+    from app.services.flow_regions import FlowSettings, rebuild_flow_profile
+
+    try:
+        rebuild_flow_profile(store, app_settings, FlowSettings(model_key=profile.model_key))
+    except Exception:
+        logger.exception("On-start flow profile rebuild failed model=%s", profile.model_key)
+        return profile
+    return store.get_flow_profile(profile.model_key) or profile
+
 
 # ---------------------------------------------------------------------------
 # GET /api/v1/flow/profile  (Slice 6)
@@ -192,6 +238,7 @@ def api_v1_flow_start(request: FlowStartRequest) -> dict[str, object]:
         model_key = "discogs_multi"
 
     profile = store.get_flow_profile(str(model_key))
+    profile = _maybe_rebuild_stale_profile(store, app_settings, profile, request.settings or {})
     if profile is None or profile.status not in ("ready", "cold_start"):
         raise HTTPException(
             status_code=409,

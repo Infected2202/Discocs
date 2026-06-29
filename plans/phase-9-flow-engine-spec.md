@@ -410,6 +410,13 @@ Purpose:
 
 - start the personal stream.
 
+On-start staleness rebuild: if the profile's `last_built_at` is older than
+`settings.rebuild_max_age_minutes` (default 30; `0` disables), `/flow/start`
+rebuilds the profile synchronously before serving, so play signals synced from
+Navidrome between sessions (play_count, likes) are reflected without a manual
+rebuild. Only an already-built profile is refreshed; a never-built one still
+returns the not-ready error.
+
 Request:
 
 ```json
