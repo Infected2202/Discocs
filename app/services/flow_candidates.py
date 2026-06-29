@@ -36,6 +36,10 @@ logger = logging.getLogger(__name__)
 # Hard-skip threshold: skip this many times in session → exclude from pool
 _SESSION_HARD_SKIP_THRESHOLD = 2
 
+# Weight of track_pref within long-term fit (rest goes to embedding region_fit).
+# Low on purpose: region_fit already encodes "in your taste"; track_pref is a nudge.
+_TRACK_PREF_WEIGHT = 0.10
+
 
 # ---------------------------------------------------------------------------
 # Session context
@@ -135,9 +139,8 @@ class PoolDiagnostics:
     centroid_loaded: bool = False
     hnsw_count: int = 0
     hnsw_error: str | None = None
-    seeds_added: int = 0
+    seeds_excluded: int = 0       # seed tracks kept OUT of the pool
     accepted_added: int = 0
-    liked_added: int = 0
     fallback_used: bool = False
     total: int = 0
 
@@ -149,11 +152,20 @@ def build_candidate_pool(
     session: FlowSessionContext,
     pool_size: int = 1000,
 ) -> tuple[list[tuple[int, float]], PoolDiagnostics, dict[int, str]]:
-    """Collect candidates from multiple sources.
+    """Collect Flow candidates: HNSW neighbours of the region centroid.
+
+    Seeds (the liked/high-signal tracks that *define* the region) are
+    deliberately excluded from the candidate pool — Flow plays neighbours in
+    embedding space, not the tracks the user already knows and rated. Replaying
+    seeds is what made early Flow output identical to the user's own likes.
+
+    Sources:
+    1. HNSW around active region centroid — the only generative source
+    2. Recently accepted tracks this session — reinforce current direction
 
     Returns:
-        pool     — list of (track_id, similarity)
-        diag     — per-source counts and error info
+        pool       — list of (track_id, similarity)
+        diag       — per-source counts and error info
         source_map — track_id → source label (for debug breakdown)
     """
     diag = PoolDiagnostics()
@@ -171,9 +183,15 @@ def build_candidate_pool(
     }
     exclude |= hard_skipped
 
+    # Exclude the region's own seeds — they built the centroid, don't replay them.
+    seed_tracks = store.list_flow_region_tracks(region.id, role="seed")
+    seed_ids = {rt.track_id for rt in seed_tracks}
+    diag.seeds_excluded = len(seed_ids)
+    exclude |= seed_ids
+
     pool: dict[int, float] = {}  # track_id → similarity
 
-    # --- Source 1: HNSW centroid ---
+    # --- Source 1: HNSW centroid (only generative source) ---
     if centroid is not None:
         try:
             from app.recommender import Recommender, StaleIndexError
@@ -199,17 +217,7 @@ def build_candidate_pool(
             diag.hnsw_error = f"unexpected: {exc}"
             logger.exception("Unexpected error in HNSW pool query")
 
-    # --- Source 2: Representative tracks + seeds from region ---
-    rep_tracks = store.list_flow_region_tracks(region.id, role="representative")
-    seed_tracks = store.list_flow_region_tracks(region.id, role="seed")
-    before = len(pool)
-    for rt in rep_tracks + seed_tracks:
-        if rt.track_id not in exclude and rt.track_id not in pool:
-            pool[rt.track_id] = 0.85
-            source_map[rt.track_id] = "seed"
-    diag.seeds_added = len(pool) - before
-
-    # --- Source 3: Recently accepted tracks ---
+    # --- Source 2: Recently accepted tracks (session reinforcement) ---
     before = len(pool)
     for tid in list(session.session_accepted.keys())[:20]:
         if tid not in exclude and tid not in pool:
@@ -217,33 +225,13 @@ def build_candidate_pool(
             source_map[tid] = "session_accepted"
     diag.accepted_added = len(pool) - before
 
-    # --- Source 4: High-signal long-term (liked / replayed) ---
-    if len(pool) < pool_size:
-        with store.connect() as conn:  # type: ignore[attr-defined]
-            rows = conn.execute(
-                """
-                SELECT utp.track_id FROM user_track_preferences utp
-                JOIN embeddings e ON e.track_id = utp.track_id AND e.model_name = ?
-                JOIN tracks t ON t.id = utp.track_id
-                WHERE t.missing_at IS NULL
-                  AND (utp.liked = 1 OR utp.replay_count >= 1)
-                ORDER BY utp.liked DESC, utp.replay_count DESC
-                LIMIT ?
-                """,
-                (session.model_key, pool_size // 4),
-            ).fetchall()
-        before = len(pool)
-        for row in rows:
-            tid = int(row["track_id"])
-            if tid not in exclude and tid not in pool:
-                pool[tid] = 0.70
-                source_map[tid] = "liked_longterm"
-        diag.liked_added = len(pool) - before
-
     if not pool:
-        logger.warning("All pool sources empty — falling back to region seeds")
+        # Emergency degradation only: HNSW unavailable AND no session signal.
+        # Better to replay seeds than to hand the user a dead Flow.
+        logger.warning("All pool sources empty — emergency fallback to region seeds")
         diag.fallback_used = True
-        result = [(rt.track_id, 0.50) for rt in seed_tracks[:pool_size] if rt.track_id not in exclude]
+        played = session.played_track_ids
+        result = [(rt.track_id, 0.50) for rt in seed_tracks[:pool_size] if rt.track_id not in played]
         for tid, _ in result:
             source_map[tid] = "fallback_seed"
         diag.total = len(result)
@@ -447,7 +435,10 @@ def score_candidates(
                 repetition_penalty += min(0.15, (release_plays - 1) * 0.08)
         repetition_penalty = min(0.30, repetition_penalty)
 
-        long_term = long_term_weight * region_fit + (1.0 - long_term_weight) * track_pref
+        # Embedding proximity (region_fit) is the primary taste signal; track_pref
+        # is only a minor nudge. Earlier it carried 0.30 of long-term fit, which —
+        # combined with seeds in the pool — made Flow replay the user's own likes.
+        long_term = (1.0 - _TRACK_PREF_WEIGHT) * region_fit + _TRACK_PREF_WEIGHT * track_pref
         base = long_term_weight * long_term + session_weight * session_fit
         final = max(0.0, min(1.0,
             base
@@ -501,10 +492,15 @@ def select_tracks(
 ) -> list[ScoredCandidate]:
     """Pick top-n with artist/release diversity caps.
 
-    Exploration slots (round(n * exploration_ratio)) filled from lower half
-    of scored list — lower-scoring / unfamiliar tracks.
+    Exploration slots filled from the lower half of the scored list (less
+    obvious / more novel tracks). round(5 * 0.10) == 0 under banker's rounding,
+    so guarantee at least one exploration slot whenever the ratio is positive
+    and the queue is large enough — otherwise discovery never fires at defaults.
     """
-    n_explore = max(0, round(n * exploration_ratio))
+    n_explore = round(n * exploration_ratio)
+    if exploration_ratio > 0 and n_explore == 0 and n >= 3:
+        n_explore = 1
+    n_explore = min(n_explore, n)
     n_main = n - n_explore
 
     artist_seen: dict[int | None, int] = {}
@@ -585,9 +581,8 @@ def fill_flow_queue(
         "pool_size": diag.total,
         "pool_sources": {
             "hnsw": diag.hnsw_count,
-            "seeds_representatives": diag.seeds_added,
             "session_accepted": diag.accepted_added,
-            "liked_longterm": diag.liked_added,
+            "seeds_excluded": diag.seeds_excluded,
             "fallback_used": diag.fallback_used,
             "centroid_loaded": diag.centroid_loaded,
             "hnsw_error": diag.hnsw_error,
