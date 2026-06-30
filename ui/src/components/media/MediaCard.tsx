@@ -51,7 +51,7 @@ export default function MediaCard({
         "group relative transition-colors",
         disabled ? "cursor-default" : "cursor-pointer",
         isShelf
-          ? "min-w-0 overflow-hidden p-2 hover:bg-muted/40"
+          ? "min-w-0 p-2 hover:z-10 hover:bg-muted/40"
           : "w-36 sm:w-44 shrink-0 rounded-lg p-3 hover:bg-muted/60",
         className,
       )}
