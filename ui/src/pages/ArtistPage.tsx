@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import Shelf from "@/components/media/Shelf"
-import TrackTable from "@/components/media/TrackTable"
+import PopularTracks from "@/components/media/PopularTracks"
 import { usePlayerStore } from "@/store/playerStore"
 import { useNavidromeStore } from "@/store/navidromeStore"
 import { cn } from "@/lib/utils"
@@ -126,9 +126,7 @@ export default function ArtistPage() {
 
       {/* Popular tracks */}
       {topTracksData && topTracksData.items.length > 0 && (
-        <div className="px-4 sm:px-6">
-          <TrackTable tracks={topTracksData.items} showRelease sourceLabel={artist.name} />
-        </div>
+        <PopularTracks tracks={topTracksData.items} sourceLabel={artist.name} />
       )}
 
       {/* Discography */}

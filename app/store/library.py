@@ -982,7 +982,7 @@ class LibraryStoreMixin:
             release_count=int(stats["release_count"] or 0),
         )
 
-    def top_tracks_for_artist(self, artist_id: int, limit: int = 5) -> list[tuple[Track, int]]:
+    def top_tracks_for_artist(self, artist_id: int, limit: int = 20) -> list[tuple[Track, int]]:
         with self.connect() as conn:
             rows = conn.execute(
                 """
