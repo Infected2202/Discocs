@@ -2,7 +2,7 @@ import { useRef } from "react"
 import { cn } from "@/lib/utils"
 
 const ROTATE_AMPLITUDE = 8
-const SCALE_ON_HOVER = 1.1
+const SCALE_ON_HOVER = 1.05
 
 interface TiltedArtworkProps {
   children: React.ReactNode
@@ -45,7 +45,7 @@ export default function TiltedArtwork({ children, className }: TiltedArtworkProp
     >
       <div
         ref={innerRef}
-        className="transition-transform duration-150 ease-out will-change-transform"
+        className="transition-transform duration-300 ease-out will-change-transform"
       >
         {children}
       </div>
