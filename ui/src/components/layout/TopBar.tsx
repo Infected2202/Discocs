@@ -1,5 +1,4 @@
 import { useState } from "react"
-import "@fontsource/liter"
 import { Menu } from "lucide-react"
 import ProfileButton from "@/components/profile/ProfileButton"
 import MobileNav from "./MobileNav"

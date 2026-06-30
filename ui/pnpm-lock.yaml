@@ -11,9 +11,6 @@ importers:
       '@fontsource-variable/inter':
         specifier: ^5.2.8
         version: 5.2.8
-      '@fontsource-variable/space-grotesk':
-        specifier: ^5.2.10
-        version: 5.2.10
       '@fontsource/liter':
         specifier: ^5.2.10
         version: 5.2.10
@@ -318,9 +315,6 @@ packages:
 
   '@fontsource-variable/inter@5.2.8':
     resolution: {integrity: sha512-kOfP2D+ykbcX/P3IFnokOhVRNoTozo5/JxhAIVYLpea/UBmCQ/YWPBfWIDuBImXX/15KH+eKh4xpEUyS2sQQGQ==}
-
-  '@fontsource-variable/space-grotesk@5.2.10':
-    resolution: {integrity: sha512-yJQO/o35/hAP3CFnpdFTwQku2yzJOae2HIpBmqkOVoxhhXJaQP3g+b6Jrz7u+eI7A5ZdCIf88uMWpBJdFiGr5w==}
 
   '@fontsource/liter@5.2.10':
     resolution: {integrity: sha512-Rk4EqVynPkVgym+zHEOWkkoS63Qc++PhKX1zI+5sS0OTr6XMu5c9FEElvvLLdOey4cbSfwxo4pcxVRKlblQRkA==}
@@ -3388,8 +3382,6 @@ snapshots:
   '@floating-ui/utils@0.2.11': {}
 
   '@fontsource-variable/inter@5.2.8': {}
-
-  '@fontsource-variable/space-grotesk@5.2.10': {}
 
   '@fontsource/liter@5.2.10': {}
 

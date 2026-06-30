@@ -15,7 +15,6 @@
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
-    "@fontsource-variable/space-grotesk": "^5.2.10",
     "@fontsource/liter": "^5.2.10",
     "@tailwindcss/vite": "^4",
     "@tanstack/react-query": "^5.101.1",
