@@ -8,14 +8,20 @@ import ErrorBoundary from "@/components/common/ErrorBoundary"
 import PageTransition from "@/components/common/PageTransition"
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts"
 import { useTrackTitle } from "@/hooks/useTrackTitle"
+import { useArtworkTheme } from "@/hooks/useArtworkTheme"
 import { useNavidromeStore } from "@/store/navidromeStore"
+import { usePlayerStore } from "@/store/playerStore"
 
 export default function AppShell() {
   useKeyboardShortcuts()
   useTrackTitle()
+  useArtworkTheme()
 
   const fetchLikedIds = useNavidromeStore((s) => s.fetchLikedIds)
   useEffect(() => { fetchLikedIds() }, [fetchLikedIds])
+
+  const restoreSession = usePlayerStore((s) => s.restoreSession)
+  useEffect(() => { void restoreSession() }, [restoreSession])
 
   return (
     <div className="flex flex-col h-svh overflow-hidden bg-background">

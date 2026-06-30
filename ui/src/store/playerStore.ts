@@ -12,6 +12,7 @@ import {
 } from "@/api/playback"
 import { flowRefill, flowEvent } from "@/api/flow"
 import { planRefill } from "./flowRefillRouting"
+import { persistSessionId, loadPersistedSessionId, clearPersistedSessionId } from "./sessionPersistence"
 import type { PlaybackEnvelope, PlaybackSession, PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
 
 const STORAGE_KEY = "discocs.playerState.v1"
@@ -38,6 +39,7 @@ function persistVolume(volume: number, muted: boolean) {
     // ignore
   }
 }
+
 
 interface PlayerState {
   // Server state
@@ -79,6 +81,8 @@ interface PlayerState {
   handleTrackEnded(): Promise<void>
   playFromEnvelope(envelope: PlaybackEnvelope): Promise<void>
   toggleExpanded(): void
+
+  restoreSession(): Promise<void>
 
   // Internal — called by AudioEngine callbacks
   _setTime(currentTime: number, duration: number): void
@@ -205,6 +209,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         } satisfies CreateSessionParams)
 
         const { queue, currentItem } = applyEnvelope(envelope, true)
+        persistSessionId(envelope.session.id)
 
         const preferred = preferredTrackId
           ? queue.items.find((item) => item.track_id === preferredTrackId)
@@ -475,6 +480,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       set({ error: null })
       try {
         const { queue, currentItem } = applyEnvelope(envelope, true)
+        persistSessionId(envelope.session.id)
         const first = currentItem ?? queue.items[0] ?? null
         if (first) {
           await get().playTrack(first.track_id, {
@@ -485,6 +491,32 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         scheduleAutoplayRefill()
       } catch (err) {
         set({ error: (err as Error).message })
+      }
+    },
+
+    async restoreSession() {
+      const sessionId = loadPersistedSessionId()
+      if (!sessionId) return
+      try {
+        const envelope = await fetchQueue(sessionId)
+        applyEnvelope(envelope)
+        const { currentTrackId, currentTrack } = get()
+        if (currentTrackId) {
+          audioEngine.load(trackAudioUrl(currentTrackId))
+          audioEngine.setVolume(get().volume)
+          audioEngine.setMuted(get().muted)
+          if (currentTrack) {
+            audioEngine.setMediaSession(currentTrack, currentTrack.artwork?.url ?? undefined)
+          }
+          audioEngine.registerMediaSessionHandlers({
+            play: () => get().togglePlay(),
+            pause: () => get().togglePlay(),
+            nexttrack: () => get().skipNext(),
+            previoustrack: () => get().skipPrevious(),
+          })
+        }
+      } catch {
+        clearPersistedSessionId()
       }
     },
 
