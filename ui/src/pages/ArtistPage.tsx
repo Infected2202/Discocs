@@ -47,6 +47,11 @@ export default function ArtistPage() {
   const { data: artistData, isLoading: artistLoading, error } = useArtist(artistId)
   const { data: discoData, isLoading: discoLoading } = useArtistDiscography(artistId)
   const { data: topTracksData } = useArtistTopTracks(artistId)
+  const popularTracks = (() => {
+    const items = topTracksData?.items ?? []
+    const hasPlays = items.some((t) => t.play_count > 0)
+    return hasPlays ? items.filter((t) => t.play_count > 0) : items.slice(0, 5)
+  })()
   const playSource = usePlayerStore((s) => s.playSource)
   const toggleArtistLike = useNavidromeStore((s) => s.toggleArtistLike)
   const liked = useNavidromeStore((s) => s.likedArtistIds.has(artistId))
@@ -125,8 +130,8 @@ export default function ArtistPage() {
       </div>
 
       {/* Popular tracks */}
-      {topTracksData && topTracksData.items.length > 0 && (
-        <PopularTracks tracks={topTracksData.items} sourceLabel={artist.name} />
+      {popularTracks.length > 0 && (
+        <PopularTracks tracks={popularTracks} sourceLabel={artist.name} />
       )}
 
       {/* Discography */}
