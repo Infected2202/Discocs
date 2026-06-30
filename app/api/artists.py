@@ -139,7 +139,7 @@ def api_v1_artist_top_tracks(artist_id: int) -> dict[str, object] | JSONResponse
         "artist": artist_link_dict(artist.artist),
         "items": items,
         "basis": "local_playback",
-        "available": any(play_count > 0 for _, play_count in top),
+        "available": len(items) > 0,
     }
 
 

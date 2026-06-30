@@ -125,7 +125,7 @@ export default function ArtistPage() {
       </div>
 
       {/* Popular tracks */}
-      {topTracksData?.available && topTracksData.items.length > 0 && (
+      {topTracksData && topTracksData.items.length > 0 && (
         <div className="px-4 sm:px-6">
           <TrackTable tracks={topTracksData.items} showRelease sourceLabel={artist.name} />
         </div>
