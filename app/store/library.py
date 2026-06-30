@@ -982,6 +982,23 @@ class LibraryStoreMixin:
             release_count=int(stats["release_count"] or 0),
         )
 
+    def top_tracks_for_artist(self, artist_id: int, limit: int = 5) -> list[tuple[Track, int]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT t.*, COALESCE(utp.play_count, 0) AS play_count
+                FROM tracks t
+                JOIN track_artists ta ON ta.track_id = t.id
+                LEFT JOIN user_track_preferences utp ON utp.track_id = t.id
+                WHERE ta.artist_id = ?
+                GROUP BY t.id
+                ORDER BY play_count DESC, t.id ASC
+                LIMIT ?
+                """,
+                (artist_id, limit),
+            ).fetchall()
+        return [(row_to_track(row), int(row["play_count"])) for row in rows]
+
     def get_release(self, release_id: int) -> ReleaseSummaryRow | None:
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM releases WHERE id = ?", (release_id,)).fetchone()
@@ -1253,7 +1270,11 @@ class LibraryStoreMixin:
                         FROM releases r
                         LEFT JOIN release_artists ra ON ra.release_id = r.id
                         LEFT JOIN artists a ON a.id = ra.artist_id
-                        WHERE r.normalized_title LIKE ? OR a.normalized_name LIKE ?
+                        WHERE (r.normalized_title LIKE ? OR a.normalized_name LIKE ?)
+                          AND EXISTS (
+                              SELECT 1 FROM release_tracks rt
+                              WHERE rt.release_id = r.id
+                          )
                         """,
                         (normalized_like, normalized_like),
                     ).fetchone()[0]
@@ -1264,7 +1285,11 @@ class LibraryStoreMixin:
                     FROM releases r
                     LEFT JOIN release_artists ra ON ra.release_id = r.id
                     LEFT JOIN artists a ON a.id = ra.artist_id
-                    WHERE r.normalized_title LIKE ? OR a.normalized_name LIKE ?
+                    WHERE (r.normalized_title LIKE ? OR a.normalized_name LIKE ?)
+                      AND EXISTS (
+                          SELECT 1 FROM release_tracks rt
+                          WHERE rt.release_id = r.id
+                      )
                     ORDER BY CASE WHEN r.normalized_title = ? THEN 0 ELSE 1 END, r.title
                     LIMIT ? OFFSET ?
                     """,

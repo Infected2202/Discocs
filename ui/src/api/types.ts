@@ -67,6 +67,17 @@ export interface ArtistAvailabilityStub {
   basis: string
 }
 
+export interface ArtistTopTrack extends TrackSummary {
+  play_count: number
+}
+
+export interface ArtistTopTracksResponse {
+  artist: ArtistLink
+  items: ArtistTopTrack[]
+  available: boolean
+  basis: string
+}
+
 // ----------------------------------------------------------------------------
 // Release
 // ----------------------------------------------------------------------------

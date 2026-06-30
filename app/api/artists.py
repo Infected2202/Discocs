@@ -21,6 +21,7 @@ from app.serializers.entities import (
     image_ref,
     release_summary_dict,
     release_track_dict,
+    track_summary_dict,
 )
 
 router = APIRouter()
@@ -127,7 +128,19 @@ def api_v1_artist_top_tracks(artist_id: int) -> dict[str, object] | JSONResponse
     artist = store.get_artist(artist_id)
     if artist is None:
         return api_error(404, "not_found", "Artist not found")
-    return {"artist": artist_link_dict(artist.artist), "items": [], "basis": "local_playback", "available": False}
+    top = store.top_tracks_for_artist(artist_id, limit=5)
+    artists_by_track = store.artists_for_tracks([track.id for track, _ in top])
+    items = []
+    for track, play_count in top:
+        item = track_summary_dict(store, track, artists_by_track.get(track.id, []))
+        item["play_count"] = play_count
+        items.append(item)
+    return {
+        "artist": artist_link_dict(artist.artist),
+        "items": items,
+        "basis": "local_playback",
+        "available": any(play_count > 0 for _, play_count in top),
+    }
 
 
 @router.get("/api/v1/artists/{artist_id}/similar", response_model=ArtistAvailabilityStubResponse)

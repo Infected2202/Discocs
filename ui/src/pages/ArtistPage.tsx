@@ -1,10 +1,11 @@
 import { useParams } from "react-router"
 import { Play, Heart } from "lucide-react"
-import { useArtist, useArtistDiscography } from "@/api/hooks/useArtist"
+import { useArtist, useArtistDiscography, useArtistTopTracks } from "@/api/hooks/useArtist"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import Shelf from "@/components/media/Shelf"
+import TrackTable from "@/components/media/TrackTable"
 import { usePlayerStore } from "@/store/playerStore"
 import { useNavidromeStore } from "@/store/navidromeStore"
 import { cn } from "@/lib/utils"
@@ -45,6 +46,7 @@ export default function ArtistPage() {
   const artistId = Number(id)
   const { data: artistData, isLoading: artistLoading, error } = useArtist(artistId)
   const { data: discoData, isLoading: discoLoading } = useArtistDiscography(artistId)
+  const { data: topTracksData } = useArtistTopTracks(artistId)
   const playSource = usePlayerStore((s) => s.playSource)
   const toggleArtistLike = useNavidromeStore((s) => s.toggleArtistLike)
   const liked = useNavidromeStore((s) => s.likedArtistIds.has(artistId))
@@ -121,6 +123,13 @@ export default function ArtistPage() {
           </div>
         </div>
       </div>
+
+      {/* Popular tracks */}
+      {topTracksData?.available && topTracksData.items.length > 0 && (
+        <div className="px-4 sm:px-6">
+          <TrackTable tracks={topTracksData.items} showRelease sourceLabel={artist.name} />
+        </div>
+      )}
 
       {/* Discography */}
       {discoData?.groups.map((group) => {

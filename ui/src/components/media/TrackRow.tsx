@@ -6,7 +6,7 @@ import ArtworkImage from "./ArtworkImage"
 import TrackMenu from "./TrackMenu"
 import { usePlayerStore } from "@/store/playerStore"
 import { useNavidromeStore } from "@/store/navidromeStore"
-import type { TrackSummary, ReleaseTrackItem } from "@/api/types"
+import type { TrackSummary, ReleaseTrackItem, ArtistTopTrack } from "@/api/types"
 
 function formatDuration(seconds: number | null | undefined): string {
   if (!seconds || !Number.isFinite(seconds)) return ""
@@ -16,8 +16,14 @@ function formatDuration(seconds: number | null | undefined): string {
   return `${m}:${String(s).padStart(2, "0")}`
 }
 
+const playCountFormatter = new Intl.NumberFormat("ru", { notation: "compact", compactDisplay: "short" })
+
+function formatPlayCount(count: number): string {
+  return `${playCountFormatter.format(count)} прослушиваний`
+}
+
 interface TrackRowProps {
-  track: TrackSummary | ReleaseTrackItem
+  track: TrackSummary | ReleaseTrackItem | ArtistTopTrack
   index?: number
   showArtwork?: boolean
   showRelease?: boolean
@@ -136,9 +142,9 @@ export default function TrackRow({
         </td>
       )}
 
-      {/* Duration */}
-      <td className="py-2 pr-2 text-right text-xs text-muted-foreground tabular-nums w-14">
-        {formatDuration(track.duration)}
+      {/* Duration / play count */}
+      <td className="py-2 pr-2 text-right text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+        {"play_count" in track ? formatPlayCount(track.play_count) : formatDuration(track.duration)}
       </td>
 
       {/* Like */}

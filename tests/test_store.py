@@ -916,6 +916,7 @@ def test_track_release_move_refreshes_old_release_sidecars(tmp_path: Path):
     assert old_release.release.track_count == 0
     assert old_release.artists == []
     assert store.list_release_tracks(old_release_id) == []
+    assert store.search_entities("Old Album")["releases"]["total"] == 0
     new_release = store.search_entities("New Album")["releases"]["items"][0]
     assert new_release.release.track_count == 1
     assert [artist.name for artist in new_release.artists] == ["New Artist"]
@@ -1224,6 +1225,72 @@ def test_playback_completion_like_dislike_replay_save_and_duplicate_idempotency(
     assert recomputed.completion_count == pref.completion_count
     assert recomputed.disliked == pref.disliked
     assert recomputed.replay_count == pref.replay_count
+
+
+def test_top_tracks_for_artist_orders_by_play_count_desc(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+
+    def make_track(name: str) -> int:
+        track_id, _changed = store.upsert_track(
+            ScannedTrack(
+                path=(tmp_path / f"{name}.flac").resolve(),
+                artist="Shared Artist",
+                title=name,
+                album="Album",
+                duration=120.0,
+                file_size=1,
+                mtime=1,
+            )
+        )
+        return track_id
+
+    quiet_id = make_track("Quiet Track")
+    loud_id = make_track("Loud Track")
+    medium_id = make_track("Medium Track")
+    artist_id = store.search_entities("Shared Artist")["artists"]["items"][0].artist.id
+
+    for _ in range(3):
+        store.record_playback_event(track_id=loud_id, event_type="play_threshold_reached")
+    store.record_playback_event(track_id=medium_id, event_type="play_threshold_reached")
+
+    top = store.top_tracks_for_artist(artist_id, limit=5)
+
+    assert [track.id for track, _count in top] == [loud_id, medium_id, quiet_id]
+    assert [count for _track, count in top] == [3, 1, 0]
+
+
+def test_top_tracks_for_artist_excludes_other_artists(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    own_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "own.flac").resolve(),
+            artist="Own Artist",
+            title="Own Track",
+            album="Album",
+            duration=120.0,
+            file_size=1,
+            mtime=1,
+        )
+    )
+    store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "other.flac").resolve(),
+            artist="Other Artist",
+            title="Other Track",
+            album="Album",
+            duration=120.0,
+            file_size=1,
+            mtime=1,
+        )
+    )
+    store.record_playback_event(track_id=own_id, event_type="play_threshold_reached")
+    artist_id = store.search_entities("Own Artist")["artists"]["items"][0].artist.id
+
+    top = store.top_tracks_for_artist(artist_id, limit=5)
+
+    assert [track.id for track, _count in top] == [own_id]
 
 
 def test_playback_queue_rejects_missing_tracks_and_low_completion_does_not_finish_item(tmp_path: Path):

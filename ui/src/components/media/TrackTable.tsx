@@ -1,8 +1,8 @@
 import TrackRow from "./TrackRow"
-import type { TrackSummary, ReleaseTrackItem } from "@/api/types"
+import type { TrackSummary, ReleaseTrackItem, ArtistTopTrack } from "@/api/types"
 
 interface TrackTableProps {
-  tracks: (TrackSummary | ReleaseTrackItem)[]
+  tracks: (TrackSummary | ReleaseTrackItem | ArtistTopTrack)[]
   showArtwork?: boolean
   showRelease?: boolean
   sourceLabel?: string
@@ -18,6 +18,8 @@ export default function TrackTable({
 }: TrackTableProps) {
   if (tracks.length === 0) return null
 
+  const showPlayCount = "play_count" in tracks[0]
+
   return (
     <table className="w-full table-fixed border-collapse">
       <colgroup>
@@ -25,7 +27,7 @@ export default function TrackTable({
         {showArtwork && <col className="w-12" />}
         <col />
         {showRelease && <col className="hidden md:table-column w-[180px]" />}
-        <col className="w-14" />
+        <col className={showPlayCount ? "w-44" : "w-14"} />
         <col className="w-8" />
         <col className="w-8" />
       </colgroup>
