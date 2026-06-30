@@ -51,8 +51,7 @@ export default function PopularTracks({ tracks, sourceLabel }: PopularTracksProp
 
   return (
     <section className="space-y-0">
-      {needsScroll && (
-        <div className="px-4 sm:px-6 flex items-center justify-end gap-2 pb-1">
+      <div className="px-4 sm:px-6 flex items-center justify-end gap-2 pb-1">
           <button
             onClick={() => canPrev && goTo(page - 1)}
             className={`flex items-center justify-center w-7 h-7 rounded-full border border-border transition-colors ${canPrev ? "hover:bg-muted" : "opacity-30 pointer-events-none"}`}
@@ -68,7 +67,6 @@ export default function PopularTracks({ tracks, sourceLabel }: PopularTracksProp
             <ChevronRight size={14} />
           </button>
         </div>
-      )}
       <div
         ref={containerRef}
         style={needsScroll && containerH ? { height: containerH, overflow: "hidden" } : undefined}
