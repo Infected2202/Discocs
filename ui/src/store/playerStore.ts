@@ -13,6 +13,7 @@ import {
 import { flowRefill, flowEvent } from "@/api/flow"
 import { planRefill } from "./flowRefillRouting"
 import { persistSessionId, loadPersistedSessionId, clearPersistedSessionId } from "./sessionPersistence"
+import { ApiError } from "@/api/client"
 import type { PlaybackEnvelope, PlaybackSession, PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
 
 const STORAGE_KEY = "discocs.playerState.v1"
@@ -515,8 +516,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
             previoustrack: () => get().skipPrevious(),
           })
         }
-      } catch {
-        clearPersistedSessionId()
+      } catch (err) {
+        // Only clear on 404 — session is gone for good.
+        // Network errors (server down, connection refused) leave the id intact.
+        if (err instanceof ApiError && err.status === 404) {
+          clearPersistedSessionId()
+        }
       }
     },
 
