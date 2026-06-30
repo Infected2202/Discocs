@@ -7,6 +7,7 @@ interface TrackTableProps {
   showRelease?: boolean
   sourceLabel?: string
   releaseContextId?: number
+  indexOffset?: number
 }
 
 export default function TrackTable({
@@ -15,6 +16,7 @@ export default function TrackTable({
   showRelease = true,
   sourceLabel,
   releaseContextId,
+  indexOffset = 0,
 }: TrackTableProps) {
   if (tracks.length === 0) return null
 
@@ -36,7 +38,7 @@ export default function TrackTable({
           <TrackRow
             key={track.id}
             track={track}
-            index={i}
+            index={indexOffset + i}
             showArtwork={showArtwork}
             showRelease={showRelease}
             sourceLabel={sourceLabel}
