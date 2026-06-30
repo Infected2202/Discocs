@@ -74,7 +74,7 @@ export default function Shelf({ title, subtitle, items, shelfKey }: ShelfProps) 
       </div>
 
       {/* Card grid — animated on page change */}
-      <div className="overflow-hidden px-3 pb-3">
+      <div className="overflow-x-hidden px-3 pb-3">
         <div
           key={animKey}
           className={direction === "right" ? "shelf-slide-right" : "shelf-slide-left"}
