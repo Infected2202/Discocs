@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
-    "@fontsource/liter": "^5.2.10",
+    "@fontsource-variable/onest": "^5.2.11",
     "@tailwindcss/vite": "^4",
     "@tanstack/react-query": "^5.101.1",
     "class-variance-authority": "^0.7.1",
