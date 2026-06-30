@@ -2,6 +2,7 @@ import { useNavigate } from "react-router"
 import { Play } from "lucide-react"
 import { cn } from "@/lib/utils"
 import ArtworkImage from "./ArtworkImage"
+import TiltedArtwork from "./TiltedArtwork"
 import type { ImageRef, SubtitleLink } from "@/api/types"
 
 export interface MediaCardProps {
@@ -61,17 +62,20 @@ export default function MediaCard({
     >
       {/* Artwork */}
       <div className="relative mb-2">
-        {artworkNode ?? (
-          <ArtworkImage
-            src={artwork?.url}
-            alt={title}
-            className={cn(
-              "w-full aspect-square",
-              type === "artist" ? "rounded-full" : "rounded-md",
-            )}
-            fallbackLetter={title[0]}
-          />
-        )}
+        {(() => {
+          const art = artworkNode ?? (
+            <ArtworkImage
+              src={artwork?.url}
+              alt={title}
+              className={cn(
+                "w-full aspect-square",
+                type === "artist" ? "rounded-full" : "rounded-md",
+              )}
+              fallbackLetter={title[0]}
+            />
+          )
+          return isShelf ? <TiltedArtwork>{art}</TiltedArtwork> : art
+        })()}
 
         {/* Play button overlay */}
         {onPlay && !disabled && (
