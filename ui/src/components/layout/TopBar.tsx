@@ -1,4 +1,5 @@
 import { useState } from "react"
+import "@fontsource/liter"
 import { Menu } from "lucide-react"
 import ProfileButton from "@/components/profile/ProfileButton"
 import MobileNav from "./MobileNav"
@@ -19,7 +20,7 @@ export default function TopBar() {
         >
           <Menu size={20} />
         </button>
-        <span className="text-primary font-bold text-lg tracking-widest select-none hidden md:block uppercase" style={{ fontFamily: "'Space Grotesk Variable', sans-serif" }}>discocs</span>
+        <span className="text-primary font-bold text-lg tracking-widest select-none hidden md:block uppercase" style={{ fontFamily: "'Liter', sans-serif" }}>discocs</span>
 
         <ProfileButton />
       </header>
