@@ -105,9 +105,19 @@ export default function TrackRow({
       {/* Title + artists */}
       <td className="py-2 pr-4 min-w-0">
         <div className="min-w-0">
-          <p className={cn("truncate text-sm font-medium", isActive && "text-primary")}>
-            {track.title}
-          </p>
+          {track.release ? (
+            <Link
+              to={`/releases/${track.release.id}`}
+              className={cn("truncate text-sm font-medium hover:underline", isActive ? "text-primary" : "")}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {track.title}
+            </Link>
+          ) : (
+            <p className={cn("truncate text-sm font-medium", isActive && "text-primary")}>
+              {track.title}
+            </p>
+          )}
           {track.artists.length > 0 && (
             <p className="truncate text-xs text-muted-foreground">
               {track.artists.map((a, i) => (
