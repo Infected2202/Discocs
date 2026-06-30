@@ -26,18 +26,18 @@ export default function PopularTracks({ tracks, sourceLabel }: PopularTracksProp
   const [page, setPage] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
-  const [containerH, setContainerH] = useState(Math.min(tracks.length, PAGE_SIZE) * 52)
+  const [containerH, setContainerH] = useState<number | null>(null)
 
-  useEffect(() => {
-    if (innerRef.current && tracks.length > 0) {
-      const rowH = innerRef.current.scrollHeight / tracks.length
-      setContainerH(rowH * Math.min(tracks.length, PAGE_SIZE))
-    }
-  }, [tracks.length])
-
+  const needsScroll = tracks.length > PAGE_SIZE
   const totalPages = Math.ceil(tracks.length / PAGE_SIZE)
   const canPrev = page > 0
   const canNext = page < totalPages - 1
+
+  useEffect(() => {
+    if (!needsScroll || !innerRef.current || tracks.length === 0) return
+    const rowH = innerRef.current.scrollHeight / tracks.length
+    setContainerH(rowH * PAGE_SIZE)
+  }, [tracks.length, needsScroll])
 
   const goTo = useCallback((next: number) => {
     const el = containerRef.current
@@ -51,7 +51,7 @@ export default function PopularTracks({ tracks, sourceLabel }: PopularTracksProp
 
   return (
     <section className="space-y-0">
-      {totalPages > 1 && (
+      {needsScroll && (
         <div className="px-4 sm:px-6 flex items-center justify-end gap-2 pb-1">
           <button
             onClick={() => canPrev && goTo(page - 1)}
@@ -71,7 +71,7 @@ export default function PopularTracks({ tracks, sourceLabel }: PopularTracksProp
       )}
       <div
         ref={containerRef}
-        style={{ height: containerH, overflow: "hidden" }}
+        style={needsScroll && containerH ? { height: containerH, overflow: "hidden" } : undefined}
         className="px-4 sm:px-6"
       >
         <div ref={innerRef}>
