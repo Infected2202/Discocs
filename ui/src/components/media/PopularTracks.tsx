@@ -47,6 +47,25 @@ export default function PopularTracks({ tracks, sourceLabel }: PopularTracksProp
     setPage(next)
   }, [tracks.length])
 
+  const pageRef = useRef(page)
+  pageRef.current = page
+  const canNextRef = useRef(canNext)
+  canNextRef.current = canNext
+  const canPrevRef = useRef(canPrev)
+  canPrevRef.current = canPrev
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el || !needsScroll) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      if (e.deltaY > 0 && canNextRef.current) goTo(pageRef.current + 1)
+      else if (e.deltaY < 0 && canPrevRef.current) goTo(pageRef.current - 1)
+    }
+    el.addEventListener("wheel", onWheel, { passive: false })
+    return () => el.removeEventListener("wheel", onWheel)
+  }, [needsScroll, goTo])
+
   if (tracks.length === 0) return null
 
   return (
