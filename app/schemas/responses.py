@@ -107,6 +107,7 @@ class ArtistResponse(BaseModel):
     artist: ArtistSummaryResponse
     actions: list[EntityActionResponse]
     links: dict[str, str]
+    top_tracks: list[dict[str, object]] = []
 
 
 class DiscographyGroupResponse(BaseModel):

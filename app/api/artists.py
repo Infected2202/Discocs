@@ -33,6 +33,13 @@ def api_v1_artist(artist_id: int) -> dict[str, object] | JSONResponse:
     artist = store.get_artist(artist_id)
     if artist is None:
         return api_error(404, "not_found", "Artist not found")
+    top = store.top_tracks_for_artist(artist_id, limit=100)
+    artists_by_track = store.artists_for_tracks([track.id for track, _ in top])
+    top_tracks = []
+    for track, play_count in top:
+        item = track_summary_dict(store, track, artists_by_track.get(track.id, []))
+        item["play_count"] = play_count
+        top_tracks.append(item)
     return {
         "artist": {**artist_summary_with_external_image(store, settings, artist), "sort_name": artist.artist.sort_name},
         "actions": [entity_action("mix", True, None)],
@@ -42,6 +49,7 @@ def api_v1_artist(artist_id: int) -> dict[str, object] | JSONResponse:
             "top_tracks": f"/api/v1/artists/{artist_id}/top-tracks",
             "similar": f"/api/v1/artists/{artist_id}/similar",
         },
+        "top_tracks": top_tracks,
     }
 
 

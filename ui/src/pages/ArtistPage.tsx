@@ -1,6 +1,6 @@
 import { useParams } from "react-router"
 import { Play, Heart } from "lucide-react"
-import { useArtist, useArtistDiscography, useArtistTopTracks } from "@/api/hooks/useArtist"
+import { useArtist, useArtistDiscography } from "@/api/hooks/useArtist"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
@@ -46,9 +46,8 @@ export default function ArtistPage() {
   const artistId = Number(id)
   const { data: artistData, isLoading: artistLoading, error } = useArtist(artistId)
   const { data: discoData, isLoading: discoLoading } = useArtistDiscography(artistId)
-  const { data: topTracksData } = useArtistTopTracks(artistId)
   const popularTracks = (() => {
-    const items = topTracksData?.items ?? []
+    const items = artistData?.top_tracks ?? []
     const hasPlays = items.some((t) => t.play_count > 0)
     return hasPlays ? items.filter((t) => t.play_count > 0) : items.slice(0, 5)
   })()
@@ -90,7 +89,7 @@ export default function ArtistPage() {
       )}
 
       {/* Header */}
-      <div className="relative z-10 space-y-8">
+      <div className="relative z-10 space-y-4">
       <div className="px-4 sm:px-6 pt-8 pb-4 flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
         <ArtworkImage
           src={artist.image?.url}

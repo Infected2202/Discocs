@@ -47,6 +47,7 @@ export interface ArtistResponse {
   artist: ArtistSummary
   actions: EntityAction[]
   links: Record<string, string>
+  top_tracks: ArtistTopTrack[]
 }
 
 export interface DiscographyGroup {
