@@ -154,7 +154,9 @@ export default function TrackRow({
 
       {/* Duration / play count */}
       <td className="py-2 pr-2 text-right text-xs text-muted-foreground tabular-nums whitespace-nowrap">
-        {"play_count" in track ? formatPlayCount(track.play_count) : formatDuration(track.duration)}
+        {"play_count" in track
+          ? track.play_count > 0 ? formatPlayCount(track.play_count) : ""
+          : formatDuration(track.duration)}
       </td>
 
       {/* Like */}
