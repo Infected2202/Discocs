@@ -26,12 +26,12 @@ export default function PopularTracks({ tracks, sourceLabel }: PopularTracksProp
   const [page, setPage] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
-  const [containerH, setContainerH] = useState(PAGE_SIZE * 52)
+  const [containerH, setContainerH] = useState(Math.min(tracks.length, PAGE_SIZE) * 52)
 
   useEffect(() => {
     if (innerRef.current && tracks.length > 0) {
       const rowH = innerRef.current.scrollHeight / tracks.length
-      setContainerH(rowH * PAGE_SIZE)
+      setContainerH(rowH * Math.min(tracks.length, PAGE_SIZE))
     }
   }, [tracks.length])
 

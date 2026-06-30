@@ -128,7 +128,7 @@ def api_v1_artist_top_tracks(artist_id: int) -> dict[str, object] | JSONResponse
     artist = store.get_artist(artist_id)
     if artist is None:
         return api_error(404, "not_found", "Artist not found")
-    top = store.top_tracks_for_artist(artist_id, limit=20)
+    top = store.top_tracks_for_artist(artist_id, limit=100)
     artists_by_track = store.artists_for_tracks([track.id for track, _ in top])
     items = []
     for track, play_count in top:
