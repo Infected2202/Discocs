@@ -59,7 +59,7 @@ export default function SearchPage() {
   return (
     <div className="relative min-h-screen">
       <div className="absolute inset-0 pointer-events-none">
-        <PlasmaFBM active accent="#3b6bff" speed={0.3} scale={1.0} opacity={1.2} />
+        <PlasmaFBM active accent="#3b6bff" speed={0.3} scale={1.0} opacity={0.9} />
       </div>
       <div className="relative py-6 space-y-6">
       {/* Search bar */}
