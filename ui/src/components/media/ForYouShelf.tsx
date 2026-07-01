@@ -35,7 +35,7 @@ export default function ForYouShelf() {
       type: "playlist",
       title: "Liked Tracks",
       subtitle: "Your favourites",
-      artworkNode: cardArtwork(<Heart size={48} />),
+      artworkNode: cardArtwork(<Heart size={72} />),
       onPlay: () => playLikes().then(playFromEnvelope).catch(() => {}),
       variant: "shelf",
     },
@@ -44,7 +44,7 @@ export default function ForYouShelf() {
       type: "shelf",
       title: "Recently Played",
       subtitle: "Your listening history",
-      artworkNode: cardArtwork(<History size={48} />),
+      artworkNode: cardArtwork(<History size={72} />),
       variant: "shelf",
     },
     {
@@ -52,7 +52,7 @@ export default function ForYouShelf() {
       type: "shelf",
       title: "Mixes For You",
       subtitle: "AI-generated mixes",
-      artworkNode: cardArtwork(<Shuffle size={48} />),
+      artworkNode: cardArtwork(<Shuffle size={72} />),
       variant: "shelf",
     },
     {
@@ -60,7 +60,7 @@ export default function ForYouShelf() {
       type: "shelf",
       title: "New Releases",
       subtitle: "Fresh from your library",
-      artworkNode: cardArtwork(<Disc3 size={48} />),
+      artworkNode: cardArtwork(<Disc3 size={72} />),
       variant: "shelf",
     },
     {
@@ -68,7 +68,7 @@ export default function ForYouShelf() {
       type: "shelf",
       title: "Recently Added",
       subtitle: "New to your collection",
-      artworkNode: cardArtwork(<Plus size={48} />),
+      artworkNode: cardArtwork(<Plus size={72} />),
       variant: "shelf",
     },
     {
@@ -76,7 +76,7 @@ export default function ForYouShelf() {
       type: "shelf",
       title: "Discover",
       subtitle: "Something new",
-      artworkNode: cardArtwork(<Compass size={48} />),
+      artworkNode: cardArtwork(<Compass size={72} />),
       variant: "shelf",
     },
     {
@@ -84,7 +84,7 @@ export default function ForYouShelf() {
       type: "shelf",
       title: "Listen Again",
       subtitle: "Pick up where you left off",
-      artworkNode: cardArtwork(<RotateCcw size={48} />),
+      artworkNode: cardArtwork(<RotateCcw size={72} />),
       variant: "shelf",
     },
     {
@@ -92,7 +92,7 @@ export default function ForYouShelf() {
       type: "shelf",
       title: "Long Time No Listen",
       subtitle: "Forgotten gems",
-      artworkNode: cardArtwork(<Clock size={48} />),
+      artworkNode: cardArtwork(<Clock size={72} />),
       variant: "shelf",
     },
     {
@@ -104,7 +104,7 @@ export default function ForYouShelf() {
         : flowProfile
           ? "Build your profile first"
           : "Loading…",
-      artworkNode: cardArtwork(<Radio size={48} />),
+      artworkNode: cardArtwork(<Radio size={72} />),
       variant: "shelf",
       disabled: !flowAvailable,
       onPlay: flowAvailable ? () => { handleStartFlow().catch(() => {}) } : undefined,
