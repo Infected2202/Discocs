@@ -141,20 +141,23 @@ export default function ExpandedPlayer() {
         {/* ── LEFT: artwork + controls ── */}
         <div
           className={cn(
-            "flex flex-col items-center flex-1 min-w-0 min-h-0 px-8 py-6",
+            "flex flex-col items-center justify-center flex-1 min-w-0 min-h-0 px-8 py-6 cursor-pointer",
             mobileTab === "queue" ? "hidden md:flex" : "flex",
           )}
           onClick={(e) => {
             // collapse if clicking empty space (not interactive children)
-            if (e.target === e.currentTarget) toggleExpanded()
+            const target = e.target as HTMLElement
+            if (target.closest("button, a, [role='switch']")) return
+            toggleExpanded()
           }}
         >
 
           {/* Artwork — on mobile natural square, on desktop fills remaining height */}
-          <div className="w-full md:flex-1 md:min-h-0 flex items-center justify-center mb-4">
+          <div className="w-full flex items-center justify-center mb-4">
             <div
-              className="relative w-full md:w-auto md:h-full aspect-square max-w-full md:max-h-full rounded-xl overflow-hidden shadow-2xl cursor-pointer"
-              onClick={() => {
+              className="relative aspect-square w-full md:w-auto md:max-h-[55vh] md:max-w-[55vh] rounded-xl overflow-hidden shadow-2xl cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation()
                 togglePlay()
                 setArtworkPulse(isPlaying ? "pause" : "play")
                 setTimeout(() => setArtworkPulse(null), 350)

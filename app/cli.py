@@ -43,7 +43,10 @@ from app.head_pack import (
 )
 from app.logging_config import configure_logging, get_analysis_logger
 from app.navidrome import NavidromeClient
-from app.navidrome_migration import migrate_navidrome_duplicate_tracks
+from app.navidrome_migration import (
+    migrate_navidrome_duplicate_tracks,
+    repair_navidrome_empty_releases,
+)
 from app.navidrome_sync import sync_navidrome_catalog
 from app.recommender import Recommender, build_index
 from app.scanner import AUDIO_EXTENSIONS, iter_audio_files, scan_music_folder
@@ -565,6 +568,29 @@ def navidrome_merge_duplicates(
     result = migrate_navidrome_duplicate_tracks(
         store,
         songs=client.iter_songs(page_size=page_size, limit=limit),
+        dry_run=not apply,
+        batch_size=batch_size,
+        progress=progress if apply else None,
+    )
+    typer.echo(result.summary())
+
+
+@cli.command("navidrome-repair-releases")
+def navidrome_repair_releases(
+    apply: Annotated[
+        bool,
+        typer.Option("--apply/--dry-run", help="Apply safe one-to-one release repairs."),
+    ] = False,
+    batch_size: Annotated[int, typer.Option("--batch-size", min=1, max=5000)] = 250,
+) -> None:
+    """Merge empty releases left behind after Navidrome album ID changes."""
+    store, _settings = get_store_and_settings()
+
+    def progress(done: int, total: int) -> None:
+        typer.echo(f"applied={done}/{total}")
+
+    result = repair_navidrome_empty_releases(
+        store,
         dry_run=not apply,
         batch_size=batch_size,
         progress=progress if apply else None,

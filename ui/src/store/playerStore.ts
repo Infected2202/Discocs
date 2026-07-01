@@ -14,6 +14,7 @@ import { flowRefill, flowEvent } from "@/api/flow"
 import { planRefill } from "./flowRefillRouting"
 import { persistSessionId, loadPersistedSessionId, clearPersistedSessionId } from "./sessionPersistence"
 import { ApiError } from "@/api/client"
+import { playerLog } from "@/lib/playerLogger"
 import type { PlaybackEnvelope, PlaybackSession, PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
 
 const STORAGE_KEY = "discocs.playerState.v1"
@@ -22,13 +23,19 @@ const REFILL_TRIGGER_EVENTS = new Set(["completed", "skipped", "liked", "dislike
 function loadPersistedVolume(): { volume: number; muted: boolean } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { volume: 1, muted: false }
+    if (!raw) {
+      playerLog("volume", "no persisted state — defaults volume=1 muted=false")
+      return { volume: 1, muted: false }
+    }
     const parsed = JSON.parse(raw) as { volume?: number; muted?: boolean }
-    return {
+    const result = {
       volume: typeof parsed.volume === "number" ? parsed.volume : 1,
       muted: typeof parsed.muted === "boolean" ? parsed.muted : false,
     }
+    playerLog("volume", "loaded from storage", result)
+    return result
   } catch {
+    playerLog("volume", "failed to load from storage — defaults volume=1 muted=false")
     return { volume: 1, muted: false }
   }
 }
@@ -403,6 +410,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
     setVolume(v) {
       const clamped = Math.max(0, Math.min(1, v))
+      playerLog("volume", "setVolume", { raw: v, clamped })
       audioEngine.setVolume(clamped)
       set({ volume: clamped })
       persistVolume(clamped, get().muted)
@@ -410,6 +418,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
     toggleMute() {
       const muted = !get().muted
+      playerLog("volume", "toggleMute", { muted, volume: get().volume })
       audioEngine.setMuted(muted)
       set({ muted })
       persistVolume(get().volume, muted)

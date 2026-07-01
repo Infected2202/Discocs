@@ -1,4 +1,3 @@
-import { useEffect } from "react"
 import { useParams } from "react-router"
 import { Play, Heart } from "lucide-react"
 import { useArtist, useArtistDiscography } from "@/api/hooks/useArtist"
@@ -9,7 +8,6 @@ import Shelf from "@/components/media/Shelf"
 import PopularTracks from "@/components/media/PopularTracks"
 import { usePlayerStore } from "@/store/playerStore"
 import { useNavidromeStore } from "@/store/navidromeStore"
-import { useBackdropStore } from "@/store/backdropStore"
 import { cn } from "@/lib/utils"
 import type { ReleaseSummary } from "@/api/types"
 
@@ -56,16 +54,6 @@ export default function ArtistPage() {
   const playSource = usePlayerStore((s) => s.playSource)
   const toggleArtistLike = useNavidromeStore((s) => s.toggleArtistLike)
   const liked = useNavidromeStore((s) => s.likedArtistIds.has(artistId))
-  const setBackdropUrl = useBackdropStore((s) => s.setArtworkUrl)
-
-  const artworkUrl = artistData?.artist.image?.url
-    ?? discoData?.groups.flatMap((g) => g.items as ReleaseSummary[]).find((r) => r.artwork?.url)?.artwork?.url
-    ?? null
-  useEffect(() => {
-    setBackdropUrl(artworkUrl)
-    return () => setBackdropUrl(null)
-  }, [artworkUrl, setBackdropUrl])
-
   const isLoading = artistLoading || discoLoading
 
   if (isLoading) return <ArtistPageSkeleton />

@@ -22,6 +22,8 @@ def song(
     title: str,
     size: int = 100,
     *,
+    album_id: str = "album-1",
+    album: str = "Album",
     play_count: int | None = None,
     played: str | None = None,
     starred: str | None = None,
@@ -30,7 +32,7 @@ def song(
         "id": item_id,
         "title": title,
         "size": size,
-        "albumId": "album-1",
+        "albumId": album_id,
         "albumArtist": "Album Artist",
         "track": 1,
         "discNumber": 1,
@@ -46,7 +48,7 @@ def song(
         id=item_id,
         title=title,
         artist="Artist",
-        album="Album",
+        album=album,
         duration=123,
         size=size,
         suffix="flac",
@@ -198,6 +200,73 @@ def test_sync_navidrome_catalog_is_idempotent_and_updates_metadata(tmp_path):
     assert refreshed.file_size == 101
     assert store.count_tracks() == 1
     assert store.count_external_tracks(NAVIDROME_PROVIDER) == 1
+
+
+def test_sync_navidrome_catalog_preserves_release_id_when_album_id_changes(tmp_path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient(
+            [
+                song("song-1", "One", album_id="album-old", album="Old title"),
+                song("song-2", "Two", album_id="album-old", album="Old title"),
+            ]
+        ),  # type: ignore[arg-type]
+    )
+    old_release = store.search_entities("Old title")["releases"]["items"][0].release
+
+    result = sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient(
+            [
+                song("song-1", "One revised", album_id="album-new", album="New title"),
+                song("song-2", "Two", album_id="album-new", album="New title"),
+                song("song-3", "Three", album_id="album-new", album="New title"),
+            ]
+        ),  # type: ignore[arg-type]
+    )
+
+    new_release = store.search_entities("New title")["releases"]["items"][0].release
+    assert result.preserved_release_count == 1
+    assert new_release.id == old_release.id
+    assert new_release.identity_key == "provider:navidrome:release:album-new"
+    assert [item.track.title for item in store.list_release_tracks(new_release.id)] == [
+        "One revised",
+        "Two",
+        "Three",
+    ]
+
+
+def test_sync_navidrome_catalog_does_not_reuse_release_id_for_split(tmp_path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient(
+            [
+                song("song-1", "One", album_id="album-old"),
+                song("song-2", "Two", album_id="album-old"),
+            ]
+        ),  # type: ignore[arg-type]
+    )
+    old_release = store.search_entities("Album")["releases"]["items"][0].release
+
+    result = sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient(
+            [
+                song("song-1", "One", album_id="album-a", album="Album A"),
+                song("song-2", "Two", album_id="album-b", album="Album B"),
+            ]
+        ),  # type: ignore[arg-type]
+    )
+
+    release_a = store.search_entities("Album A")["releases"]["items"][0].release
+    release_b = store.search_entities("Album B")["releases"]["items"][0].release
+    assert result.preserved_release_count == 0
+    assert release_a.id != old_release.id
+    assert release_b.id != old_release.id
 
 
 def test_sync_navidrome_catalog_skips_unchanged_existing_tracks(tmp_path):

@@ -16,7 +16,7 @@
 
 ## Tests
 
-Тесты — обязательная часть каждого изменения, не опциональная.
+Тесты — обязательная часть каждого значительного изменения, не запускай тесты после изменения параметров в конфигах.
 
 Write tests that would fail if the tested logic were removed or inverted. A failing test means the code is broken, not the test. Fix the code, not the test — unless the requirement genuinely changed, in which case update the test first, then fix the code. `tests/conftest.py` поднимает in-memory SQLite и заглушки модели — реальные файлы и Essentia не нужны для unit-тестов.
 

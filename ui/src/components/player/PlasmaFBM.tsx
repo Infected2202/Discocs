@@ -92,9 +92,9 @@ void main() {
     fbm(rp + 2.0 * q + vec2(8.30, 2.80))
   );
 
-  float n = fbm(p + 2.5 * r);
-  n = n * 0.5 + 0.5;                    // [-1,1] → [0,1]
-  n = smoothstep(0.35, 0.75, n);        // ниже 0.35 = прозрачно, выше 0.75 = полная яркость
+  float n = fbm(p + 4.5 * r);
+  n = n * 0.5 + 0.5;
+  n = smoothstep(0.25, 0.97, n);
 
   fragColor = vec4(uCustomColor * n, n * uOpacity);
 }`

@@ -35,6 +35,317 @@ class NavidromeDuplicateMigrationResult:
         )
 
 
+@dataclass(frozen=True)
+class NavidromeReleaseRepairResult:
+    candidates: int
+    matched: int
+    ambiguous: int
+    path_mismatch: int
+    merged: int
+    dry_run: bool
+
+    def summary(self) -> str:
+        mode = "dry_run" if self.dry_run else "applied"
+        return (
+            f"{mode}=true candidates={self.candidates} matched={self.matched} "
+            f"ambiguous={self.ambiguous} path_mismatch={self.path_mismatch} "
+            f"merged={self.merged}"
+        )
+
+
+@dataclass(frozen=True)
+class ReleaseRepairCandidate:
+    old_release_id: int
+    target_release_id: int
+    old_title: str
+    target_title: str
+    sample_track_external_id: str
+    old_path: str
+    current_path: str
+
+
+def repair_navidrome_empty_releases(
+    store: Store,
+    *,
+    dry_run: bool = True,
+    batch_size: int = 250,
+    progress: ProgressCallback | None = None,
+) -> NavidromeReleaseRepairResult:
+    """Merge strongly matched empty Navidrome releases into their successors.
+
+    Historical normalized membership is no longer available after a release
+    becomes empty, so repair is intentionally conservative: the same stable
+    song ID must connect old and current releases, its source path must be
+    unchanged, and the relationship must be one-to-one.
+    """
+    with store.connect() as conn:
+        candidates, ambiguous, path_mismatch = _release_repair_candidates(conn)
+
+    merged = 0
+    if not dry_run and candidates:
+        merged = _apply_release_repairs(
+            store,
+            candidates,
+            batch_size=max(int(batch_size), 1),
+            progress=progress,
+        )
+
+    result = NavidromeReleaseRepairResult(
+        candidates=len(candidates) + ambiguous + path_mismatch,
+        matched=len(candidates),
+        ambiguous=ambiguous,
+        path_mismatch=path_mismatch,
+        merged=merged,
+        dry_run=dry_run,
+    )
+    logger.info("Navidrome empty release repair %s", result.summary())
+    return result
+
+
+def _release_repair_candidates(
+    conn: sqlite3.Connection,
+) -> tuple[list[ReleaseRepairCandidate], int, int]:
+    rows = conn.execute(
+        """
+        SELECT
+            old.id AS old_release_id,
+            old.title AS old_title,
+            target.id AS target_release_id,
+            target.title AS target_title,
+            old_external.raw_json AS old_raw_json,
+            current_track.external_id AS sample_track_external_id,
+            current_track.raw_json AS current_raw_json
+        FROM releases old
+        JOIN external_ids old_external
+          ON old_external.provider = ?
+         AND old_external.entity_type = 'release'
+         AND old_external.entity_id = old.id
+        JOIN external_tracks current_track
+          ON current_track.provider = ?
+         AND current_track.external_id = json_extract(old_external.raw_json, '$.id')
+        JOIN release_tracks current_membership
+          ON current_membership.track_id = current_track.track_id
+        JOIN releases target
+          ON target.id = current_membership.release_id
+        WHERE NOT EXISTS (
+            SELECT 1 FROM release_tracks old_membership
+            WHERE old_membership.release_id = old.id
+        )
+          AND target.id != old.id
+        ORDER BY old.id
+        """,
+        (NAVIDROME_PROVIDER, NAVIDROME_PROVIDER),
+    ).fetchall()
+
+    target_counts: dict[int, int] = {}
+    for row in rows:
+        target_id = int(row["target_release_id"])
+        target_counts[target_id] = target_counts.get(target_id, 0) + 1
+
+    matched: list[ReleaseRepairCandidate] = []
+    ambiguous = 0
+    path_mismatch = 0
+    for row in rows:
+        target_id = int(row["target_release_id"])
+        if target_counts[target_id] != 1:
+            ambiguous += 1
+            continue
+        old_path = _navidrome_raw_path(_load_raw_json(row["old_raw_json"]))
+        current_path = _navidrome_raw_path(_load_raw_json(row["current_raw_json"]))
+        if (
+            not old_path
+            or not current_path
+            or normalize_absolute_path(old_path) != normalize_absolute_path(current_path)
+        ):
+            path_mismatch += 1
+            continue
+        matched.append(
+            ReleaseRepairCandidate(
+                old_release_id=int(row["old_release_id"]),
+                target_release_id=target_id,
+                old_title=str(row["old_title"]),
+                target_title=str(row["target_title"]),
+                sample_track_external_id=str(row["sample_track_external_id"]),
+                old_path=old_path,
+                current_path=current_path,
+            )
+        )
+    return matched, ambiguous, path_mismatch
+
+
+def _apply_release_repairs(
+    store: Store,
+    matched: list[ReleaseRepairCandidate],
+    *,
+    batch_size: int,
+    progress: ProgressCallback | None,
+) -> int:
+    merged = 0
+    total = len(matched)
+    for start in range(0, total, batch_size):
+        batch = matched[start : start + batch_size]
+        with store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                release_id_map = {
+                    candidate.old_release_id: candidate.target_release_id
+                    for candidate in batch
+                }
+                for candidate in batch:
+                    _merge_release_preference(
+                        conn,
+                        candidate.old_release_id,
+                        candidate.target_release_id,
+                    )
+                    conn.execute(
+                        "UPDATE playback_events SET release_id = ? WHERE release_id = ?",
+                        (candidate.target_release_id, candidate.old_release_id),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE playback_sessions
+                        SET source_id = ?, source_label = ?
+                        WHERE source_type = 'release' AND source_id = ?
+                        """,
+                        (
+                            candidate.target_release_id,
+                            candidate.target_title,
+                            candidate.old_release_id,
+                        ),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE queue_items
+                        SET source_id = ?
+                        WHERE source_type = 'release' AND source_id = ?
+                        """,
+                        (candidate.target_release_id, candidate.old_release_id),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE external_ids
+                        SET entity_id = ?
+                        WHERE entity_type = 'release' AND entity_id = ?
+                        """,
+                        (candidate.target_release_id, candidate.old_release_id),
+                    )
+                    cursor = conn.execute(
+                        """
+                        DELETE FROM releases
+                        WHERE id = ?
+                          AND NOT EXISTS (
+                              SELECT 1 FROM release_tracks
+                              WHERE release_id = ?
+                          )
+                        """,
+                        (candidate.old_release_id, candidate.old_release_id),
+                    )
+                    merged += int(cursor.rowcount)
+                _rewrite_session_release_states(conn, release_id_map)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        if progress is not None:
+            progress(min(start + len(batch), total), total)
+    return merged
+
+
+def _merge_release_preference(
+    conn: sqlite3.Connection,
+    old_release_id: int,
+    target_release_id: int,
+) -> None:
+    old = conn.execute(
+        "SELECT * FROM user_release_preferences WHERE release_id = ?",
+        (old_release_id,),
+    ).fetchone()
+    if old is None:
+        return
+    target = conn.execute(
+        "SELECT * FROM user_release_preferences WHERE release_id = ?",
+        (target_release_id,),
+    ).fetchone()
+    if target is None:
+        conn.execute(
+            "UPDATE user_release_preferences SET release_id = ? WHERE release_id = ?",
+            (target_release_id, old_release_id),
+        )
+        return
+    conn.execute(
+        """
+        UPDATE user_release_preferences
+        SET liked = ?,
+            play_count = ?,
+            completion_count = ?,
+            skip_count = ?,
+            last_played_at = ?,
+            last_completed_at = ?,
+            score = ?,
+            updated_at = ?
+        WHERE release_id = ?
+        """,
+        (
+            max(int(old["liked"]), int(target["liked"])),
+            int(old["play_count"]) + int(target["play_count"]),
+            int(old["completion_count"]) + int(target["completion_count"]),
+            int(old["skip_count"]) + int(target["skip_count"]),
+            _latest_text(old["last_played_at"], target["last_played_at"]),
+            _latest_text(old["last_completed_at"], target["last_completed_at"]),
+            float(old["score"]) + float(target["score"]),
+            _latest_text(old["updated_at"], target["updated_at"]),
+            target_release_id,
+        ),
+    )
+    conn.execute(
+        "DELETE FROM user_release_preferences WHERE release_id = ?",
+        (old_release_id,),
+    )
+
+
+def _rewrite_session_release_states(
+    conn: sqlite3.Connection,
+    release_id_map: dict[int, int],
+) -> None:
+    rows = conn.execute(
+        "SELECT id, state_json FROM playback_sessions WHERE state_json IS NOT NULL",
+    ).fetchall()
+    for row in rows:
+        try:
+            state = json.loads(str(row["state_json"]))
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(state, dict):
+            continue
+        release_plays = state.get("session_release_plays")
+        if not isinstance(release_plays, dict):
+            continue
+        changed = False
+        for old_release_id, target_release_id in release_id_map.items():
+            old_key = str(old_release_id)
+            if old_key not in release_plays:
+                continue
+            target_key = str(target_release_id)
+            old_value = release_plays.pop(old_key)
+            existing = release_plays.get(target_key)
+            if isinstance(old_value, (int, float)) and isinstance(existing, (int, float)):
+                release_plays[target_key] = old_value + existing
+            elif existing is None:
+                release_plays[target_key] = old_value
+            changed = True
+        if not changed:
+            continue
+        conn.execute(
+            "UPDATE playback_sessions SET state_json = ? WHERE id = ?",
+            (json.dumps(state, sort_keys=True), row["id"]),
+        )
+
+
+def _latest_text(first: object, second: object) -> str | None:
+    values = [str(value) for value in (first, second) if value is not None]
+    return max(values) if values else None
+
+
 def migrate_navidrome_duplicate_tracks(
     store: Store,
     *,

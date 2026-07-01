@@ -12,7 +12,6 @@ import { useArtworkTheme } from "@/hooks/useArtworkTheme"
 import { useNavidromeStore } from "@/store/navidromeStore"
 import { usePlayerStore } from "@/store/playerStore"
 import PlasmaFBM from "@/components/player/PlasmaFBM"
-import { useBackdropStore } from "@/store/backdropStore"
 
 export default function AppShell() {
   useKeyboardShortcuts()
@@ -24,8 +23,6 @@ export default function AppShell() {
 
   const restoreSession = usePlayerStore((s) => s.restoreSession)
   useEffect(() => { void restoreSession() }, [restoreSession])
-
-  const backdropUrl = useBackdropStore((s) => s.artworkUrl)
 
   const [plasmaAccent, setPlasmaAccent] = useState(
     () => document.documentElement.dataset.trackAccentColor ?? "#3b6bff"
@@ -42,23 +39,7 @@ export default function AppShell() {
 
   return (
     <div className="flex flex-col h-svh overflow-hidden">
-      {/* Artwork backdrop — under plasma */}
-      {backdropUrl && (
-        <div className="fixed inset-0 pointer-events-none" style={{ zIndex: -1 }}>
-          <img
-            src={backdropUrl}
-            aria-hidden
-            className="w-full h-full object-cover object-top"
-            style={{ filter: "blur(28px) brightness(0.35) saturate(1.3)", transform: "scale(1.12)" }}
-          />
-          <div
-            className="absolute inset-0"
-            style={{ background: "linear-gradient(to bottom, transparent 20%, var(--background) 90%)" }}
-          />
-        </div>
-      )}
-
-      {/* Plasma — above artwork backdrop */}
+      {/* Plasma */}
       <div className="fixed inset-0 pointer-events-none z-0" style={{ filter: "blur(4px)" }}>
         <PlasmaFBM active accent={plasmaAccent} speed={0.3} scale={1.0} opacity={0.9} />
       </div>

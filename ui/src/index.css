@@ -64,6 +64,8 @@
 :root {
     --track-accent: #ff2a6d;
     --track-accent-foreground: #07110e;
+    --track-accent-transition-duration: 960ms;
+    --track-accent-transition-ease: ease;
     --background: #0b0d0f;
     --foreground: #eef2f3;
     --card: #171a1d;
@@ -97,8 +99,8 @@
     --chart-4: #242629;
     --chart-5: #171a1d;
     transition:
-      --track-accent 320ms ease,
-      --track-accent-foreground 320ms ease;
+      --track-accent var(--track-accent-transition-duration) var(--track-accent-transition-ease),
+      --track-accent-foreground var(--track-accent-transition-duration) var(--track-accent-transition-ease);
 }
 
 @media (prefers-reduced-motion: reduce) {

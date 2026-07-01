@@ -52,7 +52,7 @@ export default function MediaCard({
         disabled ? "cursor-default" : "cursor-pointer",
         isShelf
           ? "min-w-0 p-2 hover:z-10 hover:bg-muted/40 transition-colors duration-300"
-          : "w-36 sm:w-44 shrink-0 rounded-lg p-3 hover:bg-muted/60",
+          : "w-36 sm:w-44 shrink-0 rounded-lg p-2 hover:bg-muted/60",
         className,
       )}
       onClick={handleClick}
@@ -61,7 +61,7 @@ export default function MediaCard({
       onKeyDown={(e) => !disabled && e.key === "Enter" && handleClick()}
     >
       {/* Artwork */}
-      <div className="relative mb-2">
+      <div className="relative mb-[5px]">
         {(() => {
           const art = artworkNode ?? (
             <ArtworkImage
@@ -96,10 +96,10 @@ export default function MediaCard({
       </div>
 
       {/* Text */}
-      <div className="space-y-0.5 min-w-0">
-        <p className="truncate text-sm font-medium leading-tight">{title}</p>
+      <div className="min-w-0">
+        <p className="truncate text-[14px] font-medium leading-none">{title}</p>
         {subtitleLinks && subtitleLinks.length > 0 ? (
-          <p className="truncate text-xs text-muted-foreground">
+          <p className="truncate text-[10px] text-muted-foreground">
             {subtitleLinks.map((link, i) => (
               <span key={link.href}>
                 {i > 0 && ", "}
@@ -113,7 +113,7 @@ export default function MediaCard({
             ))}
           </p>
         ) : subtitle ? (
-          <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
+          <p className="truncate text-[12px] text-muted-foreground leading-none mt-[4px]">{subtitle}</p>
         ) : null}
       </div>
     </div>

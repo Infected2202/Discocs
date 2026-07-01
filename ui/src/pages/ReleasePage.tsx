@@ -1,4 +1,3 @@
-import { useEffect } from "react"
 import { useParams } from "react-router"
 import { Link } from "react-router"
 import { Play, Shuffle, Heart } from "lucide-react"
@@ -10,7 +9,6 @@ import TrackTable from "@/components/media/TrackTable"
 import Shelf from "@/components/media/Shelf"
 import { usePlayerStore } from "@/store/playerStore"
 import { useNavidromeStore } from "@/store/navidromeStore"
-import { useBackdropStore } from "@/store/backdropStore"
 import { cn } from "@/lib/utils"
 import type { ReleaseSummary } from "@/api/types"
 
@@ -57,14 +55,6 @@ export default function ReleasePage() {
   const patchSession = usePlayerStore((s) => s.toggleShuffle)
   const toggleAlbumLike = useNavidromeStore((s) => s.toggleAlbumLike)
   const liked = useNavidromeStore((s) => s.likedAlbumIds.has(releaseId))
-  const setBackdropUrl = useBackdropStore((s) => s.setArtworkUrl)
-
-  const artworkUrl = releaseData?.release.artwork?.url ?? null
-  useEffect(() => {
-    setBackdropUrl(artworkUrl)
-    return () => setBackdropUrl(null)
-  }, [artworkUrl, setBackdropUrl])
-
   const isLoading = relLoading || tracksLoading
 
   if (isLoading) return <ReleasePageSkeleton />

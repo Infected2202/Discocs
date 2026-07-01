@@ -1,0 +1,31 @@
+.trackStack {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 40px;
+}
+
+.trackLayer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  min-width: 0;
+  opacity: 1;
+  transition:
+    opacity calc(var(--track-accent-transition-duration) / 2)
+    var(--track-accent-transition-ease);
+}
+
+.trackLayerHidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trackLayer {
+    transition: none;
+  }
+}

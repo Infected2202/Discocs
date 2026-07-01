@@ -1,0 +1,109 @@
+.backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--card);
+}
+
+.artworkLayerCurrent,
+.artworkLayerPrevious {
+  position: absolute;
+  inset: -28px;
+  --player-backdrop-artwork-opacity: 0.3;
+}
+
+.artworkLayerCurrent {
+  z-index: 1;
+  animation: player-backdrop-enter var(--track-accent-transition-duration) var(--track-accent-transition-ease) both;
+}
+
+.artworkLayerPrevious {
+  z-index: 0;
+  animation: player-backdrop-exit var(--track-accent-transition-duration) var(--track-accent-transition-ease) both;
+}
+
+.artwork {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  filter: blur(12px) brightness(0.42) saturate(1.55);
+  transform: translate3d(-1.2%, 0, 0) scale(1.08);
+  animation: player-backdrop-breathe 16s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+.plasma {
+  position: absolute;
+  inset: 0;
+  mix-blend-mode: screen;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      to right,
+      rgb(11 13 15 / 0.65) 0%,
+      rgb(11 13 15 / 0.3) 28%,
+      rgb(11 13 15 / 0.3) 72%,
+      rgb(11 13 15 / 0.65) 100%
+    ),
+    linear-gradient(to bottom, rgb(11 13 15 / 0.22), rgb(11 13 15 / 0.48));
+}
+
+@keyframes player-backdrop-breathe {
+  0% {
+    transform: translate3d(-1.2%, 0, 0) scale(1.08);
+  }
+  50% {
+    transform: translate3d(0.8%, -1%, 0) scale(1.105);
+  }
+  100% {
+    transform: translate3d(1.4%, 0.6%, 0) scale(1.13);
+  }
+}
+
+@keyframes player-backdrop-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: var(--player-backdrop-artwork-opacity);
+  }
+}
+
+@keyframes player-backdrop-exit {
+  from {
+    opacity: var(--player-backdrop-artwork-opacity);
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .artworkLayerCurrent,
+  .artworkLayerPrevious {
+    --player-backdrop-artwork-opacity: 0.3;
+  }
+
+  .artwork {
+    filter: blur(10px) brightness(0.38) saturate(1.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .artworkLayerCurrent,
+  .artworkLayerPrevious {
+    animation: none;
+    opacity: var(--player-backdrop-artwork-opacity);
+  }
+
+  .artwork {
+    animation: none;
+    transform: scale(1.1);
+  }
+}
