@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router"
-import { Settings, CircleDot } from "lucide-react"
+import { Settings, User } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useNavidromeStatus } from "@/api/hooks/useNavidromeStatus"
 import { Button } from "@/components/ui/button"
@@ -27,10 +27,11 @@ export default function ProfileButton({ mobile = false }: { mobile?: boolean }) 
     <Popover>
       <PopoverTrigger asChild>
         <button
-          className="p-1 rounded-full hover:bg-muted/40 transition-colors"
+          className="relative w-8 h-8 rounded-full flex items-center justify-center hover:bg-muted/40 transition-colors"
           title="Profile"
         >
-          <CircleDot size={22} className={dotColor} />
+          <User size={16} />
+          <span className={cn("absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-background", dotColor)} />
         </button>
       </PopoverTrigger>
       <PopoverContent align={mobile ? "center" : "end"} className="w-56 p-3">
