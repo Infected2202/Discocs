@@ -8,6 +8,7 @@ import MediaCard from "@/components/media/MediaCard"
 import TrackTable from "@/components/media/TrackTable"
 import { usePlayerStore } from "@/store/playerStore"
 import type { ArtistSummary, ReleaseSummary, TrackSummary } from "@/api/types"
+import PlasmaFBM from "@/components/player/PlasmaFBM"
 type TabKey = "all" | "artists" | "releases" | "tracks"
 
 function ResultSkeleton() {
@@ -56,7 +57,11 @@ export default function SearchPage() {
   const hasResults = artists.length > 0 || releases.length > 0 || tracks.length > 0
 
   return (
-    <div className="py-6 space-y-6">
+    <div className="relative min-h-screen">
+      <div className="absolute inset-0 pointer-events-none">
+        <PlasmaFBM active accent="#3b6bff" speed={0.3} scale={1.0} opacity={1.2} />
+      </div>
+      <div className="relative py-6 space-y-6">
       {/* Search bar */}
       <div className="px-4 sm:px-6">
         <form onSubmit={handleSubmit}>
@@ -195,6 +200,7 @@ export default function SearchPage() {
           </TabsContent>
         </Tabs>
       )}
+      </div>
     </div>
   )
 }
