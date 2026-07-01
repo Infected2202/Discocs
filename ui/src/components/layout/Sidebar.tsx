@@ -28,7 +28,7 @@ export default function Sidebar() {
   return (
     <aside
       className={cn(
-        "shrink-0 flex flex-col bg-background/50 backdrop-blur-sm border-r border-border h-full pb-[92px] transition-[width] duration-200 cursor-pointer",
+        "shrink-0 flex flex-col bg-background/30 backdrop-blur-sm border-r border-border h-full pb-[92px] transition-[width] duration-200 cursor-pointer",
         collapsed ? "w-14" : "w-[220px]",
       )}
       onClick={(e) => {
