@@ -46,23 +46,24 @@ export default function AppShell() {
 
       {/* UI layers — above plasma */}
       <div className="relative z-[1] flex flex-col flex-1 min-h-0 overflow-hidden">
-        <AppHeader />
-
-        {/* Below: sidebar + content */}
+        {/* Sidebar + right column */}
         <div className="flex flex-1 min-h-0 overflow-hidden">
           {/* Sidebar — desktop only */}
           <div className="hidden md:block h-full">
             <Sidebar />
           </div>
 
-          {/* Main column: scrollable content */}
-          <main className="flex-1 overflow-y-auto pb-[92px]">
-            <ErrorBoundary>
-              <PageTransition>
-                <Outlet />
-              </PageTransition>
-            </ErrorBoundary>
-          </main>
+          {/* Right: header + scrollable content */}
+          <div className="flex flex-col flex-1 min-h-0 min-w-0">
+            <AppHeader />
+            <main className="flex-1 overflow-y-auto pb-[92px]">
+              <ErrorBoundary>
+                <PageTransition>
+                  <Outlet />
+                </PageTransition>
+              </ErrorBoundary>
+            </main>
+          </div>
         </div>
 
         {/* Player — always mounted, never unmounts */}
