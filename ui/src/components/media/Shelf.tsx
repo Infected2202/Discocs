@@ -52,7 +52,10 @@ export default function Shelf({ title, subtitle, items, shelfKey }: ShelfProps) 
     <section className="shelf-section space-y-1">
       {/* Header */}
       <div className="px-4 sm:px-6 flex items-center gap-2 min-w-0">
-        <h2 className="text-sm font-semibold shrink-0">{title}</h2>
+        <h2
+          className={shelfKey ? "text-sm font-semibold shrink-0 cursor-pointer hover:underline" : "text-sm font-semibold shrink-0"}
+          onClick={shelfKey ? () => navigate(`/shelf/${shelfKey}`) : undefined}
+        >{title}</h2>
         {subtitle && (
           <span className="text-xs text-muted-foreground truncate hidden sm:inline">{subtitle}</span>
         )}
