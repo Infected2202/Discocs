@@ -69,27 +69,10 @@ export default function ArtistPage() {
   const { artist } = artistData
   const stats = artist.library_stats
 
-  const bgArtwork = discoData?.groups
-    .flatMap((g) => g.items as ReleaseSummary[])
-    .find((r) => r.artwork?.url)?.artwork?.url
-
   return (
     <div className="relative pb-8">
-      {/* Decorative background */}
-      {bgArtwork && (
-        <div className="absolute inset-x-0 top-0 h-[440px] overflow-hidden pointer-events-none">
-          <img
-            src={bgArtwork}
-            aria-hidden
-            className="w-full h-full object-cover object-bottom"
-            style={{ filter: "blur(15px) brightness(0.4) saturate(1.3)", transform: "scale(1.15)", opacity: 0.5 }}
-          />
-          <div className="absolute inset-0" style={{ background: "linear-gradient(in oklab to bottom, rgb(11 13 15 / 0) 25%, rgb(11 13 15 / 0.5) 50%, rgb(11 13 15 / 0.85) 68%, rgb(11 13 15) 82%)" }} />
-        </div>
-      )}
-
       {/* Header */}
-      <div className="relative z-10 space-y-4">
+      <div className="relative z-10 space-y-2">
       <div className="px-4 sm:px-6 pt-8 pb-4 flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
         <ArtworkImage
           src={artist.image?.url}

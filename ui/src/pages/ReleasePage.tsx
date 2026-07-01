@@ -73,24 +73,8 @@ export default function ReleasePage() {
 
   return (
     <div className="relative pb-8">
-      {/* Decorative background — fixed height, spans header + first tracks */}
-      {release.artwork?.url && (
-        <div className="absolute inset-x-0 top-0 h-[440px] overflow-hidden pointer-events-none">
-          <img
-            src={release.artwork.url}
-            aria-hidden
-            className="w-full h-full object-cover object-bottom"
-            style={{ filter: "blur(28px) brightness(0.35) saturate(1.3)", transform: "scale(1.12)" }}
-          />
-          <div
-            className="absolute inset-0"
-            style={{ background: "linear-gradient(to bottom, transparent 20%, var(--background) 90%)" }}
-          />
-        </div>
-      )}
-
       {/* Header */}
-      <div className="relative z-10 space-y-8">
+      <div className="relative space-y-8">
       <div className="px-4 sm:px-6 pt-8 pb-4 flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
         <ArtworkImage
           src={release.artwork?.url}
