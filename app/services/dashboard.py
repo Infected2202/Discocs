@@ -427,8 +427,15 @@ def _dashboard_albums_for_you(
         return [], 0
 
     all_items: list[dict[str, object]] = json.loads(cached)
-    page = all_items[offset : offset + limit]
-    return page, len(all_items)
+    # Shuffle on read so the shelf shows variety on every open, matching the
+    # ORDER BY RANDOM() behaviour of the other dashboard shelves. The cache
+    # itself stays score-ordered; only the presented order is randomised.
+    import random  # noqa: PLC0415
+
+    shuffled = list(all_items)
+    random.shuffle(shuffled)
+    page = shuffled[offset : offset + limit]
+    return page, len(shuffled)
 
 
 def dashboard_shelf_response(

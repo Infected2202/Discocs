@@ -766,6 +766,30 @@ def test_api_v1_dashboard_shelves_use_library_and_playback_history(tmp_path: Pat
     assert missing_response.status_code == 404
 
 
+def test_dashboard_albums_for_you_shuffles_on_read(tmp_path: Path, monkeypatch):
+    import random as _random
+
+    from app.api.deps import context
+    from app.services.dashboard import _dashboard_albums_for_you
+
+    store = init_api_store(tmp_path, monkeypatch)
+    _s, settings = context()
+    model_name = settings.default_model
+
+    items = [{"id": f"release:{i}", "title": f"Album {i}"} for i in range(20)]
+    store.set_albums_for_you_cache(model_name, json.dumps(items))
+    original_order = [it["id"] for it in items]
+
+    _random.seed(1)
+    page, total = _dashboard_albums_for_you(store, limit=20, offset=0)
+
+    assert total == 20
+    # Shuffle must not drop or duplicate items.
+    assert {it["id"] for it in page} == set(original_order)
+    # Presented order differs from the score-ordered cache (shuffle applied).
+    assert [it["id"] for it in page] != original_order
+
+
 def test_api_v1_dashboard_shelves_use_imported_navidrome_history(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     track_id = add_track(store, tmp_path / "history" / "one.flac", title="Played Elsewhere", artist="Alpha")

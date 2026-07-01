@@ -7,7 +7,7 @@ Stage 7: Split Store into domain mixins.
 """
 from __future__ import annotations
 
-from app.store.base import StoreBase
+from app.store.base import INITIALIZED_DB_PATHS, StoreBase
 from app.store.library import LibraryStoreMixin
 from app.store.playback import PlaybackStoreMixin
 from app.store.mixes import MixesStoreMixin
