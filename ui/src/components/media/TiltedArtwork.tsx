@@ -1,7 +1,7 @@
 import { useRef } from "react"
 import { cn } from "@/lib/utils"
 
-const ROTATE_AMPLITUDE = 8
+const ROTATE_AMPLITUDE = 9
 const SCALE_ON_HOVER = 1.05
 
 interface TiltedArtworkProps {
