@@ -31,6 +31,20 @@ export default function ForYouShelf() {
 
   const cards: MediaCardProps[] = [
     {
+      id: "flow",
+      type: "static",
+      title: "Flow",
+      subtitle: flowAvailable
+        ? "Your personal stream"
+        : flowProfile
+          ? "Build your profile first"
+          : "Loading…",
+      artworkNode: cardArtwork(<Radio size={72} />),
+      variant: "shelf",
+      disabled: !flowAvailable,
+      onPlay: flowAvailable ? () => { handleStartFlow().catch(() => {}) } : undefined,
+    },
+    {
       id: "likes",
       type: "playlist",
       title: "Liked Tracks",
@@ -94,20 +108,6 @@ export default function ForYouShelf() {
       subtitle: "Forgotten gems",
       artworkNode: cardArtwork(<Clock size={72} />),
       variant: "shelf",
-    },
-    {
-      id: "flow",
-      type: "static",
-      title: "Flow",
-      subtitle: flowAvailable
-        ? "Your personal stream"
-        : flowProfile
-          ? "Build your profile first"
-          : "Loading…",
-      artworkNode: cardArtwork(<Radio size={72} />),
-      variant: "shelf",
-      disabled: !flowAvailable,
-      onPlay: flowAvailable ? () => { handleStartFlow().catch(() => {}) } : undefined,
     },
   ]
 
