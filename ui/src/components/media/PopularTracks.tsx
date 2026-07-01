@@ -1,22 +1,11 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import TrackTable from "./TrackTable"
+import { animateScroll } from "@/lib/animateScroll"
 import type { ArtistTopTrack } from "@/api/types"
 
 const PAGE_SIZE = 5
 const SCROLL_DURATION = 600 // ms
-
-function animateScroll(el: HTMLElement, from: number, to: number, duration: number, onDone: () => void) {
-  const start = performance.now()
-  function frame(now: number) {
-    const t = Math.min((now - start) / duration, 1)
-    const eased = t === 1 ? 1 : 1 - Math.pow(2, -10 * t)
-    el.scrollTop = from + (to - from) * eased
-    if (t < 1) requestAnimationFrame(frame)
-    else onDone()
-  }
-  requestAnimationFrame(frame)
-}
 
 interface PopularTracksProps {
   tracks: ArtistTopTrack[]
@@ -55,7 +44,7 @@ export default function PopularTracks({ tracks, sourceLabel }: PopularTracksProp
     if (!el) { setPage(next); return }
     animating.current = true
     const rowH = el.scrollHeight / tracks.length
-    animateScroll(el, el.scrollTop, next * PAGE_SIZE * rowH, SCROLL_DURATION, () => {
+    animateScroll(el, el.scrollTop, next * PAGE_SIZE * rowH, SCROLL_DURATION, "y", () => {
       animating.current = false
     })
     setPage(next)
