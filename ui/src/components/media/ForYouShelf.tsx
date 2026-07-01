@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react"
 import Shelf from "./Shelf"
 import { usePlayerStore } from "@/store/playerStore"
 import { playLikes } from "@/api/playlists"
@@ -6,11 +7,41 @@ import { useFlowProfile } from "@/api/hooks/useFlowProfile"
 import type { MediaCardProps } from "./MediaCard"
 import type { PlaybackEnvelope } from "@/api/types"
 
-function gradientArtwork(gradient: string, icon: React.ReactNode) {
+function mixWithGray(hex: string, accentWeight = 0.3): string {
+  const clean = hex.replace("#", "")
+  const full = clean.length === 3
+    ? clean.split("").map((c) => c + c).join("")
+    : clean
+  const r = parseInt(full.slice(0, 2), 16)
+  const g = parseInt(full.slice(2, 4), 16)
+  const b = parseInt(full.slice(4, 6), 16)
+  const gr = 90 // gray target ~#5a5a5a
+  const mr = Math.round(r * accentWeight + gr * (1 - accentWeight))
+  const mg = Math.round(g * accentWeight + gr * (1 - accentWeight))
+  const mb = Math.round(b * accentWeight + gr * (1 - accentWeight))
+  return `rgb(${mr},${mg},${mb})`
+}
+
+function useAccentColor(): string {
+  const [accent, setAccent] = useState(
+    () => document.documentElement.dataset.trackAccentColor ?? "#3b6bff"
+  )
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const a = (e as CustomEvent<{ accent?: string }>).detail?.accent
+      if (a) setAccent(a)
+    }
+    window.addEventListener("trackaccentchange", handler)
+    return () => window.removeEventListener("trackaccentchange", handler)
+  }, [])
+  return accent
+}
+
+function cardArtwork(bg: string, icon: React.ReactNode) {
   return (
     <div
       className="w-full aspect-square rounded-full flex items-center justify-center"
-      style={{ background: gradient }}
+      style={{ background: bg }}
     >
       <div className="w-[55%] h-[55%] flex items-center justify-center opacity-90">
         {icon}
@@ -69,6 +100,8 @@ export default function ForYouShelf() {
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
   const { data: flowProfile } = useFlowProfile()
   const flowAvailable = flowProfile?.available === true
+  const accent = useAccentColor()
+  const bg = mixWithGray(accent)
 
   async function handleStartFlow() {
     const resp = await startFlow()
@@ -85,7 +118,7 @@ export default function ForYouShelf() {
       type: "playlist",
       title: "Liked Tracks",
       subtitle: "Your favourites",
-      artworkNode: gradientArtwork("linear-gradient(135deg,#e91e8c,#880e4f)", ICONS.likes),
+      artworkNode: cardArtwork(bg, ICONS.likes),
       onPlay: () => playLikes().then(playFromEnvelope).catch(() => {}),
       variant: "shelf",
     },
@@ -94,7 +127,7 @@ export default function ForYouShelf() {
       type: "shelf",
       title: "Recently Played",
       subtitle: "Your listening history",
-      artworkNode: gradientArtwork("linear-gradient(135deg,#b45309,#451a03)", ICONS.listenAgain),
+      artworkNode: cardArtwork(bg, ICONS.listenAgain),
       variant: "shelf",
     },
     {
@@ -102,7 +135,7 @@ export default function ForYouShelf() {
       type: "shelf",
       title: "Mixes For You",
       subtitle: "AI-generated mixes",
-      artworkNode: gradientArtwork("linear-gradient(135deg,#f97316,#9a3412)", ICONS.mixes),
+      artworkNode: cardArtwork(bg, ICONS.mixes),
       variant: "shelf",
     },
     {
@@ -110,7 +143,7 @@ export default function ForYouShelf() {
       type: "shelf",
       title: "New Releases",
       subtitle: "Fresh from your library",
-      artworkNode: gradientArtwork("linear-gradient(135deg,#0891b2,#164e63)", ICONS.newReleases),
+      artworkNode: cardArtwork(bg, ICONS.newReleases),
       variant: "shelf",
     },
     {
@@ -118,7 +151,7 @@ export default function ForYouShelf() {
       type: "shelf",
       title: "Recently Added",
       subtitle: "New to your collection",
-      artworkNode: gradientArtwork("linear-gradient(135deg,#16a34a,#14532d)", ICONS.recentlyAdded),
+      artworkNode: cardArtwork(bg, ICONS.recentlyAdded),
       variant: "shelf",
     },
     {
@@ -126,7 +159,7 @@ export default function ForYouShelf() {
       type: "shelf",
       title: "Discover",
       subtitle: "Something new",
-      artworkNode: gradientArtwork("linear-gradient(135deg,#7c3aed,#3b0764)", ICONS.discover),
+      artworkNode: cardArtwork(bg, ICONS.discover),
       variant: "shelf",
     },
     {
@@ -134,7 +167,7 @@ export default function ForYouShelf() {
       type: "shelf",
       title: "Listen Again",
       subtitle: "Pick up where you left off",
-      artworkNode: gradientArtwork("linear-gradient(135deg,#2563eb,#1e3a8a)", ICONS.listenAgain),
+      artworkNode: cardArtwork(bg, ICONS.listenAgain),
       variant: "shelf",
     },
     {
@@ -142,7 +175,7 @@ export default function ForYouShelf() {
       type: "shelf",
       title: "Long Time No Listen",
       subtitle: "Forgotten gems",
-      artworkNode: gradientArtwork("linear-gradient(135deg,#475569,#0f172a)", ICONS.longTime),
+      artworkNode: cardArtwork(bg, ICONS.longTime),
       variant: "shelf",
     },
     {
@@ -154,7 +187,7 @@ export default function ForYouShelf() {
         : flowProfile
           ? "Build your profile first"
           : "Loading…",
-      artworkNode: gradientArtwork("linear-gradient(135deg,#be185d,#500724)", ICONS.flow),
+      artworkNode: cardArtwork(bg, ICONS.flow),
       variant: "shelf",
       disabled: !flowAvailable,
       onPlay: flowAvailable ? () => { handleStartFlow().catch(() => {}) } : undefined,
