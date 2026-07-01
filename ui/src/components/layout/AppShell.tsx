@@ -53,17 +53,15 @@ export default function AppShell() {
             <Sidebar />
           </div>
 
-          {/* Right: header + scrollable content */}
-          <div className="flex flex-col flex-1 min-h-0 min-w-0">
+          {/* Right: scrollable content with header inside */}
+          <main className="flex-1 min-w-0 overflow-y-auto pb-[92px]">
             <AppHeader />
-            <main className="flex-1 overflow-y-auto pb-[92px]">
-              <ErrorBoundary>
-                <PageTransition>
-                  <Outlet />
-                </PageTransition>
-              </ErrorBoundary>
-            </main>
-          </div>
+            <ErrorBoundary>
+              <PageTransition>
+                <Outlet />
+              </PageTransition>
+            </ErrorBoundary>
+          </main>
         </div>
 
         {/* Player — always mounted, never unmounts */}
