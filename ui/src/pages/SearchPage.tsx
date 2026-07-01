@@ -8,8 +8,6 @@ import MediaCard from "@/components/media/MediaCard"
 import TrackTable from "@/components/media/TrackTable"
 import { usePlayerStore } from "@/store/playerStore"
 import type { ArtistSummary, ReleaseSummary, TrackSummary } from "@/api/types"
-import PlasmaExperiment from "@/components/player/PlasmaExperiment"
-
 type TabKey = "all" | "artists" | "releases" | "tracks"
 
 function ResultSkeleton() {
@@ -58,19 +56,7 @@ export default function SearchPage() {
   const hasResults = artists.length > 0 || releases.length > 0 || tracks.length > 0
 
   return (
-    <div className="relative min-h-screen">
-      {/* plasma experiment — full page background, debug only */}
-      <div className="absolute inset-0 pointer-events-none">
-        <PlasmaExperiment
-          active
-          accent="#3b6bff"
-          speed={0.25}
-          scale={10}
-          opacity={0.65}
-        />
-      </div>
-
-      <div className="relative py-6 space-y-6">
+    <div className="py-6 space-y-6">
       {/* Search bar */}
       <div className="px-4 sm:px-6">
         <form onSubmit={handleSubmit}>
@@ -209,7 +195,6 @@ export default function SearchPage() {
           </TabsContent>
         </Tabs>
       )}
-      </div>
     </div>
   )
 }
