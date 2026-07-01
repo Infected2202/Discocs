@@ -111,5 +111,5 @@ export default function ForYouShelf() {
     },
   ]
 
-  return <Shelf title="For You" items={cards} />
+  return <Shelf items={cards} />
 }

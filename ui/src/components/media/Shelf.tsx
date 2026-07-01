@@ -8,13 +8,13 @@ import { animateScroll } from "@/lib/animateScroll"
 const SCROLL_DURATION = 500 // ms
 
 interface ShelfProps {
-  title: string
+  title?: string
   subtitle?: string | null
   items: MediaCardProps[]
   shelfKey?: string
 }
 
-export default function Shelf({ title, subtitle, items, shelfKey }: ShelfProps) {
+export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfProps) {
   const navigate = useNavigate()
   const cols = useColumns()
   const [page, setPage] = useState(0)
@@ -51,7 +51,7 @@ export default function Shelf({ title, subtitle, items, shelfKey }: ShelfProps) 
   return (
     <section className="shelf-section space-y-1">
       {/* Header */}
-      <div className="px-4 sm:px-6 flex items-center gap-2 min-w-0">
+      {(title || shelfKey || totalPages > 1) && <div className="px-4 sm:px-6 flex items-center gap-2 min-w-0">
         <h2
           className={shelfKey ? "text-sm font-semibold shrink-0 cursor-pointer hover:underline" : "text-sm font-semibold shrink-0"}
           onClick={shelfKey ? () => navigate(`/shelf/${shelfKey}`) : undefined}
@@ -87,7 +87,7 @@ export default function Shelf({ title, subtitle, items, shelfKey }: ShelfProps) 
             </>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* Slider */}
       <div ref={containerRef} className="overflow-x-hidden">
