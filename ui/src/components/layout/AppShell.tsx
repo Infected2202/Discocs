@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { Outlet } from "react-router"
 import Sidebar from "./Sidebar"
+import AppHeader from "./AppHeader"
 import PlayerBar from "@/components/player/PlayerBar"
 import ExpandedPlayer from "@/components/player/ExpandedPlayer"
 import ErrorBoundary from "@/components/common/ErrorBoundary"
@@ -45,6 +46,8 @@ export default function AppShell() {
 
       {/* UI layers — above plasma */}
       <div className="relative z-[1] flex flex-col flex-1 min-h-0 overflow-hidden">
+        <AppHeader />
+
         {/* Below: sidebar + content */}
         <div className="flex flex-1 min-h-0 overflow-hidden">
           {/* Sidebar — desktop only */}

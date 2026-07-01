@@ -1,6 +1,5 @@
-import { useState, useEffect, useRef } from "react"
-import { useSearchParams, useNavigate } from "react-router"
-import { Search as SearchIcon } from "lucide-react"
+import { useState } from "react"
+import { useSearchParams } from "react-router"
 import { useSearch } from "@/api/hooks/useSearch"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -8,7 +7,6 @@ import MediaCard from "@/components/media/MediaCard"
 import TrackTable from "@/components/media/TrackTable"
 import { usePlayerStore } from "@/store/playerStore"
 import type { ArtistSummary, ReleaseSummary, TrackSummary } from "@/api/types"
-import PlasmaFBM from "@/components/player/PlasmaFBM"
 type TabKey = "all" | "artists" | "releases" | "tracks"
 
 function ResultSkeleton() {
@@ -28,26 +26,12 @@ function ResultSkeleton() {
 }
 
 export default function SearchPage() {
-  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const urlQuery = searchParams.get("q") ?? ""
-  const [input, setInput] = useState(urlQuery)
   const [tab, setTab] = useState<TabKey>("all")
-  const inputRef = useRef<HTMLInputElement>(null)
   const playSource = usePlayerStore((s) => s.playSource)
 
-  // Sync input when URL changes (e.g. back/forward)
-  useEffect(() => {
-    setInput(urlQuery)
-  }, [urlQuery])
-
   const { data, isLoading } = useSearch(urlQuery, "all", 12)
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    const q = input.trim()
-    if (q) navigate(`/search?q=${encodeURIComponent(q)}`, { replace: true })
-  }
 
   const groups = Object.fromEntries((data?.groups ?? []).map((g) => [g.type, g]))
   const artists = (groups["artists"]?.items ?? []) as ArtistSummary[]
@@ -57,31 +41,7 @@ export default function SearchPage() {
   const hasResults = artists.length > 0 || releases.length > 0 || tracks.length > 0
 
   return (
-    <div className="relative min-h-screen">
-      <div className="absolute inset-0 pointer-events-none">
-        <PlasmaFBM active accent="#3b6bff" speed={0.3} scale={1.0} opacity={0.9} />
-      </div>
-      <div className="relative py-6 space-y-6">
-      {/* Search bar */}
-      <div className="px-4 sm:px-6">
-        <form onSubmit={handleSubmit}>
-          <div className="relative max-w-xl">
-            <SearchIcon
-              size={16}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
-            />
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Search artists, releases, tracks…"
-              autoFocus
-              className="w-full rounded-lg bg-muted pl-9 pr-4 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-        </form>
-      </div>
-
+    <div className="py-4 space-y-6">
       {/* Empty / no query */}
       {!urlQuery && (
         <p className="px-4 sm:px-6 text-sm text-muted-foreground">Type something to search your library.</p>
@@ -200,7 +160,6 @@ export default function SearchPage() {
           </TabsContent>
         </Tabs>
       )}
-      </div>
     </div>
   )
 }

@@ -27,10 +27,10 @@ export default function ProfileButton({ mobile = false }: { mobile?: boolean }) 
     <Popover>
       <PopoverTrigger asChild>
         <button
-          className="w-8 h-8 rounded-full bg-muted flex items-center justify-center hover:bg-muted/80 transition-colors"
+          className="p-1 rounded-full hover:bg-muted/40 transition-colors"
           title="Profile"
         >
-          <CircleDot size={14} className={dotColor} />
+          <CircleDot size={22} className={dotColor} />
         </button>
       </PopoverTrigger>
       <PopoverContent align={mobile ? "center" : "end"} className="w-56 p-3">
