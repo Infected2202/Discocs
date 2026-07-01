@@ -10,7 +10,7 @@ import type { PlaybackEnvelope } from "@/api/types"
 function cardArtwork(icon: React.ReactNode) {
   return (
     <div className="w-full aspect-square flex items-center justify-center">
-      <div className="w-[55%] h-[55%] flex items-center justify-center opacity-60">
+      <div className="w-[55%] h-[55%] flex items-center justify-center">
         {icon}
       </div>
     </div>
