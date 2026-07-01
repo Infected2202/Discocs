@@ -7,6 +7,7 @@ import ForYouShelf from "@/components/media/ForYouShelf"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiFetch } from "@/api/client"
 import { usePlayerStore } from "@/store/playerStore"
+import ProfileButton from "@/components/profile/ProfileButton"
 import type { MediaCardProps } from "@/components/media/MediaCard"
 import type { PlaybackEnvelope, ShelfItem } from "@/api/types"
 
@@ -26,7 +27,7 @@ function shelfItemToCard(item: ShelfItem, onPlay: (item: ShelfItem) => void): Me
 
 function DashboardSkeleton() {
   return (
-    <div className="py-6 space-y-8">
+    <div className="py-3 space-y-2">
       {[1, 2, 3].map((i) => (
         <div key={i} className="space-y-3">
           <div className="px-4 sm:px-6 flex gap-3 items-baseline">
@@ -78,11 +79,17 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="py-6 space-y-8">
-      {/* Search bar */}
-      <div className="px-4 sm:px-6">
-        <form onSubmit={handleSearch}>
-          <div className="relative max-w-xl">
+    <div className="py-3 space-y-2">
+      {/* Logo + Search + Profile */}
+      <div className="px-4 sm:px-6 flex items-center gap-3">
+        <span
+          className="text-primary font-bold text-lg tracking-tight select-none shrink-0"
+          style={{ fontFamily: "'Onest Variable', sans-serif" }}
+        >
+          discocs
+        </span>
+        <form onSubmit={handleSearch} className="flex-1 max-w-xl">
+          <div className="relative">
             <Search
               size={16}
               className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
@@ -92,10 +99,13 @@ export default function DashboardPage() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search artists, releases, tracks…"
-              className="w-full rounded-lg bg-muted pl-9 pr-4 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full rounded-lg bg-muted/50 pl-9 pr-4 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
         </form>
+        <div className="ml-auto shrink-0">
+          <ProfileButton />
+        </div>
       </div>
 
       {/* For You shelf */}

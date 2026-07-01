@@ -1,7 +1,6 @@
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { Outlet } from "react-router"
 import Sidebar from "./Sidebar"
-import TopBar from "./TopBar"
 import PlayerBar from "@/components/player/PlayerBar"
 import ExpandedPlayer from "@/components/player/ExpandedPlayer"
 import ErrorBoundary from "@/components/common/ErrorBoundary"
@@ -11,6 +10,7 @@ import { useTrackTitle } from "@/hooks/useTrackTitle"
 import { useArtworkTheme } from "@/hooks/useArtworkTheme"
 import { useNavidromeStore } from "@/store/navidromeStore"
 import { usePlayerStore } from "@/store/playerStore"
+import PlasmaFBM from "@/components/player/PlasmaFBM"
 
 export default function AppShell() {
   useKeyboardShortcuts()
@@ -23,33 +23,49 @@ export default function AppShell() {
   const restoreSession = usePlayerStore((s) => s.restoreSession)
   useEffect(() => { void restoreSession() }, [restoreSession])
 
+  const [plasmaAccent, setPlasmaAccent] = useState(
+    () => document.documentElement.dataset.trackAccentColor ?? "#3b6bff"
+  )
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const accent = (e as CustomEvent<{ accent?: string }>).detail?.accent
+      if (accent) setPlasmaAccent(accent)
+    }
+    window.addEventListener("trackaccentchange", handler)
+    return () => window.removeEventListener("trackaccentchange", handler)
+  }, [])
+
+
   return (
-    <div className="flex flex-col h-svh overflow-hidden bg-background">
-      {/* TopBar — always visible */}
-      <div className="shrink-0">
-        <TopBar />
+    <div className="flex flex-col h-svh overflow-hidden">
+      {/* Global background effect — fixed, below UI */}
+      <div className="fixed inset-0 pointer-events-none z-0" style={{ filter: "blur(4px)" }}>
+        <PlasmaFBM active accent={plasmaAccent} speed={0.3} scale={1.0} opacity={0.9} />
       </div>
 
-      {/* Below: sidebar + content */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Sidebar — desktop only */}
-        <div className="hidden md:block h-full">
-          <Sidebar />
+      {/* UI layers — above plasma */}
+      <div className="relative z-[1] flex flex-col flex-1 min-h-0 overflow-hidden">
+        {/* Below: sidebar + content */}
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+          {/* Sidebar — desktop only */}
+          <div className="hidden md:block h-full">
+            <Sidebar />
+          </div>
+
+          {/* Main column: scrollable content */}
+          <main className="flex-1 overflow-y-auto pb-[92px]">
+            <ErrorBoundary>
+              <PageTransition>
+                <Outlet />
+              </PageTransition>
+            </ErrorBoundary>
+          </main>
         </div>
 
-        {/* Main column: scrollable content */}
-        <main className="flex-1 overflow-y-auto pb-[92px]">
-          <ErrorBoundary>
-            <PageTransition>
-              <Outlet />
-            </PageTransition>
-          </ErrorBoundary>
-        </main>
+        {/* Player — always mounted, never unmounts */}
+        <PlayerBar />
+        <ExpandedPlayer />
       </div>
-
-      {/* Player — always mounted, never unmounts */}
-      <PlayerBar />
-      <ExpandedPlayer />
     </div>
   )
 }
