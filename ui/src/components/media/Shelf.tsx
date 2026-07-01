@@ -87,17 +87,19 @@ export default function Shelf({ title, subtitle, items, shelfKey }: ShelfProps) 
       </div>
 
       {/* Slider */}
-      <div ref={containerRef} className="overflow-x-hidden px-3 pb-1">
+      <div ref={containerRef} className="overflow-x-hidden">
         <div className="flex">
           {pages.map((pageItems, pi) => (
             <div
               key={pi}
+              className="px-3 pb-1"
               style={{
                 display: "grid",
                 gridTemplateColumns: `repeat(${cols}, 1fr)`,
                 gap: "2px",
                 minWidth: "100%",
                 width: "100%",
+                boxSizing: "border-box",
               }}
             >
               {pageItems.map((item) => (
