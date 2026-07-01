@@ -107,6 +107,7 @@ export default function ShelfPage() {
             <MediaCard
               key={`${item.entity_type}-${item.entity_id}`}
               {...shelfItemToCard(item as ShelfItem, handlePlayShelfItem)}
+              variant="shelf"
               className="w-full"
             />
           ))}
