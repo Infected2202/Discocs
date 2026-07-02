@@ -5,6 +5,7 @@ import {
   mixPlasmaColor,
   parsePlasmaColor,
   readTrackAccentTransitionDurationMs,
+  shouldAdvancePlasmaFrame,
   type PlasmaRgb,
 } from "./plasmaUtils.ts"
 
@@ -195,10 +196,14 @@ export default function PlasmaFBM({
     setSize()
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
-    let elapsed = 0, prev = performance.now(), raf = 0
+    let elapsed = 0, lastFrameTime = performance.now(), raf = 0
 
     const render = (time: number) => {
-      const delta = Math.min(100, time - prev); prev = time
+      raf = requestAnimationFrame(render)
+
+      // Кап ~30 fps: медленный фон не нуждается в 60 fps, работа вдвое меньше.
+      if (!shouldAdvancePlasmaFrame(time, lastFrameTime)) return
+      const delta = Math.min(100, time - lastFrameTime); lastFrameTime = time
       let dirty = false
 
       const tr = transitionRef.current
@@ -218,16 +223,33 @@ export default function PlasmaFBM({
       }
 
       if (dirty) renderer.render({ scene: mesh })
-      raf = requestAnimationFrame(render)
     }
 
+    const startLoop = () => {
+      if (raf) return
+      lastFrameTime = performance.now()
+      raf = requestAnimationFrame(render)
+    }
+    const stopLoop = () => {
+      cancelAnimationFrame(raf)
+      raf = 0
+    }
+
+    // Пауза, когда вкладка скрыта — на фон никто не смотрит, отпускаем GPU.
+    const onVisibilityChange = () => {
+      if (document.hidden) stopLoop()
+      else startLoop()
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange)
+
     renderer.render({ scene: mesh })
-    raf = requestAnimationFrame(render)
+    if (!document.hidden) startLoop()
 
     return () => {
       programRef.current = null
       transitionRef.current = null
-      cancelAnimationFrame(raf)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
+      stopLoop()
       ro.disconnect()
       canvas.remove()
     }

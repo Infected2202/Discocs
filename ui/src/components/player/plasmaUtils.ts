@@ -17,6 +17,22 @@ export function keepPlasmaMountedBetweenTracks(
   return currentlyReady || nextAccentReady
 }
 
+// Плазма — медленный фон, 60 fps ей не нужны. Ограничиваем рендер до ~30 fps:
+// вдвое меньше работы GPU/CPU при незаметной глазу разнице.
+export const PLASMA_FRAME_INTERVAL_MS = 1000 / 30
+
+// Возвращает true, если с прошлого отрендеренного кадра прошло достаточно
+// времени, чтобы считать/рисовать новый. rAF дёргается ~60 раз/сек, но лишние
+// кадры мы пропускаем. Порог inclusive, чтобы ровно попавший в интервал кадр
+// не откладывался ещё на один тик.
+export function shouldAdvancePlasmaFrame(
+  now: number,
+  lastFrameTime: number,
+  frameIntervalMs: number = PLASMA_FRAME_INTERVAL_MS
+): boolean {
+  return now - lastFrameTime >= frameIntervalMs
+}
+
 const FALLBACK_COLOR: PlasmaRgb = [1, 0.165, 0.427]
 const TRACK_ACCENT_TRANSITION_FALLBACK_MS = 320
 

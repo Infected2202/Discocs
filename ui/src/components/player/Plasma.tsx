@@ -7,6 +7,7 @@ import {
   parsePlasmaColor,
   plasmaShaderInitializers,
   readTrackAccentTransitionDurationMs,
+  shouldAdvancePlasmaFrame,
   type PlasmaRgb,
 } from "./plasmaUtils.ts"
 
@@ -230,12 +231,18 @@ export default function Plasma({
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
     let elapsed = 0
-    let previousTime = performance.now()
+    let lastFrameTime = performance.now()
     let animationFrame = 0
 
     const render = (time: number) => {
-      const delta = Math.min(100, time - previousTime)
-      previousTime = time
+      animationFrame = requestAnimationFrame(render)
+
+      // Кап ~30 fps: пропускаем кадры, пришедшие раньше интервала. delta
+      // считаем от прошлого отрисованного кадра, чтобы скорость анимации не
+      // зависела от частоты.
+      if (!shouldAdvancePlasmaFrame(time, lastFrameTime)) return
+      const delta = Math.min(100, time - lastFrameTime)
+      lastFrameTime = time
       let shouldRender = false
 
       const transition = transitionRef.current
@@ -268,18 +275,37 @@ export default function Plasma({
       if (shouldRender) {
         renderFrame()
       }
+    }
 
+    const startLoop = () => {
+      if (animationFrame) return
+      // Сбрасываем точку отсчёта, иначе после долгой скрытости первый delta
+      // будет огромным и анимация дёрнется.
+      lastFrameTime = performance.now()
       animationFrame = requestAnimationFrame(render)
     }
 
+    const stopLoop = () => {
+      cancelAnimationFrame(animationFrame)
+      animationFrame = 0
+    }
+
+    // Пауза, когда вкладка скрыта: на неё никто не смотрит — отпускаем GPU.
+    const onVisibilityChange = () => {
+      if (document.hidden) stopLoop()
+      else startLoop()
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange)
+
     renderFrame()
-    animationFrame = requestAnimationFrame(render)
+    if (!document.hidden) startLoop()
 
     return () => {
       playerLog("plasma", "unmount")
       programRef.current = null
       transitionRef.current = null
-      cancelAnimationFrame(animationFrame)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
+      stopLoop()
       resizeObserver.disconnect()
       canvas.remove()
     }
