@@ -20,7 +20,7 @@ def api_v1_dashboard(
 ) -> dict[str, object]:
     store, settings = context()
     ensure_diagnostics = ensure_dashboard_mixes_fast(store, settings)
-    shelf_keys = ["mixes_for_you", "albums_for_you", "liked_artists", "new_releases", "discover_random", "listen_again", "long_time_no_listen", "recently_added", "history", "liked_releases"]
+    shelf_keys = ["mixes_for_you", "albums_for_you", "liked_artists", "new_releases", "recently_added", "listen_again", "long_time_no_listen", "discover_random", "history", "liked_releases"]
     shelves = [
         shelf
         for key in shelf_keys
