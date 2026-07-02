@@ -5,6 +5,7 @@ import { useShelf } from "@/api/hooks/useShelf"
 import { usePlayerStore } from "@/store/playerStore"
 import { apiFetch } from "@/api/client"
 import MediaCard from "@/components/media/MediaCard"
+import VirtualCardGrid from "@/components/media/VirtualCardGrid"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { MediaCardProps } from "@/components/media/MediaCard"
 import type { ShelfItem, PlaybackEnvelope } from "@/api/types"
@@ -98,19 +99,22 @@ export default function ShelfPage() {
         )}
       </div>
 
-      {/* Grid */}
+      {/* Grid — virtualized so only visible cards (and their images) stay in DOM */}
       {isLoading ? (
         <GridSkeleton />
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-1 px-3">
-          {allItems.map((item) => (
-            <MediaCard
-              key={`${item.entity_type}-${item.entity_id}`}
-              {...shelfItemToCard(item as ShelfItem, handlePlayShelfItem)}
-              variant="shelf"
-              className="w-full"
-            />
-          ))}
+        <div className="px-3">
+          <VirtualCardGrid
+            items={allItems as ShelfItem[]}
+            getKey={(item) => `${item.entity_type}-${item.entity_id}`}
+            renderItem={(item) => (
+              <MediaCard
+                {...shelfItemToCard(item, handlePlayShelfItem)}
+                variant="shelf"
+                className="w-full"
+              />
+            )}
+          />
         </div>
       )}
 
