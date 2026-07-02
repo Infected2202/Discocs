@@ -15,6 +15,7 @@ import { planRefill } from "./flowRefillRouting"
 import { persistSessionId, loadPersistedSessionId, clearPersistedSessionId } from "./sessionPersistence"
 import { ApiError } from "@/api/client"
 import { playerLog } from "@/lib/playerLogger"
+import { throttle } from "@/lib/throttle"
 import type { PlaybackEnvelope, PlaybackSession, PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
 
 const STORAGE_KEY = "discocs.playerState.v1"
@@ -101,9 +102,18 @@ interface PlayerState {
 const { volume: initVolume, muted: initMuted } = loadPersistedVolume()
 
 export const usePlayerStore = create<PlayerState>((set, get) => {
+  // Кап записи времени в стор до ~4/сек. Chrome и так шлёт timeupdate ~4/сек,
+  // но Firefox/Safari — заметно чаще; троттл делает частоту записи одинаковой
+  // и не даёт вернуться шторму ре-рендеров, если наверху появится подписчик.
+  // Trailing гарантирует, что последняя позиция перед паузой не потеряется.
+  const throttledSetTime = throttle(
+    (currentTime: number, duration: number) => get()._setTime(currentTime, duration),
+    250
+  )
+
   // Wire AudioEngine callbacks once at store creation
   audioEngine.init({
-    onTimeUpdate: (currentTime, duration) => get()._setTime(currentTime, duration),
+    onTimeUpdate: (currentTime, duration) => throttledSetTime(currentTime, duration),
     onPlaybackStateChange: (state) => get()._setPlaybackState(state),
     onEnded: () => get().handleTrackEnded(),
     onError: (message) => get()._setError(message),
