@@ -2,6 +2,7 @@ import path from "path"
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
+/// <reference types="vitest" />
 
 const BACKEND = "http://localhost:8711"
 
@@ -32,6 +33,10 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+  },
+  test: {
+    environment: "jsdom",
+    globals: true,
   },
   server: {
     proxy: Object.fromEntries(

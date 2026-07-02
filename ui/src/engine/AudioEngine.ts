@@ -10,13 +10,11 @@ interface AudioEngineCallbacks {
 }
 
 class AudioEngine {
-  private readonly el: HTMLAudioElement
+  private el: HTMLAudioElement
   private callbacks: AudioEngineCallbacks | null = null
 
   constructor() {
-    this.el = new Audio()
-    this.el.preload = "none"
-    this.attachListeners()
+    this.el = this.createElement()
   }
 
   init(callbacks: AudioEngineCallbacks) {
@@ -24,9 +22,17 @@ class AudioEngine {
   }
 
   load(url: string) {
-    this.el.pause()
-    this.el.removeAttribute("src")
-    this.el.load()
+    // Явно освобождаем буфер старого элемента — src='' надёжнее removeAttribute
+    const prev = this.el
+    prev.pause()
+    prev.src = ""
+    prev.load()
+
+    // Новый элемент — Chrome гарантированно освобождает нативный PCM буфер
+    // когда старый элемент теряет все ссылки и GC его собирает
+    this.el = this.createElement()
+    this.el.volume = prev.volume
+    this.el.muted = prev.muted
     this.el.src = url
     this.el.load()
   }
@@ -94,38 +100,45 @@ class AudioEngine {
     }
   }
 
-  private attachListeners() {
-    this.el.addEventListener("timeupdate", () => {
-      this.callbacks?.onTimeUpdate(this.el.currentTime, this.el.duration || 0)
+  private createElement(): HTMLAudioElement {
+    const el = new Audio()
+    el.preload = "none"
+    this.attachListeners(el)
+    return el
+  }
+
+  private attachListeners(el: HTMLAudioElement) {
+    el.addEventListener("timeupdate", () => {
+      this.callbacks?.onTimeUpdate(el.currentTime, el.duration || 0)
     })
 
-    this.el.addEventListener("play", () => {
+    el.addEventListener("play", () => {
       this.callbacks?.onPlaybackStateChange("playing")
     })
 
     // "playing" fires after buffering resumes — fixes spinner stuck after "waiting"
-    this.el.addEventListener("playing", () => {
+    el.addEventListener("playing", () => {
       this.callbacks?.onPlaybackStateChange("playing")
     })
 
-    this.el.addEventListener("pause", () => {
-      if (!this.el.ended) this.callbacks?.onPlaybackStateChange("paused")
+    el.addEventListener("pause", () => {
+      if (!el.ended) this.callbacks?.onPlaybackStateChange("paused")
     })
 
-    this.el.addEventListener("waiting", () => {
+    el.addEventListener("waiting", () => {
       this.callbacks?.onPlaybackStateChange("loading")
     })
 
-    this.el.addEventListener("canplay", () => {
+    el.addEventListener("canplay", () => {
       // only emit if we were loading — play/pause events handle the rest
     })
 
-    this.el.addEventListener("ended", () => {
+    el.addEventListener("ended", () => {
       this.callbacks?.onEnded()
     })
 
-    this.el.addEventListener("error", () => {
-      const err = this.el.error
+    el.addEventListener("error", () => {
+      const err = el.error
       const msg = err ? `Media error ${err.code}: ${err.message}` : "Unknown audio error"
       this.callbacks?.onPlaybackStateChange("error")
       this.callbacks?.onError(msg)
