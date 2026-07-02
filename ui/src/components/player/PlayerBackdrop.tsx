@@ -5,6 +5,7 @@ import Plasma from "./Plasma.tsx"
 import {
   artworkBackdropUrl,
   backdropAnimationState,
+  resolvePlasmaLayer,
   resolveBackdropLayers,
 } from "./playerBackdropUtils.ts"
 import {
@@ -119,6 +120,10 @@ export default function PlayerBackdrop({
     }
   }, [artworkUrl, backdropUrl])
 
+  // Плазма живёт, пока есть фон; готовность accent'а даёт лишь fade-in по
+  // прозрачности — без ремоунта и пересоздания WebGL-контекста между треками.
+  const plasmaLayer = resolvePlasmaLayer(Boolean(visibleBackdropUrl), plasmaReady)
+
   return (
     <div className={styles.backdrop} aria-hidden>
       {fadingBackdropUrl && fadingBackdropUrl !== visibleBackdropUrl && (
@@ -148,8 +153,8 @@ export default function PlayerBackdrop({
         </div>
       )}
       <div className={styles.scrim} />
-      {visibleBackdropUrl && plasmaReady && (
-        <div className={styles.plasma}>
+      {plasmaLayer.mounted && (
+        <div className={styles.plasma} style={{ opacity: plasmaLayer.opacity }}>
           <Plasma
             active={isPlaying}
             accent={plasmaAccent}

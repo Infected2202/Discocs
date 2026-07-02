@@ -3,6 +3,7 @@ import test from "node:test"
 import {
   artworkBackdropUrl,
   backdropAnimationState,
+  resolvePlasmaLayer,
   resolveBackdropLayers,
 } from "../src/components/player/playerBackdropUtils.ts"
 import { preloadArtworkImage } from "../src/components/player/playerBarTransitionUtils.ts"
@@ -75,6 +76,23 @@ test("artworkBackdropUrl requests an efficient backdrop image size", () => {
 test("backdrop motion runs only while audio is playing", () => {
   assert.equal(backdropAnimationState(true), "running")
   assert.equal(backdropAnimationState(false), "paused")
+})
+
+test("plasma layer stays mounted across accent readiness, fading via opacity", () => {
+  // First track: artwork present but accent not resolved yet — mounted, invisible.
+  const loading = resolvePlasmaLayer(true, false)
+  assert.equal(loading.mounted, true)
+  assert.equal(loading.opacity, 0)
+
+  // Accent resolved — same mount, now visible. Mount must NOT depend on readiness,
+  // otherwise the WebGL context would be recreated on every track change.
+  const ready = resolvePlasmaLayer(true, true)
+  assert.equal(ready.mounted, true)
+  assert.equal(ready.opacity, 1)
+
+  // No backdrop (no track / no artwork) — the only case that unmounts.
+  const idle = resolvePlasmaLayer(false, false)
+  assert.equal(idle.mounted, false)
 })
 
 test("backdrop crossfade keeps the previous artwork under the next one", () => {

@@ -38,6 +38,7 @@
   position: absolute;
   inset: 0;
   mix-blend-mode: screen;
+  transition: opacity var(--track-accent-transition-duration) var(--track-accent-transition-ease);
 }
 
 .scrim {
