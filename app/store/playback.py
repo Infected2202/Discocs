@@ -1187,6 +1187,32 @@ class PlaybackStoreMixin:
             ).fetchone()
         return row_to_user_artist_preference(row) if row else None
 
+    def set_artist_liked(self, artist_id: int, liked: bool) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO user_artist_preferences (artist_id, updated_at) VALUES (?, ?)",
+                (artist_id, now),
+            )
+            conn.execute(
+                "UPDATE user_artist_preferences SET liked = ?, updated_at = ? WHERE artist_id = ?",
+                (1 if liked else 0, now, artist_id),
+            )
+
+    def sync_artist_liked_from_navidrome(self, artist_ids: list[int]) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute("UPDATE user_artist_preferences SET liked = 0 WHERE liked = 1")
+            for artist_id in artist_ids:
+                conn.execute(
+                    "INSERT OR IGNORE INTO user_artist_preferences (artist_id, updated_at) VALUES (?, ?)",
+                    (artist_id, now),
+                )
+                conn.execute(
+                    "UPDATE user_artist_preferences SET liked = 1, updated_at = ? WHERE artist_id = ?",
+                    (now, artist_id),
+                )
+
     def list_playback_events(self, session_id: str | None = None) -> list[PlaybackEvent]:
         where = ""
         params: list[object] = []

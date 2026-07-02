@@ -81,6 +81,8 @@ def get_navidrome_starred_ids() -> dict[str, object]:
         data["album_ids"] = album_ids
         data["artist_ids"] = artist_ids
 
+        store.sync_artist_liked_from_navidrome(artist_ids)
+
         navidrome_logger.info(
             "Navidrome starred ids user=%s count=%s mapped_count=%s track_ids=%s album_ids=%s artist_ids=%s",
             data.get("user"),
@@ -139,6 +141,7 @@ def set_artist_navidrome_star(artist_id: int, request: NavidromeStarRequest) -> 
             artist_id, item_id, request.starred, exc,
         )
         raise HTTPException(status_code=502, detail=f"Navidrome star update failed: {exc}") from exc
+    store.set_artist_liked(artist_id, request.starred)
     navidrome_logger.info(
         "Navidrome artist star update ok artist_id=%s item_id=%s starred=%s",
         artist_id, item_id, request.starred,
