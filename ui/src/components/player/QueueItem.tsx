@@ -1,3 +1,4 @@
+import { memo } from "react"
 import { useNavigate } from "react-router"
 import { ThumbsUp, MoreHorizontal, ListEnd, Radio, User, Disc3 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -10,25 +11,20 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { apiFetch } from "@/api/client"
 import { patchQueue } from "@/api/playback"
+import { QueueItemLiveTime, formatTime } from "@/components/player/PlaybackProgress"
 import type { TrackSummary, PlaybackEnvelope } from "@/api/types"
-
-function formatTime(seconds: number): string {
-  if (!isFinite(seconds) || seconds < 0) return "0:00"
-  const m = Math.floor(seconds / 60)
-  const s = Math.floor(seconds % 60)
-  return `${m}:${s.toString().padStart(2, "0")}`
-}
 
 export interface QueueItemProps {
   track: TrackSummary | null
   trackId?: number
+  /** Queue/pool item id — used to jump. Omit for rows that are not jumpable. */
+  itemId?: string
+  variant?: "queue" | "autoplay"
   isCurrent?: boolean
   dimmed?: boolean
-  time?: string
-  onClick?: () => void
 }
 
-export default function QueueItem({ track, trackId, isCurrent, dimmed, time, onClick }: QueueItemProps) {
+function QueueItem({ track, trackId, itemId, variant = "queue", isCurrent, dimmed }: QueueItemProps) {
 
   const navigate = useNavigate()
   const id = track?.id ?? trackId
@@ -36,8 +32,15 @@ export default function QueueItem({ track, trackId, isCurrent, dimmed, time, onC
   const playSource     = usePlayerStore((s) => s.playSource)
   const refreshQueue   = usePlayerStore((s) => s.refreshQueue)
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
+  const jumpToQueueItem    = usePlayerStore((s) => s.jumpToQueueItem)
+  const jumpToAutoplayItem = usePlayerStore((s) => s.jumpToAutoplayItem)
   const toggleLike     = useNavidromeStore((s) => s.toggleLike)
   const liked          = useNavidromeStore((s) => track ? s.likedIds.has(track.id) : false)
+
+  // Stable-per-render handler; store actions are stable references so memo holds.
+  const onClick = isCurrent || !itemId
+    ? undefined
+    : () => (variant === "autoplay" ? jumpToAutoplayItem(itemId) : jumpToQueueItem(itemId))
 
   async function handleInstantMix() {
     if (!track) return
@@ -101,7 +104,9 @@ export default function QueueItem({ track, trackId, isCurrent, dimmed, time, onC
       <div className="flex items-center gap-1.5 shrink-0">
         {isCurrent && <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />}
         <span className="text-xs text-muted-foreground tabular-nums">
-          {time ?? (track?.duration ? formatTime(track.duration) : "")}
+          {isCurrent
+            ? <QueueItemLiveTime />
+            : (track?.duration ? formatTime(track.duration) : "")}
         </span>
       </div>
 
@@ -143,3 +148,8 @@ export default function QueueItem({ track, trackId, isCurrent, dimmed, time, onC
     </div>
   )
 }
+
+// Memoized: parent players re-map the queue whenever the store changes, but a
+// row only needs to re-render when its own props change. Without this, every
+// currentTime tick that reaches the parent would re-render the whole list.
+export default memo(QueueItem)

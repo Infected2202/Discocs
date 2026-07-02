@@ -14,14 +14,8 @@ import {
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import QueueItem from "@/components/player/QueueItem"
+import { SeekIndicators, TimeReadout } from "@/components/player/PlaybackProgress"
 import type { TrackSummary } from "@/api/types"
-
-function formatTime(seconds: number): string {
-  if (!isFinite(seconds) || seconds < 0) return "0:00"
-  const m = Math.floor(seconds / 60)
-  const s = Math.floor(seconds % 60)
-  return `${m}:${s.toString().padStart(2, "0")}`
-}
 
 // Upgrade artwork URL to max backend resolution (le=600)
 function hiresUrl(url: string | null | undefined): string | undefined {
@@ -39,8 +33,6 @@ export default function ExpandedPlayer() {
   const currentTrack       = usePlayerStore((s) => s.currentTrack)
   const currentTrackId     = usePlayerStore((s) => s.currentTrackId)
   const playbackState      = usePlayerStore((s) => s.playbackState)
-  const currentTime        = usePlayerStore((s) => s.currentTime)
-  const duration           = usePlayerStore((s) => s.duration)
   const volume             = usePlayerStore((s) => s.volume)
   const muted              = usePlayerStore((s) => s.muted)
   const session            = usePlayerStore((s) => s.session)
@@ -56,8 +48,6 @@ export default function ExpandedPlayer() {
   const toggleRepeatOne    = usePlayerStore((s) => s.toggleRepeatOne)
   const toggleAutoplay     = usePlayerStore((s) => s.toggleAutoplay)
   const toggleExpanded     = usePlayerStore((s) => s.toggleExpanded)
-  const jumpToQueueItem      = usePlayerStore((s) => s.jumpToQueueItem)
-  const jumpToAutoplayItem   = usePlayerStore((s) => s.jumpToAutoplayItem)
   const playFromEnvelope     = usePlayerStore((s) => s.playFromEnvelope)
   const recordEvent        = usePlayerStore((s) => s.recordEvent)
 
@@ -70,7 +60,6 @@ export default function ExpandedPlayer() {
 
   const isPlaying  = playbackState === "playing"
   const isLoading  = playbackState === "loading"
-  const progress   = duration > 0 ? currentTime / duration : 0
   const shuffle    = session?.shuffle_enabled ?? false
   const repeatOne  = session?.repeat_mode === "one"
   const autoplay   = session?.autoplay_enabled ?? false
@@ -239,14 +228,13 @@ export default function ExpandedPlayer() {
             <div className="w-full max-w-sm mx-auto space-y-1">
               <div className="h-1 w-full bg-muted rounded cursor-pointer group/seek relative"
                 onClick={handleSeekClick}>
-                <div className="h-full bg-primary rounded transition-[width] duration-100"
-                  style={{ width: `${progress * 100}%` }} />
-                <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary opacity-0 group-hover/seek:opacity-100 transition-opacity shadow"
-                  style={{ left: `calc(${progress * 100}% - 6px)` }} />
+                <SeekIndicators
+                  fillClassName="h-full bg-primary rounded transition-[width] duration-100"
+                  thumbClassName="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary opacity-0 group-hover/seek:opacity-100 transition-opacity shadow"
+                />
               </div>
               <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
-                <span>{formatTime(currentTime)}</span>
-                <span>{formatTime(duration)}</span>
+                <TimeReadout variant="split" />
               </div>
             </div>
 
@@ -339,9 +327,9 @@ export default function ExpandedPlayer() {
                   key={item.id}
                   track={item.track as TrackSummary | null}
                   trackId={item.track_id}
+                  itemId={item.id}
+                  variant="queue"
                   isCurrent={isCurrent}
-                  time={isCurrent ? `${formatTime(currentTime)} / ${formatTime(duration)}` : undefined}
-                  onClick={isCurrent ? undefined : () => jumpToQueueItem(item.id)}
                 />
               )
             })}
@@ -356,8 +344,9 @@ export default function ExpandedPlayer() {
                     key={item.id}
                     track={item.track as TrackSummary | null}
                     trackId={item.track_id}
+                    itemId={item.id}
+                    variant="autoplay"
                     dimmed
-                    onClick={() => jumpToAutoplayItem(item.id)}
                   />
                 ))}
               </>

@@ -14,17 +14,11 @@ import PlayerBackdrop from "@/components/player/PlayerBackdrop.tsx"
 import styles from "./PlayerBar.module.css"
 import { readTrackAccentTransitionDurationMs } from "./plasmaUtils.ts"
 import { preloadArtworkImage } from "./playerBarTransitionUtils.ts"
+import { SeekIndicators, TimeReadout } from "@/components/player/PlaybackProgress"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuTrigger, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
-
-function formatTime(seconds: number): string {
-  if (!isFinite(seconds) || seconds < 0) return "0:00"
-  const m = Math.floor(seconds / 60)
-  const s = Math.floor(seconds % 60)
-  return `${m}:${s.toString().padStart(2, "0")}`
-}
 
 interface PlayerBarTrackSnapshot {
   key: string | undefined
@@ -134,8 +128,6 @@ function VolumeControl({
 export default function PlayerBar() {
   const currentTrack    = usePlayerStore((s) => s.currentTrack)
   const playbackState   = usePlayerStore((s) => s.playbackState)
-  const currentTime     = usePlayerStore((s) => s.currentTime)
-  const duration        = usePlayerStore((s) => s.duration)
   const volume          = usePlayerStore((s) => s.volume)
   const muted           = usePlayerStore((s) => s.muted)
   const session         = usePlayerStore((s) => s.session)
@@ -156,7 +148,6 @@ export default function PlayerBar() {
 
   const isPlaying  = playbackState === "playing"
   const isLoading  = playbackState === "loading"
-  const progress   = duration > 0 ? currentTime / duration : 0
 
   const shuffle    = session?.shuffle_enabled ?? false
   const repeatOne  = session?.repeat_mode === "one"
@@ -223,7 +214,7 @@ export default function PlayerBar() {
       return Math.max(0, Math.min(1, (clientX - r.left) / r.width))
     }
 
-    setDragProgress(progressFrom(e.clientX) ?? progress)
+    setDragProgress(progressFrom(e.clientX) ?? 0)
 
     function onMove(ev: MouseEvent) {
       const v = progressFrom(ev.clientX)
@@ -242,8 +233,6 @@ export default function PlayerBar() {
     window.addEventListener("mouseup", onUp)
   }
 
-  const displayProgress = dragProgress ?? progress
-
 const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:text-foreground disabled:opacity-30"
   const activeBtn = "text-primary hover:text-primary"
 
@@ -260,13 +249,10 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
         onMouseDown={handleSeekMouseDown}
         ref={seekBarRef}
       >
-        <div
-          className="h-full bg-primary transition-[width] duration-100"
-          style={{ width: `${displayProgress * 100}%` }}
-        />
-        <div
-          className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary opacity-0 group-hover/seek:opacity-100 transition-opacity"
-          style={{ left: `calc(${displayProgress * 100}% - 6px)` }}
+        <SeekIndicators
+          override={dragProgress}
+          fillClassName="h-full bg-primary transition-[width] duration-100"
+          thumbClassName="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary opacity-0 group-hover/seek:opacity-100 transition-opacity"
         />
       </div>
 
@@ -303,9 +289,10 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
             <SkipForward size={18} />
           </button>
 
-          <span className="text-xs text-muted-foreground tabular-nums ml-2 whitespace-nowrap hidden md:inline">
-            {formatTime(currentTime)} / {formatTime(duration)}
-          </span>
+          <TimeReadout
+            variant="inline"
+            className="text-xs text-muted-foreground tabular-nums ml-2 whitespace-nowrap hidden md:inline"
+          />
         </div>
 
         {/* ── CENTER: artwork + track info + actions ── */}
