@@ -6,7 +6,7 @@ import { playMix, saveMix } from "@/api/mixes"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
-import TrackTable from "@/components/media/TrackTable"
+import VirtualTrackList from "@/components/media/VirtualTrackList"
 import { usePlayerStore } from "@/store/playerStore"
 import type { TrackSummary } from "@/api/types"
 
@@ -108,7 +108,7 @@ export default function MixPage() {
 
       {/* Tracks */}
       <div className="px-4 sm:px-6">
-        <TrackTable tracks={tracks} sourceLabel={mix.title} />
+        <VirtualTrackList tracks={tracks} sourceLabel={mix.title} />
       </div>
     </div>
   )

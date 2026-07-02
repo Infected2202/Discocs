@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query"
 import { fetchLikesPlaylist, playLikes } from "@/api/playlists"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import TrackTable from "@/components/media/TrackTable"
+import VirtualTrackList from "@/components/media/VirtualTrackList"
 import { usePlayerStore } from "@/store/playerStore"
 import type { TrackSummary } from "@/api/types"
 
@@ -101,7 +101,7 @@ export default function PlaylistPage() {
 
       {/* Tracks */}
       <div className="px-4 sm:px-6">
-        <TrackTable tracks={tracks} sourceLabel={data.title} />
+        <VirtualTrackList tracks={tracks} sourceLabel={data.title} />
       </div>
     </div>
   )
