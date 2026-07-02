@@ -127,6 +127,7 @@ def dashboard_shelf_item(
             "source_id": play_source_id or entity_id,
         },
         "badges": badges or [],
+        "reason": reason,
         "debug": debug,
     }
 

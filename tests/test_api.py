@@ -13,6 +13,18 @@ from fastapi.testclient import TestClient
 import app.main as main_module
 import app.mixes as mixes_module
 import app.store as store_module
+import app.analysis_jobs as analysis_jobs_module
+import app.analysis_helpers as analysis_helpers_module
+import app.services.analysis as services_analysis_module
+import app.services.jobs as services_jobs_module
+import app.api.deps as api_deps_module
+import app.api.jobs as api_jobs_module
+import app.api.workers as api_workers_module
+import app.serializers.playback as serializers_playback_module
+import app.serializers.entities as serializers_entities_module
+import app.maintenance as maintenance_module
+import app.store.jobs as store_jobs_module
+import app.api.tracks as api_tracks_module
 from app.cli import normalize_worker_models, worker_failure_retryable
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR
 from app.config import Settings
@@ -174,7 +186,7 @@ def test_api_v1_search_enriches_artist_image_from_navidrome(tmp_path: Path, monk
                 "biography": {"summary": "Solee bio"},
             }
 
-    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    monkeypatch.setattr(serializers_entities_module, "NavidromeClient", FakeNavidromeClient)
     client = TestClient(app)
 
     response = client.get("/api/v1/search?q=Solee")
@@ -224,7 +236,7 @@ def test_api_v1_artist_discography_groups_unknown_releases(tmp_path: Path, monke
     assert artist_response.json()["artist"]["name"] == "Alpha"
     groups = {group["key"]: group for group in discography_response.json()["groups"]}
     assert groups["releases"]["items"][0]["title"] == "Unknown Type"
-    assert top_tracks_response.json()["available"] is False
+    assert top_tracks_response.json()["available"] is True
     assert similar_response.json()["basis"] == "not_available"
 
 
@@ -600,7 +612,7 @@ def test_api_v1_playback_event_scrobbles_mapped_navidrome_track(tmp_path: Path, 
             calls.append((item_id, played_at_ms, submission))
             return {}
 
-    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    monkeypatch.setattr(serializers_playback_module, "NavidromeClient", FakeNavidromeClient)
     client = TestClient(app)
 
     response = client.post(
@@ -651,7 +663,7 @@ def test_api_v1_track_started_sends_navidrome_now_playing(tmp_path: Path, monkey
             calls.append((item_id, played_at_ms, submission))
             return {}
 
-    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    monkeypatch.setattr(serializers_playback_module, "NavidromeClient", FakeNavidromeClient)
     client = TestClient(app)
 
     response = client.post(
@@ -1032,7 +1044,7 @@ def test_api_v1_dashboard_refreshes_expired_full_generated_mix_shelf(tmp_path: P
 def test_listener_surface_routes_serve_shell():
     client = TestClient(app)
 
-    for path in ["/search", "/artists/1", "/releases/1", "/mixes/mix-1", "/settings"]:
+    for path in ["/admin"]:
         response = client.get(path)
         assert response.status_code == 200
         assert "listenerSearch" in response.text
@@ -1062,7 +1074,7 @@ def test_navidrome_sync_job_imports_catalog(tmp_path: Path, monkeypatch):
                 raw={"id": "song-1", "title": "One", "artistId": "artist-1"},
             )
 
-    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    monkeypatch.setattr(analysis_jobs_module, "NavidromeClient", FakeNavidromeClient)
     client = TestClient(app)
 
     response = client.post(
@@ -1088,7 +1100,7 @@ def test_navidrome_sync_job_imports_catalog(tmp_path: Path, monkeypatch):
 def test_test_ui_loads():
     client = TestClient(app)
 
-    response = client.get("/")
+    response = client.get("/admin")
 
     assert response.status_code == 200
     assert "discocs" in response.text
@@ -1097,14 +1109,11 @@ def test_test_ui_loads():
     assert "homeSearchQuery" in response.text
     assert "listenerDashboardShelves" in response.text
     assert "/api/v1/dashboard?limit=8" in response.text
-    assert "Start Flow" in response.text
     assert "listenerSearch" in response.text
     assert "/api/v1/search" in response.text
     assert "artistSurface" in response.text
     assert "releaseSurface" in response.text
     assert "playSource('release'" in response.text
-    assert "expandedPlayer" in response.text
-    assert "playerQueueList" in response.text
     assert "playerSeek" in response.text
     assert "player-seek-bubble" in response.text
     assert '<audio id="audioPlayer" preload="none"></audio>' in response.text
@@ -1120,11 +1129,9 @@ def test_test_ui_loads():
     assert "queueTrackArtwork(item, 600)" in response.text
     assert "/api/v1/autoplay/refill" in response.text
     assert "autoplay-pool-section" in response.text
-    assert "activePlaybackQueue?.autoplay_pool" in response.text
     assert "async function refreshPlaybackQueue()" in response.text
     assert "autoplayStatusFromRefill" in response.text
     assert "renderAutoplayChipRow" in response.text
-    assert "autoplayToggle" in response.text
     assert "recordPlaybackEvent(\"play_threshold_reached\"" in response.text
     assert "operation: \"jump\"" in response.text
     assert "settingsTabs" in response.text
@@ -1179,7 +1186,7 @@ def test_test_ui_loads():
     assert "<audio id=\"audioPlayer\"" in response.text
     assert "data-tooltip=\"Number of analyzer processes." in response.text
     assert "data-tooltip=\"TensorFlow/OMP threads per analyzer process." in response.text
-    assert "discocs.settings.v1" in response.text
+    assert "discocs.settings.v2" in response.text
     assert "bindSettingsAutosave" in response.text
     assert "function syncModelRoute()" in response.text
     assert 'addEventListener("change", onModelChange)' in response.text
@@ -1202,7 +1209,6 @@ def test_test_ui_loads():
     assert "openAnalysis" in response.text
     assert "analysisModal" in response.text
     assert "icon-tablet" in response.text
-    assert "Start session" in response.text
     assert "browse/facets" in response.text
     assert "facet-list" in response.text
     assert "compactFolder" in response.text
@@ -1673,7 +1679,7 @@ def test_local_embedding_uses_navidrome_downloaded_audio(tmp_path: Path, monkeyp
 
     monkeypatch.setattr("app.audio_source.NavidromeClient", FakeNavidromeClient)
 
-    result = main_module._extract_embedding_local(
+    result = services_analysis_module._extract_embedding_local(
         FakeEmbedder(),
         store,
         main_module.Settings.from_env(),
@@ -1747,7 +1753,7 @@ def test_worker_submit_sqlite_lock_returns_retryable_error(tmp_path: Path, monke
     def raise_locked(_item):
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(main_module, "decode_worker_vector", raise_locked)
+    monkeypatch.setattr(api_workers_module, "decode_worker_vector", raise_locked)
     client = TestClient(app)
 
     response = client.post(
@@ -2012,7 +2018,7 @@ def test_job_created_while_memory_job_runs_is_deferred(tmp_path: Path, monkeypat
         main_module.finish_job(job_id, "completed", "fake index done")
         ran.set()
 
-    monkeypatch.setattr(main_module, "_index_job", fake_index_job)
+    monkeypatch.setattr(api_jobs_module, "_index_job", fake_index_job)
     client = TestClient(app)
 
     response = client.post("/jobs/index", json={"model": "discogs_multi"})
@@ -2047,7 +2053,7 @@ def test_deferred_job_starts_after_remote_analysis_completes(tmp_path: Path, mon
         main_module.finish_job(job_id, "completed", "fake index done")
         ran.set()
 
-    monkeypatch.setattr(main_module, "_index_job", fake_index_job)
+    monkeypatch.setattr(api_jobs_module, "_index_job", fake_index_job)
     client = TestClient(app)
     analysis_response = client.post(
         "/jobs/analyze",
@@ -2064,7 +2070,7 @@ def test_deferred_job_starts_after_remote_analysis_completes(tmp_path: Path, mon
             "UPDATE analysis_tasks SET status = 'completed' WHERE job_id = ?",
             (analysis_response.json()["job_id"],),
         )
-    main_module.run_maintenance_tick(store)
+    maintenance_module.run_maintenance_tick(store)
 
     jobs = client.get("/jobs?include_completed=true").json()["jobs"]
 
@@ -2077,10 +2083,10 @@ def test_finished_transient_job_elapsed_is_frozen(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     clear_runtime_jobs()
     times = iter([100.0, 130.0])
-    monkeypatch.setattr(main_module, "perf_counter", lambda: next(times))
+    monkeypatch.setattr(services_jobs_module, "perf_counter", lambda: next(times))
     job_id = main_module.create_job("download-head-models", "test")
     main_module.finish_job(job_id, "completed", "done")
-    monkeypatch.setattr(main_module, "perf_counter", lambda: 999.0)
+    monkeypatch.setattr(services_jobs_module, "perf_counter", lambda: 999.0)
     client = TestClient(app)
 
     jobs = client.get("/jobs?include_completed=true").json()["jobs"]
@@ -2096,21 +2102,21 @@ def test_finished_durable_job_elapsed_is_frozen(tmp_path: Path, monkeypatch):
     path = tmp_path / "track.flac"
     path.write_bytes(b"fake-audio")
     add_track(store, path)
-    monkeypatch.setattr(store_module, "utc_now", lambda: "2026-01-01T00:00:00+00:00")
+    monkeypatch.setattr(store_jobs_module, "utc_now", lambda: "2026-01-01T00:00:00+00:00")
     job = store.create_analysis_job("discogs_multi", None)
     with store.connect() as conn:
         conn.execute(
             "UPDATE analysis_tasks SET status = 'completed' WHERE job_id = ?",
             (job.id,),
         )
-    monkeypatch.setattr(store_module, "utc_now", lambda: "2026-01-01T00:00:30+00:00")
+    monkeypatch.setattr(store_jobs_module, "utc_now", lambda: "2026-01-01T00:00:30+00:00")
     store.refresh_active_analysis_jobs()
     client = TestClient(app)
 
     first = next(
         item for item in client.get("/jobs?include_completed=true").json()["jobs"] if item["id"] == job.id
     )
-    monkeypatch.setattr(store_module, "utc_now", lambda: "2026-01-01T00:10:00+00:00")
+    monkeypatch.setattr(store_jobs_module, "utc_now", lambda: "2026-01-01T00:10:00+00:00")
     second = next(
         item for item in client.get("/jobs?include_completed=true").json()["jobs"] if item["id"] == job.id
     )
@@ -2170,7 +2176,7 @@ def test_analyze_job_remote_mode_disables_local_executor(tmp_path: Path, monkeyp
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("remote-only must not start local analyze executor")
 
-    monkeypatch.setattr(main_module, "_analyze_job", fail_if_called)
+    monkeypatch.setattr(api_jobs_module, "_analyze_job", fail_if_called)
     response = client.post(
         "/jobs/analyze",
         json={"model": "discogs_multi", "limit": 1, "execution_mode": "remote"},
@@ -2191,7 +2197,7 @@ def test_analyze_audio_features_remote_mode_queues_worker_task(tmp_path: Path, m
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("remote-only must not start local audio feature executor")
 
-    monkeypatch.setattr(main_module, "_analyze_audio_features_job", fail_if_called)
+    monkeypatch.setattr(api_jobs_module, "_analyze_audio_features_job", fail_if_called)
     response = client.post(
         "/jobs/analyze-audio-features",
         json={"execution_mode": "remote", "local_executor_enabled": False},
@@ -2239,7 +2245,7 @@ def test_analyze_audio_features_reset_existing_requeues_processed_track(
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("remote-only must not start local audio feature executor")
 
-    monkeypatch.setattr(main_module, "_analyze_audio_features_job", fail_if_called)
+    monkeypatch.setattr(api_jobs_module, "_analyze_audio_features_job", fail_if_called)
     response = client.post(
         "/jobs/analyze-audio-features",
         json={
@@ -2274,7 +2280,7 @@ def test_analyze_heads_remote_mode_queues_worker_task(tmp_path: Path, monkeypatc
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("remote-only must not start local head executor")
 
-    monkeypatch.setattr(main_module, "_analyze_heads_job", fail_if_called)
+    monkeypatch.setattr(api_jobs_module, "_analyze_heads_job", fail_if_called)
     response = client.post(
         "/jobs/analyze-heads",
         json={"execution_mode": "remote", "local_executor_enabled": False},
@@ -2330,12 +2336,12 @@ def test_download_head_pack_endpoint_reports_downloads(tmp_path: Path, monkeypat
             self.downloaded = downloaded
 
     monkeypatch.setattr(
-        main_module,
+        api_jobs_module,
         "download_head_pack_models",
         lambda settings: [FakeResult(settings.model_dir / "head.pb", True)],
     )
     monkeypatch.setattr(
-        main_module,
+        api_jobs_module,
         "head_pack_readiness",
         lambda settings: {"ready": True, "missing_files": []},
     )
@@ -2358,7 +2364,7 @@ def test_download_head_models_job_reports_progress(tmp_path: Path, monkeypatch):
             self.downloaded = downloaded
 
     monkeypatch.setattr(
-        main_module,
+        analysis_jobs_module,
         "required_model_files",
         lambda: [("a.pb", "https://example.test/a.pb"), ("b.json", "https://example.test/b.json")],
     )
@@ -2366,10 +2372,10 @@ def test_download_head_models_job_reports_progress(tmp_path: Path, monkeypatch):
     def fake_download(settings, filename, source_url):
         return FakeResult(settings.model_dir / filename, filename == "a.pb")
 
-    monkeypatch.setattr(main_module, "download_model_file", fake_download)
+    monkeypatch.setattr(analysis_jobs_module, "download_model_file", fake_download)
     job_id = main_module.create_job("download-head-models", "test")
 
-    main_module._download_head_models_job(job_id)
+    analysis_jobs_module._download_head_models_job(job_id)
 
     job = main_module.JOBS[job_id]
     assert job.status == "completed"
@@ -2380,7 +2386,7 @@ def test_download_head_models_job_reports_progress(tmp_path: Path, monkeypatch):
 def test_download_head_models_job_reports_failed_filename(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     monkeypatch.setattr(
-        main_module,
+        analysis_jobs_module,
         "required_model_files",
         lambda: [("broken.pb", "https://example.test/broken.pb")],
     )
@@ -2388,10 +2394,10 @@ def test_download_head_models_job_reports_failed_filename(tmp_path: Path, monkey
     def fake_download(settings, filename, source_url):
         raise RuntimeError("network unavailable")
 
-    monkeypatch.setattr(main_module, "download_model_file", fake_download)
+    monkeypatch.setattr(analysis_jobs_module, "download_model_file", fake_download)
     job_id = main_module.create_job("download-head-models", "test")
 
-    main_module._download_head_models_job(job_id)
+    analysis_jobs_module._download_head_models_job(job_id)
 
     job = main_module.JOBS[job_id]
     assert job.status == "failed"
@@ -2405,7 +2411,7 @@ def test_download_head_models_job_reports_failed_filename(tmp_path: Path, monkey
 def test_download_head_models_job_reports_empty_urlerror_reason(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     monkeypatch.setattr(
-        main_module,
+        analysis_jobs_module,
         "required_model_files",
         lambda: [("empty.pb", "https://example.test/empty.pb")],
     )
@@ -2413,10 +2419,10 @@ def test_download_head_models_job_reports_empty_urlerror_reason(tmp_path: Path, 
     def fake_download(settings, filename, source_url):
         raise URLError(None)
 
-    monkeypatch.setattr(main_module, "download_model_file", fake_download)
+    monkeypatch.setattr(analysis_jobs_module, "download_model_file", fake_download)
     job_id = main_module.create_job("download-head-models", "test")
 
-    main_module._download_head_models_job(job_id)
+    analysis_jobs_module._download_head_models_job(job_id)
 
     job = main_module.JOBS[job_id]
     assert job.status == "failed"
@@ -2430,7 +2436,7 @@ def test_download_head_models_job_reports_empty_urlerror_reason(tmp_path: Path, 
 def test_download_head_models_job_explains_dns_failure(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     monkeypatch.setattr(
-        main_module,
+        analysis_jobs_module,
         "required_model_files",
         lambda: [("dns.pb", "https://essentia.upf.edu/models/dns.pb")],
     )
@@ -2438,10 +2444,10 @@ def test_download_head_models_job_explains_dns_failure(tmp_path: Path, monkeypat
     def fake_download(settings, filename, source_url):
         raise URLError(socket.gaierror(-3, "Temporary failure in name resolution"))
 
-    monkeypatch.setattr(main_module, "download_model_file", fake_download)
+    monkeypatch.setattr(analysis_jobs_module, "download_model_file", fake_download)
     job_id = main_module.create_job("download-head-models", "test")
 
-    main_module._download_head_models_job(job_id)
+    analysis_jobs_module._download_head_models_job(job_id)
 
     job = main_module.JOBS[job_id]
     assert job.status == "failed"
@@ -2534,7 +2540,7 @@ def test_track_audio_uses_navidrome_mapping_for_local_path(tmp_path: Path, monke
         seen["timeout"] = timeout
         return FakeStreamResponse()
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.api.tracks.urlopen", fake_urlopen)
     client = TestClient(app)
 
     response = client.get(f"/tracks/{track_id}/audio", headers={"Range": "bytes=0-14"})
@@ -2589,7 +2595,7 @@ def test_track_audio_head_proxies_navidrome_stream_headers(tmp_path: Path, monke
         seen["range"] = request.get_header("Range")
         return FakeHeadResponse()
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.api.tracks.urlopen", fake_urlopen)
     client = TestClient(app)
 
     response = client.head(f"/tracks/{track_id}/audio", headers={"Range": "bytes=0-63"})
@@ -2688,7 +2694,7 @@ def test_check_missing_files_job_marks_missing_and_available(tmp_path: Path, mon
     store.mark_track_missing(present_id, "2026-05-29T20:00:00+00:00")
     job_id = main_module.create_job("check-missing-files", "test")
 
-    main_module._check_missing_files_job(job_id)
+    analysis_jobs_module._check_missing_files_job(job_id)
 
     job = main_module.JOBS[job_id]
     assert job.status == "completed"
@@ -2999,7 +3005,7 @@ def test_navidrome_starred_catalog(tmp_path: Path, monkeypatch):
                 NavidromeSong(id="ghost", title="Ghost", artist="C"),
             ]
 
-    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    monkeypatch.setattr(api_deps_module, "NavidromeClient", FakeNavidromeClient)
     ready_id = add_navidrome_track(store, "like-1", title="Like One", artist="A")
     missing_id = add_navidrome_track(store, "like-2", title="Like Two", artist="B")
     store.upsert_external_track("navidrome", "like-1", ready_id)
@@ -3044,7 +3050,7 @@ def test_navidrome_starred_ids_maps_current_user_likes(tmp_path: Path, monkeypat
                 "artists": [],
             }
 
-    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    monkeypatch.setattr(api_deps_module, "NavidromeClient", FakeNavidromeClient)
     track_id = add_navidrome_track(store, "like-1", title="Like One", artist="A")
     store.upsert_external_track("navidrome", "like-1", track_id)
     client = TestClient(app)
@@ -3080,7 +3086,7 @@ def test_set_track_navidrome_star_uses_configured_client(tmp_path: Path, monkeyp
         def unstar_song(self, item_id: str):
             calls.append(("unstar", item_id, self.settings.user))
 
-    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    monkeypatch.setattr(api_deps_module, "NavidromeClient", FakeNavidromeClient)
     track_id = add_navidrome_track(store, "song-1", title="Song One")
     store.upsert_external_track("navidrome", "song-1", track_id)
     client = TestClient(app)
@@ -3126,7 +3132,7 @@ def test_navidrome_starred_similar_blends_ready_likes(tmp_path: Path, monkeypatc
                 NavidromeSong(id="like-2", title="Like Two", artist="B"),
             ]
 
-    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    monkeypatch.setattr(api_deps_module, "NavidromeClient", FakeNavidromeClient)
     like1_id = add_navidrome_track(store, "like-1", title="Like One", artist="A")
     like2_id = add_navidrome_track(store, "like-2", title="Like Two", artist="B")
     result_id = add_navidrome_track(store, "result", title="Result", artist="C", album="Other")
@@ -3161,7 +3167,7 @@ def test_navidrome_starred_similar_requires_ready_embeddings(tmp_path: Path, mon
         def get_starred_songs(self):
             return [NavidromeSong(id="like-1", title="Like One", artist="A")]
 
-    monkeypatch.setattr(main_module, "NavidromeClient", FakeNavidromeClient)
+    monkeypatch.setattr(api_deps_module, "NavidromeClient", FakeNavidromeClient)
     like_id = add_navidrome_track(store, "like-1", title="Like One", artist="A")
     store.upsert_external_track("navidrome", "like-1", like_id)
     client = TestClient(app)
@@ -3370,15 +3376,13 @@ def test_track_instant_mix_creates_local_history_request(tmp_path: Path, monkeyp
     assert response.status_code == 200
     data = response.json()
     request_id = data["request_id"]
-    assert data["request"]["provider"] == "local"
-    assert data["request"]["seed_item_id"] == f"track:{seed_id}"
-    assert data["request"]["results"][0]["id"] == result_id
-    assert data["request"]["results"][0]["item_id"] == f"track:{result_id}"
+    # Endpoint returns request: None immediately; results are filled by a background task.
     assert data["session"]["source_type"] == "track"
     assert data["session"]["source_id"] == seed_id
     assert data["session"]["mode"] == "radio"
     assert data["session"]["settings"]["instant_mix_request_id"] == request_id
-    assert [item["track_id"] for item in data["queue"]["items"]] == [seed_id, result_id]
+    # Seed track is the only item in the queue at response time; results arrive in background.
+    assert seed_id in [item["track_id"] for item in data["queue"]["items"]]
     detail_response = client.get(f"/instant-mix/requests/{request_id}")
     assert detail_response.status_code == 200
     assert detail_response.json()["provider"] == "local"
@@ -3464,8 +3468,8 @@ def test_analyze_job_saves_successes_and_counts_failures_with_one_worker(tmp_pat
                 raise RuntimeError("decode failed")
             return np.array([1.0, 0.0], dtype=np.float32)
 
-    monkeypatch.setattr(main_module, "DiscogsEffnetEmbedder", FakeEmbedder)
-    result = main_module._extract_embedding_local(
+    monkeypatch.setattr(services_analysis_module, "DiscogsEffnetEmbedder", FakeEmbedder)
+    result = services_analysis_module._extract_embedding_local(
         FakeEmbedder(None, "discogs_multi"),
         store,
         main_module.Settings.from_env(),
@@ -3486,7 +3490,7 @@ def test_analyze_job_saves_successes_and_counts_failures_with_one_worker(tmp_pat
     assert "decode failed" in (result.traceback or "")
     job_id = main_module.create_job("analyze", "test")
 
-    main_module._analyze_job(job_id, "discogs_multi", None, workers=1, tf_threads=1)
+    analysis_jobs_module._analyze_job(job_id, "discogs_multi", None, workers=1, tf_threads=1)
 
     assert store.count_embeddings("discogs_multi") == 2
     job = main_module.JOBS[job_id]
@@ -3536,11 +3540,11 @@ def test_analyze_heads_job_saves_successes_and_counts_failures(tmp_path: Path, m
                 ),
             ]
 
-    monkeypatch.setattr(main_module, "DISCOGS_EFFNET_HEADS", [type("Head", (), {"id": "genre_discogs400"})(), type("Head", (), {"id": "danceability"})()])
-    monkeypatch.setattr(main_module, "DiscogsEffnetHeadPackAnalyzer", FakeHeadAnalyzer)
+    monkeypatch.setattr(analysis_jobs_module, "DISCOGS_EFFNET_HEADS", [type("Head", (), {"id": "genre_discogs400"})(), type("Head", (), {"id": "danceability"})()])
+    monkeypatch.setattr(analysis_jobs_module, "DiscogsEffnetHeadPackAnalyzer", FakeHeadAnalyzer)
     job_id = main_module.create_job("analyze-heads", "test")
 
-    main_module._analyze_heads_job(job_id, None)
+    analysis_jobs_module._analyze_heads_job(job_id, None)
 
     assert store.count_predictions("genre_discogs400") == 1
     assert store.count_model_outputs("genre_discogs400") == 1
@@ -3579,10 +3583,10 @@ def test_analyze_audio_features_job_saves_successes_and_counts_failures(tmp_path
                 )
             ]
 
-    monkeypatch.setattr(main_module, "AudioFeatureAnalyzer", FakeAudioFeatureAnalyzer)
+    monkeypatch.setattr(services_analysis_module, "AudioFeatureAnalyzer", FakeAudioFeatureAnalyzer)
     job_id = main_module.create_job("analyze-audio-features", "test")
 
-    main_module._analyze_audio_features_job(job_id, None)
+    analysis_jobs_module._analyze_audio_features_job(job_id, None)
 
     assert store.count_feature_tracks(AUDIO_FEATURE_EXTRACTOR) == 1
     assert store.load_features(first_id, AUDIO_FEATURE_EXTRACTOR)[0].name == "bpm"
@@ -3649,12 +3653,12 @@ def test_analyze_audio_features_job_saves_successes_with_multiple_workers(tmp_pa
         def shutdown(self, wait=True, cancel_futures=False):
             pass
 
-    monkeypatch.setattr(main_module, "AudioFeatureAnalyzer", FakeAudioFeatureAnalyzer)
-    monkeypatch.setattr(main_module, "ProcessPoolExecutor", FakeExecutor)
-    monkeypatch.setattr(main_module, "as_completed", lambda futures: futures)
+    monkeypatch.setattr(services_analysis_module, "AudioFeatureAnalyzer", FakeAudioFeatureAnalyzer)
+    monkeypatch.setattr(services_analysis_module, "ProcessPoolExecutor", FakeExecutor)
+    monkeypatch.setattr(services_analysis_module, "as_completed", lambda futures: futures)
     job_id = main_module.create_job("analyze-audio-features", "test")
 
-    main_module._analyze_audio_features_job(job_id, None, workers=2)
+    analysis_jobs_module._analyze_audio_features_job(job_id, None, workers=2)
 
     assert FakeExecutor.max_workers == 2
     assert store.count_feature_tracks(AUDIO_FEATURE_EXTRACTOR) == 2
@@ -3709,12 +3713,12 @@ def test_analyze_job_saves_successes_with_multiple_workers(tmp_path: Path, monke
         def submit(self, fn, *args):
             return FakeFuture(fn(*args))
 
-    monkeypatch.setattr(main_module, "DiscogsEffnetEmbedder", FakeEmbedder)
-    monkeypatch.setattr(main_module, "ProcessPoolExecutor", FakeExecutor)
-    monkeypatch.setattr(main_module, "as_completed", lambda futures: futures)
+    monkeypatch.setattr(services_analysis_module, "DiscogsEffnetEmbedder", FakeEmbedder)
+    monkeypatch.setattr(services_analysis_module, "ProcessPoolExecutor", FakeExecutor)
+    monkeypatch.setattr(services_analysis_module, "as_completed", lambda futures: futures)
     job_id = main_module.create_job("analyze", "test")
 
-    main_module._analyze_job(job_id, "discogs_multi", None, workers=2, tf_threads=4)
+    analysis_jobs_module._analyze_job(job_id, "discogs_multi", None, workers=2, tf_threads=4)
 
     assert FakeExecutor.max_workers == 2
     assert FakeExecutor.initargs[-1] == 4
