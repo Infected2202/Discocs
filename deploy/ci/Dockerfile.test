@@ -1,0 +1,20 @@
+# Образ для прогона unit-тестов в CI.
+# Путь-независим (код кладётся через COPY, а не bind-mount) — работает
+# из Jenkins-в-контейнере, где workspace недоступен хостовому демону как путь.
+# Essentia не нужна: tests/conftest.py поднимает in-memory SQLite и заглушки модели.
+FROM python:3.11
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Слой зависимостей кэшируется отдельно от исходников
+COPY pyproject.toml README.md ./
+COPY app ./app
+RUN python -m pip install --upgrade pip \
+    && python -m pip install -e ".[dev]"
+
+COPY tests ./tests
+
+CMD ["python", "-m", "pytest", "-q"]

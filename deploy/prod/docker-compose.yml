@@ -1,0 +1,70 @@
+# Production compose — тянет ГОТОВЫЕ образы из Nexus (docker-dev @ 192.168.1.41:5000),
+# в отличие от dev-compose в корне, который собирает локально (build:).
+#
+# Запускается на хосте 192.168.1.41 стадией Deploy в Jenkinsfile:
+#   docker compose -p discocs -f deploy/prod/docker-compose.yml --env-file <env> pull
+#   docker compose -p discocs -f deploy/prod/docker-compose.yml --env-file <env> up -d --remove-orphans
+#
+# Откат на прошлый билд: поставь TAG=<git-sha> в .env и повтори up.
+# Бот стартует только при COMPOSE_PROFILES=bot (см. .env.example).
+
+services:
+  backend:
+    image: ${REGISTRY:-192.168.1.41:5000}/${IMAGE_NS:-discocs}/backend:${TAG:-latest}
+    restart: unless-stopped
+    expose:
+      - "7752"
+    volumes:
+      - discocs-data:/app/data
+      - discocs-models:/app/models
+      - type: bind
+        source: ${DISCOCS_MUSIC_DIR:-/path/to/music}
+        target: /music
+        read_only: true
+    environment:
+      DISCOCS_DB_PATH: /app/data/app.db
+      DISCOCS_DATA_DIR: /app/data
+      DISCOCS_MODEL_DIR: /app/models
+      DISCOCS_INDEX_DIR: /app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7752/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    image: ${REGISTRY:-192.168.1.41:5000}/${IMAGE_NS:-discocs}/frontend:${TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${DISCOCS_HTTP_PORT:-80}:80"
+    environment:
+      BACKEND_HOST: backend
+      BACKEND_PORT: "7752"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  bot:
+    image: ${REGISTRY:-192.168.1.41:5000}/${IMAGE_NS:-discocs}/bot:${TAG:-latest}
+    restart: unless-stopped
+    profiles: ["bot"]
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      ALLOWED_TELEGRAM_USER_IDS: ${ALLOWED_TELEGRAM_USER_IDS}
+      NAVIDROME_BASE_URL: ${NAVIDROME_BASE_URL}
+      NAVIDROME_USERNAME: ${NAVIDROME_USERNAME}
+      NAVIDROME_PASSWORD: ${NAVIDROME_PASSWORD}
+      DISCOCS_BASE_URL: ${DISCOCS_BASE_URL:-http://backend:7752}
+      SQLITE_PATH: /data/bot.sqlite
+      TEMP_DIR: /data/tmp
+    volumes:
+      - discocs-bot-data:/data
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  discocs-data:
+  discocs-models:
+  discocs-bot-data:
