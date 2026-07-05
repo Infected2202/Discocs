@@ -1262,7 +1262,7 @@
       }
     }
     function label(t) { return `${text(t.artist)} - ${text(t.title) || t.path}`.replace(/^ - /, ""); }
-    function encodedArg(value) { return encodeURIComponent(value).replace(/'/g, "%27"); }
+    function encodedArg(value) { return encodeURIComponent(value).replaceAll(/'/g, "%27"); }
     function compactFolder(path) {
       const parts = String(path).split(/[\\/]+/).filter(Boolean);
       if (parts.length <= 2) return path;
@@ -1437,7 +1437,7 @@
     }
     function shellQuote(value) {
       const textValue = String(value || "");
-      return textValue.includes(" ") ? `"${textValue.replace(/"/g, '\\"')}"` : textValue;
+      return textValue.includes(" ") ? `"${textValue.replaceAll(/"/g, '\\"')}"` : textValue;
     }
     function refreshWorkerCommand() {
       const server = workerSetting("workerServerUrl", "http://127.0.0.1:8711");
@@ -3373,7 +3373,7 @@
     }
     function facetButton(kind, item) {
       const active = String(browseFilters[kind] || "") === String(item.value);
-      const encodedValue = encodeURIComponent(item.value).replace(/'/g, "%27");
+      const encodedValue = encodeURIComponent(item.value).replaceAll(/'/g, "%27");
       const display = kind === "folder" ? compactFolder(item.value) : item.value;
       return `<button class="facet-button ${active ? "active" : ""}" title="${item.value}" onclick="setBrowseFilter('${kind}', '${encodedValue}')">
         <span class="facet-name">${display}</span><span class="pill">${item.count}</span>
