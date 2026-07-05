@@ -5,10 +5,12 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY discocs_bot/pyproject.toml discocs_bot/README.md ./
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+COPY discocs_bot/pyproject.toml discocs_bot/uv.lock discocs_bot/README.md ./
 COPY discocs_bot/bot ./bot
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen
 
-RUN python -m pip install --upgrade pip \
-    && python -m pip install -e .
-
+ENV PATH="/app/.venv/bin:$PATH"
 CMD ["discocs-bot"]

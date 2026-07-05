@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Образ для прогона unit-тестов бота в CI — тот же паттерн, что Dockerfile.test
-# для backend'а (путь-независим, кэш pip переживает инвалидацию слоя с исходниками).
+# для backend'а (путь-независим, кэш uv переживает инвалидацию слоя с исходниками).
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -8,12 +8,14 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY discocs_bot/pyproject.toml discocs_bot/README.md ./
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+COPY discocs_bot/pyproject.toml discocs_bot/uv.lock discocs_bot/README.md ./
 COPY discocs_bot/bot ./bot
-RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m pip install --upgrade pip \
-    && python -m pip install -e ".[dev]"
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --extra dev
 
 COPY discocs_bot/tests ./tests
 
+ENV PATH="/app/.venv/bin:$PATH"
 CMD ["python", "-m", "pytest", "-q", "--cov=bot", "--cov-report=xml:/app/bot-coverage.xml"]

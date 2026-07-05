@@ -113,7 +113,8 @@ pipeline {
           parallel(services.collectEntries { svc ->
             [(svc.name): {
               def img = "${REGISTRY}/${IMAGE_NS}/${svc.name}"
-              sh "docker build -f ${svc.df} -t ${img}:${GIT_SHA} ."
+              // BuildKit нужен backend/bot Dockerfile'ам — --mount=type=cache для uv.
+              sh "DOCKER_BUILDKIT=1 docker build -f ${svc.df} -t ${img}:${GIT_SHA} ."
               sh "docker push ${img}:${GIT_SHA}"             // :<git-sha> — неизменяемый, для отката
               if (env.IS_MAIN == 'true') {
                 sh "docker tag ${img}:${GIT_SHA} ${img}:latest"

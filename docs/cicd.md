@@ -30,6 +30,7 @@ push в Gitea ──webhook──> Jenkins
 | `deploy/ci/Dockerfile.bot-test` | образ для прогона тестов бота (`discocs_bot`) в CI |
 | `deploy/ci/Dockerfile.ui-test` | образ для прогона тестов фронтенда (`ui`, vitest) в CI |
 | `deploy/ci/Dockerfile.trivy-fs` | образ для Trivy fs-скана зависимостей в CI |
+| `uv.lock` / `discocs_bot/uv.lock` | закреплённые версии Python-зависимостей (backend / бот) |
 | `deploy/prod/docker-compose.yml` | прод-стек: тянет готовые образы из Nexus |
 | `deploy/prod/.env.example` | шаблон прод-окружения (реальный `.env` — секрет, не в гит) |
 
@@ -193,6 +194,21 @@ JS-отчёт — `sonar.javascript.lcov.reportPaths=ui/coverage/lcov.info`.
 из-за чего vitest их не подхватывал), а `discocs_bot/pyproject.toml` не
 объявлял `pytest` даже как dev-зависимость.
 
+## Python-зависимости (uv)
+
+Backend (`app`) и бот (`discocs_bot`) ставятся через `uv sync --frozen` вместо
+`pip install -e .` — во всех четырёх Dockerfile'ах, что их используют
+(`deploy/backend/Dockerfile`, `deploy/bot/Dockerfile`, `deploy/ci/Dockerfile.test`,
+`deploy/ci/Dockerfile.bot-test`). `--frozen` ставит строго из `uv.lock` /
+`discocs_bot/uv.lock`, без пересчёта резолвера — то же самое закрепление
+версий, что видит `trivy fs` (см. ниже). Бинарник `uv` берётся многостадийным
+`COPY --from=ghcr.io/astral-sh/uv:latest`, отдельно ставить не нужно.
+
+Lock-файлы обновляются вручную командой `uv lock` (в корне — для `app`,
+в `discocs_bot/` — для бота) при изменении зависимостей в `pyproject.toml`;
+CI их не регенерирует и не проверяет свежесть (можно добавить `uv lock --check`
+отдельной стадией, если резолвинг начнёт расползаться незамеченным).
+
 ## Очистка образов на агенте
 
 `post/always` в `Jenkinsfile` гоняет `docker image prune -a -f --filter "until=48h"`.
@@ -208,10 +224,8 @@ JS-отчёт — `sonar.javascript.lcov.reportPaths=ui/coverage/lcov.info`.
 (`--exit-code 0`, билд никогда не валится). Один инструмент закрывает то, что
 Sonar Community не умеет бесплатно (SCA — уязвимости в зависимостях):
 
-- `trivy fs` — CVE в `pnpm-lock.yaml` (фронтенд, покрытие полное) и в Python-зависимостях
-  (`pyproject.toml` — без lock-файла, поэтому резолвинг версий у Trivy неполный;
-  если понадобится точное покрытие, нужен `pip-compile`/`uv lock` для генерации lock-файла —
-  отдельная задача, пока не сделано, не прячем этот пробел);
+- `trivy fs` — CVE в `pnpm-lock.yaml` (фронтенд) и в `uv.lock`/`discocs_bot/uv.lock`
+  (backend/бот — точный резолвинг версий, см. ниже);
 - `trivy image` — CVE в уже собранных образах `backend`/`frontend`/`bot`, через
   `docker.sock` (не bind-mount воркспейса — тут монтируется только сокет, это работает).
 

@@ -10,16 +10,20 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
 # app меняется почти в каждом коммите, поэтому слой ниже всё равно
-# инвалидируется каждый раз — кэш pip монтируется отдельно (переживает
+# инвалидируется каждый раз — кэш uv монтируется отдельно (переживает
 # инвалидацию слоя), иначе каждый билд заново качает все зависимости по сети.
-COPY pyproject.toml README.md ./
+# --frozen — ставим строго из uv.lock, без пересчёта резолвера (тот же lock,
+# что использует Trivy для точного резолвинга версий зависимостей).
+COPY pyproject.toml uv.lock README.md ./
 COPY app ./app
-RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m pip install --upgrade pip \
-    && python -m pip install -e ".[dev]"
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --extra dev
 
 COPY scripts ./scripts
 COPY tests ./tests
 
+ENV PATH="/app/.venv/bin:$PATH"
 CMD ["python", "-m", "pytest", "-q", "-n", "auto", "--cov=app", "--cov-report=xml:/app/coverage.xml"]

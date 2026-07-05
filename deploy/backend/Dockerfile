@@ -11,12 +11,16 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml README.md ./
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# --frozen — ставим строго из uv.lock, без пересчёта резолвера, чтобы прод
+# получал ровно те версии, что закреплены в lock-файле (и что видит Trivy).
+COPY pyproject.toml uv.lock README.md ./
 COPY app ./app
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --extra essentia
 
-RUN python -m pip install --upgrade pip \
-    && python -m pip install -e ".[essentia]"
-
+ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 7752
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7752"]
