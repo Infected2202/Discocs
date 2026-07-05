@@ -184,6 +184,15 @@ JS-отчёт — `sonar.javascript.lcov.reportPaths=ui/coverage/lcov.info`.
 из-за чего vitest их не подхватывал), а `discocs_bot/pyproject.toml` не
 объявлял `pytest` даже как dev-зависимость.
 
+## Очистка образов на агенте
+
+`post/always` в `Jenkinsfile` гоняет `docker image prune -a -f --filter "until=48h"`.
+Агент — постоянный LXC-контейнер, а не эфемерный воркер: без этого шага тестовые/scan-образы
+(`discocs-test`, `discocs-bot-test`, `discocs-ui-test`, `discocs-trivy-fs`) и прод-теги
+по `GIT_SHA` копились бы на диске бесконечно (раньше чистка была только на
+`TARGET_SERVER`, агента не касалась). `until=48h` — компромисс: свежие билды
+ещё можно подебажить руками, старое чистится само.
+
 ## Trivy (security scan)
 
 Стадия `Security Scan` в `Jenkinsfile` — после `Build & Push`, report-only
