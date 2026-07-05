@@ -65,8 +65,6 @@ services:
     dns:
       - 1.1.1.1
       - 8.8.8.8
-    ports:
-      - "${TA_PORT}:${TA_PORT}"
     healthcheck:
       test: ["CMD", "ip", "link", "show", "awg0"]
       interval: 10s
