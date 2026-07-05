@@ -15,8 +15,8 @@ services:
   backend:
     image: ${REGISTRY:-192.168.1.41:5000}/${IMAGE_NS:-discocs}/backend:${TAG:-latest}
     restart: unless-stopped
-    expose:
-      - "7752"
+    ports:
+      - "8711:7752"
     volumes:
       - ${DISCOCS_STATE_DIR}/discocs_backend/data:/app/data
       - ${DISCOCS_STATE_DIR}/discocs_backend/models:/app/models
