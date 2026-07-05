@@ -2,8 +2,11 @@
 # Отчёт по CVE в зависимостях (requirements/pnpm-lock) — report-only, не блокирует билд.
 # Код кладём через COPY, а не bind-mount: агент собирает через хостовый демон
 # (docker-outside-of-docker), workspace ему как путь недоступен.
+# Скан идёт в RUN (а не ENTRYPOINT+`docker run`), чтобы --mount=type=cache
+# сохранял БД уязвимостей Trivy между билдами — иначе ~150+ МБ качались бы заново
+# на каждый билд.
 FROM aquasec/trivy:latest
 WORKDIR /repo
 COPY . .
-ENTRYPOINT ["trivy", "fs", "--exit-code", "0", "--scanners", "vuln"]
-CMD ["/repo"]
+RUN --mount=type=cache,target=/root/.cache/trivy \
+    trivy fs --exit-code 0 --scanners vuln /repo

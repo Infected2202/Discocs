@@ -128,15 +128,19 @@ pipeline {
     stage('Security Scan') {
       steps {
         // Trivy, report-only (--exit-code 0 — никогда не валит билд):
-        // 1) CVE в зависимостях (requirements/pnpm-lock) — образ собирается через
-        //    COPY (не bind-mount) по той же причине, что Dockerfile.test.
+        // 1) CVE в зависимостях (requirements/pnpm-lock) — скан идёт прямо в
+        //    RUN сборки Dockerfile.trivy-fs (см. комментарий там), вывод виден
+        //    в логе этой стадии как обычный docker build output.
         // 2) CVE в уже собранных образах — сокет докера, а не воркспейс,
         //    поэтому -v тут работает (см. Docker Login/Build & Push выше).
-        sh 'DOCKER_BUILDKIT=1 docker build -f deploy/ci/Dockerfile.trivy-fs -t discocs-trivy-fs:${GIT_SHA} .'
-        sh 'docker run --rm discocs-trivy-fs:${GIT_SHA}'
+        //    Именованный volume trivy-db-cache — та же причина, что в
+        //    Dockerfile.trivy-fs: не качать ~150+ МБ БД заново на каждый образ.
+        sh 'DOCKER_BUILDKIT=1 docker build --progress=plain -f deploy/ci/Dockerfile.trivy-fs -t discocs-trivy-fs:${GIT_SHA} .'
         sh '''
           for svc in backend frontend bot; do
-            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v trivy-db-cache:/root/.cache/trivy \
               aquasec/trivy image --exit-code 0 ${REGISTRY}/${IMAGE_NS}/${svc}:${GIT_SHA}
           done
         '''
@@ -152,6 +156,10 @@ pipeline {
           // в TARGET_DIR (git — источник правды) и там же pull/up.
           // .env на хосте — не наше дело: заводится и правится вручную,
           // CI его не перезаписывает (см. комментарий в шапке файла).
+          // --wait ждёт, пока docker healthcheck'и (уже описаны в
+          // deploy/prod/docker-compose.yml) не подтвердят healthy — раньше
+          // `up -d` считался успехом сразу после старта контейнера, падение
+          // через несколько секунд после деплоя было бы не видно в CI.
           sshagent(['HS_SSH_KEY']) {
             sh '''
               set -e
@@ -160,7 +168,7 @@ pipeline {
                 set -e
                 cd '"$TARGET_DIR"'
                 docker compose -p discocs --env-file .env pull
-                docker compose -p discocs --env-file .env up -d --force-recreate --remove-orphans
+                docker compose -p discocs --env-file .env up -d --force-recreate --remove-orphans --wait --wait-timeout 120
                 docker image prune -f
               '
             '''

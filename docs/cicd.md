@@ -97,13 +97,22 @@ git remote set-url --add --push origin http://192.168.1.41:3064/HS/discocs.git
 
 Деплой автоматический на успешной сборке `main`: Jenkins по SSH заливает
 `deploy/prod/docker-compose.yml` в `TARGET_DIR` на `TARGET_SERVER` (`.env` там уже лежит,
-CI его не перезаписывает) и там же гоняет `pull` + `up -d --force-recreate`. Вручную на хосте:
+CI его не перезаписывает) и там же гоняет `pull` + `up -d --force-recreate --wait`. Вручную на хосте:
 
 ```bash
 cd /home/infected2202/docker/discocs   # TARGET_DIR, там же лежит .env
 docker compose -p discocs --env-file .env pull
-docker compose -p discocs --env-file .env up -d --force-recreate --remove-orphans
+docker compose -p discocs --env-file .env up -d --force-recreate --remove-orphans --wait --wait-timeout 120
 ```
+
+`--wait` — это и есть post-deploy smoke-check: блокирует команду, пока Docker
+healthcheck'и сервисов (уже описаны в `deploy/prod/docker-compose.yml`, у backend —
+`curl`/`urlopen` на `/health`) не подтвердят `healthy`, и возвращает ненулевой
+код, если за `--wait-timeout` (120с) это не произошло — тогда SSH-шаг в
+Jenkins падает и стадия `Deploy` считается зафейленной. До этого `up -d`
+считался успехом сразу после старта контейнера, падение через несколько
+секунд после деплоя было не видно в CI. Требует Docker Compose ≥ v2.17 на
+`TARGET_SERVER` — проверить: `docker compose version`.
 
 **Откат** на конкретный билд — поставь его sha в `.env` и повтори up:
 
@@ -205,6 +214,13 @@ Sonar Community не умеет бесплатно (SCA — уязвимости
   отдельная задача, пока не сделано, не прячем этот пробел);
 - `trivy image` — CVE в уже собранных образах `backend`/`frontend`/`bot`, через
   `docker.sock` (не bind-mount воркспейса — тут монтируется только сокет, это работает).
+
+БД уязвимостей Trivy (~150+ МБ) кэшируется, а не качается заново на каждый билд:
+для `trivy fs` — через `--mount=type=cache` прямо в `RUN` сборки `Dockerfile.trivy-fs`
+(скан идёт во время `docker build`, не отдельным `docker run` после — так кэш
+BuildKit реально переиспользуется между билдами); для `trivy image` — через
+именованный volume `trivy-db-cache` (не трогается `docker image prune`,
+живёт отдельно от образов).
 
 Секреты и Dockerfile/IaC-анализ Trivy не делает — это уже покрыто встроенными
 анализаторами Sonar (см. выше), дублировать не стали.
