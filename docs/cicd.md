@@ -10,7 +10,8 @@ push в Gitea ──webhook──> Jenkins
    └─ Test         прогон pytest в контейнере python:3.11 (deploy/ci/Dockerfile.test)
    └─ Build&Push   сборка backend/frontend/bot → Nexus (docker-dev @ :5000)
    │                 теги:  :<git-sha>  (всегда)   +  :latest  (только с main)
-   └─ Deploy        [post/success, только main] docker compose pull && up -d
+   └─ Deploy        [post/success, только main] по SSH на TARGET_SERVER:
+                       scp compose+.env в TARGET_DIR → docker compose pull && up -d --force-recreate
 ```
 
 Файлы:
@@ -45,16 +46,20 @@ push в Gitea ──webhook──> Jenkins
 |---|---|---|
 | `nexus_token` | Username/Password | логин в Nexus для push *(уже есть)* |
 | `discocs_prod_env` | Secret file | прод `.env` (содержимое `deploy/prod/.env.example`, заполненное) |
+| `HS_SSH_KEY` | SSH Username with private key | деплой-ключ на `TARGET_SERVER` *(уже есть)* |
 
 `discocs_prod_env`: заполни `deploy/prod/.env.example` реальными значениями
-(минимум `DISCOCS_MUSIC_DIR`), сохрани как файл и загрузи в Jenkins →
+(минимум `DISCOCS_MUSIC_DIR` и `DISCOCS_STATE_DIR`), сохрани как файл и загрузи в Jenkins →
 Manage Jenkins → Credentials → Add → **Secret file**, ID `discocs_prod_env`.
 
 ### 2. Агент Jenkins (контейнер)
 
-- смонтирован `/var/run/docker.sock`;
-- внутри есть `docker` CLI и `docker compose` plugin;
-- хостовый `daemon.json` с insecure-registries (см. выше).
+- смонтирован `/var/run/docker.sock` (нужен только для сборки/пуша образов);
+- внутри есть `docker` CLI;
+- деплой не требует docker socket в агенте — идёт по SSH на `TARGET_SERVER`
+  (см. env-блок `Jenkinsfile`: `TARGET_SERVER`, `TARGET_USER`, `TARGET_PORT`, `TARGET_DIR`);
+  на целевом хосте должен быть настроен `insecure-registries` для `192.168.1.41:5000` (см. выше)
+  и создана директория `TARGET_DIR` (`/home/infected2202/docker/discocs`).
 
 ### 3. Job + триггер (Gitea)
 
@@ -79,20 +84,22 @@ git remote set-url --add --push origin http://192.168.1.41:3064/HS/discocs.git
 
 ## Деплой и откат
 
-Деплой автоматический на успешной сборке `main`. Вручную на хосте:
+Деплой автоматический на успешной сборке `main`: Jenkins по SSH заливает
+`deploy/prod/docker-compose.yml` и заполненный `.env` в `TARGET_DIR` на
+`TARGET_SERVER` и там же гоняет `pull` + `up -d --force-recreate`. Вручную на хосте:
 
 ```bash
-cd /opt/discocs   # где лежит прод .env (или укажи --env-file)
-docker compose -p discocs -f deploy/prod/docker-compose.yml --env-file .env pull
-docker compose -p discocs -f deploy/prod/docker-compose.yml --env-file .env up -d --remove-orphans
+cd /home/infected2202/docker/discocs   # TARGET_DIR, там же лежит .env
+docker compose -p discocs --env-file .env pull
+docker compose -p discocs --env-file .env up -d --force-recreate --remove-orphans
 ```
 
 **Откат** на конкретный билд — поставь его sha в `.env` и повтори up:
 
 ```bash
 TAG=a1b2c3d   # значение из тега образа / номера коммита
-# правишь TAG в .env, затем:
-docker compose -p discocs -f deploy/prod/docker-compose.yml --env-file .env up -d
+# правишь TAG в TARGET_DIR/.env на сервере, затем:
+docker compose -p discocs --env-file .env up -d --force-recreate
 ```
 
 ## Бот
