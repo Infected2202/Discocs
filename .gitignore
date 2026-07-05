@@ -46,3 +46,6 @@ eval/results/
 .codex/local-secrets.env
 .env.local
 
+# Personal Claude Code overrides (Jenkins API token, etc.) — never commit
+.claude/settings.local.json
+

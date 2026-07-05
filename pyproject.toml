@@ -38,6 +38,17 @@ dev = [
 [project.scripts]
 recs = "app.cli:main"
 
+[tool.uv]
+# requires-python (3.11-3.15) — широкий диапазон для совместимости, но
+# реально код гоняется только на 3.11 (Dockerfile.test) и 3.12 (прод-образы).
+# Без этого uv lock резолвит "универсально" по всему диапазону и может
+# закрепить версию essentia-tensorflow, у которой есть wheel только под
+# гипотетический 3.14 — ломает `uv sync --frozen` на 3.12 (см. git history).
+environments = [
+  "python_version == '3.11'",
+  "python_version == '3.12'",
+]
+
 [tool.setuptools.packages.find]
 include = ["app*"]
 
