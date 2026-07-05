@@ -7,11 +7,15 @@ Nexus, Gitea, целевой хост) — одна машина `.41`.
 
 ```
 push в Gitea ──webhook──> Jenkins
-   └─ Test         прогон pytest -n auto в контейнере python:3.11 (deploy/ci/Dockerfile.test),
-   │                 сборка образа через BuildKit (--mount=type=cache для pip)
+   └─ Test         три отдельных образа, каждый BuildKit + --mount=type=cache:
+   │                 backend — pytest -n auto (deploy/ci/Dockerfile.test)
+   │                 бот     — pytest (deploy/ci/Dockerfile.bot-test)
+   │                 фронт   — vitest run --coverage (deploy/ci/Dockerfile.ui-test)
+   │                 coverage-отчёты каждого достаются docker cp'ом
    └─ Sonar        sonar-scanner — отчёт в SonarQube, без Quality Gate (билд не блокируется)
    └─ Build&Push   сборка backend/frontend/bot → Nexus (docker-dev @ :5000)
    │                 теги:  :<git-sha>  (всегда)   +  :latest  (только с main)
+   └─ Security Scan Trivy — CVE в зависимостях + в собранных образах, report-only
    └─ Deploy        [post/success, только main] по SSH на TARGET_SERVER:
                        scp compose в TARGET_DIR → docker compose pull && up -d --force-recreate
                        (.env на хосте CI не трогает — заводится и правится вручную)
@@ -22,7 +26,10 @@ push в Gitea ──webhook──> Jenkins
 | Файл | Роль |
 |---|---|
 | `Jenkinsfile` | описание пайплайна |
-| `deploy/ci/Dockerfile.test` | образ для прогона тестов в CI |
+| `deploy/ci/Dockerfile.test` | образ для прогона тестов backend (`app`) в CI |
+| `deploy/ci/Dockerfile.bot-test` | образ для прогона тестов бота (`discocs_bot`) в CI |
+| `deploy/ci/Dockerfile.ui-test` | образ для прогона тестов фронтенда (`ui`, vitest) в CI |
+| `deploy/ci/Dockerfile.trivy-fs` | образ для Trivy fs-скана зависимостей в CI |
 | `deploy/prod/docker-compose.yml` | прод-стек: тянет готовые образы из Nexus |
 | `deploy/prod/.env.example` | шаблон прод-окружения (реальный `.env` — секрет, не в гит) |
 
@@ -140,8 +147,12 @@ frontend поднимаются без него. Образ бота при эт
 полезным, можно добавить `waitForQualityGate` (потребует настроить вебхук
 SonarQube → Jenkins).
 
-Покрыты все три части кодовой базы: `sonar.sources=app,discocs_bot/bot,ui/src`
-(бэкенд, бот, фронтенд), `sonar.tests` — соответствующие каталоги тестов.
+Покрыты все части кодовой базы: `sonar.sources=app,discocs_bot/bot,ui/src,deploy`
+(бэкенд, бот, фронтенд, CI/Dockerfile'ы), `sonar.tests` — соответствующие каталоги
+тестов. `deploy` добавлен ради встроенных в Community Build анализаторов **Secrets**
+и **Docker/IaC** — они бесплатны и не требуют отдельного софта (gitleaks/hadolint
+не нужны), просто раньше `deploy` не попадал в область сканирования.
+
 Для фронтенда отдельный отчёт линтера не подключён: `ui/eslint.config.js`
 использует только рекомендованные пресеты (eslint/typescript-eslint/react-hooks),
 встроенный TS/JS-анализатор Sonar покрывает то же самое сам — подключать
@@ -155,15 +166,39 @@ SonarQube → Jenkins).
 TS/JS-анализатора) — обновлять сканер вместе с сервером, версия и ссылка на
 скачивание — https://docs.sonarsource.com/sonarqube-server/analyzing-source-code/scanners/sonarscanner.
 
-Python-coverage подключён только для `app` (backend): стадия `Test` гоняет
-`pytest --cov=app --cov-report=xml` внутри `discocs-test`, `coverage.xml`
-достаётся из контейнера через `docker cp` (агент — docker-outside-of-docker,
-bind-mount воркспейса недоступен хостовому демону) и подхватывается
-`sonar.python.coverage.reportPaths=coverage.xml`. Бот (`discocs_bot`) и
-фронтенд (`ui`) coverage в Sonar не отдают — у бота свой `pytest`-прогон вне
-`Dockerfile.test`, у фронтенда `ui/package.json`'s `test` — это `node --test`,
-а не `vitest` (хотя `@vitest/coverage-v8` стоит в `devDependencies`), так что
-честного JS-coverage сейчас нет в принципе — отдельная задача, если понадобится.
+Coverage подключён для всех трёх частей — стадия `Test` собирает три образа
+и достаёт из каждого свой отчёт через `docker cp` (агент — docker-outside-of-docker,
+bind-mount воркспейса недоступен хостовому демону):
+
+- backend (`discocs-test`) — `pytest --cov=app --cov-report=xml` → `coverage.xml`
+- бот (`discocs-bot-test`) — `pytest --cov=bot --cov-report=xml` → `bot-coverage.xml`
+- фронт (`discocs-ui-test`) — `vitest run --coverage` (provider v8, reporter lcov) → `ui/coverage/lcov.info`
+
+Оба Python-отчёта подхватываются `sonar.python.coverage.reportPaths=coverage.xml,bot-coverage.xml`,
+JS-отчёт — `sonar.javascript.lcov.reportPaths=ui/coverage/lcov.info`.
+
+Раньше тесты бота и фронтенда вообще не запускались в CI (только числились
+в `sonar.tests`), хотя лежали в репозитории — это был реальный пробел, а не
+просто нехватка coverage-метрики: `ui/package.json`'s `test` был на `node --test`
+вместо `vitest` (4 файла в `ui/tests` импортировали `test` из `node:test`,
+из-за чего vitest их не подхватывал), а `discocs_bot/pyproject.toml` не
+объявлял `pytest` даже как dev-зависимость.
+
+## Trivy (security scan)
+
+Стадия `Security Scan` в `Jenkinsfile` — после `Build & Push`, report-only
+(`--exit-code 0`, билд никогда не валится). Один инструмент закрывает то, что
+Sonar Community не умеет бесплатно (SCA — уязвимости в зависимостях):
+
+- `trivy fs` — CVE в `pnpm-lock.yaml` (фронтенд, покрытие полное) и в Python-зависимостях
+  (`pyproject.toml` — без lock-файла, поэтому резолвинг версий у Trivy неполный;
+  если понадобится точное покрытие, нужен `pip-compile`/`uv lock` для генерации lock-файла —
+  отдельная задача, пока не сделано, не прячем этот пробел);
+- `trivy image` — CVE в уже собранных образах `backend`/`frontend`/`bot`, через
+  `docker.sock` (не bind-mount воркспейса — тут монтируется только сокет, это работает).
+
+Секреты и Dockerfile/IaC-анализ Trivy не делает — это уже покрыто встроенными
+анализаторами Sonar (см. выше), дублировать не стали.
 
 ## Траблшутинг
 

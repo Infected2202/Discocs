@@ -49,15 +49,31 @@ pipeline {
       steps {
         // BuildKit нужен для --mount=type=cache в Dockerfile.test (кэш pip
         // переживает инвалидацию слоя с исходниками между билдами).
+        // Backend, бот и фронтенд тестируются отдельными образами — раньше
+        // реально гонялся только backend, хотя тесты бота/фронта лежали в
+        // репо и были прописаны в sonar.tests (баг, тесты никогда не запускались).
         sh 'DOCKER_BUILDKIT=1 docker build -f deploy/ci/Dockerfile.test -t discocs-test:${GIT_SHA} .'
+        sh 'DOCKER_BUILDKIT=1 docker build -f deploy/ci/Dockerfile.bot-test -t discocs-bot-test:${GIT_SHA} .'
+        sh 'DOCKER_BUILDKIT=1 docker build -f deploy/ci/Dockerfile.ui-test -t discocs-ui-test:${GIT_SHA} .'
         // create+start+cp вместо `docker run --rm`: агент собирает через хостовый
         // демон (docker-outside-of-docker), поэтому bind-mount воркспейса недоступен —
-        // coverage.xml достаём из уже остановленного контейнера через `docker cp`.
+        // coverage-отчёты достаём из уже остановленных контейнеров через `docker cp`.
         sh '''
           set -e
           CID=$(docker create discocs-test:${GIT_SHA})
           docker start -a "$CID"
           docker cp "$CID:/app/coverage.xml" coverage.xml
+          docker rm -f "$CID"
+
+          CID=$(docker create discocs-bot-test:${GIT_SHA})
+          docker start -a "$CID"
+          docker cp "$CID:/app/bot-coverage.xml" bot-coverage.xml
+          docker rm -f "$CID"
+
+          CID=$(docker create discocs-ui-test:${GIT_SHA})
+          docker start -a "$CID"
+          mkdir -p ui/coverage
+          docker cp "$CID:/build/coverage/lcov.info" ui/coverage/lcov.info
           docker rm -f "$CID"
         '''
       }
@@ -106,6 +122,24 @@ pipeline {
             }]
           })
         }
+      }
+    }
+
+    stage('Security Scan') {
+      steps {
+        // Trivy, report-only (--exit-code 0 — никогда не валит билд):
+        // 1) CVE в зависимостях (requirements/pnpm-lock) — образ собирается через
+        //    COPY (не bind-mount) по той же причине, что Dockerfile.test.
+        // 2) CVE в уже собранных образах — сокет докера, а не воркспейс,
+        //    поэтому -v тут работает (см. Docker Login/Build & Push выше).
+        sh 'DOCKER_BUILDKIT=1 docker build -f deploy/ci/Dockerfile.trivy-fs -t discocs-trivy-fs:${GIT_SHA} .'
+        sh 'docker run --rm discocs-trivy-fs:${GIT_SHA}'
+        sh '''
+          for svc in backend frontend bot; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+              aquasec/trivy image --exit-code 0 ${REGISTRY}/${IMAGE_NS}/${svc}:${GIT_SHA}
+          done
+        '''
       }
     }
   }

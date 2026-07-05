@@ -1,0 +1,19 @@
+# syntax=docker/dockerfile:1
+# Образ для прогона unit-тестов бота в CI — тот же паттерн, что Dockerfile.test
+# для backend'а (путь-независим, кэш pip переживает инвалидацию слоя с исходниками).
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY discocs_bot/pyproject.toml discocs_bot/README.md ./
+COPY discocs_bot/bot ./bot
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install --upgrade pip \
+    && python -m pip install -e ".[dev]"
+
+COPY discocs_bot/tests ./tests
+
+CMD ["python", "-m", "pytest", "-q", "--cov=bot", "--cov-report=xml:/app/bot-coverage.xml"]

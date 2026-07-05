@@ -1,0 +1,13 @@
+# syntax=docker/dockerfile:1
+# Образ для прогона unit-тестов фронтенда в CI (vitest + coverage-v8),
+# тот же build-стейдж, что deploy/nginx/Dockerfile использует для сборки.
+FROM node:24-alpine
+
+WORKDIR /build
+
+COPY ui/package.json ui/pnpm-lock.yaml ./
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    npm install -g pnpm@11 && pnpm install --frozen-lockfile
+COPY ui/ ./
+
+CMD ["pnpm", "test:coverage"]
