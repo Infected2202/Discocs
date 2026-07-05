@@ -9,8 +9,10 @@
 //
 // Credentials в Jenkins:
 //   - tank_nexus_user_pass (Username/Password)         — логин в Nexus для push (общий для всех джоб)
-//   - discocs_prod_env     (Secret file)               — прод .env с секретами (см. deploy/prod/.env.example)
 //   - HS_SSH_KEY           (SSH Username with private key) — деплой-ключ на TARGET_SERVER
+//
+// .env на TARGET_SERVER (TARGET_DIR/.env) — заводится и правится вручную на хосте,
+// CI его не трогает и не деплоит (см. deploy/prod/.env.example для списка переменных).
 
 pipeline {
   agent any
@@ -99,23 +101,22 @@ pipeline {
     success {
       script {
         if (env.IS_MAIN == 'true') {
-          // Деплой по SSH на целевой хост: заливаем актуальный compose+.env
+          // Деплой по SSH на целевой хост: заливаем актуальный compose-файл
           // в TARGET_DIR (git — источник правды) и там же pull/up.
-          withCredentials([file(credentialsId: 'discocs_prod_env', variable: 'PROD_ENV')]) {
-            sshagent(['HS_SSH_KEY']) {
-              sh '''
+          // .env на хосте — не наше дело: заводится и правится вручную,
+          // CI его не перезаписывает (см. комментарий в шапке файла).
+          sshagent(['HS_SSH_KEY']) {
+            sh '''
+              set -e
+              scp -P "$TARGET_PORT" -o StrictHostKeyChecking=no deploy/prod/docker-compose.yml "$TARGET_USER@$TARGET_SERVER:$TARGET_DIR/docker-compose.yml"
+              ssh -p "$TARGET_PORT" -o StrictHostKeyChecking=no "$TARGET_USER@$TARGET_SERVER" '
                 set -e
-                scp -P "$TARGET_PORT" -o StrictHostKeyChecking=no deploy/prod/docker-compose.yml "$TARGET_USER@$TARGET_SERVER:$TARGET_DIR/docker-compose.yml"
-                scp -P "$TARGET_PORT" -o StrictHostKeyChecking=no "$PROD_ENV" "$TARGET_USER@$TARGET_SERVER:$TARGET_DIR/.env"
-                ssh -p "$TARGET_PORT" -o StrictHostKeyChecking=no "$TARGET_USER@$TARGET_SERVER" '
-                  set -e
-                  cd '"$TARGET_DIR"'
-                  docker compose -p discocs --env-file .env pull
-                  docker compose -p discocs --env-file .env up -d --force-recreate --remove-orphans
-                  docker image prune -f
-                '
-              '''
-            }
+                cd '"$TARGET_DIR"'
+                docker compose -p discocs --env-file .env pull
+                docker compose -p discocs --env-file .env up -d --force-recreate --remove-orphans
+                docker image prune -f
+              '
+            '''
           }
           echo "Deployed discocs @ ${env.GIT_SHA}"
         } else {

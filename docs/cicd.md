@@ -11,7 +11,8 @@ push в Gitea ──webhook──> Jenkins
    └─ Build&Push   сборка backend/frontend/bot → Nexus (docker-dev @ :5000)
    │                 теги:  :<git-sha>  (всегда)   +  :latest  (только с main)
    └─ Deploy        [post/success, только main] по SSH на TARGET_SERVER:
-                       scp compose+.env в TARGET_DIR → docker compose pull && up -d --force-recreate
+                       scp compose в TARGET_DIR → docker compose pull && up -d --force-recreate
+                       (.env на хосте CI не трогает — заводится и правится вручную)
 ```
 
 Файлы:
@@ -45,12 +46,12 @@ push в Gitea ──webhook──> Jenkins
 | ID | Тип | Назначение |
 |---|---|---|
 | `tank_nexus_user_pass` | Username/Password | логин в Nexus для push *(уже есть, общий для всех джоб)* |
-| `discocs_prod_env` | Secret file | прод `.env` (содержимое `deploy/prod/.env.example`, заполненное) |
 | `HS_SSH_KEY` | SSH Username with private key | деплой-ключ на `TARGET_SERVER` *(уже есть)* |
 
-`discocs_prod_env`: заполни `deploy/prod/.env.example` реальными значениями
-(минимум `DISCOCS_MUSIC_DIR` и `DISCOCS_STATE_DIR`), сохрани как файл и загрузи в Jenkins →
-Manage Jenkins → Credentials → Add → **Secret file**, ID `discocs_prod_env`.
+`.env` в CI больше не участвует: заполни `deploy/prod/.env.example` реальными значениями
+(минимум `DISCOCS_MUSIC_DIR` и `DISCOCS_STATE_DIR`) и один раз положи как `TARGET_DIR/.env`
+прямо на хосте (`192.168.1.41`). Дальше CI его не трогает — правишь на месте, когда нужно
+поменять переменную (профиль бота, токен, URL Navidrome и т.п.), без пересборки/редеплоя.
 
 ### 2. Агент Jenkins (контейнер)
 
@@ -85,8 +86,8 @@ git remote set-url --add --push origin http://192.168.1.41:3064/HS/discocs.git
 ## Деплой и откат
 
 Деплой автоматический на успешной сборке `main`: Jenkins по SSH заливает
-`deploy/prod/docker-compose.yml` и заполненный `.env` в `TARGET_DIR` на
-`TARGET_SERVER` и там же гоняет `pull` + `up -d --force-recreate`. Вручную на хосте:
+`deploy/prod/docker-compose.yml` в `TARGET_DIR` на `TARGET_SERVER` (`.env` там уже лежит,
+CI его не перезаписывает) и там же гоняет `pull` + `up -d --force-recreate`. Вручную на хосте:
 
 ```bash
 cd /home/infected2202/docker/discocs   # TARGET_DIR, там же лежит .env
