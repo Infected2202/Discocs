@@ -322,7 +322,7 @@ class EmbeddingsStoreMixin:
                 """,
                 model_names,
             ).fetchall()
-        counts = {name: 0 for name in model_names}
+        counts = dict.fromkeys(model_names, 0)
         counts.update({str(row["model_name"]): int(row["count"]) for row in rows})
         return counts
 

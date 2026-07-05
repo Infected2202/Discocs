@@ -682,6 +682,11 @@ def test_store_model_output_round_trip_and_missing_pack_counts(tmp_path: Path):
     assert [track.id for track in store.list_tracks_missing_head_pack(["genre_discogs400", "danceability"])] == [
         second_id
     ]
+    assert store.count_model_outputs_by_model(["genre_discogs400", "danceability", "unused_model"]) == {
+        "genre_discogs400": 2,
+        "danceability": 1,
+        "unused_model": 0,
+    }
 
 
 def test_store_features_round_trip_and_missing_features_counts(tmp_path: Path):
