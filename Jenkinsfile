@@ -55,19 +55,23 @@ pipeline {
 
     stage('Build & Push') {
       steps {
-        script {
-          def base = "${REGISTRY}/${IMAGE_NS}"
-          def services = [
-            [name: 'backend',  df: 'deploy/backend/Dockerfile'],
-            [name: 'frontend', df: 'deploy/nginx/Dockerfile'],
-            [name: 'bot',      df: 'deploy/bot/Dockerfile'],
-          ]
-          docker.withRegistry("http://${REGISTRY}", 'nexus_token') {
+        // Плагин Docker Pipeline не установлен — используем голый docker CLI
+        // (он уже доступен агенту, см. стадию Test), без глобальной переменной `docker`.
+        withCredentials([usernamePassword(credentialsId: 'nexus_token', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
+          sh 'echo "$NEXUS_PASS" | docker login "$REGISTRY" -u "$NEXUS_USER" --password-stdin'
+          script {
+            def services = [
+              [name: 'backend',  df: 'deploy/backend/Dockerfile'],
+              [name: 'frontend', df: 'deploy/nginx/Dockerfile'],
+              [name: 'bot',      df: 'deploy/bot/Dockerfile'],
+            ]
             for (svc in services) {
-              def img = docker.build("${base}/${svc.name}:${env.GIT_SHA}", "-f ${svc.df} .")
-              img.push()                                   // :<git-sha> — неизменяемый, для отката
+              def img = "${REGISTRY}/${IMAGE_NS}/${svc.name}"
+              sh "docker build -f ${svc.df} -t ${img}:${GIT_SHA} ."
+              sh "docker push ${img}:${GIT_SHA}"             // :<git-sha> — неизменяемый, для отката
               if (env.IS_MAIN == 'true') {
-                img.push('latest')                         // :latest — перезапись, только с main
+                sh "docker tag ${img}:${GIT_SHA} ${img}:latest"
+                sh "docker push ${img}:latest"               // :latest — перезапись, только с main
               }
             }
           }
