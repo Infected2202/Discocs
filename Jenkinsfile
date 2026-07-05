@@ -58,20 +58,29 @@ pipeline {
     //   }
     // }
 
-    stage('Build & Push') {
+    stage('Docker Login') {
       steps {
         // Плагин Docker Pipeline не установлен — используем голый docker CLI
         // (он уже доступен агенту, см. стадию Test), без глобальной переменной `docker`.
         // tank_nexus_user_pass — тот же credential, что уже рабочий в другой джобе для push в Nexus.
         withCredentials([usernamePassword(credentialsId: 'tank_nexus_user_pass', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
           sh 'echo "$NEXUS_PASS" | docker login "$REGISTRY" -u "$NEXUS_USER" --password-stdin'
-          script {
-            def services = [
-              [name: 'backend',  df: 'deploy/backend/Dockerfile'],
-              [name: 'frontend', df: 'deploy/nginx/Dockerfile'],
-              [name: 'bot',      df: 'deploy/bot/Dockerfile'],
-            ]
-            for (svc in services) {
+        }
+      }
+    }
+
+    stage('Build & Push') {
+      steps {
+        script {
+          def services = [
+            [name: 'backend',  df: 'deploy/backend/Dockerfile'],
+            [name: 'frontend', df: 'deploy/nginx/Dockerfile'],
+            [name: 'bot',      df: 'deploy/bot/Dockerfile'],
+          ]
+          // Каждый сервис — своя ветка parallel, поэтому в stage view/Blue Ocean
+          // они видны раздельно, а не одной сплошной стадией.
+          parallel(services.collectEntries { svc ->
+            [(svc.name): {
               def img = "${REGISTRY}/${IMAGE_NS}/${svc.name}"
               sh "docker build -f ${svc.df} -t ${img}:${GIT_SHA} ."
               sh "docker push ${img}:${GIT_SHA}"             // :<git-sha> — неизменяемый, для отката
@@ -79,8 +88,8 @@ pipeline {
                 sh "docker tag ${img}:${GIT_SHA} ${img}:latest"
                 sh "docker push ${img}:latest"               // :latest — перезапись, только с main
               }
-            }
-          }
+            }]
+          })
         }
       }
     }
