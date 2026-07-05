@@ -7,6 +7,9 @@
 #
 # Откат на прошлый билд: поставь TAG=<git-sha> в .env и повтори up.
 # Бот стартует только при COMPOSE_PROFILES=bot (см. .env.example).
+#
+# Данные сервисов лежат на хосте под ${DISCOCS_STATE_DIR}/<discocs_backend|discocs_bot>/…
+# (bind-mount, не docker volume) — контексты сервисов не перемешиваются на диске.
 
 services:
   backend:
@@ -15,8 +18,8 @@ services:
     expose:
       - "7752"
     volumes:
-      - discocs-data:/app/data
-      - discocs-models:/app/models
+      - ${DISCOCS_STATE_DIR}/discocs_backend/data:/app/data
+      - ${DISCOCS_STATE_DIR}/discocs_backend/models:/app/models
       - type: bind
         source: ${DISCOCS_MUSIC_DIR:-/path/to/music}
         target: /music
@@ -59,12 +62,7 @@ services:
       SQLITE_PATH: /data/bot.sqlite
       TEMP_DIR: /data/tmp
     volumes:
-      - discocs-bot-data:/data
+      - ${DISCOCS_STATE_DIR}/discocs_bot:/data
     depends_on:
       backend:
         condition: service_healthy
-
-volumes:
-  discocs-data:
-  discocs-models:
-  discocs-bot-data:
