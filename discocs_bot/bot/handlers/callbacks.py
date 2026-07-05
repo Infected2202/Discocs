@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 LOADING_CAPTION = "⏳ Готовлю..."
 ERROR_DETAIL_LIMIT = 600
+NAVIDROME_UNAVAILABLE = "Navidrome сейчас недоступен."
 
 
 async def _safe_edit_text(message, text: str) -> None:
@@ -146,7 +147,7 @@ async def _restore_card_after_error(
     try:
         track = await navidrome.get_song(song_id)
     except NavidromeError:
-        await _set_card_error(query, "Navidrome сейчас недоступен.")
+        await _set_card_error(query, NAVIDROME_UNAVAILABLE)
         return
     if not await edit_track_card(
         context.bot,
@@ -183,7 +184,7 @@ async def _handle_get(update: Update, context: ContextTypes.DEFAULT_TYPE, song_i
         track = await navidrome.get_song(song_id)
         remember_last_track(context, song_id=song_id, title=track.display_line)
     except NavidromeError:
-        await message.reply_text("Navidrome сейчас недоступен.")
+        await message.reply_text(NAVIDROME_UNAVAILABLE)
         return
 
     try:
@@ -209,7 +210,7 @@ async def _handle_get(update: Update, context: ContextTypes.DEFAULT_TYPE, song_i
             user_id=user.id if user else None,
         )
     except NavidromeError:
-        await _safe_edit_loading_message(loading, "Navidrome сейчас недоступен.")
+        await _safe_edit_loading_message(loading, NAVIDROME_UNAVAILABLE)
     except TranscodeError as exc:
         if str(exc) == "file_too_large":
             await _safe_edit_loading_message(
@@ -247,7 +248,7 @@ async def _handle_album(update: Update, context: ContextTypes.DEFAULT_TYPE, albu
         )
         await telegram_retry(lambda: status.delete(), description="delete_album_status")
     except NavidromeError:
-        await _safe_edit_text(status, "Navidrome сейчас недоступен.")
+        await _safe_edit_text(status, NAVIDROME_UNAVAILABLE)
     except TranscodeError as exc:
         if str(exc) == "file_too_large":
             await _safe_edit_text(
@@ -321,9 +322,9 @@ async def send_radio_page(
         )
     except NavidromeError:
         if status:
-            await status.edit_text("Navidrome сейчас недоступен.")
+            await status.edit_text(NAVIDROME_UNAVAILABLE)
         else:
-            await message.reply_text("Navidrome сейчас недоступен.")
+            await message.reply_text(NAVIDROME_UNAVAILABLE)
         return
     except DiscocsError as exc:
         if status:
@@ -369,7 +370,7 @@ async def _handle_radio(update: Update, context: ContextTypes.DEFAULT_TYPE, song
     try:
         source = await navidrome.get_song(song_id)
     except NavidromeError:
-        await message.reply_text("Navidrome сейчас недоступен.")
+        await message.reply_text(NAVIDROME_UNAVAILABLE)
         return
 
     context.user_data[RADIO_SEED_KEY] = song_id

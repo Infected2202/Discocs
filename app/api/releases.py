@@ -30,13 +30,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_RELEASE_NOT_FOUND = "Release not found"
+
 
 @router.get("/api/v1/releases/{release_id}", response_model=ReleaseResponse)
 def api_v1_release(release_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     release = store.get_release(release_id)
     if release is None:
-        return api_error(404, "not_found", "Release not found")
+        return api_error(404, "not_found", _RELEASE_NOT_FOUND)
     return {
         "release": release_summary_dict(release),
         "actions": [entity_action("play", True, None), entity_action("shuffle", True, None)],
@@ -53,7 +55,7 @@ def api_v1_release_tracks(release_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     release = store.get_release(release_id)
     if release is None:
-        return api_error(404, "not_found", "Release not found")
+        return api_error(404, "not_found", _RELEASE_NOT_FOUND)
     return {
         "release": {"id": release.release.id, "title": release.release.title},
         "items": [release_track_dict(store, item) for item in store.list_release_tracks(release_id)],
@@ -65,7 +67,7 @@ def api_v1_release_related_discography(release_id: int) -> dict[str, object] | J
     store, _settings = context()
     release = store.get_release(release_id)
     if release is None:
-        return api_error(404, "not_found", "Release not found")
+        return api_error(404, "not_found", _RELEASE_NOT_FOUND)
     items = store.related_discography_for_release(release_id)
     return {
         "release": {"id": release.release.id, "title": release.release.title},
@@ -86,7 +88,7 @@ def api_v1_release_recommendations(
     store, settings = context()
     release = store.get_release(release_id)
     if release is None:
-        return api_error(404, "not_found", "Release not found")
+        return api_error(404, "not_found", _RELEASE_NOT_FOUND)
 
     model_name = settings.default_model
     source_centroid = store.load_release_embedding(release_id, model_name)
@@ -145,7 +147,7 @@ def api_v1_release_cover(
     store, settings = context()
     release = store.get_release(release_id)
     if release is None:
-        return api_error(404, "not_found", "Release not found")
+        return api_error(404, "not_found", _RELEASE_NOT_FOUND)
     if not release.release.cover_art_id:
         return api_error(404, "not_found", "Release has no cover art")
     try:

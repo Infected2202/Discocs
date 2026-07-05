@@ -16,6 +16,8 @@ from app.state import (
     MAX_AUDIO_FEATURE_WORKERS,
 )
 
+_EXECUTION_MODE_PATTERN = "^(both|local|remote)$"
+
 
 # ---------------------------------------------------------------------------
 # Analysis / worker
@@ -32,7 +34,7 @@ class AnalyzeRequest(BaseModel):
     )
     local_executor_enabled: bool = True
     max_attempts: int = Field(default=3, ge=1, le=20)
-    execution_mode: str = Field(default="both", pattern="^(both|local|remote)$")
+    execution_mode: str = Field(default="both", pattern=_EXECUTION_MODE_PATTERN)
 
 
 class WorkerRegisterRequest(BaseModel):
@@ -133,7 +135,7 @@ class AnalyzeHeadsRequest(BaseModel):
     limit: int | None = Field(default=None, ge=1)
     local_executor_enabled: bool = True
     max_attempts: int = Field(default=3, ge=1, le=20)
-    execution_mode: str = Field(default="both", pattern="^(both|local|remote)$")
+    execution_mode: str = Field(default="both", pattern=_EXECUTION_MODE_PATTERN)
 
 
 class AnalyzeAudioFeaturesRequest(BaseModel):
@@ -141,7 +143,7 @@ class AnalyzeAudioFeaturesRequest(BaseModel):
     workers: int = Field(default=DEFAULT_AUDIO_FEATURE_WORKERS, ge=1, le=MAX_AUDIO_FEATURE_WORKERS)
     local_executor_enabled: bool = True
     max_attempts: int = Field(default=3, ge=1, le=20)
-    execution_mode: str = Field(default="both", pattern="^(both|local|remote)$")
+    execution_mode: str = Field(default="both", pattern=_EXECUTION_MODE_PATTERN)
     reset_existing: bool = False
     extractor: str = AUDIO_FEATURE_EXTRACTOR
 

@@ -73,6 +73,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_WAITING_TO_SYNC_NAVIDROME = "Waiting to sync Navidrome catalog"
+
 
 # ---------------------------------------------------------------------------
 # Stats cache helpers
@@ -496,7 +498,7 @@ def start_navidrome_sync(
         known_total = request.limit or store.count_external_tracks("navidrome") or 0
         job = store.create_progress_job(
             "navidrome-sync", "navidrome",
-            total=known_total, message="Waiting to sync Navidrome catalog", job_id=job_id,
+            total=known_total, message=_WAITING_TO_SYNC_NAVIDROME, job_id=job_id,
         )
         args = (job.id, request.page_size, request.limit, request.mark_stale)
         if tasks is None:
@@ -514,7 +516,7 @@ def start_navidrome_sync(
     store, _settings = context()
     deferred_job_id, deferred = create_deferred_job_if_busy(
         "navidrome-sync",
-        "Waiting to sync Navidrome catalog",
+        _WAITING_TO_SYNC_NAVIDROME,
         lambda job_id: lambda: start_now(job_id, None),
         store=store,
     )
@@ -526,7 +528,7 @@ def start_navidrome_sync(
             "limit": request.limit,
             "mark_stale": request.mark_stale,
         }
-    job_id = create_job("navidrome-sync", "Waiting to sync Navidrome catalog")
+    job_id = create_job("navidrome-sync", _WAITING_TO_SYNC_NAVIDROME)
     return start_now(job_id, background_tasks)
 
 

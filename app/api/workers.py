@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_TASK_NOT_FOUND = "Task not found"
+_SQLITE_BUSY_RETRY_SUBMIT = "SQLite is busy; retry submit"
+
 
 def _audio_response_media_type(path: Path) -> str | None:
     suffix = path.suffix.lower()
@@ -64,7 +67,7 @@ def get_worker_task_state(task_id: str, worker_id: str) -> dict[str, object]:
     store, _settings = context()
     task = store.get_analysis_task(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND)
     job_status = store.get_analysis_job_status(task.job_id)
     active = (
         task.status == "leased"
@@ -144,7 +147,7 @@ def get_worker_task_audio(task_id: str) -> FileResponse:
     store, settings = context()
     task = store.get_analysis_task(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND)
     if task.status != "leased":
         raise HTTPException(status_code=409, detail=f"Task is not active: {task.status}")
     job_status = store.get_analysis_job_status(task.job_id)
@@ -211,12 +214,12 @@ def submit_worker_results(
         )
     except sqlite3.OperationalError as exc:
         if is_sqlite_locked(exc):
-            raise HTTPException(status_code=503, detail="SQLite is busy; retry submit") from exc
+            raise HTTPException(status_code=503, detail=_SQLITE_BUSY_RETRY_SUBMIT) from exc
         raise
 
     def reject_task(task_id: str, exc: Exception, log_label: str) -> None:
         if is_sqlite_locked(exc):
-            raise HTTPException(status_code=503, detail="SQLite is busy; retry submit") from exc
+            raise HTTPException(status_code=503, detail=_SQLITE_BUSY_RETRY_SUBMIT) from exc
         rejected.append({"task_id": task_id, "error": str(exc)})
         try:
             sqlite_retry(
@@ -227,7 +230,7 @@ def submit_worker_results(
             )
         except sqlite3.OperationalError as lock_exc:
             if is_sqlite_locked(lock_exc):
-                raise HTTPException(status_code=503, detail="SQLite is busy; retry submit") from lock_exc
+                raise HTTPException(status_code=503, detail=_SQLITE_BUSY_RETRY_SUBMIT) from lock_exc
             raise
         except Exception:
             logger.exception("Failed to mark worker %s rejected task_id=%s", log_label, task_id)
@@ -309,7 +312,7 @@ def submit_worker_results(
                     (item.task_id,),
                 ).fetchone()
                 if row is None:
-                    raise ValueError("Task not found")
+                    raise ValueError(_TASK_NOT_FOUND)
                 if str(row["status"]) != "leased":
                     raise ValueError(f"Task is not active: {row['status']}")
                 if row["lease_owner"] != request.worker_id:
@@ -372,7 +375,7 @@ def submit_worker_results(
             return sqlite_retry(operation)
         except sqlite3.OperationalError as exc:
             if is_sqlite_locked(exc):
-                raise HTTPException(status_code=503, detail="SQLite is busy; retry submit") from exc
+                raise HTTPException(status_code=503, detail=_SQLITE_BUSY_RETRY_SUBMIT) from exc
             raise
 
     accepted: list[str] = []

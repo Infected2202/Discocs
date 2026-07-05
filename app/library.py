@@ -9,6 +9,7 @@ from typing import Any
 
 UNKNOWN_ARTIST_NAME = "Unknown Artist"
 UNKNOWN_RELEASE_TYPE = "unknown"
+_NAVIDROME_URI_PREFIX = "navidrome://"
 VALID_RELEASE_TYPES = {
     "album",
     "ep",
@@ -209,7 +210,7 @@ def _release_folder_key(path: str | None, *, has_album: bool) -> str | None:
         parsed = Path(path)
     except (TypeError, ValueError):
         return None
-    if str(path).startswith("navidrome://"):
+    if str(path).startswith(_NAVIDROME_URI_PREFIX):
         return None
     parent = parsed.parent if has_album else parsed
     text = parent.as_posix() if parent != Path(".") else ""
@@ -220,8 +221,8 @@ def _release_folder_key(path: str | None, *, has_album: bool) -> str | None:
 def _path_stem(path: str | None) -> str | None:
     if not path:
         return None
-    if str(path).startswith("navidrome://"):
-        return str(path).removeprefix("navidrome://") or None
+    if str(path).startswith(_NAVIDROME_URI_PREFIX):
+        return str(path).removeprefix(_NAVIDROME_URI_PREFIX) or None
     return clean_display_text(Path(path).stem)
 
 

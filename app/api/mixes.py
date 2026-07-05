@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_GENERATED_MIX_NOT_FOUND = "Generated mix not found"
+
 
 # ---------------------------------------------------------------------------
 # Generated mixes
@@ -112,7 +114,7 @@ def api_v1_mix_detail(mix_id: str, include_debug: bool = False) -> dict[str, obj
     store, _settings = context()
     mix = store.get_generated_mix(mix_id)
     if mix is None:
-        return api_error(404, "not_found", "Generated mix not found")
+        return api_error(404, "not_found", _GENERATED_MIX_NOT_FOUND)
     detail = generated_mix_detail_dict(store, mix)
     if not include_debug:
         detail.pop("score_summary", None)
@@ -127,7 +129,7 @@ def api_v1_mix_cover(mix_id: str) -> FileResponse | JSONResponse:
     store, _settings = context()
     mix = store.get_generated_mix(mix_id)
     if mix is None:
-        return api_error(404, "not_found", "Generated mix not found")
+        return api_error(404, "not_found", _GENERATED_MIX_NOT_FOUND)
     if not mix.cover_path:
         return api_error(404, "not_found", "Generated mix has no cover")
     path = Path(mix.cover_path)
@@ -162,7 +164,7 @@ def api_v1_save_mix(mix_id: str) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     mix = store.save_generated_mix_as_playlist(mix_id)
     if mix is None:
-        return api_error(404, "not_found", "Generated mix not found")
+        return api_error(404, "not_found", _GENERATED_MIX_NOT_FOUND)
     return generated_mix_summary_dict(store, mix)
 
 
@@ -171,7 +173,7 @@ def api_v1_play_mix(mix_id: str) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     mix = store.get_generated_mix(mix_id)
     if mix is None:
-        return api_error(404, "not_found", "Generated mix not found")
+        return api_error(404, "not_found", _GENERATED_MIX_NOT_FOUND)
     track_ids = [item.track_id for item in store.list_generated_mix_items(mix_id)]
     if not track_ids:
         return api_error(409, "empty_mix", "Generated mix has no playable tracks")

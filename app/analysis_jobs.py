@@ -55,6 +55,7 @@ from app.state import (
 
 logger = logging.getLogger(__name__)
 analysis_logger = get_analysis_logger()
+_ANALYZE_CANCELLED_SHUTDOWN = "Analyze cancelled during application shutdown"
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +186,7 @@ def _analyze_job(
     from app.api.deps import context
     try:
         if _state.SHUTDOWN_REQUESTED:
-            finish_job(job_id, "failed", "Analyze cancelled during application shutdown")
+            finish_job(job_id, "failed", _ANALYZE_CANCELLED_SHUTDOWN)
             return
         store, settings = context()
         if enqueue:
@@ -222,7 +223,7 @@ def _analyze_job(
         failed = 0
         while True:
             if _state.SHUTDOWN_REQUESTED:
-                finish_job(job_id, "failed", "Analyze cancelled during application shutdown")
+                finish_job(job_id, "failed", _ANALYZE_CANCELLED_SHUTDOWN)
                 return
             tasks = store.claim_analysis_tasks(local_worker_id, [model], limit=max(workers, 1), lease_seconds=3600)
             if not tasks:
@@ -238,7 +239,7 @@ def _analyze_job(
                 continue
             for result in _iter_analyze_task_results(tasks, store, settings, model, workers, tf_threads):
                 if _state.SHUTDOWN_REQUESTED:
-                    finish_job(job_id, "failed", "Analyze cancelled during application shutdown")
+                    finish_job(job_id, "failed", _ANALYZE_CANCELLED_SHUTDOWN)
                     return
                 update_job(job_id, current=result.path, message=f"Analyzing {result.path}")
                 if result.task_id is None:

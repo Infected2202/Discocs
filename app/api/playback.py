@@ -41,6 +41,8 @@ from app.serializers.playback import (
 
 router = APIRouter()
 
+_PLAYBACK_SESSION_NOT_FOUND = "Playback session not found"
+
 
 @router.get("/api/v1/playback/settings", response_model=PlaybackSettingsResponse)
 def api_v1_playback_settings() -> dict[str, object]:
@@ -55,7 +57,7 @@ def api_v1_autoplay_refill(
     store, settings = context()
     session = store.get_playback_session(request.session_id)
     if session is None:
-        return api_error(404, "not_found", "Playback session not found")
+        return api_error(404, "not_found", _PLAYBACK_SESSION_NOT_FOUND)
     if not session.autoplay_enabled:
         return {
             "session_id": session.id,
@@ -117,7 +119,7 @@ def api_v1_get_playback_session(session_id: str) -> dict[str, object] | JSONResp
     store, _settings = context()
     session = store.get_playback_session(session_id)
     if session is None:
-        return api_error(404, "not_found", "Playback session not found")
+        return api_error(404, "not_found", _PLAYBACK_SESSION_NOT_FOUND)
     return playback_session_response(store, session)
 
 
@@ -145,7 +147,7 @@ def api_v1_update_playback_session(
     except ValueError as exc:
         return api_error(400, "invalid_request", str(exc))
     if session is None:
-        return api_error(404, "not_found", "Playback session not found")
+        return api_error(404, "not_found", _PLAYBACK_SESSION_NOT_FOUND)
     return playback_session_response(store, session)
 
 
@@ -157,7 +159,7 @@ def api_v1_get_playback_queue(
     store, _settings = context()
     session = store.get_playback_session(session_id)
     if session is None:
-        return api_error(404, "not_found", "Playback session not found")
+        return api_error(404, "not_found", _PLAYBACK_SESSION_NOT_FOUND)
     items = store.list_queue_items(session_id)
     return {"session": playback_session_dict(store, session), "queue": playback_queue_dict(store, session, items, include_debug)}
 
@@ -170,7 +172,7 @@ def api_v1_patch_playback_queue(
     store, _settings = context()
     session = store.get_playback_session(session_id)
     if session is None:
-        return api_error(404, "not_found", "Playback session not found")
+        return api_error(404, "not_found", _PLAYBACK_SESSION_NOT_FOUND)
     try:
         if request.operation == "replace":
             store.replace_queue_items(session_id, queue_patch_items(request))

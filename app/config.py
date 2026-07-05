@@ -14,12 +14,13 @@ MODEL_FILES = {
     "discogs_label": "discogs_label_embeddings-effnet-bs64-1.pb",
 }
 
+_DEFAULT_MODEL_OUTPUT = "PartitionedCall:1"
 MODEL_OUTPUTS = {
-    "discogs_effnet": "PartitionedCall:1",
-    "discogs_multi": "PartitionedCall:1",
-    "discogs_track": "PartitionedCall:1",
-    "discogs_release": "PartitionedCall:1",
-    "discogs_label": "PartitionedCall:1",
+    "discogs_effnet": _DEFAULT_MODEL_OUTPUT,
+    "discogs_multi": _DEFAULT_MODEL_OUTPUT,
+    "discogs_track": _DEFAULT_MODEL_OUTPUT,
+    "discogs_release": _DEFAULT_MODEL_OUTPUT,
+    "discogs_label": _DEFAULT_MODEL_OUTPUT,
 }
 
 DISCOGS_EFFNET_MODEL = "discogs_effnet"

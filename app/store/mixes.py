@@ -100,6 +100,7 @@ from app.scanner import ScannedTrack
 logger = logging.getLogger(__name__)
 INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
+_SELECT_GENERATED_MIX_BY_ID = "SELECT * FROM generated_mixes WHERE id = ?"
 
 class MixesStoreMixin:
     def save_generated_mix(
@@ -188,7 +189,7 @@ class MixesStoreMixin:
                     ),
                 )
             row = conn.execute(
-                "SELECT * FROM generated_mixes WHERE id = ?",
+                _SELECT_GENERATED_MIX_BY_ID,
                 (mix_id,),
             ).fetchone()
         if row is None:
@@ -202,7 +203,7 @@ class MixesStoreMixin:
                 (cover_path, utc_now(), mix_id),
             )
             row = conn.execute(
-                "SELECT * FROM generated_mixes WHERE id = ?",
+                _SELECT_GENERATED_MIX_BY_ID,
                 (mix_id,),
             ).fetchone()
         return row_to_generated_mix(row) if row else None
@@ -257,7 +258,7 @@ class MixesStoreMixin:
     def get_generated_mix(self, mix_id: str) -> GeneratedMix | None:
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM generated_mixes WHERE id = ?",
+                _SELECT_GENERATED_MIX_BY_ID,
                 (mix_id,),
             ).fetchone()
         return row_to_generated_mix(row) if row else None
@@ -335,7 +336,7 @@ class MixesStoreMixin:
                 (playlist_id, now, mix_id),
             )
             row = conn.execute(
-                "SELECT * FROM generated_mixes WHERE id = ?",
+                _SELECT_GENERATED_MIX_BY_ID,
                 (mix_id,),
             ).fetchone()
         return row_to_generated_mix(row) if row else None

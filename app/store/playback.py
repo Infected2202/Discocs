@@ -113,6 +113,7 @@ from app.scanner import ScannedTrack
 logger = logging.getLogger(__name__)
 INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
+_TOUCH_PLAYBACK_SESSION = "UPDATE playback_sessions SET updated_at = ? WHERE id = ?"
 
 class PlaybackStoreMixin:
     def create_playback_session(
@@ -404,7 +405,7 @@ class PlaybackStoreMixin:
                     ),
                 )
             conn.execute(
-                "UPDATE playback_sessions SET updated_at = ? WHERE id = ?",
+                _TOUCH_PLAYBACK_SESSION,
                 (now, session_id),
             )
             rows = conn.execute(
@@ -429,7 +430,7 @@ class PlaybackStoreMixin:
                 (now, queue_item_id, session_id),
             )
             conn.execute(
-                "UPDATE playback_sessions SET updated_at = ? WHERE id = ?",
+                _TOUCH_PLAYBACK_SESSION,
                 (now, session_id),
             )
             row = conn.execute(
@@ -469,7 +470,7 @@ class PlaybackStoreMixin:
                     (index, now, item.id),
                 )
             conn.execute(
-                "UPDATE playback_sessions SET updated_at = ? WHERE id = ?",
+                _TOUCH_PLAYBACK_SESSION,
                 (now, session_id),
             )
             rows = conn.execute(

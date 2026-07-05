@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 EDIT_RETRY_ATTEMPTS = 3
 EDIT_RETRY_DELAY_SEC = 0.4
+COVER_FILENAME = "cover.jpg"
 
 
 def format_track_card(track: Track) -> str:
@@ -57,7 +58,7 @@ async def send_track_card(
         with cover_path.open("rb") as cover_file:
             return await bot.send_photo(
                 chat_id=chat_id,
-                photo=InputFile(cover_file, filename="cover.jpg"),
+                photo=InputFile(cover_file, filename=COVER_FILENAME),
                 caption=caption,
                 reply_markup=keyboard,
             )
@@ -82,7 +83,7 @@ async def send_track_loading_card(
         with cover_path.open("rb") as cover_file:
             return await bot.send_photo(
                 chat_id=chat_id,
-                photo=InputFile(cover_file, filename="cover.jpg"),
+                photo=InputFile(cover_file, filename=COVER_FILENAME),
                 caption=caption,
             )
     finally:
@@ -118,7 +119,7 @@ async def edit_track_card(
                         media=InputMediaPhoto(
                             media=InputFile(
                                 cover_file,
-                                filename="cover.jpg",
+                                filename=COVER_FILENAME,
                                 attach=True,
                             ),
                             caption=caption,

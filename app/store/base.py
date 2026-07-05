@@ -89,6 +89,7 @@ from app.scanner import ScannedTrack
 logger = logging.getLogger(__name__)
 INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
+_INT_NOT_NULL_DEFAULT_0 = "INTEGER NOT NULL DEFAULT 0"
 
 class StoreBase:
     def __init__(self, db_path: Path):
@@ -718,12 +719,12 @@ class StoreBase:
             self._ensure_column(conn, "tracks", "added_at", "TEXT")
             self._ensure_column(conn, "releases", "added_at", "TEXT")
             self._ensure_column(conn, "analysis_jobs", "kind", "TEXT NOT NULL DEFAULT 'analyze'")
-            self._ensure_column(conn, "analysis_jobs", "progress_done", "INTEGER NOT NULL DEFAULT 0")
-            self._ensure_column(conn, "analysis_jobs", "progress_failed", "INTEGER NOT NULL DEFAULT 0")
-            self._ensure_column(conn, "analysis_workers", "claimed_count", "INTEGER NOT NULL DEFAULT 0")
-            self._ensure_column(conn, "analysis_workers", "completed_count", "INTEGER NOT NULL DEFAULT 0")
-            self._ensure_column(conn, "analysis_workers", "failed_count", "INTEGER NOT NULL DEFAULT 0")
-            self._ensure_column(conn, "analysis_workers", "released_count", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "analysis_jobs", "progress_done", _INT_NOT_NULL_DEFAULT_0)
+            self._ensure_column(conn, "analysis_jobs", "progress_failed", _INT_NOT_NULL_DEFAULT_0)
+            self._ensure_column(conn, "analysis_workers", "claimed_count", _INT_NOT_NULL_DEFAULT_0)
+            self._ensure_column(conn, "analysis_workers", "completed_count", _INT_NOT_NULL_DEFAULT_0)
+            self._ensure_column(conn, "analysis_workers", "failed_count", _INT_NOT_NULL_DEFAULT_0)
+            self._ensure_column(conn, "analysis_workers", "released_count", _INT_NOT_NULL_DEFAULT_0)
             self._ensure_column(conn, "analysis_workers", "current_task_id", "TEXT")
             self._ensure_column(conn, "analysis_workers", "stage", "TEXT")
             self._ensure_column(conn, "analysis_workers", "message", "TEXT")
@@ -731,7 +732,7 @@ class StoreBase:
             self._ensure_column(conn, "playback_sessions", "current_queue_item_id", "TEXT")
             self._ensure_column(conn, "playback_sessions", "settings_json", "TEXT")
             self._ensure_column(conn, "playback_sessions", "state_json", "TEXT")
-            self._ensure_column(conn, "queue_items", "locked", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "queue_items", "locked", _INT_NOT_NULL_DEFAULT_0)
             self._ensure_column(conn, "queue_items", "reason", "TEXT")
             self._ensure_column(conn, "queue_items", "score", "REAL")
             self._ensure_column(conn, "queue_items", "debug_json", "TEXT")

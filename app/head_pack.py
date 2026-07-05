@@ -16,11 +16,13 @@ HEAD_PACK_NAME = "discogs-effnet-heads"
 HEAD_INPUT = "serving_default_model_Placeholder"
 HEAD_OUTPUT = "PartitionedCall:0"
 HEAD_TOP_N = 20
+_MODEL_PLACEHOLDER = "model/Placeholder"
 HEAD_TENSOR_FALLBACKS = (
-    ("model/Placeholder", "model/Sigmoid"),
-    ("model/Placeholder", "model/Softmax"),
-    ("model/Placeholder", "model/Identity"),
+    (_MODEL_PLACEHOLDER, "model/Sigmoid"),
+    (_MODEL_PLACEHOLDER, "model/Softmax"),
+    (_MODEL_PLACEHOLDER, "model/Identity"),
 )
+_JSON_SUFFIX = ".json"
 CLASSIFICATION_HEAD_BASE_URL = "https://essentia.upf.edu/models/classification-heads"
 FEATURE_EXTRACTOR_BASE_URL = "https://essentia.upf.edu/models/feature-extractors/discogs-effnet"
 logger = logging.getLogger(__name__)
@@ -82,7 +84,7 @@ def _head(
         id=model_id,
         folder=folder,
         filename=filename,
-        metadata_filename=metadata_filename or filename.replace(".pb", ".json"),
+        metadata_filename=metadata_filename or filename.replace(".pb", _JSON_SUFFIX),
         output_kind=output_kind,
     )
 
@@ -281,7 +283,7 @@ def known_model_files(
         current = by_filename.get(filename)
         if current is None:
             by_filename[filename] = {
-                "model": filename.replace(".pb", "").replace(".json", ""),
+                "model": filename.replace(".pb", "").replace(_JSON_SUFFIX, ""),
                 "filename": filename,
                 "path": str(settings.model_dir / filename),
                 "source_url": source_url,
@@ -299,13 +301,13 @@ def download_model_file(settings: Settings, filename: str, source_url: str) -> D
     settings.model_dir.mkdir(parents=True, exist_ok=True)
     path = settings.model_dir / filename
     if path.exists():
-        if path.suffix == ".json":
+        if path.suffix == _JSON_SUFFIX:
             load_metadata_json(path)
         logger.info("Model file already present path=%s", path)
         return DownloadResult(path=path, source_url=source_url, downloaded=False)
     logger.info("Downloading model file path=%s url=%s", path, source_url)
     urlretrieve(source_url, path)
-    if path.suffix == ".json":
+    if path.suffix == _JSON_SUFFIX:
         load_metadata_json(path)
     return DownloadResult(path=path, source_url=source_url, downloaded=True)
 

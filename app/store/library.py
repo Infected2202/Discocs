@@ -98,6 +98,7 @@ from app.scanner import ScannedTrack
 logger = logging.getLogger(__name__)
 INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
+_DELETE_RELEASE_ARTISTS = "DELETE FROM release_artists WHERE release_id = ?"
 
 class LibraryStoreMixin:
     def upsert_track(self, scanned: ScannedTrack) -> tuple[int, bool]:
@@ -457,7 +458,7 @@ class LibraryStoreMixin:
         now: str,
     ) -> None:
         if clean_display_text(explicit_credit):
-            conn.execute("DELETE FROM release_artists WHERE release_id = ?", (release_id,))
+            conn.execute(_DELETE_RELEASE_ARTISTS, (release_id,))
             for credit in parse_artist_credit(explicit_credit):
                 explicit = replace(credit, confidence="explicit")
                 artist_id = self._upsert_artist(conn, explicit.name, now)
@@ -502,7 +503,7 @@ class LibraryStoreMixin:
             """,
             (release_id,),
         ).fetchall()
-        conn.execute("DELETE FROM release_artists WHERE release_id = ?", (release_id,))
+        conn.execute(_DELETE_RELEASE_ARTISTS, (release_id,))
 
         if not rows:
             return
@@ -598,7 +599,7 @@ class LibraryStoreMixin:
             (release_id,),
         ).fetchone()
         if has_tracks is None:
-            conn.execute("DELETE FROM release_artists WHERE release_id = ?", (release_id,))
+            conn.execute(_DELETE_RELEASE_ARTISTS, (release_id,))
         else:
             self._refresh_release_artists(conn, release_id, explicit_credit=None, now=now)
         self._refresh_release_basics(conn, release_id, now)

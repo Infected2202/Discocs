@@ -26,13 +26,15 @@ from app.serializers.entities import (
 
 router = APIRouter()
 
+_ARTIST_NOT_FOUND = "Artist not found"
+
 
 @router.get("/api/v1/artists/{artist_id}", response_model=ArtistResponse)
 def api_v1_artist(artist_id: int) -> dict[str, object] | JSONResponse:
     store, settings = context()
     artist = store.get_artist(artist_id)
     if artist is None:
-        return api_error(404, "not_found", "Artist not found")
+        return api_error(404, "not_found", _ARTIST_NOT_FOUND)
     top = store.top_tracks_for_artist(artist_id, limit=100)
     artists_by_track = store.artists_for_tracks([track.id for track, _ in top])
     top_tracks = []
@@ -63,7 +65,7 @@ def api_v1_artist_discography(
     store, _settings = context()
     artist = store.get_artist(artist_id)
     if artist is None:
-        return api_error(404, "not_found", "Artist not found")
+        return api_error(404, "not_found", _ARTIST_NOT_FOUND)
     titles = {
         "albums": "Albums",
         "eps": "EPs",
@@ -107,7 +109,7 @@ def api_v1_artist_image(artist_id: int) -> dict[str, object] | JSONResponse:
     store, settings = context()
     artist = store.get_artist(artist_id)
     if artist is None:
-        return api_error(404, "not_found", "Artist not found")
+        return api_error(404, "not_found", _ARTIST_NOT_FOUND)
     summary = artist_summary_with_external_image(store, settings, artist)
     image = summary["image"] if isinstance(summary.get("image"), dict) else image_ref(None)
     if not image.get("url"):
@@ -121,7 +123,7 @@ def api_v1_artist_cover(artist_id: int) -> JSONResponse | RedirectResponse:
     store, settings = context()
     artist = store.get_artist(artist_id)
     if artist is None:
-        return api_error(404, "not_found", "Artist not found")
+        return api_error(404, "not_found", _ARTIST_NOT_FOUND)
     summary = artist_summary_with_external_image(store, settings, artist)
     image = summary["image"] if isinstance(summary.get("image"), dict) else {}
     url = image.get("url")
@@ -135,7 +137,7 @@ def api_v1_artist_top_tracks(artist_id: int) -> dict[str, object] | JSONResponse
     store, _settings = context()
     artist = store.get_artist(artist_id)
     if artist is None:
-        return api_error(404, "not_found", "Artist not found")
+        return api_error(404, "not_found", _ARTIST_NOT_FOUND)
     top = store.top_tracks_for_artist(artist_id, limit=100)
     artists_by_track = store.artists_for_tracks([track.id for track, _ in top])
     items = []
@@ -156,5 +158,5 @@ def api_v1_artist_similar(artist_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     artist = store.get_artist(artist_id)
     if artist is None:
-        return api_error(404, "not_found", "Artist not found")
+        return api_error(404, "not_found", _ARTIST_NOT_FOUND)
     return {"artist": artist_link_dict(artist.artist), "items": [], "available": False, "basis": "not_available"}

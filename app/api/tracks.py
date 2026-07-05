@@ -50,6 +50,9 @@ navidrome_logger = logging.getLogger("discocs.navidrome")
 
 router = APIRouter()
 
+_EMBEDDING_STATUS_PATTERN = "^(all|ready|missing)$"
+_TRACK_NOT_FOUND = "Track not found"
+
 
 # ---------------------------------------------------------------------------
 # Track listing / search / browse
@@ -59,7 +62,7 @@ router = APIRouter()
 def list_tracks(
     query: str = "",
     limit: int = Query(50, ge=1, le=500),
-    embedding_status: str = Query("all", pattern="^(all|ready|missing)$"),
+    embedding_status: str = Query("all", pattern=_EMBEDDING_STATUS_PATTERN),
     model: str = "discogs_multi",
     folder: str | None = None,
     genre: str | None = None,
@@ -90,7 +93,7 @@ def list_tracks(
 def search_tracks(
     q: str = "",
     limit: int = Query(50, ge=1, le=500),
-    embedding_status: str = Query("all", pattern="^(all|ready|missing)$"),
+    embedding_status: str = Query("all", pattern=_EMBEDDING_STATUS_PATTERN),
     model: str = "discogs_multi",
 ) -> dict[str, object]:
     return list_tracks(
@@ -104,7 +107,7 @@ def search_tracks(
 @router.get("/browse/facets")
 def browse_facets(
     model: str = "discogs_multi",
-    embedding_status: str = Query("all", pattern="^(all|ready|missing)$"),
+    embedding_status: str = Query("all", pattern=_EMBEDDING_STATUS_PATTERN),
 ) -> dict[str, object]:
     store, _settings = context()
     try:
@@ -282,7 +285,7 @@ def get_track(track_id: int) -> dict[str, object]:
     track = store.get_track(track_id)
     if track is None:
         logger.warning("Track not found track_id=%s", track_id)
-        raise HTTPException(status_code=404, detail="Track not found")
+        raise HTTPException(status_code=404, detail=_TRACK_NOT_FOUND)
     return enriched_track_dict(store, track)
 
 
@@ -292,7 +295,7 @@ def get_track_analysis(track_id: int) -> dict[str, object]:
     track = store.get_track(track_id)
     if track is None:
         logger.warning("Track analysis requested for missing track track_id=%s", track_id)
-        raise HTTPException(status_code=404, detail="Track not found")
+        raise HTTPException(status_code=404, detail=_TRACK_NOT_FOUND)
     predictions_by_model = store.list_predictions(track_id)
     outputs = [
         {
@@ -336,7 +339,7 @@ def get_track_audio(track_id: int, request: Request) -> Response:
     track = store.get_track(track_id)
     if track is None:
         logger.warning("Audio requested for missing track track_id=%s", track_id)
-        raise HTTPException(status_code=404, detail="Track not found")
+        raise HTTPException(status_code=404, detail=_TRACK_NOT_FOUND)
     item_id = navidrome_item_id_for_track(store, track)
     if item_id is not None:
         try:
@@ -375,7 +378,7 @@ def get_track_cover(track_id: int, size: int = Query(default=96, ge=32, le=600))
     track = store.get_track(track_id)
     if track is None:
         logger.warning("Cover requested for missing track track_id=%s", track_id)
-        raise HTTPException(status_code=404, detail="Track not found")
+        raise HTTPException(status_code=404, detail=_TRACK_NOT_FOUND)
     external_id = store.external_id_for_track("navidrome", track_id)
     if external_id is None:
         raise HTTPException(status_code=404, detail="Track has no Navidrome mapping")
@@ -444,7 +447,7 @@ def get_similar_tracks(
     seed = store.get_track(track_id)
     if seed is None:
         logger.warning("Similar requested for missing track track_id=%s", track_id)
-        raise HTTPException(status_code=404, detail="Track not found")
+        raise HTTPException(status_code=404, detail=_TRACK_NOT_FOUND)
     try:
         results = Recommender(store, settings, model).similar(
             seed,

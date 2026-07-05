@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 MEDIA_GROUP_LIMIT = 10
 TELEGRAM_CONNECT_TIMEOUT = 30
 TELEGRAM_UPLOAD_TIMEOUT = 300
+COVER_FILENAME = "cover.jpg"
+NO_AUDIO_SOURCE_PREPARED = "No audio source prepared"
 
 
 @dataclass(slots=True)
@@ -496,7 +498,7 @@ class DeliveryService:
         thumb_file = None
         if thumb_path and thumb_path.exists():
             thumb_file = thumb_path.open("rb")
-            kwargs["thumbnail"] = InputFile(thumb_file, filename="cover.jpg")
+            kwargs["thumbnail"] = InputFile(thumb_file, filename=COVER_FILENAME)
 
         try:
             if prepared.file_id:
@@ -513,7 +515,7 @@ class DeliveryService:
                         description="send_audio",
                     )
             else:
-                raise TranscodeError("No audio source prepared")
+                raise TranscodeError(NO_AUDIO_SOURCE_PREPARED)
         finally:
             if thumb_file:
                 thumb_file.close()
@@ -550,7 +552,7 @@ class DeliveryService:
                     description="send_document",
                 )
         else:
-            raise TranscodeError("No audio source prepared")
+            raise TranscodeError(NO_AUDIO_SOURCE_PREPARED)
 
         await self._cache_from_messages([message], [prepared])
         return message
@@ -580,7 +582,7 @@ class DeliveryService:
 
         if not file_id:
             if not prepared.file_path:
-                raise TranscodeError("No audio source prepared")
+                raise TranscodeError(NO_AUDIO_SOURCE_PREPARED)
             upload_msg = await self._upload_audio_for_file_id(
                 bot,
                 chat_id=chat_id,
@@ -647,7 +649,7 @@ class DeliveryService:
 
         if not file_id:
             if not prepared.file_path:
-                raise TranscodeError("No audio source prepared")
+                raise TranscodeError(NO_AUDIO_SOURCE_PREPARED)
             upload_msg = await self._send_single_document(
                 bot,
                 chat_id=chat_id,
@@ -710,12 +712,12 @@ class DeliveryService:
             "write_timeout": TELEGRAM_UPLOAD_TIMEOUT,
         }
         if not prepared.file_path:
-            raise TranscodeError("No audio source prepared")
+            raise TranscodeError(NO_AUDIO_SOURCE_PREPARED)
 
         thumb_file = None
         if thumb_path and thumb_path.exists():
             thumb_file = thumb_path.open("rb")
-            kwargs["thumbnail"] = InputFile(thumb_file, filename="cover.jpg")
+            kwargs["thumbnail"] = InputFile(thumb_file, filename=COVER_FILENAME)
 
         try:
             with prepared.file_path.open("rb") as audio_file:
@@ -741,7 +743,7 @@ class DeliveryService:
                 await telegram_retry(
                     lambda: bot.send_photo(
                         chat_id=chat_id,
-                        photo=InputFile(cover_file, filename="cover.jpg"),
+                        photo=InputFile(cover_file, filename=COVER_FILENAME),
                         caption=caption,
                         connect_timeout=TELEGRAM_CONNECT_TIMEOUT,
                         read_timeout=TELEGRAM_UPLOAD_TIMEOUT,
@@ -824,11 +826,11 @@ class DeliveryService:
         kwargs: dict = _telegram_audio_metadata(prepared)
         if thumb_path and thumb_path.exists() and not prepared.file_id:
             thumb_file = stack.enter_context(thumb_path.open("rb"))
-            kwargs["thumbnail"] = InputFile(thumb_file, filename="cover.jpg")
+            kwargs["thumbnail"] = InputFile(thumb_file, filename=COVER_FILENAME)
         if prepared.file_id:
             return InputMediaAudio(media=prepared.file_id, **kwargs)
         if not prepared.file_path:
-            raise TranscodeError("No audio source prepared")
+            raise TranscodeError(NO_AUDIO_SOURCE_PREPARED)
         handle = stack.enter_context(prepared.file_path.open("rb"))
         return InputMediaAudio(media=handle, filename=prepared.filename, **kwargs)
 

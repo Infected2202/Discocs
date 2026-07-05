@@ -90,6 +90,7 @@ from app.store._helpers import row_to_track
 logger = logging.getLogger(__name__)
 INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
+_ORDER_COUNT_DESC_VALUE = "count DESC, value"
 
 class FilesStoreMixin:
     def mark_track_missing(self, track_id: int, missing_at: str | None = None) -> None:
@@ -339,18 +340,18 @@ class FilesStoreMixin:
             "genres": facet_rows(
                 "genre",
                 "t.genre IS NOT NULL AND TRIM(t.genre) != ''",
-                "count DESC, value",
+                _ORDER_COUNT_DESC_VALUE,
             ),
             "years": facet_rows("year", "t.year IS NOT NULL", "value DESC"),
             "artists": facet_rows(
                 "artist",
                 "t.artist IS NOT NULL AND TRIM(t.artist) != ''",
-                "count DESC, value",
+                _ORDER_COUNT_DESC_VALUE,
             ),
             "albums": facet_rows(
                 "album",
                 "t.album IS NOT NULL AND TRIM(t.album) != ''",
-                "count DESC, value",
+                _ORDER_COUNT_DESC_VALUE,
             ),
         }
 

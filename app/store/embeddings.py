@@ -90,6 +90,8 @@ from app.scanner import ScannedTrack
 logger = logging.getLogger(__name__)
 INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
+_LIMIT_CLAUSE = " LIMIT ?"
+_TRACK_ORDER_BY_ARTIST_ALBUM_TITLE = "t.artist, t.album, t.title, t.id"
 
 class EmbeddingsStoreMixin:
     def save_embedding(self, track_id: int, model_name: str, vector: np.ndarray) -> None:
@@ -370,7 +372,7 @@ class EmbeddingsStoreMixin:
         """
         params: list[object] = [*model_names, len(model_names)]
         if limit is not None:
-            sql += " LIMIT ?"
+            sql += _LIMIT_CLAUSE
             params.append(limit)
         with self.connect() as conn:
             rows = conn.execute(sql, params).fetchall()
@@ -496,7 +498,7 @@ class EmbeddingsStoreMixin:
         """
         params: list[object] = [extractor]
         if limit is not None:
-            sql += " LIMIT ?"
+            sql += _LIMIT_CLAUSE
             params.append(limit)
         with self.connect() as conn:
             rows = conn.execute(sql, params).fetchall()
@@ -536,7 +538,7 @@ class EmbeddingsStoreMixin:
         """
         params: list[object] = [model_name]
         if limit is not None:
-            sql += " LIMIT ?"
+            sql += _LIMIT_CLAUSE
             params.append(limit)
         with self.connect() as conn:
             rows = conn.execute(sql, params).fetchall()
@@ -692,8 +694,8 @@ class EmbeddingsStoreMixin:
             feature_params.append(extractor)
 
         sort_direction = "DESC" if sort_direction.lower() == "desc" else "ASC"
-        inner_order_sql = "t.artist, t.album, t.title, t.id"
-        outer_order_sql = "t.artist, t.album, t.title, t.id"
+        inner_order_sql = _TRACK_ORDER_BY_ARTIST_ALBUM_TITLE
+        outer_order_sql = _TRACK_ORDER_BY_ARTIST_ALBUM_TITLE
         sort_select = "NULL AS sort_value"
         if sort_by:
             sort_select = "sf.value AS sort_value"
@@ -854,8 +856,8 @@ class EmbeddingsStoreMixin:
         sort_select = "NULL AS sort_value"
         sort_join = ""
         sort_params: list[object] = []
-        inner_order_sql = "t.artist, t.album, t.title, t.id"
-        outer_order_sql = "t.artist, t.album, t.title, t.id"
+        inner_order_sql = _TRACK_ORDER_BY_ARTIST_ALBUM_TITLE
+        outer_order_sql = _TRACK_ORDER_BY_ARTIST_ALBUM_TITLE
         if sort_by:
             sort_select = "sp.score AS sort_value"
             sort_join = """
