@@ -6,9 +6,9 @@
 #   docker compose -p discocs -f deploy/prod/docker-compose.yml --env-file <env> up -d --remove-orphans
 #
 # Откат на прошлый билд: поставь TAG=<git-sha> в .env и повтори up.
-# Бот стартует только при COMPOSE_PROFILES=bot (см. .env.example).
+# Бот и его awg-туннель стартуют только при COMPOSE_PROFILES=bot (см. .env.example).
 #
-# Данные сервисов лежат на хосте под ${DISCOCS_STATE_DIR}/<discocs_backend|discocs_bot>/…
+# Данные сервисов лежат на хосте под ${DISCOCS_STATE_DIR}/<discocs_backend|discocs_bot|discocs_awg>/…
 # (bind-mount, не docker volume) — контексты сервисов не перемешиваются на диске.
 
 services:

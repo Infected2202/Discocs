@@ -7,7 +7,8 @@ Nexus, Gitea, целевой хост) — одна машина `.41`.
 
 ```
 push в Gitea ──webhook──> Jenkins
-   └─ Test         прогон pytest в контейнере python:3.11 (deploy/ci/Dockerfile.test)
+   └─ Test         прогон pytest -n auto в контейнере python:3.11 (deploy/ci/Dockerfile.test),
+   │                 сборка образа через BuildKit (--mount=type=cache для pip)
    └─ Build&Push   сборка backend/frontend/bot → Nexus (docker-dev @ :5000)
    │                 теги:  :<git-sha>  (всегда)   +  :latest  (только с main)
    └─ Deploy        [post/success, только main] по SSH на TARGET_SERVER:
@@ -29,7 +30,7 @@ push в Gitea ──webhook──> Jenkins
 - Nexus UI/API: `http://192.168.1.41:8081`, hosted-репо `docker-dev`.
 - Docker-эндпоинт (push/pull): **`192.168.1.41:5000`**.
 - Имена образов: `192.168.1.41:5000/discocs/{backend,frontend,bot}`.
-- Пул анонимный, push — под `nexus_token`.
+- Пул анонимный, push — под `tank_nexus_user_pass` (Username/Password, общий для всех джоб).
 - Репо работает по HTTP → на хосте нужен `insecure-registries` (уже настроено):
 
   ```json
@@ -108,6 +109,23 @@ docker compose -p discocs --env-file .env up -d --force-recreate
 Стартует только при `COMPOSE_PROFILES=bot` в `.env` (плюс заполненный `BOT_TOKEN`
 и прочие переменные). Пока не готов — просто не выставляй профиль, backend и
 frontend поднимаются без него. Образ бота при этом всё равно собирается и пушится.
+
+Сеть площадки режет боту прямой исходящий трафик до Telegram API, поэтому вместе
+с ботом (тот же профиль `bot`) поднимается сайдкар `awg` — весь сетевой стек бота
+(`network_mode: service:awg`) идёт через amneziawg-туннель. Конфиг туннеля и
+`start-awg.sh` — секреты, кладутся руками в `${DISCOCS_STATE_DIR}/discocs_awg/`
+(не коммитятся, см. `deploy/prod/.env.example`). `backend` по-прежнему резолвится
+по имени, т.к. `awg` сидит в той же compose-сети.
+
+## Порты на хосте
+
+| Порт | Сервис | Назначение |
+|---|---|---|
+| `${DISCOCS_HTTP_PORT:-80}` | frontend | новый UI (основной вход) |
+| `8711` | backend | старая админка (`/admin`) + API напрямую, для внутреннего стенда опубликован |
+
+`backend` порт публикуется намеренно (`ports: ["8711:7752"]`) — площадка внутренняя,
+доступа снаружи LAN нет, поэтому нет смысла прятать API за одним только nginx.
 
 ## Задел: SonarQube
 
