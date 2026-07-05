@@ -23,7 +23,7 @@ describe("formatTime", () => {
   })
 
   it("нечисловые/отрицательные → 0:00", () => {
-    expect(formatTime(NaN)).toBe("0:00")
+    expect(formatTime(Number.NaN)).toBe("0:00")
     expect(formatTime(-5)).toBe("0:00")
   })
 })

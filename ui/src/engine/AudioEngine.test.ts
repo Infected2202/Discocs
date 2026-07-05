@@ -7,7 +7,7 @@ class MockAudio {
   volume = 1
   muted = false
   currentTime = 0
-  duration = NaN
+  duration = Number.NaN
   paused = true
   ended = false
   error: MediaError | null = null
