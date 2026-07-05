@@ -62,8 +62,9 @@ pipeline {
       steps {
         // Плагин Docker Pipeline не установлен — используем голый docker CLI
         // (он уже доступен агенту, см. стадию Test), без глобальной переменной `docker`.
-        withCredentials([usernamePassword(credentialsId: 'nexus_token', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
-          sh 'echo "$NEXUS_PASS" | docker login "$REGISTRY" -u "$NEXUS_USER" --password-stdin'
+        // nexus_token — Secret text (identity-токен), username в Nexus не хранится отдельно.
+        withCredentials([string(credentialsId: 'nexus_token', variable: 'NEXUS_PASS')]) {
+          sh 'echo "$NEXUS_PASS" | docker login "$REGISTRY" -u jenkins_budy --password-stdin'
           script {
             def services = [
               [name: 'backend',  df: 'deploy/backend/Dockerfile'],
