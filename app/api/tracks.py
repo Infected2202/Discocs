@@ -89,7 +89,7 @@ def list_tracks(
     return {"results": [enriched_track_listing_dict(store, track) for track in tracks]}
 
 
-@router.get("/tracks/search")
+@router.get("/tracks/search", responses={400: {"description": "Invalid track filters"}})
 def search_tracks(
     q: str = "",
     limit: int = Query(50, ge=1, le=500),
