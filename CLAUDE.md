@@ -2,13 +2,22 @@
 
 ## Работа с проектом
 
-Создавай коммит после каждого изменения. После коммита сразу делай push (`git push origin main && git push gitea main` — оба remote'а, gitea триггерит Jenkins CI).
+Коммить и пушить **один раз, когда задача полностью выполнена** — не после
+каждой отдельной правки. `disableConcurrentBuilds()` в Jenkins не даёт сборкам
+идти параллельно: частые пуши копят очередь из полных прогонов пайплайна
+(Test → Sonar → Build&Push → Security Scan → Deploy), в основном уже
+устаревших к моменту старта. Один коммит/пуш на логическую задачу — это и
+осмысленная история, и вменяемая нагрузка на CI.
+
+`git push origin main && git push gitea main` — оба remote'а, gitea триггерит
+Jenkins CI.
 
 Используй MCP-инструменты когда они уместны: Playwright для проверки UI в браузере, context7 для актуальной документации библиотек.
 
-При каждом изменении:
-1. Пиши или обновляй тесты — новый код без теста не считается готовым.
-2. Обновляй документацию в `docs/` если меняется поведение, API или пайплайн.
+Каждая значимая задача:
+1. Код + тесты — новый код без теста не считается готовым.
+2. Документация в `docs/`, если меняется поведение, API или пайплайн.
+3. Коммит + push, когда всё готово (см. выше, не раньше).
 
 ## Формат ответа
 
@@ -16,7 +25,13 @@
 
 ## Tests
 
-Тесты — обязательная часть каждого значительного изменения, не запускай тесты после изменения параметров в конфигах.
+Тесты — обязательная часть каждого значительного изменения. **Не гоняй тесты,
+сборки и линтеры локально для самопроверки** (`pytest`, `docker build`,
+`tsc`, `vitest`, `npm run build` и т.п.) — всё это уже выполняется в Jenkins-
+джобе (`Test` → `Sonar` → `Security Scan`, см. `docs/cicd.md`), локальный
+прогон только дублирует работу и создаёт риск разъехаться с окружением
+CI-контейнеров. Пиши код и тесты, коммить/пушь по завершении задачи (см.
+выше) и смотри результат в CI — как именно, см. `## CI results` ниже.
 
 Write tests that would fail if the tested logic were removed or inverted. A failing test means the code is broken, not the test. Fix the code, not the test — unless the requirement genuinely changed, in which case update the test first, then fix the code. `tests/conftest.py` поднимает in-memory SQLite и заглушки модели — реальные файлы и Essentia не нужны для unit-тестов.
 
@@ -30,6 +45,29 @@ Write tests that would fail if the tested logic were removed or inverted. A fail
 - FastAPI: health, search, similar — включая пути ошибок
 
 Интеграционные тесты с реальной моделью или Essentia помечать `@pytest.mark.integration`.
+
+## CI results
+
+Результаты сборки/тестов/скана смотри в Jenkins-джобе, а не гоняй их локально:
+
+- **Качество кода / coverage / security hotspots** — SonarQube MCP
+  (`mcp__sonarqube__*`), проект `discocs`. Не через Jenkins API.
+- **Прошла ли сборка, статус конкретной стадии, Trivy-отчёт** — Jenkins API,
+  джоба `http://192.168.1.41:8077/job/HS/job/discocs_build`. Креды
+  (`JENKINS_USER`/`JENKINS_TOKEN`, read-only юзер) — в `.claude/settings.local.json`
+  (не в гите, локально на этой машине).
+
+Алгоритм — от дешёвого к дорогому, не тяни лог, если не нужен:
+
+1. `GET lastBuild/api/json?tree=number,building,result` — легчайший запрос,
+   поллить пока не увидишь `building:false` на нужном номере (сравнивай
+   с номером, который был до пуша).
+2. Если `result != SUCCESS`, или нужны данные, которых нет в Sonar (Trivy) —
+   `GET lastBuild/wfapi/describe`: статус по каждой стадии (Test/Sonar/
+   Build&Push/Security Scan) без консоли вообще.
+3. Только если конкретная стадия упала/непонятна — `lastBuild/consoleText`
+   целиком (десятки-сотни КБ, не мегабайты) и искать нужный кусок локально
+   (по имени стадии / `ERROR`), не заливать весь лог в контекст.
 
 ## UI Rule
 
