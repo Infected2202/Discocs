@@ -9,7 +9,7 @@ interface PreloadableImage {
 
 export async function preloadArtworkImage(
   artworkUrl: string | null | undefined,
-  createImage: () => PreloadableImage = () => new Image()
+  createImage: () => PreloadableImage = () => new Image() as unknown as PreloadableImage
 ): Promise<void> {
   if (!artworkUrl) return
 

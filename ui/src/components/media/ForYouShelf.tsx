@@ -22,9 +22,19 @@ export default function ForYouShelf() {
 
   async function handleStartFlow() {
     const resp = await startFlow()
+    const items = resp.queue.items
     const envelope: PlaybackEnvelope = {
       session: resp.session,
-      queue: { ...resp.queue, current_item: resp.queue.items[0] ?? null },
+      queue: {
+        items,
+        current_index: 0,
+        current_item: items[0] ?? null,
+        upcoming: items.slice(1),
+        played: [],
+        source_items: items,
+        generated_items: [],
+        autoplay_pool: [],
+      },
     }
     await playFromEnvelope(envelope)
   }

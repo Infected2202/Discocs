@@ -40,10 +40,10 @@ function makeTrack(id: number): TrackSummary {
     duration: 180,
     artists: [{ id: 1, name: "Artist" }],
     release: { id: 1, title: "Album" },
-    artwork: null,
-    file_path: `/music/track${id}.flac`,
-    model_version: null,
-    has_embedding: false,
+    artwork: { url: null, source: "placeholder", placeholder: true },
+    explicit: false,
+    liked: false,
+    actions: [],
   }
 }
 
