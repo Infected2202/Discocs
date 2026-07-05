@@ -837,7 +837,7 @@ def test_upsert_track_creates_normalized_artist_release_sidecars(tmp_path: Path)
     assert [artist.name for artist in tracks[0].artists] == ["Alpha", "Beta"]
 
 
-def test_release_artists_aggregate_track_artists_without_album_artist(tmp_path: Path):
+def test_release_artists_fall_back_to_various_artists_without_dominant_artist(tmp_path: Path):
     store = Store(tmp_path / "app.db")
     store.init()
     release_dir = tmp_path / "Various" / "Split"
@@ -870,9 +870,14 @@ def test_release_artists_aggregate_track_artists_without_album_artist(tmp_path: 
     releases = store.search_entities("Split")["releases"]["items"]
     assert len(releases) == 1
     release = releases[0]
-    assert [artist.name for artist in release.artists] == ["Alpha", "Beta"]
+    # No dominant artist — Alpha and Beta each cover 50% of the release, below the
+    # 60% threshold — so the release credit falls back to the synthetic "Various Artists".
+    assert [artist.name for artist in release.artists] == ["Various Artists"]
     tracks = store.list_release_tracks(release.release.id)
     assert [item.track.id for item in tracks] == [first_id, second_id]
+    # Track-level artists stay intact even though the release aggregates to VA.
+    assert [artist.name for artist in tracks[0].artists] == ["Alpha"]
+    assert [artist.name for artist in tracks[1].artists] == ["Beta"]
 
 
 def test_track_release_move_refreshes_old_release_sidecars(tmp_path: Path):
