@@ -66,3 +66,22 @@ Rules:
 creates a new session with a different `source_type`. The next
 `scheduleAutoplayRefill` call reads the live session from the store, sees a
 non-flow type, and routes to the autoplay engine — no explicit cleanup needed.
+
+### Flow refill dedup
+
+`scheduleAutoplayRefill` fires from several event handlers (skip, track-ended,
+like/dislike), so overlapping calls are possible for the same session. Two
+layers keep a track from being queued twice:
+
+- **Client**: a module-level `refillInFlight` flag in `playerStore.ts` makes
+  `scheduleAutoplayRefill` a no-op while a previous call is still in flight.
+- **Server**: `app/api/flow.py:_load_session_context` excludes every track
+  currently on the queue (any status except `removed`) from the candidate
+  pool — not just `played`/`skipped` — and `api_v1_flow_refill` re-reads the
+  queue right before `append_queue_items` to drop any candidate that a
+  concurrent refill already added.
+
+Neither layer is a hard transactional guarantee (no DB-level unique
+constraint); together they close the practical race without adding that
+complexity. See `tests/test_flow_refill_dedup.py` for the regression coverage
+and `plans/todo.md` for the original bug writeup.

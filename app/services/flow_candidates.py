@@ -83,6 +83,8 @@ class FlowSessionContext:
     region_id: str
     model_key: str = "discogs_multi"
 
+    # Despite the name, this also includes tracks still queued-but-unplayed —
+    # anything already on the queue must stay out of the candidate pool.
     played_track_ids: set[int] = field(default_factory=set)
     current_track_id: int | None = None
 

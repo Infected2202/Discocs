@@ -102,6 +102,11 @@ interface PlayerState {
 const { volume: initVolume, muted: initMuted } = loadPersistedVolume()
 
 export const usePlayerStore = create<PlayerState>((set, get) => {
+  // Single-flight guard for scheduleAutoplayRefill — not store state on
+  // purpose, it's a transient in-flight flag, not something a subscriber
+  // should ever render off of.
+  let refillInFlight = false
+
   // Кап записи времени в стор до ~4/сек. Chrome и так шлёт timeupdate ~4/сек,
   // но Firefox/Safari — заметно чаще; троттл делает частоту записи одинаковой
   // и не даёт вернуться шторму ре-рендеров, если наверху появится подписчик.
@@ -151,6 +156,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     const { session, currentTrackId, currentTrack } = get()
     if (!session?.id || !session.autoplay_enabled) return
 
+    // Multiple triggers (skip, track-ended, like/dislike) can fire in close
+    // succession. Without this guard, two overlapping refill calls can both
+    // read the same queue state and append the same candidate twice.
+    if (refillInFlight) return
+    refillInFlight = true
+
     const { engine, sendEvent } = planRefill(session.source_type, eventType)
 
     try {
@@ -189,6 +200,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       }
     } catch {
       // silently ignore refill errors — not user-facing
+    } finally {
+      refillInFlight = false
     }
   }
 

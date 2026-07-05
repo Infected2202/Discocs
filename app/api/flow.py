@@ -159,11 +159,14 @@ def _load_session_context(store, session_id: str, region_id: str, model_key: str
     ctx.exclude_played_days = int(state.get("exclude_played_days") or 0)
     ctx.current_track_id = session.current_track_id
 
-    # Already-played track IDs from queue
+    # Tracks to keep out of the candidate pool: anything still on the queue
+    # (played, skipped, playing, or queued-but-not-yet-played). A track sitting
+    # further down as "queued" must be excluded too, otherwise a later refill
+    # call can pick it again and append a duplicate before it's ever played.
     queue = store.list_queue_items(session_id)
     ctx.played_track_ids = {
         item.track_id for item in queue
-        if item.status in ("played", "skipped")
+        if item.status != "removed"
     }
     if session.current_track_id:
         ctx.played_track_ids.add(session.current_track_id)
@@ -423,6 +426,12 @@ def api_v1_flow_refill(request: FlowRefillRequest) -> dict[str, object]:
         n=need,
         pool_size=max(need * 20, 50),
     )
+
+    # Re-check right before writing: narrows the window where a concurrent
+    # refill call (same session) already queued one of these track IDs after
+    # ctx was built above.
+    already_queued = {i.track_id for i in store.list_queue_items(request.session_id) if i.status != "removed"}
+    selected = [c for c in selected if c.track_id not in already_queued]
 
     added: list[dict] = []
     if selected:
