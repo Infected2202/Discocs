@@ -21,8 +21,13 @@ def pytest_configure(config) -> None:
     ends. If pytest reuses the same basetemp across sessions, it tries to
     delete the previous session's numbered dirs and hits WinError 32.
     Unique-per-session basetemp eliminates cross-session cleanup entirely.
+
+    Under pytest-xdist each worker runs its own session (and its own call to
+    this hook) — worker id is folded into the path so two workers starting
+    in the same second don't race on the same numbered subdirs.
     """
-    base = Path(tempfile.gettempdir()) / "pytest-discocs" / str(int(time.time()))
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER", "master")
+    base = Path(tempfile.gettempdir()) / "pytest-discocs" / f"{int(time.time())}-{worker_id}"
     base.mkdir(parents=True, exist_ok=True)
     config.option.basetemp = base
 
