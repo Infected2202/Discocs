@@ -10,6 +10,7 @@
 // Credentials в Jenkins:
 //   - tank_nexus_user_pass (Username/Password)         — логин в Nexus для push (общий для всех джоб)
 //   - HS_SSH_KEY           (SSH Username with private key) — деплой-ключ на TARGET_SERVER
+//   - sonar_token          (Secret text)                — токен для sonar-scanner (общий для всех джоб)
 //
 // .env на TARGET_SERVER (TARGET_DIR/.env) — заводится и правится вручную на хосте,
 // CI его не трогает и не деплоит (см. deploy/prod/.env.example для списка переменных).
@@ -53,14 +54,15 @@ pipeline {
       }
     }
 
-    // --- ЗАДЕЛ под SonarQube (включить позже, см. docs/cicd.md) ---
-    // stage('Sonar') {
-    //   steps {
-    //     withSonarQubeEnv('sonar') {
-    //       sh 'sonar-scanner -Dsonar.projectKey=discocs -Dsonar.sources=app'
-    //     }
-    //   }
-    // }
+    stage('Sonar') {
+      steps {
+        // Только отчёт, без waitForQualityGate — билд не блокируется внешним сервисом.
+        // sonar_token — тот же credential, что уже рабочий в другой джобе.
+        withCredentials([string(credentialsId: 'sonar_token', variable: 'SONAR_TOKEN')]) {
+          sh 'sonar-scanner -Dsonar.host.url=http://192.168.1.41:9077 -Dsonar.login=$SONAR_TOKEN'
+        }
+      }
+    }
 
     stage('Docker Login') {
       steps {

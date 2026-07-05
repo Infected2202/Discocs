@@ -9,6 +9,7 @@ Nexus, Gitea, целевой хост) — одна машина `.41`.
 push в Gitea ──webhook──> Jenkins
    └─ Test         прогон pytest -n auto в контейнере python:3.11 (deploy/ci/Dockerfile.test),
    │                 сборка образа через BuildKit (--mount=type=cache для pip)
+   └─ Sonar        sonar-scanner — отчёт в SonarQube, без Quality Gate (билд не блокируется)
    └─ Build&Push   сборка backend/frontend/bot → Nexus (docker-dev @ :5000)
    │                 теги:  :<git-sha>  (всегда)   +  :latest  (только с main)
    └─ Deploy        [post/success, только main] по SSH на TARGET_SERVER:
@@ -48,6 +49,7 @@ push в Gitea ──webhook──> Jenkins
 |---|---|---|
 | `tank_nexus_user_pass` | Username/Password | логин в Nexus для push *(уже есть, общий для всех джоб)* |
 | `HS_SSH_KEY` | SSH Username with private key | деплой-ключ на `TARGET_SERVER` *(уже есть)* |
+| `sonar_token` | Secret text | токен для `sonar-scanner` *(уже есть, общий для всех джоб)* |
 
 `.env` в CI больше не участвует: заполни `deploy/prod/.env.example` реальными значениями
 (минимум `DISCOCS_MUSIC_DIR` и `DISCOCS_STATE_DIR`) и один раз положи как `TARGET_DIR/.env`
@@ -127,18 +129,16 @@ frontend поднимаются без него. Образ бота при эт
 `backend` порт публикуется намеренно (`ports: ["8711:7752"]`) — площадка внутренняя,
 доступа снаружи LAN нет, поэтому нет смысла прятать API за одним только nginx.
 
-## Задел: SonarQube
+## SonarQube
 
-Стадия `Sonar` в `Jenkinsfile` закомментирована. SonarQube уже поднят
-(`http://192.168.1.41:9077`), и credential `sonar_token` (Secret text) уже
-заведён в Jenkins — используется в других джобах через
-`withCredentials([string(credentialsId: 'sonar_token', variable: 'SONAR_TOKEN')])`
-и вызов `sonar-scanner -Dsonar.host.url=... -Dsonar.login=${SONAR_TOKEN}`.
-Чтобы включить у нас:
-
-1. Добавить `sonar-project.properties` (`sonar.projectKey=discocs`, `sonar.sources=app`).
-2. Раскомментировать стадию `Sonar` в `Jenkinsfile`, используя `sonar_token` по образцу выше.
-3. При желании добавить Quality Gate через `waitForQualityGate`.
+Стадия `Sonar` в `Jenkinsfile` — после `Test`, перед `Build & Push`. Гоняет
+`sonar-scanner` (`sonar-project.properties`: `sonar.projectKey=discocs`,
+`sonar.sources=app`, `sonar.tests=tests`) против сервера `http://192.168.1.41:9077`
+под токеном `sonar_token`. Это только отчёт — `waitForQualityGate` не используется,
+результат анализа не может завалить билд, смотреть метрики (code smells,
+дублирование, security hotspots) — в вебке Sonar по `projectKey=discocs`.
+Если качество анализа окажется полезным, можно добавить `waitForQualityGate`
+(потребует настроить вебхук SonarQube → Jenkins).
 
 ## Траблшутинг
 
