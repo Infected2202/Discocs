@@ -50,7 +50,16 @@ pipeline {
         // BuildKit нужен для --mount=type=cache в Dockerfile.test (кэш pip
         // переживает инвалидацию слоя с исходниками между билдами).
         sh 'DOCKER_BUILDKIT=1 docker build -f deploy/ci/Dockerfile.test -t discocs-test:${GIT_SHA} .'
-        sh 'docker run --rm discocs-test:${GIT_SHA}'
+        // create+start+cp вместо `docker run --rm`: агент собирает через хостовый
+        // демон (docker-outside-of-docker), поэтому bind-mount воркспейса недоступен —
+        // coverage.xml достаём из уже остановленного контейнера через `docker cp`.
+        sh '''
+          set -e
+          CID=$(docker create discocs-test:${GIT_SHA})
+          docker start -a "$CID"
+          docker cp "$CID:/app/coverage.xml" coverage.xml
+          docker rm -f "$CID"
+        '''
       }
     }
 

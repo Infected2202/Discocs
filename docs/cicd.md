@@ -132,13 +132,30 @@ frontend поднимаются без него. Образ бота при эт
 ## SonarQube
 
 Стадия `Sonar` в `Jenkinsfile` — после `Test`, перед `Build & Push`. Гоняет
-`sonar-scanner` (`sonar-project.properties`: `sonar.projectKey=discocs`,
-`sonar.sources=app`, `sonar.tests=tests`) против сервера `http://192.168.1.41:9077`
-под токеном `sonar_token`. Это только отчёт — `waitForQualityGate` не используется,
-результат анализа не может завалить билд, смотреть метрики (code smells,
-дублирование, security hotspots) — в вебке Sonar по `projectKey=discocs`.
-Если качество анализа окажется полезным, можно добавить `waitForQualityGate`
-(потребует настроить вебхук SonarQube → Jenkins).
+`sonar-scanner` (см. `sonar-project.properties`) против сервера
+`http://192.168.1.41:9077` под токеном `sonar_token`. Это только отчёт —
+`waitForQualityGate` не используется, результат анализа не может завалить
+билд, смотреть метрики (code smells, дублирование, security hotspots) —
+в вебке Sonar по `projectKey=discocs`. Если качество анализа окажется
+полезным, можно добавить `waitForQualityGate` (потребует настроить вебхук
+SonarQube → Jenkins).
+
+Покрыты все три части кодовой базы: `sonar.sources=app,discocs_bot/bot,ui/src`
+(бэкенд, бот, фронтенд), `sonar.tests` — соответствующие каталоги тестов.
+Для фронтенда отдельный отчёт линтера не подключён: `ui/eslint.config.js`
+использует только рекомендованные пресеты (eslint/typescript-eslint/react-hooks),
+встроенный TS/JS-анализатор Sonar покрывает то же самое сам — подключать
+`sonar.eslint.reportPaths` стоит, только если появятся кастомные правила.
+
+Python-coverage подключён только для `app` (backend): стадия `Test` гоняет
+`pytest --cov=app --cov-report=xml` внутри `discocs-test`, `coverage.xml`
+достаётся из контейнера через `docker cp` (агент — docker-outside-of-docker,
+bind-mount воркспейса недоступен хостовому демону) и подхватывается
+`sonar.python.coverage.reportPaths=coverage.xml`. Бот (`discocs_bot`) и
+фронтенд (`ui`) coverage в Sonar не отдают — у бота свой `pytest`-прогон вне
+`Dockerfile.test`, у фронтенда `ui/package.json`'s `test` — это `node --test`,
+а не `vitest` (хотя `@vitest/coverage-v8` стоит в `devDependencies`), так что
+честного JS-coverage сейчас нет в принципе — отдельная задача, если понадобится.
 
 ## Траблшутинг
 

@@ -22,4 +22,4 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY scripts ./scripts
 COPY tests ./tests
 
-CMD ["python", "-m", "pytest", "-q", "-n", "auto"]
+CMD ["python", "-m", "pytest", "-q", "-n", "auto", "--cov=app", "--cov-report=xml:/app/coverage.xml"]
