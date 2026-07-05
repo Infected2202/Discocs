@@ -147,6 +147,15 @@ SonarQube → Jenkins).
 встроенный TS/JS-анализатор Sonar покрывает то же самое сам — подключать
 `sonar.eslint.reportPaths` стоит, только если появятся кастомные правила.
 
+**Известная проблема**: анализ `ui/src` сейчас падает целиком —
+`ui/tsconfig.app.json` использует опции TS 5.5+/5.8 (`verbatimModuleSyntax`,
+`erasableSyntaxOnly`, `moduleResolution: bundler`, `allowImportingTsExtensions`),
+которые не понимает TS/JS-анализатор текущей версии SonarQube на
+`192.168.1.41:9077` (`Unknown compiler option` в логе). Это версионное
+рассогласование сервер↔проект, а не проблема конфигурации репозитория —
+чинится обновлением SonarQube-сервера. Конфиг `sonar.sources` уже правильный
+и трогать его не нужно, фронтенд начнёт анализироваться сам после апгрейда.
+
 Python-coverage подключён только для `app` (backend): стадия `Test` гоняет
 `pytest --cov=app --cov-report=xml` внутри `discocs-test`, `coverage.xml`
 достаётся из контейнера через `docker cp` (агент — docker-outside-of-docker,

@@ -44,3 +44,10 @@ include = ["app*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.coverage.run]
+# relative_files делает пути в coverage.xml относительными (app/foo.py, не
+# /app/app/foo.py) — иначе Sonar-scanner, запущенный на хосте Jenkins-агента,
+# не может сопоставить пути, записанные внутри тестового контейнера.
+relative_files = true
+source = ["app"]
