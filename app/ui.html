@@ -863,7 +863,7 @@
           <button data-settings-tab="advanced" onclick="setSettingsTab('advanced')">Advanced / Debug</button>
         </div>
         <div class="settings-pane active" data-settings-pane="embeddings">
-        <label><span class="label-title">Model <span class="info" tabindex="0" data-tooltip="Embedding model used for analyze, index, and recommendations. Changing it requires separate embeddings and index.">(i)</span></span>
+        <label><span class="label-title">Model <span class="info" data-tooltip="Embedding model used for analyze, index, and recommendations. Changing it requires separate embeddings and index.">(i)</span></span>
           <select id="model">
             <option value="discogs_multi">discogs_multi</option>
             <option value="discogs_track">discogs_track</option>
@@ -872,29 +872,29 @@
             <option value="muq_mulan">muq_mulan</option>
           </select>
         </label>
-        <label><span class="label-title">Analyze limit <span class="info" tabindex="0" data-tooltip="Maximum number of missing tracks to process in one job. Empty means all missing tracks. Smaller batches are easier to test.">(i)</span></span>
+        <label><span class="label-title">Analyze limit <span class="info" data-tooltip="Maximum number of missing tracks to process in one job. Empty means all missing tracks. Smaller batches are easier to test.">(i)</span></span>
           <input id="limit" type="number" min="0" value="0">
         </label>
-        <label><span class="label-title">Analyze execution <span class="info" tabindex="0" data-tooltip="Choose where embedding analyze tasks are executed. Remote only queues tasks for HTTP pull workers; local only uses this server; local + remote lets both claim tasks.">(i)</span></span>
+        <label><span class="label-title">Analyze execution <span class="info" data-tooltip="Choose where embedding analyze tasks are executed. Remote only queues tasks for HTTP pull workers; local only uses this server; local + remote lets both claim tasks.">(i)</span></span>
           <select id="analyzeExecutionMode" onchange="refreshWorkerCommand()">
             <option value="both">Local + remote</option>
             <option value="remote" selected>Remote only</option>
             <option value="local">Local only</option>
           </select>
         </label>
-        <label><span class="label-title">Analyze workers <span class="info" tabindex="0" data-tooltip="Number of analyzer processes. More workers can improve throughput but use more RAM and may slow each individual prediction. Current measured default: 4.">(i)</span></span>
+        <label><span class="label-title">Analyze workers <span class="info" data-tooltip="Number of analyzer processes. More workers can improve throughput but use more RAM and may slow each individual prediction. Current measured default: 4.">(i)</span></span>
           <input id="workers" type="number" min="1" value="6">
         </label>
-        <label><span class="label-title">Analyze TF threads <span class="info" tabindex="0" data-tooltip="TensorFlow/OMP threads per analyzer process. Too high causes contention; benchmarked default is 4 with 4 workers.">(i)</span></span>
+        <label><span class="label-title">Analyze TF threads <span class="info" data-tooltip="TensorFlow/OMP threads per analyzer process. Too high causes contention; benchmarked default is 4 with 4 workers.">(i)</span></span>
           <input id="tfThreads" type="number" min="1" value="4">
         </label>
         </div>
         <div class="settings-pane" data-settings-pane="analysis">
         <h3>Audio features</h3>
-        <label><span class="label-title">Audio feature workers <span class="info" tabindex="0" data-tooltip="Number of local analyzer processes for BPM/key/loudness/dynamics. Separate from Discogs embedding workers so audio feature tuning cannot overload model inference.">(i)</span></span>
+        <label><span class="label-title">Audio feature workers <span class="info" data-tooltip="Number of local analyzer processes for BPM/key/loudness/dynamics. Separate from Discogs embedding workers so audio feature tuning cannot overload model inference.">(i)</span></span>
           <input id="audioFeatureWorkers" type="number" min="1" value="8">
         </label>
-        <label><span class="label-title">Feature extractor <span class="info" tabindex="0" data-tooltip="Audio feature pipeline version stored in track_features. Rescan deletes existing values for this extractor and queues tracks for re-analysis.">(i)</span></span>
+        <label><span class="label-title">Feature extractor <span class="info" data-tooltip="Audio feature pipeline version stored in track_features. Rescan deletes existing values for this extractor and queues tracks for re-analysis.">(i)</span></span>
           <select id="audioFeaturesExtractor">
             <option value="audio_features_v1">audio_features_v1</option>
           </select>
@@ -907,13 +907,13 @@
         </div>
         <div class="settings-pane" data-settings-pane="general">
         <h3>Navidrome</h3>
-        <label><span class="label-title">Navidrome URL <span class="info" tabindex="0" data-tooltip="Base URL that this app can reach, for example http://192.168.1.41:4533 or http://navidrome:4533 from Docker.">(i)</span></span>
+        <label><span class="label-title">Navidrome URL <span class="info" data-tooltip="Base URL that this app can reach, for example http://192.168.1.41:4533 or http://navidrome:4533 from Docker.">(i)</span></span>
           <input id="navidromeUrl" placeholder="http://127.0.0.1:4533">
         </label>
-        <label><span class="label-title">Navidrome user <span class="info" tabindex="0" data-tooltip="Subsonic/Navidrome username used by this app for sync and audio downloads.">(i)</span></span>
-          <input id="navidromeUser" autocomplete="username">
+        <label><span class="label-title">Navidrome user <span class="info" data-tooltip="Subsonic/Navidrome username used by this app for sync and audio downloads.">(i)</span></span>
+          <input id="navidromeUser" type="text" autocomplete="username">
         </label>
-        <label><span class="label-title">Navidrome password <span class="info" tabindex="0" data-tooltip="Leave blank when saving to keep the existing saved password.">(i)</span></span>
+        <label><span class="label-title">Navidrome password <span class="info" data-tooltip="Leave blank when saving to keep the existing saved password.">(i)</span></span>
           <input id="navidromePassword" type="password" autocomplete="current-password" placeholder="leave blank to keep saved password">
         </label>
         <label><span class="label-title">Auth mode</span>
@@ -943,28 +943,28 @@
         </div>
         <div class="settings-pane" data-settings-pane="advanced">
         <h3>Remote worker</h3>
-        <label><span class="label-title">Server URL for worker <span class="info" tabindex="0" data-tooltip="Base URL that the remote machine can reach. Use the host/IP running this web app, not localhost unless the worker runs on the same machine.">(i)</span></span>
+        <label><span class="label-title">Server URL for worker <span class="info" data-tooltip="Base URL that the remote machine can reach. Use the host/IP running this web app, not localhost unless the worker runs on the same machine.">(i)</span></span>
           <input id="workerServerUrl" value="http://127.0.0.1:8711" oninput="refreshWorkerCommand()">
         </label>
-        <label><span class="label-title">Worker ID <span class="info" tabindex="0" data-tooltip="Stable name shown in Jobs / Workers. Use a different ID for each remote machine.">(i)</span></span>
+        <label><span class="label-title">Worker ID <span class="info" data-tooltip="Stable name shown in Jobs / Workers. Use a different ID for each remote machine.">(i)</span></span>
           <input id="workerId" value="gpu-4090-1" oninput="refreshWorkerCommand()">
         </label>
-        <label><span class="label-title">Claim batch size <span class="info" tabindex="0" data-tooltip="How many queued tasks the worker asks for in one claim. Higher values reduce API round trips.">(i)</span></span>
+        <label><span class="label-title">Claim batch size <span class="info" data-tooltip="How many queued tasks the worker asks for in one claim. Higher values reduce API round trips.">(i)</span></span>
           <input id="workerClaimBatchSize" type="number" min="1" value="32" oninput="refreshWorkerCommand()">
         </label>
-        <label><span class="label-title">Max in-flight tasks <span class="info" tabindex="0" data-tooltip="Maximum leased tasks held by the worker while it downloads and processes audio. Keep this high enough to avoid GPU starvation.">(i)</span></span>
+        <label><span class="label-title">Max in-flight tasks <span class="info" data-tooltip="Maximum leased tasks held by the worker while it downloads and processes audio. Keep this high enough to avoid GPU starvation.">(i)</span></span>
           <input id="workerMaxInflightTasks" type="number" min="1" value="128" oninput="refreshWorkerCommand()">
         </label>
-        <label><span class="label-title">Download concurrency <span class="info" tabindex="0" data-tooltip="How many source audio files the worker downloads at the same time. Useful on fast LAN storage.">(i)</span></span>
+        <label><span class="label-title">Download concurrency <span class="info" data-tooltip="How many source audio files the worker downloads at the same time. Useful on fast LAN storage.">(i)</span></span>
           <input id="workerDownloadConcurrency" type="number" min="1" value="8" oninput="refreshWorkerCommand()">
         </label>
-        <label><span class="label-title">Submit batch size <span class="info" tabindex="0" data-tooltip="How many results/failures the worker sends back in one request.">(i)</span></span>
+        <label><span class="label-title">Submit batch size <span class="info" data-tooltip="How many results/failures the worker sends back in one request.">(i)</span></span>
           <input id="workerSubmitBatchSize" type="number" min="1" value="32" oninput="refreshWorkerCommand()">
         </label>
-        <label><span class="label-title">Lease seconds <span class="info" tabindex="0" data-tooltip="How long the server waits before returning an unfinished leased task to the queue. Increase for slow models or long tracks.">(i)</span></span>
+        <label><span class="label-title">Lease seconds <span class="info" data-tooltip="How long the server waits before returning an unfinished leased task to the queue. Increase for slow models or long tracks.">(i)</span></span>
           <input id="workerLeaseSeconds" type="number" min="30" value="900" oninput="refreshWorkerCommand()">
         </label>
-        <label><span class="label-title">Recycle after tasks <span class="info" tabindex="0" data-tooltip="Optional safety valve for suspected memory leaks. 0 keeps the worker running forever; a positive value exits after that many submitted tasks.">(i)</span></span>
+        <label><span class="label-title">Recycle after tasks <span class="info" data-tooltip="Optional safety valve for suspected memory leaks. 0 keeps the worker running forever; a positive value exits after that many submitted tasks.">(i)</span></span>
           <input id="workerMaxTasksBeforeExit" type="number" min="0" value="0" oninput="refreshWorkerCommand()">
         </label>
         <label><span class="label-title">Worker command</span>
@@ -973,51 +973,51 @@
         </div>
         <div class="settings-pane" data-settings-pane="mixes">
         <h3>Generated Mixes</h3>
-        <label><span class="label-title">Dashboard mixes <span class="info" tabindex="0" data-tooltip="How many finite generated mixes are kept on the Home dashboard. This controls the number of taste regions selected, not tracks inside each mix.">(i)</span></span>
+        <label><span class="label-title">Dashboard mixes <span class="info" data-tooltip="How many finite generated mixes are kept on the Home dashboard. This controls the number of taste regions selected, not tracks inside each mix.">(i)</span></span>
           <input id="generatedMixDashboardCount" type="number" min="1" max="20" value="8">
         </label>
-        <label><span class="label-title">Tracks per mix <span class="info" tabindex="0" data-tooltip="Target final playlist length for each generated mix. Tracks are selected from the candidate pool after scoring, familiar/discovery balancing, and artist/release caps.">(i)</span></span>
+        <label><span class="label-title">Tracks per mix <span class="info" data-tooltip="Target final playlist length for each generated mix. Tracks are selected from the candidate pool after scoring, familiar/discovery balancing, and artist/release caps.">(i)</span></span>
           <input id="generatedMixTracksPerMix" type="number" min="1" max="300" value="100">
         </label>
-        <label><span class="label-title">Update cadence <span class="info" tabindex="0" data-tooltip="How often new listening preferences may trigger automatic regeneration. Daily waits at least 1 day after the newest active mix; weekly waits 7 days; manual disables preference-triggered refresh.">(i)</span></span>
+        <label><span class="label-title">Update cadence <span class="info" data-tooltip="How often new listening preferences may trigger automatic regeneration. Daily waits at least 1 day after the newest active mix; weekly waits 7 days; manual disables preference-triggered refresh.">(i)</span></span>
           <select id="generatedMixUpdateCadence">
             <option value="daily">daily</option>
             <option value="weekly">weekly</option>
             <option value="manual">manual</option>
           </select>
         </label>
-        <label><span class="label-title">Seed source <span class="info" tabindex="0" data-tooltip="Which user signals define taste regions. Listening history uses Navidrome/local plays plus likes and completions; track likes only ignores plays; positive history keeps the older liked/completed/replayed/score signals.">(i)</span></span>
+        <label><span class="label-title">Seed source <span class="info" data-tooltip="Which user signals define taste regions. Listening history uses Navidrome/local plays plus likes and completions; track likes only ignores plays; positive history keeps the older liked/completed/replayed/score signals.">(i)</span></span>
           <select id="generatedMixSeedSource">
             <option value="listening_history">listening_history</option>
             <option value="track_likes_only">track_likes_only</option>
             <option value="positive_history">positive_history</option>
           </select>
         </label>
-        <label><span class="label-title">Region threshold <span class="info" tabindex="0" data-tooltip="Similarity cutoff used while clustering listened/liked tracks into taste regions. Lower values make larger, broader regions; higher values make smaller, tighter regions. Try 0.76-0.78 if a mix is too narrow.">(i)</span></span>
+        <label><span class="label-title">Region threshold <span class="info" data-tooltip="Similarity cutoff used while clustering listened/liked tracks into taste regions. Lower values make larger, broader regions; higher values make smaller, tighter regions. Try 0.76-0.78 if a mix is too narrow.">(i)</span></span>
           <input id="generatedMixRegionThreshold" type="number" min="0" max="1" step="0.01" value="0.82">
         </label>
-        <label><span class="label-title">Discovery ratio <span class="info" tabindex="0" data-tooltip="Target share of final mix tracks that are new rather than already present in your listening/like signals. 0 allows mostly known tracks; 1 tries to fill the mix with new nearby tracks.">(i)</span></span>
+        <label><span class="label-title">Discovery ratio <span class="info" data-tooltip="Target share of final mix tracks that are new rather than already present in your listening/like signals. 0 allows mostly known tracks; 1 tries to fill the mix with new nearby tracks.">(i)</span></span>
           <input id="generatedMixDiscoveryRatio" type="number" min="0" max="1" step="0.05" value="0.75">
         </label>
-        <label><span class="label-title">Novelty weight <span class="info" tabindex="0" data-tooltip="How strongly candidate scoring prefers unheard or long-unplayed tracks over recently heard tracks. This is separate from Discovery ratio: ratio controls known/new count, novelty weight controls ranking inside the candidate pool. 0 ignores novelty; 1 strongly favors fresher discoveries.">(i)</span></span>
+        <label><span class="label-title">Novelty weight <span class="info" data-tooltip="How strongly candidate scoring prefers unheard or long-unplayed tracks over recently heard tracks. This is separate from Discovery ratio: ratio controls known/new count, novelty weight controls ranking inside the candidate pool. 0 ignores novelty; 1 strongly favors fresher discoveries.">(i)</span></span>
           <input id="generatedMixNoveltyWeight" type="number" min="0" max="1" step="0.05" value="0.6">
         </label>
-        <label><span class="label-title">Max per artist <span class="info" tabindex="0" data-tooltip="Maximum tracks by the same artist in the final generated mix. This is applied after candidate scoring, not to the candidate pool. Lower values increase variety but may reject very close matches.">(i)</span></span>
+        <label><span class="label-title">Max per artist <span class="info" data-tooltip="Maximum tracks by the same artist in the final generated mix. This is applied after candidate scoring, not to the candidate pool. Lower values increase variety but may reject very close matches.">(i)</span></span>
           <input id="generatedMixMaxPerArtist" type="number" min="1" max="50" value="4">
         </label>
-        <label><span class="label-title">Max per release <span class="info" tabindex="0" data-tooltip="Maximum tracks from the same album/release in the final generated mix. This is applied after candidate scoring, not to the candidate pool. Use 1 for stronger album variety.">(i)</span></span>
+        <label><span class="label-title">Max per release <span class="info" data-tooltip="Maximum tracks from the same album/release in the final generated mix. This is applied after candidate scoring, not to the candidate pool. Use 1 for stronger album variety.">(i)</span></span>
           <input id="generatedMixMaxPerRelease" type="number" min="1" max="50" value="2">
         </label>
-        <label><span class="label-title">Candidate pool <span class="info" tabindex="0" data-tooltip="Maximum nearest-neighbor candidates considered per mix before final selection. Larger values give caps and discovery balancing more room, but generation is slower. This is not the final playlist length.">(i)</span></span>
+        <label><span class="label-title">Candidate pool <span class="info" data-tooltip="Maximum nearest-neighbor candidates considered per mix before final selection. Larger values give caps and discovery balancing more room, but generation is slower. This is not the final playlist length.">(i)</span></span>
           <input id="generatedMixCandidatePool" type="number" min="10" max="5000" value="1200">
         </label>
-        <label><span class="label-title">Duplicate strictness <span class="info" tabindex="0" data-tooltip="Strict prevents the same track from appearing in multiple generated mixes in one generation run. Soft allows overlap when regions are close or the catalog is sparse.">(i)</span></span>
+        <label><span class="label-title">Duplicate strictness <span class="info" data-tooltip="Strict prevents the same track from appearing in multiple generated mixes in one generation run. Soft allows overlap when regions are close or the catalog is sparse.">(i)</span></span>
           <select id="generatedMixDuplicateStrictness">
             <option value="strict">strict</option>
             <option value="soft">soft</option>
           </select>
         </label>
-        <label><span class="label-title">Mix model <span class="info" tabindex="0" data-tooltip="Embedding model used for taste regions and candidate search. The selected model needs embeddings and preferably a ready index.">(i)</span></span>
+        <label><span class="label-title">Mix model <span class="info" data-tooltip="Embedding model used for taste regions and candidate search. The selected model needs embeddings and preferably a ready index.">(i)</span></span>
           <select id="generatedMixModel">
             <option value="discogs_multi">discogs_multi</option>
             <option value="discogs_track">discogs_track</option>
@@ -1034,15 +1034,15 @@
         <div class="meta" id="generatedMixStatus">Generated mix settings not loaded yet.</div>
         <pre class="meta" id="generatedMixDiagnostics"></pre>
         <h3>Similarity Recommendations</h3>
-        <label><span class="label-title">Results <span class="info" tabindex="0" data-tooltip="Number of similar tracks requested for the current seed. Higher values return a wider list but may include weaker matches.">(i)</span></span>
+        <label><span class="label-title">Results <span class="info" data-tooltip="Number of similar tracks requested for the current seed. Higher values return a wider list but may include weaker matches.">(i)</span></span>
           <input id="k" type="number" min="1" max="100" value="30">
         </label>
-        <label><span class="label-title">Max per artist <span class="info" tabindex="0" data-tooltip="Limits repeated artists in recommendations. Lower values make results more diverse.">(i)</span></span>
+        <label><span class="label-title">Max per artist <span class="info" data-tooltip="Limits repeated artists in recommendations. Lower values make results more diverse.">(i)</span></span>
           <input id="maxPerArtist" type="number" min="1" max="20" value="2">
         </label>
         <label class="row">
           <input id="excludeSameAlbum" type="checkbox" checked style="min-height:auto">
-          <span class="label-title">Exclude same album <span class="info" tabindex="0" data-tooltip="Removes tracks from the same album as the seed. Useful when you want discovery instead of near-duplicates.">(i)</span></span>
+          <span class="label-title">Exclude same album <span class="info" data-tooltip="Removes tracks from the same album as the seed. Useful when you want discovery instead of near-duplicates.">(i)</span></span>
         </label>
         </div>
         <div class="settings-pane" data-settings-pane="flow">
