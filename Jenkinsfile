@@ -8,9 +8,9 @@
 //   - на хосте в /etc/docker/daemon.json уже прописан insecure-registries: ["192.168.1.41:5000"]
 //
 // Credentials в Jenkins:
-//   - nexus_token       (Username/Password)        — логин в Nexus для push
-//   - discocs_prod_env  (Secret file)               — прод .env с секретами (см. deploy/prod/.env.example)
-//   - HS_SSH_KEY        (SSH Username with private key) — деплой-ключ на TARGET_SERVER
+//   - tank_nexus_user_pass (Username/Password)         — логин в Nexus для push (общий для всех джоб)
+//   - discocs_prod_env     (Secret file)               — прод .env с секретами (см. deploy/prod/.env.example)
+//   - HS_SSH_KEY           (SSH Username with private key) — деплой-ключ на TARGET_SERVER
 
 pipeline {
   agent any
@@ -62,9 +62,9 @@ pipeline {
       steps {
         // Плагин Docker Pipeline не установлен — используем голый docker CLI
         // (он уже доступен агенту, см. стадию Test), без глобальной переменной `docker`.
-        // nexus_token — Secret text (identity-токен), username в Nexus не хранится отдельно.
-        withCredentials([string(credentialsId: 'nexus_token', variable: 'NEXUS_PASS')]) {
-          sh 'echo "$NEXUS_PASS" | docker login "$REGISTRY" -u jenkins_budy --password-stdin'
+        // tank_nexus_user_pass — тот же credential, что уже рабочий в другой джобе для push в Nexus.
+        withCredentials([usernamePassword(credentialsId: 'tank_nexus_user_pass', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
+          sh 'echo "$NEXUS_PASS" | docker login "$REGISTRY" -u "$NEXUS_USER" --password-stdin'
           script {
             def services = [
               [name: 'backend',  df: 'deploy/backend/Dockerfile'],

@@ -44,7 +44,7 @@ push в Gitea ──webhook──> Jenkins
 
 | ID | Тип | Назначение |
 |---|---|---|
-| `nexus_token` | Username/Password | логин в Nexus для push *(уже есть)* |
+| `tank_nexus_user_pass` | Username/Password | логин в Nexus для push *(уже есть, общий для всех джоб)* |
 | `discocs_prod_env` | Secret file | прод `.env` (содержимое `deploy/prod/.env.example`, заполненное) |
 | `HS_SSH_KEY` | SSH Username with private key | деплой-ключ на `TARGET_SERVER` *(уже есть)* |
 
@@ -110,11 +110,16 @@ frontend поднимаются без него. Образ бота при эт
 
 ## Задел: SonarQube
 
-Стадия `Sonar` в `Jenkinsfile` закомментирована. Чтобы включить:
+Стадия `Sonar` в `Jenkinsfile` закомментирована. SonarQube уже поднят
+(`http://192.168.1.41:9077`), и credential `sonar_token` (Secret text) уже
+заведён в Jenkins — используется в других джобах через
+`withCredentials([string(credentialsId: 'sonar_token', variable: 'SONAR_TOKEN')])`
+и вызов `sonar-scanner -Dsonar.host.url=... -Dsonar.login=${SONAR_TOKEN}`.
+Чтобы включить у нас:
 
-1. Поднять SonarQube, в Jenkins настроить сервер (`Manage Jenkins → System → SonarQube servers`, имя `sonar`) + токен.
-2. Добавить `sonar-project.properties` (`sonar.projectKey=discocs`, `sonar.sources=app`).
-3. Раскомментировать стадию `Sonar` и, при желании, добавить Quality Gate через `waitForQualityGate`.
+1. Добавить `sonar-project.properties` (`sonar.projectKey=discocs`, `sonar.sources=app`).
+2. Раскомментировать стадию `Sonar` в `Jenkinsfile`, используя `sonar_token` по образцу выше.
+3. При желании добавить Quality Gate через `waitForQualityGate`.
 
 ## Траблшутинг
 
