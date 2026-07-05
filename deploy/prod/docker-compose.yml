@@ -48,10 +48,40 @@ services:
       backend:
         condition: service_healthy
 
+  # Бот не имеет прямого доступа наружу (сеть площадки режет исходящий трафик до Telegram
+  # API) — весь его сетевой стек проксируется через туннель awg (см. ниже).
+  awg:
+    image: wiktorbgu/amneziawg-mikrotik:latest
+    restart: unless-stopped
+    profiles: ["bot"]
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ${DISCOCS_STATE_DIR}/discocs_awg/config:/etc/amnezia/amneziawg:ro
+      - ${DISCOCS_STATE_DIR}/discocs_awg/start-awg.sh:/start-awg.sh:ro
+    entrypoint: ["/bin/sh", "/start-awg.sh"]
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    ports:
+      - "${TA_PORT}:${TA_PORT}"
+    healthcheck:
+      test: ["CMD", "ip", "link", "show", "awg0"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   bot:
     image: ${REGISTRY:-192.168.1.41:5000}/${IMAGE_NS:-discocs}/bot:${TAG:-latest}
     restart: unless-stopped
     profiles: ["bot"]
+    # Сидит в сетевом неймспейсе awg — весь исходящий трафик (в т.ч. к Telegram API)
+    # идёт через туннель. backend всё ещё резолвится по имени, т.к. awg на той же
+    # compose-сети.
+    network_mode: "service:awg"
     environment:
       BOT_TOKEN: ${BOT_TOKEN}
       ALLOWED_TELEGRAM_USER_IDS: ${ALLOWED_TELEGRAM_USER_IDS}
@@ -65,4 +95,6 @@ services:
       - ${DISCOCS_STATE_DIR}/discocs_bot:/data
     depends_on:
       backend:
+        condition: service_healthy
+      awg:
         condition: service_healthy
