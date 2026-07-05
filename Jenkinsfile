@@ -46,7 +46,9 @@ pipeline {
 
     stage('Test') {
       steps {
-        sh 'docker build -f deploy/ci/Dockerfile.test -t discocs-test:${GIT_SHA} .'
+        // BuildKit нужен для --mount=type=cache в Dockerfile.test (кэш pip
+        // переживает инвалидацию слоя с исходниками между билдами).
+        sh 'DOCKER_BUILDKIT=1 docker build -f deploy/ci/Dockerfile.test -t discocs-test:${GIT_SHA} .'
         sh 'docker run --rm discocs-test:${GIT_SHA}'
       }
     }

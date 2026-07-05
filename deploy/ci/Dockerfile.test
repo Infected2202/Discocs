@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Образ для прогона unit-тестов в CI.
 # Путь-независим (код кладётся через COPY, а не bind-mount) — работает
 # из Jenkins-в-контейнере, где workspace недоступен хостовому демону как путь.
@@ -9,10 +10,13 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Слой зависимостей кэшируется отдельно от исходников
+# app меняется почти в каждом коммите, поэтому слой ниже всё равно
+# инвалидируется каждый раз — кэш pip монтируется отдельно (переживает
+# инвалидацию слоя), иначе каждый билд заново качает все зависимости по сети.
 COPY pyproject.toml README.md ./
 COPY app ./app
-RUN python -m pip install --upgrade pip \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install --upgrade pip \
     && python -m pip install -e ".[dev]"
 
 COPY scripts ./scripts
