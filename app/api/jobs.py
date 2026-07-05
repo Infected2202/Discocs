@@ -371,7 +371,10 @@ def start_analyze_heads(
     return start_now(job_id, background_tasks)
 
 
-@router.post("/jobs/analyze-audio-features")
+@router.post(
+    "/jobs/analyze-audio-features",
+    responses={400: {"description": "Unsupported audio feature extractor"}},
+)
 def start_analyze_audio_features(
     request: AnalyzeAudioFeaturesRequest,
     background_tasks: BackgroundTasks,
@@ -582,7 +585,7 @@ def list_jobs(
     return response
 
 
-@router.get("/jobs/{job_id}")
+@router.get("/jobs/{job_id}", responses={404: {"description": "Job not found"}})
 def get_job_detail(job_id: str) -> dict[str, object]:
     store, _settings = context()
     job = store.get_analysis_job(job_id)
@@ -600,7 +603,7 @@ def get_job_detail(job_id: str) -> dict[str, object]:
     }
 
 
-@router.post("/jobs/{job_id}/cancel")
+@router.post("/jobs/{job_id}/cancel", responses={404: {"description": "Job not found"}})
 def cancel_job(job_id: str, request: CancelJobRequest | None = None) -> dict[str, object]:
     reason = request.reason if request is not None else "Cancelled by user"
     store, _settings = context()
@@ -634,7 +637,7 @@ def cancel_job(job_id: str, request: CancelJobRequest | None = None) -> dict[str
 # Index rebuild + feedback
 # ---------------------------------------------------------------------------
 
-@router.post("/index/rebuild")
+@router.post("/index/rebuild", responses={400: {"description": "Index rebuild failed"}})
 def rebuild_index(request: IndexRequest) -> dict[str, object]:
     store, settings = context()
     try:
@@ -776,7 +779,13 @@ def api_v1_flow_profile_status(
     }
 
 
-@router.post("/feedback")
+@router.post(
+    "/feedback",
+    responses={
+        400: {"description": "Feedback validation failed"},
+        404: {"description": "Seed or result track not found"},
+    },
+)
 def save_feedback(request: FeedbackRequest) -> dict[str, str]:
     store, _settings = context()
     if store.get_track(request.seed_track_id) is None:

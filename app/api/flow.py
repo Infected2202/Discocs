@@ -217,7 +217,10 @@ def _region_summary(region) -> dict[str, object]:
 # POST /api/v1/flow/start
 # ---------------------------------------------------------------------------
 
-@router.post("/api/v1/flow/start")
+@router.post(
+    "/api/v1/flow/start",
+    responses={409: {"description": "Flow profile not ready or has no regions/candidates"}},
+)
 def api_v1_flow_start(request: FlowStartRequest) -> dict[str, object]:
     """Start a new Flow session.
 
@@ -358,7 +361,14 @@ def api_v1_flow_start(request: FlowStartRequest) -> dict[str, object]:
 # POST /api/v1/flow/refill
 # ---------------------------------------------------------------------------
 
-@router.post("/api/v1/flow/refill")
+@router.post(
+    "/api/v1/flow/refill",
+    responses={
+        400: {"description": "Session is not a Flow session"},
+        404: {"description": "Playback session, flow profile, or region not found"},
+        409: {"description": "Session has ended or has no regions"},
+    },
+)
 def api_v1_flow_refill(request: FlowRefillRequest) -> dict[str, object]:
     """Refill / rerank the Flow queue.
 
@@ -475,7 +485,13 @@ def api_v1_flow_refill(request: FlowRefillRequest) -> dict[str, object]:
 # POST /api/v1/flow/event  (Slice 5: feedback loop)
 # ---------------------------------------------------------------------------
 
-@router.post("/api/v1/flow/event")
+@router.post(
+    "/api/v1/flow/event",
+    responses={
+        400: {"description": "Session is not a Flow session"},
+        404: {"description": "Playback session not found"},
+    },
+)
 def api_v1_flow_event(request: FlowEventRequest) -> dict[str, object]:
     """Apply a playback event to Flow session state.
 

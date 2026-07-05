@@ -76,7 +76,7 @@ def update_navidrome_settings(request: NavidromeSettingsRequest) -> dict[str, ob
     return get_navidrome_settings()
 
 
-@router.post("/navidrome/ping")
+@router.post("/navidrome/ping", responses={502: {"description": "Navidrome ping failed"}})
 def ping_navidrome() -> dict[str, object]:
     _store, settings = context()
     try:

@@ -62,7 +62,7 @@ def _audio_response_media_type(path: Path) -> str | None:
     return None
 
 
-@router.get("/workers/tasks/{task_id}/state")
+@router.get("/workers/tasks/{task_id}/state", responses={404: {"description": _TASK_NOT_FOUND}})
 def get_worker_task_state(task_id: str, worker_id: str) -> dict[str, object]:
     store, _settings = context()
     task = store.get_analysis_task(task_id)
@@ -142,7 +142,15 @@ def claim_worker_tasks(request: WorkerClaimRequest) -> dict[str, object]:
     return {"tasks": [analysis_task_dict(task) for task in tasks]}
 
 
-@router.get("/workers/tasks/{task_id}/audio")
+@router.get(
+    "/workers/tasks/{task_id}/audio",
+    responses={
+        404: {"description": _TASK_NOT_FOUND},
+        409: {"description": "Task is not active, job is not running, or file identity is stale"},
+        410: {"description": "Audio file not mounted or no longer exists"},
+        502: {"description": "Navidrome audio download failed"},
+    },
+)
 def get_worker_task_audio(task_id: str) -> FileResponse:
     store, settings = context()
     task = store.get_analysis_task(task_id)
@@ -192,7 +200,7 @@ def get_worker_task_audio(task_id: str) -> FileResponse:
     return FileResponse(path, media_type=_audio_response_media_type(path))
 
 
-@router.post("/workers/results")
+@router.post("/workers/results", responses={503: {"description": _SQLITE_BUSY_RETRY_SUBMIT}})
 def submit_worker_results(
     request: WorkerSubmitRequest,
     background_tasks: BackgroundTasks,

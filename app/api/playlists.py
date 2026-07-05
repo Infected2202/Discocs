@@ -23,7 +23,11 @@ def _liked_track_ids(store, settings) -> list[int]:
         raise HTTPException(status_code=502, detail=f"Navidrome starred failed: {exc}") from exc
 
 
-@router.get("/api/v1/playlists/likes", response_model=None)
+@router.get(
+    "/api/v1/playlists/likes",
+    response_model=None,
+    responses={502: {"description": "Navidrome starred lookup failed"}},
+)
 def api_v1_likes_playlist() -> dict[str, object]:
     store, settings = context()
     track_ids = _liked_track_ids(store, settings)
@@ -38,7 +42,11 @@ def api_v1_likes_playlist() -> dict[str, object]:
     }
 
 
-@router.post("/api/v1/playlists/likes/play", response_model=PlaybackSessionEnvelopeResponse)
+@router.post(
+    "/api/v1/playlists/likes/play",
+    response_model=PlaybackSessionEnvelopeResponse,
+    responses={502: {"description": "Navidrome starred lookup failed"}},
+)
 def api_v1_play_likes() -> dict[str, object] | JSONResponse:
     store, settings = context()
     track_ids = _liked_track_ids(store, settings)

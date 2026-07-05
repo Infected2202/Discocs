@@ -212,7 +212,10 @@ def api_v1_play_mix(mix_id: str) -> dict[str, object] | JSONResponse:
 # Instant-mix history + track instant-mix creation
 # ---------------------------------------------------------------------------
 
-@router.get("/instant-mix/requests")
+@router.get(
+    "/instant-mix/requests",
+    responses={503: {"description": "Instant mix history could not be read from SQLite"}},
+)
 def list_instant_mix_requests(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -237,7 +240,13 @@ def list_instant_mix_requests(
     }
 
 
-@router.get("/instant-mix/requests/{request_id}")
+@router.get(
+    "/instant-mix/requests/{request_id}",
+    responses={
+        404: {"description": "Instant mix request not found"},
+        503: {"description": "Instant mix request could not be read from SQLite"},
+    },
+)
 def get_instant_mix_request(request_id: str) -> dict[str, object]:
     store, _settings = context()
     try:
@@ -253,7 +262,7 @@ def get_instant_mix_request(request_id: str) -> dict[str, object]:
     return instant_mix_request_dict(request, include_results=True, store=store)
 
 
-@router.post("/tracks/{track_id}/instant-mix")
+@router.post("/tracks/{track_id}/instant-mix", responses={404: {"description": "Track not found"}})
 def create_track_instant_mix(track_id: int, background_tasks: BackgroundTasks) -> dict[str, object]:
     started = perf_counter()
     request_id = str(uuid4())

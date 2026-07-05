@@ -34,7 +34,7 @@ navidrome_plugin_logger = get_navidrome_plugin_logger()
 router = APIRouter()
 
 
-@router.get("/navidrome/starred")
+@router.get("/navidrome/starred", responses={502: {"description": "Navidrome starred lookup failed"}})
 def get_navidrome_starred(model: str = "discogs_multi") -> dict[str, object]:
     store, settings = context()
     client = _navidrome_client(settings)
@@ -50,7 +50,7 @@ def get_navidrome_starred(model: str = "discogs_multi") -> dict[str, object]:
         raise HTTPException(status_code=502, detail=f"Navidrome starred failed: {exc}") from exc
 
 
-@router.get("/navidrome/starred/ids")
+@router.get("/navidrome/starred/ids", responses={502: {"description": "Navidrome starred lookup failed"}})
 def get_navidrome_starred_ids() -> dict[str, object]:
     store, settings = context()
     client = _navidrome_client(settings)
@@ -98,7 +98,13 @@ def get_navidrome_starred_ids() -> dict[str, object]:
         raise HTTPException(status_code=502, detail=f"Navidrome starred failed: {exc}") from exc
 
 
-@router.put("/releases/{release_id}/navidrome-star")
+@router.put(
+    "/releases/{release_id}/navidrome-star",
+    responses={
+        404: {"description": "Release has no Navidrome mapping"},
+        502: {"description": "Navidrome star update failed"},
+    },
+)
 def set_release_navidrome_star(release_id: int, request: NavidromeStarRequest) -> dict[str, object]:
     store, settings = context()
     item_id = store.external_id_for_entity("navidrome", "release", release_id)
@@ -123,7 +129,13 @@ def set_release_navidrome_star(release_id: int, request: NavidromeStarRequest) -
     return {"release_id": release_id, "item_id": item_id, "starred": request.starred}
 
 
-@router.put("/artists/{artist_id}/navidrome-star")
+@router.put(
+    "/artists/{artist_id}/navidrome-star",
+    responses={
+        404: {"description": "Artist has no Navidrome mapping"},
+        502: {"description": "Navidrome star update failed"},
+    },
+)
 def set_artist_navidrome_star(artist_id: int, request: NavidromeStarRequest) -> dict[str, object]:
     store, settings = context()
     item_id = store.external_id_for_entity("navidrome", "artist", artist_id)
@@ -149,7 +161,13 @@ def set_artist_navidrome_star(artist_id: int, request: NavidromeStarRequest) -> 
     return {"artist_id": artist_id, "item_id": item_id, "starred": request.starred}
 
 
-@router.put("/tracks/{track_id}/navidrome-star")
+@router.put(
+    "/tracks/{track_id}/navidrome-star",
+    responses={
+        404: {"description": "Track not found or has no Navidrome mapping"},
+        502: {"description": "Navidrome star update failed"},
+    },
+)
 def set_track_navidrome_star(track_id: int, request: NavidromeStarRequest) -> dict[str, object]:
     store, settings = context()
     track = store.get_track(track_id)
@@ -196,7 +214,14 @@ def set_track_navidrome_star(track_id: int, request: NavidromeStarRequest) -> di
     }
 
 
-@router.get("/navidrome/starred/similar")
+@router.get(
+    "/navidrome/starred/similar",
+    responses={
+        404: {"description": "No ready liked tracks with embeddings"},
+        502: {"description": "Navidrome starred lookup failed"},
+        503: {"description": "Similar mix index missing"},
+    },
+)
 def get_navidrome_starred_similar(
     model: str = "discogs_multi",
     count: int = Query(default=50, ge=1, le=500),
@@ -252,7 +277,14 @@ def get_navidrome_starred_similar(
     }
 
 
-@router.get("/navidrome/similar", response_model=NavidromeSimilarResponse)
+@router.get(
+    "/navidrome/similar",
+    response_model=NavidromeSimilarResponse,
+    responses={
+        404: {"description": "Navidrome item_id is not synced or has no similar tracks"},
+        503: {"description": "Similar index missing or Navidrome similar lookup failed"},
+    },
+)
 def get_navidrome_similar(
     item_id: str,
     count: int = Query(default=50, ge=1, le=500),

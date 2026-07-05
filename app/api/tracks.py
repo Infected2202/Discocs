@@ -58,7 +58,7 @@ _TRACK_NOT_FOUND = "Track not found"
 # Track listing / search / browse
 # ---------------------------------------------------------------------------
 
-@router.get("/tracks")
+@router.get("/tracks", responses={400: {"description": "Invalid track filters"}})
 def list_tracks(
     query: str = "",
     limit: int = Query(50, ge=1, le=500),
@@ -104,7 +104,7 @@ def search_tracks(
     )
 
 
-@router.get("/browse/facets")
+@router.get("/browse/facets", responses={400: {"description": "Invalid browse facets filters"}})
 def browse_facets(
     model: str = "discogs_multi",
     embedding_status: str = Query("all", pattern=_EMBEDDING_STATUS_PATTERN),
@@ -279,7 +279,7 @@ def delete_analysis_errors(request: DeleteAnalysisErrorsRequest) -> dict[str, ob
 # Individual track routes
 # ---------------------------------------------------------------------------
 
-@router.get("/tracks/{track_id}")
+@router.get("/tracks/{track_id}", responses={404: {"description": _TRACK_NOT_FOUND}})
 def get_track(track_id: int) -> dict[str, object]:
     store, _settings = context()
     track = store.get_track(track_id)
@@ -289,7 +289,7 @@ def get_track(track_id: int) -> dict[str, object]:
     return enriched_track_dict(store, track)
 
 
-@router.get("/tracks/{track_id}/analysis")
+@router.get("/tracks/{track_id}/analysis", responses={404: {"description": _TRACK_NOT_FOUND}})
 def get_track_analysis(track_id: int) -> dict[str, object]:
     store, _settings = context()
     track = store.get_track(track_id)
@@ -332,8 +332,15 @@ def get_track_analysis(track_id: int) -> dict[str, object]:
     }
 
 
-@router.head("/tracks/{track_id}/audio")
-@router.get("/tracks/{track_id}/audio")
+_TRACK_AUDIO_RESPONSES = {
+    404: {"description": _TRACK_NOT_FOUND},
+    410: {"description": "Audio file not mounted or no longer exists"},
+    502: {"description": "Navidrome audio stream unavailable"},
+}
+
+
+@router.head("/tracks/{track_id}/audio", responses=_TRACK_AUDIO_RESPONSES)
+@router.get("/tracks/{track_id}/audio", responses=_TRACK_AUDIO_RESPONSES)
 def get_track_audio(track_id: int, request: Request) -> Response:
     store, settings = context()
     track = store.get_track(track_id)
@@ -371,7 +378,13 @@ def get_track_audio(track_id: int, request: Request) -> Response:
     return FileResponse(path, media_type=audio_response_media_type(path))
 
 
-@router.get("/tracks/{track_id}/cover")
+@router.get(
+    "/tracks/{track_id}/cover",
+    responses={
+        404: {"description": "Track, Navidrome mapping, or cover art not found"},
+        502: {"description": "Navidrome cover art unavailable"},
+    },
+)
 def get_track_cover(track_id: int, size: int = Query(default=96, ge=32, le=600)) -> Response:
     started = perf_counter()
     store, settings = context()
@@ -435,7 +448,10 @@ def get_track_cover(track_id: int, size: int = Query(default=96, ge=32, le=600))
     return cover_response(cover.payload, cover.content_type)
 
 
-@router.get("/tracks/{track_id}/similar")
+@router.get(
+    "/tracks/{track_id}/similar",
+    responses={404: {"description": _TRACK_NOT_FOUND}, 503: {"description": "Similar index missing"}},
+)
 def get_similar_tracks(
     track_id: int,
     model: str = "discogs_multi",
@@ -477,7 +493,13 @@ def get_similar_tracks(
 # Text search + multi-seed mix
 # ---------------------------------------------------------------------------
 
-@router.post("/text-search")
+@router.post(
+    "/text-search",
+    responses={
+        400: {"description": "Text query is empty"},
+        503: {"description": "Text search embedding unavailable"},
+    },
+)
 def text_search(request: TextSearchRequest) -> dict[str, object]:
     query = request.query.strip()
     if not query:
@@ -545,7 +567,14 @@ def _parse_seed_ids_param(seed_ids: str) -> list[int]:
     return parsed
 
 
-@router.get("/tracks/similar/mix")
+@router.get(
+    "/tracks/similar/mix",
+    responses={
+        400: {"description": "Invalid seed_ids parameter"},
+        404: {"description": "One or more seed tracks not found"},
+        503: {"description": "Similar mix index missing"},
+    },
+)
 def get_similar_mix_tracks(
     seed_ids: str = Query(..., description="Comma-separated track ids"),
     model: str = "discogs_multi",
