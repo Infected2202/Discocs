@@ -66,3 +66,42 @@ def test_refresh_skipped_without_navidrome_url(monkeypatch):
 
     maintenance._maybe_refresh_navidrome_play_state(store=object(), settings=settings)
     assert calls == []
+
+
+class _FakeStore:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def expire_analysis_leases(self) -> None:
+        self.calls.append("expire_analysis_leases")
+
+    def refresh_active_analysis_jobs(self) -> None:
+        self.calls.append("refresh_active_analysis_jobs")
+
+    def recent_analysis_jobs(self, limit: int) -> list:
+        self.calls.append("recent_analysis_jobs")
+        return []
+
+    def albums_for_you_cache_age_hours(self, model_name: str) -> float:
+        self.calls.append("albums_for_you_cache_age_hours")
+        return 999.0  # older than refresh threshold so refresh is attempted
+
+
+def test_run_maintenance_tick_uses_passed_in_store(monkeypatch):
+    """An explicitly passed store must be used as-is, not discarded for a fresh context() store."""
+    fake_store = _FakeStore()
+    settings = _settings(play_state_refresh_seconds=0)
+
+    def _fail_context():
+        raise AssertionError("context() must not be called when a store is explicitly provided")
+
+    monkeypatch.setattr(maintenance, "context", _fail_context)
+    monkeypatch.setattr(maintenance.Settings, "from_env", staticmethod(lambda: settings))
+    monkeypatch.setattr(maintenance, "sync_memory_jobs_from_durable_jobs", lambda jobs: None)
+    monkeypatch.setattr(maintenance, "maybe_start_next_deferred_job", lambda: None)
+    monkeypatch.setattr("app.services.albums_for_you.refresh_albums_for_you", lambda store, model: None)
+
+    maintenance.run_maintenance_tick(fake_store)
+
+    assert "expire_analysis_leases" in fake_store.calls
+    assert "albums_for_you_cache_age_hours" in fake_store.calls

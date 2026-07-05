@@ -10,6 +10,7 @@ from time import monotonic
 
 import app.state as _state
 from app.api.deps import context
+from app.config import Settings
 from app.services.jobs import maybe_start_next_deferred_job, sync_memory_jobs_from_durable_jobs
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,10 @@ def _maybe_refresh_albums_for_you(store, settings) -> None:
 
 
 def run_maintenance_tick(store=None) -> None:
-    store, settings = context()
+    if store is None:
+        store, settings = context()
+    else:
+        settings = Settings.from_env()
     store.expire_analysis_leases()
     store.refresh_active_analysis_jobs()
     sync_memory_jobs_from_durable_jobs(store.recent_analysis_jobs(limit=100))
