@@ -102,7 +102,6 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
             scrollSnapType: "x mandatory",
             scrollPaddingLeft: "12px",
             scrollPaddingRight: "12px",
-            touchAction: "pan-x",
             WebkitOverflowScrolling: "touch",
           }}
         >
