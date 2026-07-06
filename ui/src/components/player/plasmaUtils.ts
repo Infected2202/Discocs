@@ -10,13 +10,6 @@ export const plasmaShaderInitializers = `
   vec3 S = vec3(0.0);
 `
 
-export function keepPlasmaMountedBetweenTracks(
-  currentlyReady: boolean,
-  nextAccentReady: boolean
-): boolean {
-  return currentlyReady || nextAccentReady
-}
-
 // Плазма — медленный фон, 60 fps ей не нужны. Ограничиваем рендер до ~30 fps:
 // вдвое меньше работы GPU/CPU при незаметной глазу разнице.
 export const PLASMA_FRAME_INTERVAL_MS = 1000 / 30

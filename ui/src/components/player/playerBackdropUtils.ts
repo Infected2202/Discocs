@@ -45,23 +45,3 @@ export function resolveBackdropLayers(
     fadingUrl: currentVisibleUrl,
   }
 }
-
-export interface PlasmaLayerState {
-  mounted: boolean
-  opacity: number
-}
-
-// Монтирование плазмы отвязано от готовности accent'а: пока есть фон (обложка),
-// WebGL-контекст живёт и переиспользуется между треками — как у фонового
-// PlasmaFBM. Готовность цвета управляет только прозрачностью (плавный fade-in
-// вместо ремоунта и пересоздания контекста), поэтому смена трека не роняет и не
-// пересоздаёт контекст.
-export function resolvePlasmaLayer(
-  hasBackdrop: boolean,
-  ready: boolean
-): PlasmaLayerState {
-  return {
-    mounted: hasBackdrop,
-    opacity: ready ? 1 : 0,
-  }
-}

@@ -1,17 +1,12 @@
 import { useEffect, useRef, useState } from "react"
 import { playerLog } from "@/lib/playerLogger"
 import styles from "./PlayerBackdrop.module.css"
-import Plasma from "./Plasma.tsx"
 import {
   artworkBackdropUrl,
   backdropAnimationState,
-  resolvePlasmaLayer,
   resolveBackdropLayers,
 } from "./playerBackdropUtils.ts"
-import {
-  keepPlasmaMountedBetweenTracks,
-  readTrackAccentTransitionDurationMs,
-} from "./plasmaUtils.ts"
+import { readTrackAccentTransitionDurationMs } from "./plasmaUtils.ts"
 import { preloadArtworkImage } from "./playerBarTransitionUtils.ts"
 
 interface PlayerBackdropProps {
@@ -25,8 +20,6 @@ export default function PlayerBackdrop({
 }: PlayerBackdropProps) {
   const backdropUrl = artworkBackdropUrl(artworkUrl)
   const animationPlayState = backdropAnimationState(isPlaying)
-  const [plasmaReady, setPlasmaReady] = useState(false)
-  const [plasmaAccent, setPlasmaAccent] = useState("")
   const [visibleBackdropUrl, setVisibleBackdropUrl] = useState(backdropUrl)
   const [fadingBackdropUrl, setFadingBackdropUrl] = useState<string>()
   const visibleBackdropUrlRef = useRef(visibleBackdropUrl)
@@ -72,58 +65,6 @@ export default function PlayerBackdrop({
     }
   }, [backdropUrl])
 
-  useEffect(() => {
-    if (!backdropUrl || !artworkUrl) {
-      playerLog("backdrop", "plasma hidden", {
-        artworkUrl: artworkUrl ?? null,
-        backdropUrl: backdropUrl ?? null,
-        reason: "missing-artwork",
-      })
-      setPlasmaReady(false)
-      return
-    }
-
-    const ready = document.documentElement.dataset.trackAccentArtwork === artworkUrl
-    const accent = ready
-      ? (document.documentElement.dataset.trackAccentColor ?? "")
-      : ""
-    playerLog("backdrop", "artwork changed", {
-      artworkUrl,
-      backdropUrl,
-      rootArtworkUrl: document.documentElement.dataset.trackAccentArtwork ?? "",
-      accent,
-      ready,
-    })
-    setPlasmaReady((current) => keepPlasmaMountedBetweenTracks(current, ready))
-    if (ready) setPlasmaAccent(accent)
-
-    const handleAccentChange = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        artworkUrl?: string
-        accent?: string
-      }>).detail
-      playerLog("backdrop", "accent event", {
-        artworkUrl,
-        eventArtworkUrl: detail?.artworkUrl ?? "",
-        accent: detail?.accent ?? "",
-      })
-      if (detail?.artworkUrl === artworkUrl) {
-        playerLog("backdrop", "plasma ready", { artworkUrl })
-        setPlasmaAccent(detail?.accent ?? "")
-        setPlasmaReady(true)
-      }
-    }
-
-    globalThis.addEventListener("trackaccentchange", handleAccentChange)
-    return () => {
-      globalThis.removeEventListener("trackaccentchange", handleAccentChange)
-    }
-  }, [artworkUrl, backdropUrl])
-
-  // Плазма живёт, пока есть фон; готовность accent'а даёт лишь fade-in по
-  // прозрачности — без ремоунта и пересоздания WebGL-контекста между треками.
-  const plasmaLayer = resolvePlasmaLayer(Boolean(visibleBackdropUrl), plasmaReady)
-
   return (
     <div className={styles.backdrop} aria-hidden>
       {fadingBackdropUrl && fadingBackdropUrl !== visibleBackdropUrl && (
@@ -153,17 +94,6 @@ export default function PlayerBackdrop({
         </div>
       )}
       <div className={styles.scrim} />
-      {plasmaLayer.mounted && (
-        <div className={styles.plasma} style={{ opacity: plasmaLayer.opacity }}>
-          <Plasma
-            active={isPlaying}
-            accent={plasmaAccent}
-            speed={0.1}
-            scale={30}
-            opacity={0.3}
-          />
-        </div>
-      )}
     </div>
   )
 }

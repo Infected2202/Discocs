@@ -45,7 +45,7 @@ export default function AppShell() {
       <div className="flex flex-col h-svh overflow-hidden">
         {/* Plasma */}
         <div className="fixed inset-0 pointer-events-none z-0" style={{ filter: "blur(4px)" }}>
-          <PlasmaFBM active accent={plasmaAccent} speed={0.3} scale={1.0} opacity={0.9} />
+          <PlasmaFBM active accent={plasmaAccent} speed={0.9} scale={1.0} opacity={0.9} />
         </div>
 
         {/* UI layers — above plasma */}

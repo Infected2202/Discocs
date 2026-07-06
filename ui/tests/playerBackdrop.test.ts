@@ -3,13 +3,11 @@ import { test } from "vitest"
 import {
   artworkBackdropUrl,
   backdropAnimationState,
-  resolvePlasmaLayer,
   resolveBackdropLayers,
 } from "../src/components/player/playerBackdropUtils.ts"
 import { preloadArtworkImage } from "../src/components/player/playerBarTransitionUtils.ts"
 import {
   easeTrackAccentTransition,
-  keepPlasmaMountedBetweenTracks,
   mixPlasmaColor,
   parsePlasmaColor,
   plasmaShaderInitializers,
@@ -17,48 +15,10 @@ import {
   readTrackAccentColor,
 } from "../src/components/player/plasmaUtils.ts"
 
-test("plasma stays mounted while the next track accent is resolving", () => {
-  assert.equal(keepPlasmaMountedBetweenTracks(false, false), false)
-  assert.equal(keepPlasmaMountedBetweenTracks(false, true), true)
-  assert.equal(keepPlasmaMountedBetweenTracks(true, false), true)
-})
-
 test("plasma shader initializes frame accumulators deterministically", () => {
   assert.match(plasmaShaderInitializers, /float i = 0\.0;/)
   assert.match(plasmaShaderInitializers, /float z = 0\.0;/)
   assert.match(plasmaShaderInitializers, /vec3 O = vec3\(0\.0\);/)
-})
-
-test("first plasma frame should wait for the current track accent event", () => {
-  let plasmaReady = false
-  let plasmaAccent = ""
-  let resolvedArtworkUrl = ""
-  const artworkUrl = "/artwork/current"
-
-  const onArtworkChange = () => {
-    plasmaReady = resolvedArtworkUrl === artworkUrl
-    plasmaAccent = plasmaReady ? "rgb(10 20 30)" : ""
-  }
-
-  const onAccentChange = (nextArtworkUrl: string, nextAccent: string) => {
-    resolvedArtworkUrl = nextArtworkUrl
-    if (nextArtworkUrl === artworkUrl) {
-      plasmaAccent = nextAccent
-      plasmaReady = true
-    }
-  }
-
-  onArtworkChange()
-  assert.equal(plasmaReady, false)
-  assert.equal(plasmaAccent, "")
-
-  onAccentChange("/artwork/previous", "rgb(1 2 3)")
-  assert.equal(plasmaReady, false)
-  assert.equal(plasmaAccent, "")
-
-  onAccentChange(artworkUrl, "rgb(12 34 56)")
-  assert.equal(plasmaReady, true)
-  assert.equal(plasmaAccent, "rgb(12 34 56)")
 })
 
 test("artworkBackdropUrl requests an efficient backdrop image size", () => {
@@ -76,23 +36,6 @@ test("artworkBackdropUrl requests an efficient backdrop image size", () => {
 test("backdrop motion runs only while audio is playing", () => {
   assert.equal(backdropAnimationState(true), "running")
   assert.equal(backdropAnimationState(false), "paused")
-})
-
-test("plasma layer stays mounted across accent readiness, fading via opacity", () => {
-  // First track: artwork present but accent not resolved yet — mounted, invisible.
-  const loading = resolvePlasmaLayer(true, false)
-  assert.equal(loading.mounted, true)
-  assert.equal(loading.opacity, 0)
-
-  // Accent resolved — same mount, now visible. Mount must NOT depend on readiness,
-  // otherwise the WebGL context would be recreated on every track change.
-  const ready = resolvePlasmaLayer(true, true)
-  assert.equal(ready.mounted, true)
-  assert.equal(ready.opacity, 1)
-
-  // No backdrop (no track / no artwork) — the only case that unmounts.
-  const idle = resolvePlasmaLayer(false, false)
-  assert.equal(idle.mounted, false)
 })
 
 test("backdrop crossfade keeps the previous artwork under the next one", () => {
