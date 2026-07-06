@@ -11,7 +11,8 @@ push в Gitea ──webhook──> Jenkins
    │                 backend — pytest -n auto (deploy/ci/Dockerfile.test)
    │                 бот     — pytest (deploy/ci/Dockerfile.bot-test)
    │                 фронт   — vitest run --coverage (deploy/ci/Dockerfile.ui-test)
-   │                 coverage-отчёты каждого достаются docker cp'ом
+   │                 coverage- и junit-отчёты каждого достаются docker cp'ом,
+   │                 junit публикуется через встроенный шаг `junit` (Test Result Trend)
    └─ Sonar        sonar-scanner — отчёт в SonarQube, без Quality Gate (билд не блокируется)
    └─ Build&Push   сборка backend/frontend/bot → Nexus (docker-dev @ :5000)
    │                 теги:  :<git-sha>  (всегда)   +  :latest  (только с main)
@@ -195,6 +196,25 @@ JS-отчёт — `sonar.javascript.lcov.reportPaths=ui/coverage/lcov.info`.
 вместо `vitest` (4 файла в `ui/tests` импортировали `test` из `node:test`,
 из-за чего vitest их не подхватывал), а `discocs_bot/pyproject.toml` не
 объявлял `pytest` даже как dev-зависимость.
+
+### JUnit-отчёты (Test Result Trend)
+
+Каждый из трёх тестовых прогонов пишет ещё и JUnit XML — `pytest --junitxml=`
+(backend/бот) и `vitest`'ный встроенный `junit`-репортер (фронт, настроен в
+`ui/vite.config.ts`: `reporters: ["default", "junit"]`). Все три (`junit-backend.xml`,
+`junit-bot.xml`, `junit-ui.xml`) достаются `docker cp`'ом и публикуются одним
+встроенным шагом `junit 'junit-*.xml'` (ядро Jenkins, отдельный плагин не нужен) —
+даёт нативный **Test Result Trend** на странице джобы и список конкретно
+упавших тестов, без грепа консоли.
+
+Важно: скрипт извлечения coverage/junit специально не использует `set -e` —
+раньше (см. историю, билд #53) первый же упавший набор тестов обрывал весь
+скрипт до `docker cp`, и при реальном падении тестов не оставалось вообще
+никакого отчёта (ни coverage, ни junit) — приходилось лезть в консоль руками.
+Теперь код выхода каждого `docker start -a` трекается вручную (`FAILED`),
+`docker cp` всегда выполняется, а стадия `Test` фейлится по итоговому `exit
+$FAILED` уже после того, как все отчёты извлечены; `junit` публикуется в
+`post { always { ... } }` стадии, а не только при успехе.
 
 ## Python-зависимости (uv)
 

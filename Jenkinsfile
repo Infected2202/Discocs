@@ -57,25 +57,44 @@ pipeline {
         sh 'DOCKER_BUILDKIT=1 docker build -f deploy/ci/Dockerfile.ui-test -t discocs-ui-test:${GIT_SHA} .'
         // create+start+cp вместо `docker run --rm`: агент собирает через хостовый
         // демон (docker-outside-of-docker), поэтому bind-mount воркспейса недоступен —
-        // coverage-отчёты достаём из уже остановленных контейнеров через `docker cp`.
+        // coverage/junit-отчёты достаём из уже остановленных контейнеров через `docker cp`.
+        // set +e и ручной трекинг FAILED — иначе `set -e` прерывал бы скрипт на первом же
+        // упавшем наборе тестов, и мы теряли бы coverage/junit именно тогда, когда они
+        // нужнее всего (см. историю: билд #53 упал без единого извлечённого отчёта).
         sh '''
-          set -e
+          set +e
+          FAILED=0
+
           CID=$(docker create discocs-test:${GIT_SHA})
           docker start -a "$CID"
+          [ $? -ne 0 ] && FAILED=1
           docker cp "$CID:/app/coverage.xml" coverage.xml
+          docker cp "$CID:/app/junit-backend.xml" junit-backend.xml
           docker rm -f "$CID"
 
           CID=$(docker create discocs-bot-test:${GIT_SHA})
           docker start -a "$CID"
+          [ $? -ne 0 ] && FAILED=1
           docker cp "$CID:/app/bot-coverage.xml" bot-coverage.xml
+          docker cp "$CID:/app/junit-bot.xml" junit-bot.xml
           docker rm -f "$CID"
 
           CID=$(docker create discocs-ui-test:${GIT_SHA})
           docker start -a "$CID"
+          [ $? -ne 0 ] && FAILED=1
           mkdir -p ui/coverage
           docker cp "$CID:/build/coverage/lcov.info" ui/coverage/lcov.info
+          docker cp "$CID:/build/junit-ui.xml" junit-ui.xml
           docker rm -f "$CID"
+
+          exit $FAILED
         '''
+      }
+      post {
+        // always, не success — иначе результаты падающих тестов никогда бы не публиковались.
+        always {
+          junit 'junit-*.xml'
+        }
       }
     }
 

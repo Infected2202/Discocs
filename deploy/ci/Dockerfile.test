@@ -26,4 +26,4 @@ COPY scripts ./scripts
 COPY tests ./tests
 
 ENV PATH="/app/.venv/bin:$PATH"
-CMD ["python", "-m", "pytest", "-q", "-n", "auto", "--cov=app", "--cov-report=xml:/app/coverage.xml"]
+CMD ["python", "-m", "pytest", "-q", "-n", "auto", "--cov=app", "--cov-report=xml:/app/coverage.xml", "--junitxml=/app/junit-backend.xml"]

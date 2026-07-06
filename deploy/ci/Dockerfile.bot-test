@@ -18,4 +18,4 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY discocs_bot/tests ./tests
 
 ENV PATH="/app/.venv/bin:$PATH"
-CMD ["python", "-m", "pytest", "-q", "--cov=bot", "--cov-report=xml:/app/bot-coverage.xml"]
+CMD ["python", "-m", "pytest", "-q", "--cov=bot", "--cov-report=xml:/app/bot-coverage.xml", "--junitxml=/app/junit-bot.xml"]

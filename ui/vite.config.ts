@@ -44,6 +44,10 @@ export default defineConfig({
       reportsDirectory: "coverage",
       include: ["src/**"],
     },
+    // junit — тот же формат, что pytest --junitxml для backend/бота, чтобы
+    // Jenkins мог показать все три через один встроенный шаг `junit`.
+    reporters: ["default", "junit"],
+    outputFile: { junit: "./junit-ui.xml" },
   },
   server: {
     proxy: Object.fromEntries(
