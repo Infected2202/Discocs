@@ -14,14 +14,18 @@ interface ShelfProps {
   readonly shelfKey?: string
 }
 
+const MOBILE_COLS = 2
+const MOBILE_GAP_PX = 8
+
 export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfProps) {
   const navigate = useNavigate()
   const cols = useColumns()
+  const isMobile = cols === MOBILE_COLS
   const [page, setPage] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const animating = useRef(false)
 
-  const sliced = items.slice(0, cols * 2)
+  const sliced = isMobile ? items : items.slice(0, cols * 2)
   const totalPages = Math.ceil(sliced.length / cols)
   const canPrev = page > 0
   const canNext = page < totalPages - 1
@@ -51,7 +55,7 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
   return (
     <section className="shelf-section space-y-1">
       {/* Header */}
-      {(title || shelfKey || totalPages > 1) && <div className="px-4 sm:px-6 flex items-center gap-2 min-w-0">
+      {(title || shelfKey || (!isMobile && totalPages > 1)) && <div className="px-4 sm:px-6 flex items-center gap-2 min-w-0">
         <h2
           className={shelfKey ? "text-sm font-semibold shrink-0 cursor-pointer hover:underline" : "text-sm font-semibold shrink-0"}
           onClick={shelfKey ? () => navigate(`/shelf/${shelfKey}`) : undefined}
@@ -68,7 +72,7 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
               More
             </button>
           )}
-          {totalPages > 1 && (
+          {!isMobile && totalPages > 1 && (
             <>
               <button
                 onClick={() => canPrev && goTo(page - 1)}
@@ -90,28 +94,54 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
       </div>}
 
       {/* Slider */}
-      <div ref={containerRef} className="overflow-x-hidden">
-        <div className="flex">
-          {pages.map((pageItems, pi) => (
+      {isMobile ? (
+        <div
+          className="flex overflow-x-auto px-3 pb-1"
+          style={{
+            gap: `${MOBILE_GAP_PX}px`,
+            scrollSnapType: "x mandatory",
+            scrollPaddingLeft: "12px",
+            scrollPaddingRight: "12px",
+            touchAction: "pan-x",
+            WebkitOverflowScrolling: "touch",
+          }}
+        >
+          {sliced.map((item) => (
             <div
-              key={pi}
-              className="px-3 pb-1"
+              key={`${item.type}-${item.id}`}
               style={{
-                display: "grid",
-                gridTemplateColumns: `repeat(${cols}, 1fr)`,
-                gap: "2px",
-                minWidth: "100%",
-                width: "100%",
-                boxSizing: "border-box",
+                flex: `0 0 calc((100% - ${MOBILE_GAP_PX}px) / ${MOBILE_COLS})`,
+                scrollSnapAlign: "start",
               }}
             >
-              {pageItems.map((item) => (
-                <MediaCard key={`${item.type}-${item.id}`} {...item} variant="shelf" />
-              ))}
+              <MediaCard {...item} variant="shelf" />
             </div>
           ))}
         </div>
-      </div>
+      ) : (
+        <div ref={containerRef} className="overflow-x-hidden">
+          <div className="flex">
+            {pages.map((pageItems, pi) => (
+              <div
+                key={pi}
+                className="px-3 pb-1"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: `repeat(${cols}, 1fr)`,
+                  gap: "2px",
+                  minWidth: "100%",
+                  width: "100%",
+                  boxSizing: "border-box",
+                }}
+              >
+                {pageItems.map((item) => (
+                  <MediaCard key={`${item.type}-${item.id}`} {...item} variant="shelf" />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   )
 }

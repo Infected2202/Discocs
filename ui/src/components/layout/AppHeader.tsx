@@ -20,8 +20,9 @@ export default function AppHeader() {
   return (
     <div className="shrink-0 flex items-center gap-4 sm:gap-6 px-4 sm:px-6 py-3">
       <span
-        className="text-primary font-bold text-2xl tracking-tight select-none shrink-0"
+        className="text-primary font-bold text-2xl tracking-tight select-none shrink-0 cursor-pointer"
         style={{ fontFamily: "'Onest Variable', sans-serif" }}
+        onClick={() => navigate("/")}
       >
         discocs
       </span>
