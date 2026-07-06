@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 from time import perf_counter
-from typing import Annotated
+from typing import Annotated, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from urllib.parse import urljoin
@@ -1136,6 +1136,19 @@ def normalize_worker_models(models: list[str]) -> list[str]:
     return list(dict.fromkeys(model for model in normalized if model))
 
 
+def close_task_on_conflict(
+    exc: Exception,
+    task_id: str,
+    model_name: str,
+    audio_path: Path | None,
+    close_inactive_task: Callable[[str, str, Path | None], bool],
+) -> bool:
+    """True if `exc` is an HTTP 409 (task no longer active) and it was closed."""
+    if isinstance(exc, HTTPError) and exc.code == 409:
+        return close_inactive_task(task_id, model_name, audio_path)
+    return False
+
+
 def fallback_to_essentia_embedding(
     settings: Settings,
     model_name: str,
@@ -1528,9 +1541,8 @@ def worker(
                             active_items.append({"task": task, "audio_path": audio_path, "patches": patches})
                             patch_counts.append(len(patches))
                         except Exception as exc:
-                            if isinstance(exc, HTTPError) and exc.code == 409:
-                                if close_inactive_task(task_id, model_name, audio_path):
-                                    continue
+                            if close_task_on_conflict(exc, task_id, model_name, audio_path, close_inactive_task):
+                                continue
                             append_worker_failure(failures, task_id, exc)
                             completed_task_ids.add(task_id)
                             typer.echo(f"failed task_id={task_id}: {exc}", err=True)
@@ -1635,9 +1647,8 @@ def worker(
                                 )
                                 process_ready_embedding_batches()
                             except Exception as exc:
-                                if isinstance(exc, HTTPError) and exc.code == 409:
-                                    if close_inactive_task(task_id, model_name, audio_path):
-                                        continue
+                                if close_task_on_conflict(exc, task_id, model_name, audio_path, close_inactive_task):
+                                    continue
                                 if embedding_backend == "auto":
                                     if close_inactive_task(task_id, model_name, audio_path):
                                         continue
@@ -1693,9 +1704,8 @@ def worker(
                                 completed_task_ids.add(task_id)
                                 typer.echo(f"ok task_id={task_id} track_id={task['track_id']} model={model_name}")
                             except Exception as exc:
-                                if isinstance(exc, HTTPError) and exc.code == 409:
-                                    if close_inactive_task(task_id, model_name, audio_path):
-                                        continue
+                                if close_task_on_conflict(exc, task_id, model_name, audio_path, close_inactive_task):
+                                    continue
                                 append_worker_failure(failures, task_id, exc)
                                 completed_task_ids.add(task_id)
                                 typer.echo(f"failed task_id={task_id}: {exc}", err=True)
@@ -1764,9 +1774,8 @@ def worker(
                             completed_task_ids.add(task_id)
                             typer.echo(f"ok task_id={task_id} track_id={task['track_id']} model={model_name}")
                         except Exception as exc:
-                            if isinstance(exc, HTTPError) and exc.code == 409:
-                                if close_inactive_task(task_id, model_name, audio_path):
-                                    continue
+                            if close_task_on_conflict(exc, task_id, model_name, audio_path, close_inactive_task):
+                                continue
                             append_worker_failure(failures, task_id, exc)
                             completed_task_ids.add(task_id)
                             typer.echo(f"failed task_id={task_id}: {exc}", err=True)
