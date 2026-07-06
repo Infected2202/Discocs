@@ -10,6 +10,7 @@ download, model inference) monkeypatched. This is the safety net that stages
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 
 import numpy as np
@@ -103,7 +104,9 @@ def _make_post_json(claim_sequence: list[list[dict]]):
     claim_iter = iter(claim_sequence)
 
     def fake_post_json(server: str, path: str, payload: dict, *, timeout: float = 60) -> dict:
-        calls.append((path, payload))
+        # submit_worker_buffers clears its result/failure lists in place right after
+        # calling post_json, so the recorded payload must be a snapshot, not a reference.
+        calls.append((path, copy.deepcopy(payload)))
         if path == "/workers/register":
             return {}
         if path == "/workers/claim":
@@ -130,7 +133,9 @@ def _make_task_state(active_map: dict[str, bool | None] | None):
 
     def fake_task_is_active(server: str, worker_id: str, task_id: str) -> bool:
         state = active_map.get(task_id, True)
-        return bool(state) if state is not None else True
+        # `None` models a task whose state check itself 404s (task gone entirely) -
+        # that must also read as "not active" so callers route into close_inactive_task.
+        return bool(state) if state is not None else False
 
     def fake_worker_task_state(server: str, worker_id: str, task_id: str) -> dict:
         state = active_map.get(task_id, True)
