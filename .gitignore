@@ -44,6 +44,9 @@ eval/results/
 
 # Local Codex/test secrets
 .codex/local-secrets.env
+.codex/sonarqube.env
+.codex/config.toml
+.mcp.json
 .env.local
 
 # Personal Claude Code overrides (Jenkins API token, etc.) — never commit
