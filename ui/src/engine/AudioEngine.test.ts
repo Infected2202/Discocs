@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 
 // Minimal TimeRanges mock — enough for AudioEngine's buffered-range scan
 class MockTimeRanges {
-  constructor(private readonly ranges: Array<[number, number]> = []) {}
+  private readonly ranges: Array<[number, number]>
+  constructor(ranges: Array<[number, number]> = []) {
+    this.ranges = ranges
+  }
   get length() { return this.ranges.length }
   start(i: number) { return this.ranges[i][0] }
   end(i: number) { return this.ranges[i][1] }
