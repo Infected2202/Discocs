@@ -1182,6 +1182,608 @@ def fallback_to_essentia_embedding(
         typer.echo(f"failed task_id={task_id}: {fallback_exc}", err=True)
 
 
+class WorkerRuntime:
+    """Mutable state and per-cycle logic for `worker()`'s claim/process/submit loop.
+
+    Replaces the 7 nonlocal-sharing closures that used to live inside
+    `worker()` (see plans/cli-refactoring-plan.md, Stage 6) with methods over
+    explicit instance state.
+    """
+
+    def __init__(
+        self,
+        *,
+        server: str,
+        worker_id: str,
+        models: list[str],
+        claim_batch_size: int,
+        lease_seconds: int,
+        poll_seconds: float,
+        once: bool,
+        max_inflight_tasks: int,
+        submit_batch_size: int,
+        download_concurrency: int,
+        resolved_cpu_workers: int,
+        gpu_batch_size: int,
+        embedding_backend: str,
+        ready_batches: int,
+        max_tasks_before_exit: int,
+        settings: Settings,
+        embedders: dict[str, object],
+        audio_feature_analyzer: AudioFeatureAnalyzer | None,
+        head_pack_analyzer: DiscogsEffnetHeadPackAnalyzer | None,
+        direct_embedding_pipeline: bool,
+    ) -> None:
+        self.server = server
+        self.worker_id = worker_id
+        self.models = models
+        self.claim_batch_size = claim_batch_size
+        self.lease_seconds = lease_seconds
+        self.poll_seconds = poll_seconds
+        self.once = once
+        self.max_inflight_tasks = max_inflight_tasks
+        self.submit_batch_size = submit_batch_size
+        self.download_concurrency = download_concurrency
+        self.resolved_cpu_workers = resolved_cpu_workers
+        self.gpu_batch_size = gpu_batch_size
+        self.embedding_backend = embedding_backend
+        self.ready_batches = ready_batches
+        self.max_tasks_before_exit = max_tasks_before_exit
+        self.settings = settings
+        self.embedders = embedders
+        self.audio_feature_analyzer = audio_feature_analyzer
+        self.head_pack_analyzer = head_pack_analyzer
+        self.direct_embedding_pipeline = direct_embedding_pipeline
+
+        self.temp_path: Path | None = None
+        self.downloader: ThreadPoolExecutor | None = None
+        self.cpu_pool: ThreadPoolExecutor | None = None
+
+        self.draining = False
+        self.processed_any = False
+        self.leased_task_ids: set[str] = set()
+        self.completed_task_ids: set[str] = set()
+        self.acknowledged_task_ids: set[str] = set()
+        self.audio_paths: dict[str, Path] = {}
+        self.results: list[dict[str, object]] = []
+        self.feature_results: list[dict[str, object]] = []
+        self.head_results: list[dict[str, object]] = []
+        self.failures: list[dict[str, object]] = []
+        self.future_to_task: dict[object, tuple[dict[str, object], Path]] = {}
+        self.cpu_future_to_task: dict[object, tuple[dict[str, object], Path]] = {}
+        self.embedding_future_to_task: dict[object, tuple[dict[str, object], Path]] = {}
+        self.embedding_future_started_at: dict[object, float] = {}
+        self.ready_embedding_tasks: list[dict[str, object]] = []
+        self.ready_head_tasks: list[dict[str, object]] = []
+        self.last_metrics_at = perf_counter()
+
+    def request_drain(self, _signum, _frame) -> None:
+        if self.draining:
+            raise KeyboardInterrupt
+        self.draining = True
+        typer.echo("stop requested; finishing current task and releasing the rest", err=True)
+
+    def _release_audio_path(self, task_id: str, audio_path: Path | None) -> None:
+        path = audio_path or self.audio_paths.pop(task_id, None)
+        if path is not None:
+            self.audio_paths.pop(task_id, None)
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                typer.echo(f"temp cleanup failed task_id={task_id}: {exc}", err=True)
+
+    def maybe_flush_if_batch_full(self) -> None:
+        if (
+            len(self.results) + len(self.feature_results) + len(self.head_results) + len(self.failures)
+            >= max(self.submit_batch_size, 1)
+        ):
+            self.flush_worker_buffers()
+
+    def flush_worker_buffers(self) -> None:
+        before = len(self.acknowledged_task_ids)
+        submit_worker_buffers(
+            self.server,
+            self.worker_id,
+            self.results,
+            self.feature_results,
+            self.head_results,
+            self.failures,
+            self.acknowledged_task_ids,
+            self.audio_paths,
+        )
+        if self.max_tasks_before_exit > 0 and len(self.acknowledged_task_ids) >= self.max_tasks_before_exit:
+            if len(self.acknowledged_task_ids) != before:
+                typer.echo(
+                    f"max tasks reached: {len(self.acknowledged_task_ids)}/{self.max_tasks_before_exit}; draining"
+                )
+            self.draining = True
+
+    def close_inactive_task(self, task_id: str, model_name: str, audio_path: Path | None = None) -> bool:
+        try:
+            state = worker_task_state(self.server, self.worker_id, task_id)
+        except HTTPError as state_exc:
+            if state_exc.code == 404:
+                self.acknowledged_task_ids.add(task_id)
+                self._release_audio_path(task_id, audio_path)
+                typer.echo(f"closed missing task_id={task_id} model={model_name}", err=True)
+                return True
+            typer.echo(f"state check failed task_id={task_id} model={model_name}: {state_exc}", err=True)
+            return False
+        except Exception as state_exc:
+            typer.echo(f"state check failed task_id={task_id} model={model_name}: {state_exc}", err=True)
+            return False
+        if bool(state.get("active")):
+            return False
+        self.acknowledged_task_ids.add(task_id)
+        self._release_audio_path(task_id, audio_path)
+        typer.echo(
+            f"closed inactive task_id={task_id} model={model_name} "
+            f"task_status={state.get('status')} job_status={state.get('job_status')}",
+            err=True,
+        )
+        return True
+
+    def claim_more(self) -> None:
+        if self.draining:
+            return
+        capacity = (
+            max(self.max_inflight_tasks, 1)
+            - len(self.future_to_task)
+            - len(self.cpu_future_to_task)
+            - len(self.embedding_future_to_task)
+            - len(self.ready_embedding_tasks)
+            - len(self.ready_head_tasks)
+        )
+        if capacity <= 0:
+            return
+        limit = min(max(self.claim_batch_size, 1), capacity)
+        claimed = post_json(
+            self.server,
+            "/workers/claim",
+            {
+                "worker_id": self.worker_id,
+                "models": self.models,
+                "limit": limit,
+                "lease_seconds": self.lease_seconds,
+            },
+        )
+        tasks = claimed.get("tasks", [])
+        if not isinstance(tasks, list) or not tasks:
+            return
+        for task in tasks:
+            task_id = str(task["task_id"])
+            self.leased_task_ids.add(task_id)
+            suffix = Path(str(task.get("path") or "")).suffix or ".audio"
+            audio_path = self.temp_path / f"{task_id}{suffix}"
+            self.audio_paths[task_id] = audio_path
+            future = self.downloader.submit(
+                download_task_audio,
+                self.server,
+                str(task["audio_url"]),
+                audio_path,
+            )
+            self.future_to_task[future] = (task, audio_path)
+        self.processed_any = True
+
+    def maybe_log_metrics(self) -> None:
+        now = perf_counter()
+        if now - self.last_metrics_at < 10:
+            return
+        self.last_metrics_at = now
+        typer.echo(
+            "worker metrics "
+            f"claimed={len(self.leased_task_ids)} "
+            f"submitted={len(self.acknowledged_task_ids)} "
+            f"failed_buffer={len(self.failures)} "
+            f"download={len(self.future_to_task)} "
+            f"cpu_features={len(self.cpu_future_to_task)} "
+            f"embedding_preprocess={len(self.embedding_future_to_task)} "
+            f"ready_embeddings={len(self.ready_embedding_tasks)} "
+            f"ready_heads={len(self.ready_head_tasks)} "
+            f"leased={len(self.leased_task_ids - self.acknowledged_task_ids)} "
+            f"rss_mb={process_rss_mb()} "
+            f"{torch_cuda_memory_summary()}"
+        )
+
+    def process_ready_embedding_batches(self, *, flush: bool = False) -> None:
+        if not self.ready_embedding_tasks:
+            return
+        grouped_models = list(dict.fromkeys(str(item["task"]["model_name"]) for item in self.ready_embedding_tasks))
+        for model_name in grouped_models:
+            model_items = [
+                item for item in self.ready_embedding_tasks if str(item["task"]["model_name"]) == model_name
+            ]
+            total_patches = sum(len(item["patches"]) for item in model_items)
+            target_patches = max(self.gpu_batch_size, 1) * max(self.ready_batches, 1)
+            if not flush and total_patches < target_patches:
+                continue
+            self.ready_embedding_tasks[:] = [
+                item for item in self.ready_embedding_tasks if str(item["task"]["model_name"]) != model_name
+            ]
+            try:
+                batch_started = perf_counter()
+                active_items = []
+                for item in model_items:
+                    task_id = str(item["task"]["task_id"])
+                    if self.draining or not task_is_active(self.server, self.worker_id, task_id):
+                        self.close_inactive_task(task_id, model_name, item.get("audio_path"))
+                        continue
+                    active_items.append(item)
+                if not active_items:
+                    continue
+                all_patches = np.concatenate([item["patches"] for item in active_items], axis=0)
+                patch_counts = [len(item["patches"]) for item in active_items]
+                actual_patches = len(all_patches)
+                padded = 0
+                remainder = actual_patches % self.gpu_batch_size
+                if remainder:
+                    padded = self.gpu_batch_size - remainder
+                    all_patches = np.pad(all_patches, ((0, padded), (0, 0), (0, 0)), mode="constant")
+                direct_model = self.embedders[model_name].direct_model()
+                predict_started = perf_counter()
+                outputs = []
+                for start in range(0, len(all_patches), self.gpu_batch_size):
+                    outputs.append(
+                        direct_model.predict_patches_unpadded(all_patches[start : start + self.gpu_batch_size])
+                    )
+                embeddings = np.concatenate(outputs, axis=0)[:actual_patches]
+                predict_seconds = perf_counter() - predict_started
+                offset = 0
+                for item, patch_count in zip(active_items, patch_counts):
+                    task = item["task"]
+                    task_id = str(task["task_id"])
+                    task_embeddings = embeddings[offset : offset + patch_count]
+                    offset += patch_count
+                    vector = pool_and_normalize(task_embeddings)
+                    append_embedding_result(self.results, task, model_name, vector)
+                    self.completed_task_ids.add(task_id)
+                    typer.echo(
+                        f"ok task_id={task_id} track_id={task['track_id']} "
+                        f"model={model_name} patches={patch_count}"
+                    )
+                typer.echo(
+                    f"gpu batch model={model_name} tasks={len(active_items)} "
+                    f"patches={actual_patches} padded={padded} "
+                    f"predict_seconds={predict_seconds:.3f} total_seconds={perf_counter() - batch_started:.3f}"
+                )
+                del all_patches, embeddings, outputs
+            except Exception as exc:
+                for item in model_items:
+                    task = item["task"]
+                    task_id = str(task["task_id"])
+                    audio_path = item["audio_path"]
+                    if self.embedding_backend == "auto":
+                        fallback_to_essentia_embedding(
+                            self.settings,
+                            model_name,
+                            self.gpu_batch_size,
+                            audio_path,
+                            task,
+                            self.results,
+                            self.failures,
+                            self.completed_task_ids,
+                        )
+                    else:
+                        append_worker_failure(self.failures, task_id, exc)
+                        self.completed_task_ids.add(task_id)
+                        typer.echo(f"failed task_id={task_id}: {exc}", err=True)
+            self.maybe_flush_if_batch_full()
+
+    def process_ready_head_batches(self, *, flush: bool = False) -> None:
+        if not self.ready_head_tasks:
+            return
+        if self.head_pack_analyzer is None:
+            raise KeyError("discogs-effnet-heads")
+        target_tasks = max(4, self.ready_batches, 1)
+        if not flush and len(self.ready_head_tasks) < target_tasks:
+            return
+        batch_items = self.ready_head_tasks[:target_tasks]
+        del self.ready_head_tasks[:target_tasks]
+        batch_started = perf_counter()
+        active_items: list[dict[str, object]] = []
+        patch_counts: list[int] = []
+        for item in batch_items:
+            task = item["task"]
+            audio_path = item["audio_path"]
+            task_id = str(task["task_id"])
+            model_name = str(task["model_name"])
+            try:
+                if self.draining or not task_is_active(self.server, self.worker_id, task_id):
+                    self.close_inactive_task(task_id, model_name, audio_path)
+                    continue
+                patches = self.head_pack_analyzer.extract_patch_embeddings(audio_path)
+                if len(patches) == 0:
+                    raise ValueError("No EffNet patches extracted")
+                active_items.append({"task": task, "audio_path": audio_path, "patches": patches})
+                patch_counts.append(len(patches))
+            except Exception as exc:
+                if close_task_on_conflict(exc, task_id, model_name, audio_path, self.close_inactive_task):
+                    continue
+                append_worker_failure(self.failures, task_id, exc)
+                self.completed_task_ids.add(task_id)
+                typer.echo(f"failed task_id={task_id}: {exc}", err=True)
+        if not active_items:
+            return
+        try:
+            predict_started = perf_counter()
+            outputs_by_task = self.head_pack_analyzer.analyze_patch_embedding_batch(
+                [np.asarray(item["patches"], dtype=np.float32) for item in active_items]
+            )
+            predict_seconds = perf_counter() - predict_started
+            for item, outputs, patch_count in zip(active_items, outputs_by_task, patch_counts):
+                task = item["task"]
+                task_id = str(task["task_id"])
+                self.head_results.append(
+                    {
+                        "task_id": task_id,
+                        "track_id": int(task["track_id"]),
+                        "model_name": "discogs-effnet-heads",
+                        "file_size": int(task["file_size"]),
+                        "mtime": int(task["mtime"]),
+                        "outputs": serialized_head_outputs(outputs),
+                    }
+                )
+                self.completed_task_ids.add(task_id)
+                typer.echo(
+                    f"ok task_id={task_id} track_id={task['track_id']} "
+                    f"model=discogs-effnet-heads patches={patch_count}"
+                )
+            typer.echo(
+                f"head batch tasks={len(active_items)} patches={sum(patch_counts)} "
+                f"predict_seconds={predict_seconds:.3f} total_seconds={perf_counter() - batch_started:.3f}"
+            )
+            del outputs_by_task
+        except Exception as exc:
+            for item in active_items:
+                task = item["task"]
+                task_id = str(task["task_id"])
+                append_worker_failure(self.failures, task_id, exc)
+                self.completed_task_ids.add(task_id)
+                typer.echo(f"failed task_id={task_id}: {exc}", err=True)
+        finally:
+            for item in active_items:
+                item.pop("patches", None)
+        self.maybe_flush_if_batch_full()
+
+    def _handle_embedding_future(self, future: object) -> None:
+        task, audio_path = self.embedding_future_to_task.pop(future)
+        preprocess_started = self.embedding_future_started_at.pop(future, perf_counter())
+        task_id = str(task["task_id"])
+        model_name = str(task["model_name"])
+        try:
+            patches = future.result()
+            if len(patches) == 0:
+                raise ValueError("No EffNet patches extracted")
+            if self.draining or not task_is_active(self.server, self.worker_id, task_id):
+                self.close_inactive_task(task_id, model_name, audio_path)
+                return
+            self.ready_embedding_tasks.append({"task": task, "audio_path": audio_path, "patches": patches})
+            typer.echo(
+                f"ready task_id={task_id} track_id={task['track_id']} "
+                f"model={model_name} patches={len(patches)} "
+                f"preprocess_seconds={perf_counter() - preprocess_started:.3f}"
+            )
+            self.process_ready_embedding_batches()
+        except Exception as exc:
+            if close_task_on_conflict(exc, task_id, model_name, audio_path, self.close_inactive_task):
+                return
+            if self.embedding_backend == "auto":
+                if self.close_inactive_task(task_id, model_name, audio_path):
+                    return
+                fallback_to_essentia_embedding(
+                    self.settings,
+                    model_name,
+                    self.gpu_batch_size,
+                    audio_path,
+                    task,
+                    self.results,
+                    self.failures,
+                    self.completed_task_ids,
+                )
+            else:
+                append_worker_failure(self.failures, task_id, exc)
+                self.completed_task_ids.add(task_id)
+                typer.echo(f"failed task_id={task_id}: {exc}", err=True)
+        self.maybe_flush_if_batch_full()
+
+    def _handle_cpu_future(self, future: object) -> None:
+        task, audio_path = self.cpu_future_to_task.pop(future)
+        task_id = str(task["task_id"])
+        model_name = str(task["model_name"])
+        try:
+            features = future.result()
+            if self.draining:
+                return
+            self.feature_results.append(
+                {
+                    "task_id": task_id,
+                    "track_id": int(task["track_id"]),
+                    "model_name": model_name,
+                    "file_size": int(task["file_size"]),
+                    "mtime": int(task["mtime"]),
+                    "features": [
+                        {
+                            "name": feature.name,
+                            "value": feature.value,
+                            "text_value": feature.text_value,
+                            "unit": feature.unit,
+                            "confidence": feature.confidence,
+                            "extractor": feature.extractor,
+                        }
+                        for feature in features
+                    ],
+                }
+            )
+            self.completed_task_ids.add(task_id)
+            typer.echo(f"ok task_id={task_id} track_id={task['track_id']} model={model_name}")
+        except Exception as exc:
+            if close_task_on_conflict(exc, task_id, model_name, audio_path, self.close_inactive_task):
+                return
+            append_worker_failure(self.failures, task_id, exc)
+            self.completed_task_ids.add(task_id)
+            typer.echo(f"failed task_id={task_id}: {exc}", err=True)
+        self.maybe_flush_if_batch_full()
+
+    def _maybe_claim_more(self) -> None:
+        if not self.draining:
+            try:
+                self.claim_more()
+            except (URLError, TimeoutError) as exc:
+                typer.echo(f"claim failed: {exc}", err=True)
+
+    def _handle_download_future(self, future: object) -> None:
+        task, audio_path = self.future_to_task.pop(future)
+        task_id = str(task["task_id"])
+        model_name = str(task["model_name"])
+        try:
+            future.result()
+            if self.draining:
+                return
+            if model_name == AUDIO_FEATURE_EXTRACTOR:
+                if self.audio_feature_analyzer is None:
+                    raise KeyError(model_name)
+                cpu_future = self.cpu_pool.submit(self.audio_feature_analyzer.analyze_track, audio_path)
+                self.cpu_future_to_task[cpu_future] = (task, audio_path)
+                return
+            elif model_name == "discogs-effnet-heads":
+                if self.head_pack_analyzer is None:
+                    raise KeyError(model_name)
+                self.ready_head_tasks.append({"task": task, "audio_path": audio_path})
+                typer.echo(
+                    f"ready task_id={task_id} track_id={task['track_id']} "
+                    f"model={model_name} stage=head-buffer"
+                )
+                self.process_ready_head_batches()
+                return
+            else:
+                if (
+                    self.direct_embedding_pipeline
+                    and model_name in self.embedders
+                    and isinstance(self.embedders[model_name], DiscogsEffnetEmbedder)
+                ):
+                    embedding_future = self.cpu_pool.submit(
+                        self.embedders[model_name].extract_direct_patches, audio_path
+                    )
+                    self.embedding_future_to_task[embedding_future] = (task, audio_path)
+                    self.embedding_future_started_at[embedding_future] = perf_counter()
+                    return
+                vector = np.asarray(
+                    self.embedders[model_name].extract_track_vector(audio_path),
+                    dtype=np.float32,
+                )
+                self.results.append(
+                    {
+                        "task_id": task_id,
+                        "track_id": int(task["track_id"]),
+                        "model_name": model_name,
+                        "dim": int(vector.shape[0]),
+                        "dtype": "float32",
+                        "vector_b64": base64.b64encode(vector.tobytes()).decode("ascii"),
+                        "file_size": int(task["file_size"]),
+                        "mtime": int(task["mtime"]),
+                    }
+                )
+            self.completed_task_ids.add(task_id)
+            typer.echo(f"ok task_id={task_id} track_id={task['track_id']} model={model_name}")
+        except Exception as exc:
+            if close_task_on_conflict(exc, task_id, model_name, audio_path, self.close_inactive_task):
+                return
+            append_worker_failure(self.failures, task_id, exc)
+            self.completed_task_ids.add(task_id)
+            typer.echo(f"failed task_id={task_id}: {exc}", err=True)
+
+        self.maybe_flush_if_batch_full()
+        self._maybe_claim_more()
+
+    def _run_loop(self) -> bool:
+        """Returns True if the caller should still submit buffered results."""
+        while not self.draining:
+            self.maybe_log_metrics()
+            self.process_ready_embedding_batches()
+            self.process_ready_head_batches()
+            try:
+                self.claim_more()
+            except (URLError, TimeoutError) as exc:
+                typer.echo(f"claim failed: {exc}", err=True)
+                if self.once:
+                    raise typer.Exit(1) from exc
+
+            if (
+                not self.future_to_task
+                and not self.cpu_future_to_task
+                and not self.embedding_future_to_task
+                and not self.ready_embedding_tasks
+                and not self.ready_head_tasks
+            ):
+                if self.once:
+                    typer.echo("no tasks" if not self.processed_any else "done")
+                    return False
+                post_json(self.server, "/workers/heartbeat", {"worker_id": self.worker_id, "models": self.models})
+                time.sleep(self.poll_seconds)
+                continue
+
+            pending = set(self.future_to_task) | set(self.cpu_future_to_task) | set(self.embedding_future_to_task)
+            if not pending:
+                self.process_ready_embedding_batches(flush=True)
+                self.process_ready_head_batches(flush=True)
+                continue
+            done_futures, _pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done_futures:
+                if future in self.embedding_future_to_task:
+                    self._handle_embedding_future(future)
+                    continue
+                if future in self.cpu_future_to_task:
+                    self._handle_cpu_future(future)
+                    continue
+                self._handle_download_future(future)
+
+        if self.draining:
+            typer.echo(
+                "releasing "
+                f"{len(self.future_to_task) + len(self.cpu_future_to_task) + len(self.embedding_future_to_task) + len(self.ready_embedding_tasks) + len(self.ready_head_tasks)} "
+                "queued in-flight task(s)",
+                err=True,
+            )
+        return True
+
+    def run(self) -> None:
+        previous_sigint = signal.signal(signal.SIGINT, self.request_drain)
+        try:
+            with tempfile.TemporaryDirectory(prefix="discocs-worker-") as temp_dir:
+                self.temp_path = Path(temp_dir)
+                with ThreadPoolExecutor(
+                    max_workers=max(self.download_concurrency, 1)
+                ) as downloader, ThreadPoolExecutor(max_workers=max(self.resolved_cpu_workers, 1)) as cpu_pool:
+                    self.downloader = downloader
+                    self.cpu_pool = cpu_pool
+                    should_submit = self._run_loop()
+            if should_submit:
+                submit_worker_buffers(
+                    self.server,
+                    self.worker_id,
+                    self.results,
+                    self.feature_results,
+                    self.head_results,
+                    self.failures,
+                    self.acknowledged_task_ids,
+                    self.audio_paths,
+                )
+        except KeyboardInterrupt:
+            typer.echo("forced stop requested; releasing leases", err=True)
+        finally:
+            signal.signal(signal.SIGINT, previous_sigint)
+            unreleased = sorted(self.leased_task_ids - self.acknowledged_task_ids)
+            if unreleased:
+                try:
+                    post_json(
+                        self.server,
+                        "/workers/release",
+                        {"worker_id": self.worker_id, "task_ids": unreleased},
+                    )
+                except Exception as exc:
+                    typer.echo(f"release failed for {len(unreleased)} task(s): {exc}", err=True)
+
+
 @cli.command("worker")
 def worker(
     server: Annotated[str, typer.Option("--server")] = "http://127.0.0.1:8711",
@@ -1260,568 +1862,33 @@ def worker(
         f"startup_jitter_seconds={startup_jitter_seconds}"
     )
     register_worker_with_retry(server, worker_id, models, poll_seconds, once)
-    draining = False
-
-    def request_drain(_signum, _frame) -> None:
-        nonlocal draining
-        if draining:
-            raise KeyboardInterrupt
-        draining = True
-        typer.echo("stop requested; finishing current task and releasing the rest", err=True)
-
-    previous_sigint = signal.signal(signal.SIGINT, request_drain)
-    leased_task_ids: set[str] = set()
-    completed_task_ids: set[str] = set()
-    acknowledged_task_ids: set[str] = set()
-    audio_paths: dict[str, Path] = {}
-    results: list[dict[str, object]] = []
-    feature_results: list[dict[str, object]] = []
-    head_results: list[dict[str, object]] = []
-    failures: list[dict[str, object]] = []
-    processed_any = False
-    try:
-        with tempfile.TemporaryDirectory(prefix="discocs-worker-") as temp_dir:
-            temp_path = Path(temp_dir)
-            with ThreadPoolExecutor(max_workers=max(download_concurrency, 1)) as downloader, ThreadPoolExecutor(
-                max_workers=max(resolved_cpu_workers, 1)
-            ) as cpu_pool:
-                future_to_task: dict[object, tuple[dict[str, object], Path]] = {}
-                cpu_future_to_task: dict[object, tuple[dict[str, object], Path]] = {}
-                embedding_future_to_task: dict[object, tuple[dict[str, object], Path]] = {}
-                embedding_future_started_at: dict[object, float] = {}
-                ready_embedding_tasks: list[dict[str, object]] = []
-                ready_head_tasks: list[dict[str, object]] = []
-                last_metrics_at = perf_counter()
-                direct_embedding_pipeline = (
-                    embedding_backend in {"auto", "tensorflow"}
-                    and any(isinstance(embedder, DiscogsEffnetEmbedder) for embedder in embedders.values())
-                )
-
-                def flush_worker_buffers() -> None:
-                    nonlocal draining
-                    before = len(acknowledged_task_ids)
-                    submit_worker_buffers(
-                        server,
-                        worker_id,
-                        results,
-                        feature_results,
-                        head_results,
-                        failures,
-                        acknowledged_task_ids,
-                        audio_paths,
-                    )
-                    if max_tasks_before_exit > 0 and len(acknowledged_task_ids) >= max_tasks_before_exit:
-                        if len(acknowledged_task_ids) != before:
-                            typer.echo(
-                                f"max tasks reached: {len(acknowledged_task_ids)}/{max_tasks_before_exit}; draining"
-                            )
-                        draining = True
-
-                def close_inactive_task(task_id: str, model_name: str, audio_path: Path | None = None) -> bool:
-                    try:
-                        state = worker_task_state(server, worker_id, task_id)
-                    except HTTPError as state_exc:
-                        if state_exc.code == 404:
-                            acknowledged_task_ids.add(task_id)
-                            path = audio_path or audio_paths.pop(task_id, None)
-                            if path is not None:
-                                audio_paths.pop(task_id, None)
-                                try:
-                                    path.unlink(missing_ok=True)
-                                except OSError as exc:
-                                    typer.echo(f"temp cleanup failed task_id={task_id}: {exc}", err=True)
-                            typer.echo(
-                                f"closed missing task_id={task_id} model={model_name}",
-                                err=True,
-                            )
-                            return True
-                        typer.echo(
-                            f"state check failed task_id={task_id} model={model_name}: {state_exc}",
-                            err=True,
-                        )
-                        return False
-                    except Exception as state_exc:
-                        typer.echo(
-                            f"state check failed task_id={task_id} model={model_name}: {state_exc}",
-                            err=True,
-                        )
-                        return False
-                    if bool(state.get("active")):
-                        return False
-                    acknowledged_task_ids.add(task_id)
-                    path = audio_path or audio_paths.pop(task_id, None)
-                    if path is not None:
-                        audio_paths.pop(task_id, None)
-                        try:
-                            path.unlink(missing_ok=True)
-                        except OSError as exc:
-                            typer.echo(f"temp cleanup failed task_id={task_id}: {exc}", err=True)
-                    typer.echo(
-                        f"closed inactive task_id={task_id} model={model_name} "
-                        f"task_status={state.get('status')} job_status={state.get('job_status')}",
-                        err=True,
-                    )
-                    return True
-
-                def claim_more() -> None:
-                    nonlocal processed_any
-                    if draining:
-                        return
-                    capacity = (
-                        max(max_inflight_tasks, 1)
-                        - len(future_to_task)
-                        - len(cpu_future_to_task)
-                        - len(embedding_future_to_task)
-                        - len(ready_embedding_tasks)
-                        - len(ready_head_tasks)
-                    )
-                    if capacity <= 0:
-                        return
-                    limit = min(max(claim_batch_size, 1), capacity)
-                    claimed = post_json(
-                        server,
-                        "/workers/claim",
-                        {
-                            "worker_id": worker_id,
-                            "models": models,
-                            "limit": limit,
-                            "lease_seconds": lease_seconds,
-                        },
-                    )
-                    tasks = claimed.get("tasks", [])
-                    if not isinstance(tasks, list) or not tasks:
-                        return
-                    for task in tasks:
-                        task_id = str(task["task_id"])
-                        leased_task_ids.add(task_id)
-                        suffix = Path(str(task.get("path") or "")).suffix or ".audio"
-                        audio_path = temp_path / f"{task_id}{suffix}"
-                        audio_paths[task_id] = audio_path
-                        future = downloader.submit(
-                            download_task_audio,
-                            server,
-                            str(task["audio_url"]),
-                            audio_path,
-                        )
-                        future_to_task[future] = (task, audio_path)
-                    processed_any = True
-
-                def maybe_log_metrics() -> None:
-                    nonlocal last_metrics_at
-                    now = perf_counter()
-                    if now - last_metrics_at < 10:
-                        return
-                    last_metrics_at = now
-                    typer.echo(
-                        "worker metrics "
-                        f"claimed={len(leased_task_ids)} "
-                        f"submitted={len(acknowledged_task_ids)} "
-                        f"failed_buffer={len(failures)} "
-                        f"download={len(future_to_task)} "
-                        f"cpu_features={len(cpu_future_to_task)} "
-                        f"embedding_preprocess={len(embedding_future_to_task)} "
-                        f"ready_embeddings={len(ready_embedding_tasks)} "
-                        f"ready_heads={len(ready_head_tasks)} "
-                        f"leased={len(leased_task_ids - acknowledged_task_ids)} "
-                        f"rss_mb={process_rss_mb()} "
-                        f"{torch_cuda_memory_summary()}"
-                    )
-
-                def process_ready_embedding_batches(*, flush: bool = False) -> None:
-                    if not ready_embedding_tasks:
-                        return
-                    grouped_models = list(dict.fromkeys(str(item["task"]["model_name"]) for item in ready_embedding_tasks))
-                    for model_name in grouped_models:
-                        model_items = [item for item in ready_embedding_tasks if str(item["task"]["model_name"]) == model_name]
-                        total_patches = sum(len(item["patches"]) for item in model_items)
-                        target_patches = max(gpu_batch_size, 1) * max(ready_batches, 1)
-                        if not flush and total_patches < target_patches:
-                            continue
-                        ready_embedding_tasks[:] = [
-                            item
-                            for item in ready_embedding_tasks
-                            if str(item["task"]["model_name"]) != model_name
-                        ]
-                        try:
-                            batch_started = perf_counter()
-                            active_items = []
-                            for item in model_items:
-                                task_id = str(item["task"]["task_id"])
-                                if draining or not task_is_active(server, worker_id, task_id):
-                                    close_inactive_task(task_id, model_name, item.get("audio_path"))
-                                    continue
-                                active_items.append(item)
-                            if not active_items:
-                                continue
-                            all_patches = np.concatenate([item["patches"] for item in active_items], axis=0)
-                            patch_counts = [len(item["patches"]) for item in active_items]
-                            actual_patches = len(all_patches)
-                            padded = 0
-                            remainder = actual_patches % gpu_batch_size
-                            if remainder:
-                                padded = gpu_batch_size - remainder
-                                all_patches = np.pad(all_patches, ((0, padded), (0, 0), (0, 0)), mode="constant")
-                            direct_model = embedders[model_name].direct_model()
-                            predict_started = perf_counter()
-                            outputs = []
-                            for start in range(0, len(all_patches), gpu_batch_size):
-                                outputs.append(direct_model.predict_patches_unpadded(all_patches[start : start + gpu_batch_size]))
-                            embeddings = np.concatenate(outputs, axis=0)[:actual_patches]
-                            predict_seconds = perf_counter() - predict_started
-                            offset = 0
-                            for item, patch_count in zip(active_items, patch_counts):
-                                task = item["task"]
-                                task_id = str(task["task_id"])
-                                task_embeddings = embeddings[offset : offset + patch_count]
-                                offset += patch_count
-                                vector = pool_and_normalize(task_embeddings)
-                                append_embedding_result(results, task, model_name, vector)
-                                completed_task_ids.add(task_id)
-                                typer.echo(
-                                    f"ok task_id={task_id} track_id={task['track_id']} "
-                                    f"model={model_name} patches={patch_count}"
-                                )
-                            typer.echo(
-                                f"gpu batch model={model_name} tasks={len(active_items)} "
-                                f"patches={actual_patches} padded={padded} "
-                                f"predict_seconds={predict_seconds:.3f} total_seconds={perf_counter() - batch_started:.3f}"
-                            )
-                            del all_patches, embeddings, outputs
-                        except Exception as exc:
-                            for item in model_items:
-                                task = item["task"]
-                                task_id = str(task["task_id"])
-                                audio_path = item["audio_path"]
-                                if embedding_backend == "auto":
-                                    fallback_to_essentia_embedding(
-                                        settings,
-                                        model_name,
-                                        gpu_batch_size,
-                                        audio_path,
-                                        task,
-                                        results,
-                                        failures,
-                                        completed_task_ids,
-                                    )
-                                else:
-                                    append_worker_failure(failures, task_id, exc)
-                                    completed_task_ids.add(task_id)
-                                    typer.echo(f"failed task_id={task_id}: {exc}", err=True)
-                        if (
-                            len(results) + len(feature_results) + len(head_results) + len(failures)
-                            >= max(submit_batch_size, 1)
-                        ):
-                            flush_worker_buffers()
-
-                def process_ready_head_batches(*, flush: bool = False) -> None:
-                    if not ready_head_tasks:
-                        return
-                    if head_pack_analyzer is None:
-                        raise KeyError("discogs-effnet-heads")
-                    target_tasks = max(4, ready_batches, 1)
-                    if not flush and len(ready_head_tasks) < target_tasks:
-                        return
-                    batch_items = ready_head_tasks[:target_tasks]
-                    del ready_head_tasks[:target_tasks]
-                    batch_started = perf_counter()
-                    active_items: list[dict[str, object]] = []
-                    patch_counts: list[int] = []
-                    for item in batch_items:
-                        task = item["task"]
-                        audio_path = item["audio_path"]
-                        task_id = str(task["task_id"])
-                        model_name = str(task["model_name"])
-                        try:
-                            if draining or not task_is_active(server, worker_id, task_id):
-                                close_inactive_task(task_id, model_name, audio_path)
-                                continue
-                            patches = head_pack_analyzer.extract_patch_embeddings(audio_path)
-                            if len(patches) == 0:
-                                raise ValueError("No EffNet patches extracted")
-                            active_items.append({"task": task, "audio_path": audio_path, "patches": patches})
-                            patch_counts.append(len(patches))
-                        except Exception as exc:
-                            if close_task_on_conflict(exc, task_id, model_name, audio_path, close_inactive_task):
-                                continue
-                            append_worker_failure(failures, task_id, exc)
-                            completed_task_ids.add(task_id)
-                            typer.echo(f"failed task_id={task_id}: {exc}", err=True)
-                    if not active_items:
-                        return
-                    try:
-                        predict_started = perf_counter()
-                        outputs_by_task = head_pack_analyzer.analyze_patch_embedding_batch(
-                            [np.asarray(item["patches"], dtype=np.float32) for item in active_items]
-                        )
-                        predict_seconds = perf_counter() - predict_started
-                        for item, outputs, patch_count in zip(active_items, outputs_by_task, patch_counts):
-                            task = item["task"]
-                            task_id = str(task["task_id"])
-                            head_results.append(
-                                {
-                                    "task_id": task_id,
-                                    "track_id": int(task["track_id"]),
-                                    "model_name": "discogs-effnet-heads",
-                                    "file_size": int(task["file_size"]),
-                                    "mtime": int(task["mtime"]),
-                                    "outputs": serialized_head_outputs(outputs),
-                                }
-                            )
-                            completed_task_ids.add(task_id)
-                            typer.echo(
-                                f"ok task_id={task_id} track_id={task['track_id']} "
-                                f"model=discogs-effnet-heads patches={patch_count}"
-                            )
-                        typer.echo(
-                            f"head batch tasks={len(active_items)} patches={sum(patch_counts)} "
-                            f"predict_seconds={predict_seconds:.3f} total_seconds={perf_counter() - batch_started:.3f}"
-                        )
-                        del outputs_by_task
-                    except Exception as exc:
-                        for item in active_items:
-                            task = item["task"]
-                            task_id = str(task["task_id"])
-                            append_worker_failure(failures, task_id, exc)
-                            completed_task_ids.add(task_id)
-                            typer.echo(f"failed task_id={task_id}: {exc}", err=True)
-                    finally:
-                        for item in active_items:
-                            item.pop("patches", None)
-                    if (
-                        len(results) + len(feature_results) + len(head_results) + len(failures)
-                        >= max(submit_batch_size, 1)
-                    ):
-                        flush_worker_buffers()
-
-                while not draining:
-                    maybe_log_metrics()
-                    process_ready_embedding_batches()
-                    process_ready_head_batches()
-                    try:
-                        claim_more()
-                    except (URLError, TimeoutError) as exc:
-                        typer.echo(f"claim failed: {exc}", err=True)
-                        if once:
-                            raise typer.Exit(1) from exc
-
-                    if (
-                        not future_to_task
-                        and not cpu_future_to_task
-                        and not embedding_future_to_task
-                        and not ready_embedding_tasks
-                        and not ready_head_tasks
-                    ):
-                        if once:
-                            typer.echo("no tasks" if not processed_any else "done")
-                            return
-                        post_json(server, "/workers/heartbeat", {"worker_id": worker_id, "models": models})
-                        time.sleep(poll_seconds)
-                        continue
-
-                    pending = set(future_to_task) | set(cpu_future_to_task) | set(embedding_future_to_task)
-                    if not pending:
-                        process_ready_embedding_batches(flush=True)
-                        process_ready_head_batches(flush=True)
-                        continue
-                    done_futures, _pending = wait(pending, return_when=FIRST_COMPLETED)
-                    for future in done_futures:
-                        if future in embedding_future_to_task:
-                            task, audio_path = embedding_future_to_task.pop(future)
-                            preprocess_started = embedding_future_started_at.pop(future, perf_counter())
-                            task_id = str(task["task_id"])
-                            model_name = str(task["model_name"])
-                            try:
-                                patches = future.result()
-                                if len(patches) == 0:
-                                    raise ValueError("No EffNet patches extracted")
-                                if draining or not task_is_active(server, worker_id, task_id):
-                                    close_inactive_task(task_id, model_name, audio_path)
-                                    continue
-                                ready_embedding_tasks.append(
-                                    {"task": task, "audio_path": audio_path, "patches": patches}
-                                )
-                                typer.echo(
-                                    f"ready task_id={task_id} track_id={task['track_id']} "
-                                    f"model={model_name} patches={len(patches)} "
-                                    f"preprocess_seconds={perf_counter() - preprocess_started:.3f}"
-                                )
-                                process_ready_embedding_batches()
-                            except Exception as exc:
-                                if close_task_on_conflict(exc, task_id, model_name, audio_path, close_inactive_task):
-                                    continue
-                                if embedding_backend == "auto":
-                                    if close_inactive_task(task_id, model_name, audio_path):
-                                        continue
-                                    fallback_to_essentia_embedding(
-                                        settings,
-                                        model_name,
-                                        gpu_batch_size,
-                                        audio_path,
-                                        task,
-                                        results,
-                                        failures,
-                                        completed_task_ids,
-                                    )
-                                else:
-                                    append_worker_failure(failures, task_id, exc)
-                                    completed_task_ids.add(task_id)
-                                    typer.echo(f"failed task_id={task_id}: {exc}", err=True)
-                            if (
-                                len(results) + len(feature_results) + len(head_results) + len(failures)
-                                >= max(submit_batch_size, 1)
-                            ):
-                                flush_worker_buffers()
-                            continue
-
-                        if future in cpu_future_to_task:
-                            task, audio_path = cpu_future_to_task.pop(future)
-                            task_id = str(task["task_id"])
-                            model_name = str(task["model_name"])
-                            try:
-                                features = future.result()
-                                if draining:
-                                    continue
-                                feature_results.append(
-                                    {
-                                        "task_id": task_id,
-                                        "track_id": int(task["track_id"]),
-                                        "model_name": model_name,
-                                        "file_size": int(task["file_size"]),
-                                        "mtime": int(task["mtime"]),
-                                        "features": [
-                                            {
-                                                "name": feature.name,
-                                                "value": feature.value,
-                                                "text_value": feature.text_value,
-                                                "unit": feature.unit,
-                                                "confidence": feature.confidence,
-                                                "extractor": feature.extractor,
-                                            }
-                                            for feature in features
-                                        ],
-                                    }
-                                )
-                                completed_task_ids.add(task_id)
-                                typer.echo(f"ok task_id={task_id} track_id={task['track_id']} model={model_name}")
-                            except Exception as exc:
-                                if close_task_on_conflict(exc, task_id, model_name, audio_path, close_inactive_task):
-                                    continue
-                                append_worker_failure(failures, task_id, exc)
-                                completed_task_ids.add(task_id)
-                                typer.echo(f"failed task_id={task_id}: {exc}", err=True)
-                            if (
-                                len(results) + len(feature_results) + len(head_results) + len(failures)
-                                >= max(submit_batch_size, 1)
-                            ):
-                                flush_worker_buffers()
-                            continue
-
-                        task, audio_path = future_to_task.pop(future)
-                        task_id = str(task["task_id"])
-                        model_name = str(task["model_name"])
-                        try:
-                            future.result()
-                            if draining:
-                                continue
-                            if model_name == AUDIO_FEATURE_EXTRACTOR:
-                                if audio_feature_analyzer is None:
-                                    raise KeyError(model_name)
-                                cpu_future = cpu_pool.submit(
-                                    audio_feature_analyzer.analyze_track,
-                                    audio_path,
-                                )
-                                cpu_future_to_task[cpu_future] = (task, audio_path)
-                                continue
-                            elif model_name == "discogs-effnet-heads":
-                                if head_pack_analyzer is None:
-                                    raise KeyError(model_name)
-                                ready_head_tasks.append({"task": task, "audio_path": audio_path})
-                                typer.echo(
-                                    f"ready task_id={task_id} track_id={task['track_id']} "
-                                    f"model={model_name} stage=head-buffer"
-                                )
-                                process_ready_head_batches()
-                                continue
-                            else:
-                                if (
-                                    direct_embedding_pipeline
-                                    and model_name in embedders
-                                    and isinstance(embedders[model_name], DiscogsEffnetEmbedder)
-                                ):
-                                    embedding_future = cpu_pool.submit(
-                                        embedders[model_name].extract_direct_patches,
-                                        audio_path,
-                                    )
-                                    embedding_future_to_task[embedding_future] = (task, audio_path)
-                                    embedding_future_started_at[embedding_future] = perf_counter()
-                                    continue
-                                vector = np.asarray(
-                                    embedders[model_name].extract_track_vector(audio_path),
-                                    dtype=np.float32,
-                                )
-                                results.append(
-                                    {
-                                        "task_id": task_id,
-                                        "track_id": int(task["track_id"]),
-                                        "model_name": model_name,
-                                        "dim": int(vector.shape[0]),
-                                        "dtype": "float32",
-                                        "vector_b64": base64.b64encode(vector.tobytes()).decode("ascii"),
-                                        "file_size": int(task["file_size"]),
-                                        "mtime": int(task["mtime"]),
-                                    }
-                                )
-                            completed_task_ids.add(task_id)
-                            typer.echo(f"ok task_id={task_id} track_id={task['track_id']} model={model_name}")
-                        except Exception as exc:
-                            if close_task_on_conflict(exc, task_id, model_name, audio_path, close_inactive_task):
-                                continue
-                            append_worker_failure(failures, task_id, exc)
-                            completed_task_ids.add(task_id)
-                            typer.echo(f"failed task_id={task_id}: {exc}", err=True)
-
-                        if (
-                            len(results) + len(feature_results) + len(head_results) + len(failures)
-                            >= max(submit_batch_size, 1)
-                        ):
-                            flush_worker_buffers()
-                        if not draining:
-                            try:
-                                claim_more()
-                            except (URLError, TimeoutError) as exc:
-                                typer.echo(f"claim failed: {exc}", err=True)
-
-                if draining:
-                    typer.echo(
-                        "releasing "
-                        f"{len(future_to_task) + len(cpu_future_to_task) + len(embedding_future_to_task) + len(ready_embedding_tasks) + len(ready_head_tasks)} "
-                        "queued in-flight task(s)",
-                        err=True,
-                    )
-        submit_worker_buffers(
-            server,
-            worker_id,
-            results,
-            feature_results,
-            head_results,
-            failures,
-            acknowledged_task_ids,
-            audio_paths,
-        )
-    except KeyboardInterrupt:
-        typer.echo("forced stop requested; releasing leases", err=True)
-    finally:
-        signal.signal(signal.SIGINT, previous_sigint)
-        unreleased = sorted(leased_task_ids - acknowledged_task_ids)
-        if unreleased:
-            try:
-                post_json(
-                    server,
-                    "/workers/release",
-                    {"worker_id": worker_id, "task_ids": unreleased},
-                )
-            except Exception as exc:
-                typer.echo(f"release failed for {len(unreleased)} task(s): {exc}", err=True)
+    direct_embedding_pipeline = (
+        embedding_backend in {"auto", "tensorflow"}
+        and any(isinstance(embedder, DiscogsEffnetEmbedder) for embedder in embedders.values())
+    )
+    runtime = WorkerRuntime(
+        server=server,
+        worker_id=worker_id,
+        models=models,
+        claim_batch_size=claim_batch_size,
+        lease_seconds=lease_seconds,
+        poll_seconds=poll_seconds,
+        once=once,
+        max_inflight_tasks=max_inflight_tasks,
+        submit_batch_size=submit_batch_size,
+        download_concurrency=download_concurrency,
+        resolved_cpu_workers=resolved_cpu_workers,
+        gpu_batch_size=gpu_batch_size,
+        embedding_backend=embedding_backend,
+        ready_batches=ready_batches,
+        max_tasks_before_exit=max_tasks_before_exit,
+        settings=settings,
+        embedders=embedders,
+        audio_feature_analyzer=audio_feature_analyzer,
+        head_pack_analyzer=head_pack_analyzer,
+        direct_embedding_pipeline=direct_embedding_pipeline,
+    )
+    runtime.run()
 
 
 @cli.command("download-models")
