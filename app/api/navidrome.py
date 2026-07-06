@@ -280,7 +280,6 @@ def get_navidrome_starred_similar(
 
 @router.get(
     "/navidrome/similar",
-    response_model=NavidromeSimilarResponse,
     responses={
         404: {"description": "Navidrome item_id is not synced or has no similar tracks"},
         503: {"description": "Similar index missing or Navidrome similar lookup failed"},

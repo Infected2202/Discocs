@@ -3178,6 +3178,16 @@ def test_navidrome_starred_similar_requires_ready_embeddings(tmp_path: Path, mon
     assert "No ready liked tracks" in response.json()["detail"]
 
 
+def test_navidrome_similar_openapi_uses_annotated_response_model():
+    client = TestClient(app)
+
+    response_schema = client.get("/openapi.json").json()["paths"]["/navidrome/similar"]["get"][
+        "responses"
+    ]["200"]["content"]["application/json"]["schema"]
+
+    assert response_schema == {"$ref": "#/components/schemas/NavidromeSimilarResponse"}
+
+
 def test_navidrome_similar_returns_external_ids(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     seed_id = add_navidrome_track(store, "seed", title="Seed")
