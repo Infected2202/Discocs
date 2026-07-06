@@ -16,6 +16,8 @@ push в Gitea ──webhook──> Jenkins
    └─ Build&Push   сборка backend/frontend/bot → Nexus (docker-dev @ :5000)
    │                 теги:  :<git-sha>  (всегда)   +  :latest  (только с main)
    └─ Security Scan Trivy — CVE в зависимостях + в собранных образах, report-only
+   │                 находки образов также публикуются как HTML-вкладки на билде
+   │                 (Trivy: backend/frontend/bot, через publishHTML)
    └─ Deploy        [post/success, только main] по SSH на TARGET_SERVER:
                        scp compose в TARGET_DIR → docker compose pull && up -d --force-recreate
                        (.env на хосте CI не трогает — заводится и правится вручную)
@@ -238,6 +240,18 @@ BuildKit реально переиспользуется между билдам
 
 Секреты и Dockerfile/IaC-анализ Trivy не делает — это уже покрыто встроенными
 анализаторами Sonar (см. выше), дублировать не стали.
+
+### HTML-отчёт
+
+Раньше находки `trivy image` были видны только в консоли билда — приходилось
+искать глазами по логу. Стадия `Security Scan` теперь дополнительно гоняет тот
+же скан ещё раз с `--format template --template "@contrib/html.tpl"` (шаблон
+зашит в образ `aquasec/trivy`, ничего скачивать не нужно) и публикует три
+отдельные вкладки на странице билда через `publishHTML` (плагин **HTML
+Publisher**, установлен на Jenkins вручную, в репозитории не отражается):
+**Trivy: backend**, **Trivy: frontend**, **Trivy: bot**. Двойной скан на
+образ (обычный + HTML) не удваивает время заметно — БД уязвимостей уже в
+кэше (`trivy-db-cache`), пересканируется только сам образ.
 
 ## Траблшутинг
 

@@ -138,13 +138,52 @@ pipeline {
         //    Dockerfile.trivy-fs: не качать ~150+ МБ БД заново на каждый образ.
         sh 'DOCKER_BUILDKIT=1 docker build --progress=plain -f deploy/ci/Dockerfile.trivy-fs -t discocs-trivy-fs:${GIT_SHA} .'
         sh '''
+          set -e
           for svc in backend frontend bot; do
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v trivy-db-cache:/root/.cache/trivy \
               aquasec/trivy image --exit-code 0 ${REGISTRY}/${IMAGE_NS}/${svc}:${GIT_SHA}
+
+            # HTML-версия того же скана — для вкладки на билде (publishHTML ниже),
+            # чтобы не искать находки по консоли. create+cp вместо `docker run
+            # -v <файл>`: воркспейс агента недоступен хостовому демону как путь
+            # (docker-outside-of-docker, та же причина, что везде в этом файле).
+            CID=$(docker create \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v trivy-db-cache:/root/.cache/trivy \
+              aquasec/trivy image --exit-code 0 \
+              --format template --template "@contrib/html.tpl" \
+              -o "/trivy-${svc}.html" ${REGISTRY}/${IMAGE_NS}/${svc}:${GIT_SHA})
+            docker start -a "$CID"
+            docker cp "$CID:/trivy-${svc}.html" "trivy-${svc}.html"
+            docker rm -f "$CID"
           done
         '''
+        publishHTML(target: [
+          allowMissing: false,
+          alwaysLinkToLastBuild: true,
+          keepAll: true,
+          reportDir: '.',
+          reportFiles: 'trivy-backend.html',
+          reportName: 'Trivy: backend',
+        ])
+        publishHTML(target: [
+          allowMissing: false,
+          alwaysLinkToLastBuild: true,
+          keepAll: true,
+          reportDir: '.',
+          reportFiles: 'trivy-frontend.html',
+          reportName: 'Trivy: frontend',
+        ])
+        publishHTML(target: [
+          allowMissing: false,
+          alwaysLinkToLastBuild: true,
+          keepAll: true,
+          reportDir: '.',
+          reportFiles: 'trivy-bot.html',
+          reportName: 'Trivy: bot',
+        ])
       }
     }
   }
