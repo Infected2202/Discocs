@@ -1683,15 +1683,7 @@ def worker(
                                 if isinstance(exc, HTTPError) and exc.code == 409:
                                     if close_inactive_task(task_id, model_name, audio_path):
                                         continue
-                                failures.append(
-                                    {
-                                        "task_id": task_id,
-                                        "error": str(exc),
-                                        "error_type": type(exc).__name__,
-                                        "stage": "worker",
-                                        "retryable": worker_failure_retryable(exc),
-                                    }
-                                )
+                                append_worker_failure(failures, task_id, exc)
                                 completed_task_ids.add(task_id)
                                 typer.echo(f"failed task_id={task_id}: {exc}", err=True)
                             if (
@@ -1762,15 +1754,7 @@ def worker(
                             if isinstance(exc, HTTPError) and exc.code == 409:
                                 if close_inactive_task(task_id, model_name, audio_path):
                                     continue
-                            failures.append(
-                                {
-                                    "task_id": task_id,
-                                    "error": str(exc),
-                                    "error_type": type(exc).__name__,
-                                    "stage": "worker",
-                                    "retryable": worker_failure_retryable(exc),
-                                }
-                            )
+                            append_worker_failure(failures, task_id, exc)
                             completed_task_ids.add(task_id)
                             typer.echo(f"failed task_id={task_id}: {exc}", err=True)
 
