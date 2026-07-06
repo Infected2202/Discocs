@@ -111,6 +111,7 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
               key={`${item.type}-${item.id}`}
               style={{
                 flex: `0 0 calc((100% - ${MOBILE_GAP_PX}px) / ${MOBILE_COLS})`,
+                minWidth: 0,
                 scrollSnapAlign: "start",
               }}
             >
