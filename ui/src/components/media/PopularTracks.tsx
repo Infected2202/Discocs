@@ -8,8 +8,8 @@ const PAGE_SIZE = 5
 const SCROLL_DURATION = 600 // ms
 
 interface PopularTracksProps {
-  tracks: ArtistTopTrack[]
-  sourceLabel?: string
+  readonly tracks: ArtistTopTrack[]
+  readonly sourceLabel?: string
 }
 
 export default function PopularTracks({ tracks, sourceLabel }: PopularTracksProps) {

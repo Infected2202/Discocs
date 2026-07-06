@@ -256,7 +256,7 @@ def build_candidate_pool(
     # --- Source 1: HNSW centroid (only generative source) ---
     if centroid is not None:
         try:
-            from app.recommender import Recommender, StaleIndexError
+            from app.recommender import Recommender
             rec = Recommender(store, app_settings, session.model_key)
             results = rec.similar_vector(
                 centroid,
@@ -272,7 +272,7 @@ def build_candidate_pool(
                 source_map[r.track.id] = "hnsw"
             diag.hnsw_count = len(results)
             logger.debug("HNSW source: %d tracks region=%s", len(results), region.id)
-        except (FileNotFoundError, StaleIndexError) as exc:
+        except FileNotFoundError as exc:
             diag.hnsw_error = str(exc)
             logger.warning("HNSW unavailable: %s", exc)
         except Exception as exc:

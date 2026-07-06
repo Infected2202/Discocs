@@ -696,7 +696,7 @@ def register_worker_with_retry(
         try:
             post_json(server, "/workers/register", {"worker_id": worker_id, "models": models})
             return
-        except (HTTPError, URLError, TimeoutError, ConnectionError) as exc:
+        except (URLError, TimeoutError, ConnectionError) as exc:
             typer.echo(
                 f"server unavailable during register: {server} ({exc}); retrying in {poll_seconds}s",
                 err=True,
@@ -738,7 +738,7 @@ def post_worker_submit_json(server: str, path: str, payload: dict[str, object]) 
             )
             time.sleep(delay)
             delay = min(delay * 2, 60.0)
-        except (URLError, TimeoutError, ConnectionError, OSError) as exc:
+        except OSError as exc:
             typer.echo(
                 f"submit failed: {exc}; attempt={attempt}; retrying in {delay:.1f}s",
                 err=True,
@@ -1564,7 +1564,7 @@ def worker(
                     process_ready_head_batches()
                     try:
                         claim_more()
-                    except (HTTPError, URLError, TimeoutError) as exc:
+                    except (URLError, TimeoutError) as exc:
                         typer.echo(f"claim failed: {exc}", err=True)
                         if once:
                             raise typer.Exit(1) from exc
@@ -1782,7 +1782,7 @@ def worker(
                         if not draining:
                             try:
                                 claim_more()
-                            except (HTTPError, URLError, TimeoutError) as exc:
+                            except (URLError, TimeoutError) as exc:
                                 typer.echo(f"claim failed: {exc}", err=True)
 
                 if draining:

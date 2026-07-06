@@ -6,19 +6,19 @@ import TiltedArtwork from "./TiltedArtwork"
 import type { ImageRef, SubtitleLink } from "@/api/types"
 
 export interface MediaCardProps {
-  id: number | string
-  type: "artist" | "release" | "generated_mix" | "track" | "playlist" | "shelf" | "static"
-  title: string
-  subtitle?: string | null
-  subtitleLinks?: SubtitleLink[]
-  href?: string
-  reason?: string | null
-  artwork?: ImageRef | null
-  artworkNode?: React.ReactNode
-  onPlay?: () => void
-  className?: string
-  variant?: "default" | "shelf"
-  disabled?: boolean
+  readonly id: number | string
+  readonly type: "artist" | "release" | "generated_mix" | "track" | "playlist" | "shelf" | "static"
+  readonly title: string
+  readonly subtitle?: string | null
+  readonly subtitleLinks?: SubtitleLink[]
+  readonly href?: string
+  readonly reason?: string | null
+  readonly artwork?: ImageRef | null
+  readonly artworkNode?: React.ReactNode
+  readonly onPlay?: () => void
+  readonly className?: string
+  readonly variant?: "default" | "shelf"
+  readonly disabled?: boolean
 }
 
 export default function MediaCard({

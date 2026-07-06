@@ -15,8 +15,8 @@ import {
 import { preloadArtworkImage } from "./playerBarTransitionUtils.ts"
 
 interface PlayerBackdropProps {
-  artworkUrl: string | null | undefined
-  isPlaying: boolean
+  readonly artworkUrl: string | null | undefined
+  readonly isPlaying: boolean
 }
 
 export default function PlayerBackdrop({
@@ -36,7 +36,7 @@ export default function PlayerBackdrop({
 
     let cancelled = false
     let cleanupTimeout: number | undefined
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
+    const reducedMotion = globalThis.matchMedia("(prefers-reduced-motion: reduce)")
 
     void preloadArtworkImage(backdropUrl).then(() => {
       if (cancelled) return
@@ -57,7 +57,7 @@ export default function PlayerBackdrop({
 
       if (!fadingUrl || reducedMotion.matches) return
 
-      cleanupTimeout = window.setTimeout(() => {
+      cleanupTimeout = globalThis.setTimeout(() => {
         if (!cancelled) {
           setFadingBackdropUrl((current) =>
             current === fadingUrl ? undefined : current
@@ -68,7 +68,7 @@ export default function PlayerBackdrop({
 
     return () => {
       cancelled = true
-      if (cleanupTimeout !== undefined) window.clearTimeout(cleanupTimeout)
+      if (cleanupTimeout !== undefined) globalThis.clearTimeout(cleanupTimeout)
     }
   }, [backdropUrl])
 
@@ -114,9 +114,9 @@ export default function PlayerBackdrop({
       }
     }
 
-    window.addEventListener("trackaccentchange", handleAccentChange)
+    globalThis.addEventListener("trackaccentchange", handleAccentChange)
     return () => {
-      window.removeEventListener("trackaccentchange", handleAccentChange)
+      globalThis.removeEventListener("trackaccentchange", handleAccentChange)
     }
   }, [artworkUrl, backdropUrl])
 

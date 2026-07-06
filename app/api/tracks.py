@@ -10,7 +10,8 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from urllib.error import HTTPError, URLError
+from typing import Annotated
+from urllib.error import HTTPError
 from urllib.request import Request as UrlRequest, urlopen
 
 import numpy as np
@@ -61,8 +62,8 @@ _TRACK_NOT_FOUND = "Track not found"
 @router.get("/tracks", responses={400: {"description": "Invalid track filters"}})
 def list_tracks(
     query: str = "",
-    limit: int = Query(50, ge=1, le=500),
-    embedding_status: str = Query("all", pattern=_EMBEDDING_STATUS_PATTERN),
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    embedding_status: Annotated[str, Query(pattern=_EMBEDDING_STATUS_PATTERN)] = "all",
     model: str = "discogs_multi",
     folder: str | None = None,
     genre: str | None = None,
@@ -92,8 +93,8 @@ def list_tracks(
 @router.get("/tracks/search", responses={400: {"description": "Invalid track filters"}})
 def search_tracks(
     q: str = "",
-    limit: int = Query(50, ge=1, le=500),
-    embedding_status: str = Query("all", pattern=_EMBEDDING_STATUS_PATTERN),
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    embedding_status: Annotated[str, Query(pattern=_EMBEDDING_STATUS_PATTERN)] = "all",
     model: str = "discogs_multi",
 ) -> dict[str, object]:
     return list_tracks(
@@ -107,7 +108,7 @@ def search_tracks(
 @router.get("/browse/facets", responses={400: {"description": "Invalid browse facets filters"}})
 def browse_facets(
     model: str = "discogs_multi",
-    embedding_status: str = Query("all", pattern=_EMBEDDING_STATUS_PATTERN),
+    embedding_status: Annotated[str, Query(pattern=_EMBEDDING_STATUS_PATTERN)] = "all",
 ) -> dict[str, object]:
     store, _settings = context()
     try:
@@ -123,8 +124,8 @@ def browse_facets(
 
 @router.get("/lost-files")
 def list_lost_files(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=500),
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> dict[str, object]:
     store, _settings = context()
     count = store.count_missing_files()
@@ -155,8 +156,8 @@ def delete_lost_files(request: DeleteTracksRequest) -> dict[str, object]:
 
 @router.get("/analysis/errors")
 def list_analysis_errors(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=500),
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> dict[str, object]:
     store, _settings = context()
     offset = (page - 1) * page_size
@@ -385,7 +386,7 @@ def get_track_audio(track_id: int, request: Request) -> Response:
         502: {"description": "Navidrome cover art unavailable"},
     },
 )
-def get_track_cover(track_id: int, size: int = Query(default=96, ge=32, le=600)) -> Response:
+def get_track_cover(track_id: int, size: Annotated[int, Query(ge=32, le=600)] = 96) -> Response:
     started = perf_counter()
     store, settings = context()
     track = store.get_track(track_id)
@@ -576,7 +577,7 @@ def _parse_seed_ids_param(seed_ids: str) -> list[int]:
     },
 )
 def get_similar_mix_tracks(
-    seed_ids: str = Query(..., description="Comma-separated track ids"),
+    seed_ids: Annotated[str, Query(description="Comma-separated track ids")],
     model: str = "discogs_multi",
     k: int = 30,
     max_per_artist: int = 2,
@@ -644,7 +645,7 @@ def navidrome_audio_stream_response(
             status_code=exc.code,
             detail=f"Navidrome stream unavailable: {exc.reason}",
         ) from exc
-    except (OSError, URLError) as exc:
+    except OSError as exc:
         raise RuntimeError(f"Navidrome stream unavailable: {exc}") from exc
 
     response_headers = navidrome_stream_headers(upstream.headers)

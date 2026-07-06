@@ -6,10 +6,10 @@ import type { TrackSummary } from "@/api/types"
 const ROW_HEIGHT = 52
 
 interface VirtualTrackListProps {
-  tracks: TrackSummary[]
-  showArtwork?: boolean
-  showRelease?: boolean
-  sourceLabel?: string
+  readonly tracks: TrackSummary[]
+  readonly showArtwork?: boolean
+  readonly showRelease?: boolean
+  readonly sourceLabel?: string
 }
 
 export default function VirtualTrackList({

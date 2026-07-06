@@ -4,6 +4,8 @@ Extracted from app/main.py — Stage 6c.
 """
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
@@ -52,7 +54,7 @@ def api_v1_playback_settings() -> dict[str, object]:
 @router.post("/api/v1/autoplay/refill", response_model=AutoplayRefillResponse)
 def api_v1_autoplay_refill(
     request: AutoplayRefillRequest,
-    include_debug: bool = Query(False),
+    include_debug: Annotated[bool, Query()] = False,
 ) -> dict[str, object] | JSONResponse:
     store, settings = context()
     session = store.get_playback_session(request.session_id)

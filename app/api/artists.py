@@ -4,6 +4,8 @@ Extracted from app/main.py — Stage 6b.
 """
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse, RedirectResponse
 
@@ -58,8 +60,8 @@ def api_v1_artist(artist_id: int) -> dict[str, object] | JSONResponse:
 @router.get("/api/v1/artists/{artist_id}/discography", response_model=ArtistDiscographyResponse)
 def api_v1_artist_discography(
     artist_id: int,
-    sort: str = Query(default="release_date_desc", pattern="^(release_date_desc|release_date_asc|title)$"),
-    limit: int | None = Query(default=None, ge=1, le=100),
+    sort: Annotated[str, Query(pattern="^(release_date_desc|release_date_asc|title)$")] = "release_date_desc",
+    limit: Annotated[int | None, Query(ge=1, le=100)] = None,
     include_tracks: bool = False,
 ) -> dict[str, object] | JSONResponse:
     store, _settings = context()

@@ -8,6 +8,7 @@ import logging
 import time
 from dataclasses import asdict
 from time import perf_counter
+from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
@@ -651,8 +652,8 @@ def rebuild_index(request: IndexRequest) -> dict[str, object]:
 
 @router.post("/api/v1/jobs/release-aggregates")
 def api_v1_release_aggregates_job(
-    model_name: str = Query(default="discogs_multi"),
-    limit: int = Query(default=0, ge=0, description="Max releases to process (0 = all)"),
+    model_name: Annotated[str, Query()] = "discogs_multi",
+    limit: Annotated[int, Query(ge=0, description="Max releases to process (0 = all)")] = 0,
 ) -> dict[str, object]:
     """Trigger the release aggregate computation job.
 
@@ -688,7 +689,7 @@ def api_v1_album_recommendation_settings() -> dict[str, object]:
 
 @router.get("/api/v1/jobs/release-aggregates/status")
 def api_v1_release_aggregates_status(
-    model_name: str = Query(default="discogs_multi"),
+    model_name: Annotated[str, Query()] = "discogs_multi",
 ) -> dict[str, object]:
     """Return current aggregate coverage for a model."""
     store, _settings = context()
@@ -743,7 +744,7 @@ def api_v1_albums_for_you_status() -> dict[str, object]:
 @router.post("/api/v1/jobs/flow-profile")
 def api_v1_flow_profile_rebuild_job(
     background_tasks: BackgroundTasks,
-    model_key: str = Query(default="discogs_multi"),
+    model_key: Annotated[str, Query()] = "discogs_multi",
 ) -> dict[str, object]:
     """Rebuild the Flow taste profile (seed collection + clustering)."""
     store, settings = context()
@@ -763,7 +764,7 @@ def api_v1_flow_profile_rebuild_job(
 
 @router.get("/api/v1/jobs/flow-profile/status")
 def api_v1_flow_profile_status(
-    model_key: str = Query(default="discogs_multi"),
+    model_key: Annotated[str, Query()] = "discogs_multi",
 ) -> dict[str, object]:
     """Return current Flow profile status."""
     store, _settings = context()

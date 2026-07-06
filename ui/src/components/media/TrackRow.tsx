@@ -23,12 +23,12 @@ function formatPlayCount(count: number): string {
 }
 
 interface TrackRowProps {
-  track: TrackSummary | ReleaseTrackItem | ArtistTopTrack
-  index?: number
-  showArtwork?: boolean
-  showRelease?: boolean
-  sourceLabel?: string
-  releaseContextId?: number
+  readonly track: TrackSummary | ReleaseTrackItem | ArtistTopTrack
+  readonly index?: number
+  readonly showArtwork?: boolean
+  readonly showRelease?: boolean
+  readonly sourceLabel?: string
+  readonly releaseContextId?: number
 }
 
 export default function TrackRow({

@@ -688,7 +688,6 @@ class PlaybackStoreMixin:
         track_id = int(row["track_id"]) if row["track_id"] is not None else None
         release_id = int(row["release_id"]) if row["release_id"] is not None else None
         artist_ids = _artist_ids_for_event(conn, row)
-        created_at = str(row["created_at"])
         delta: dict[str, object] = {}
         if track_id is not None:
             before = self._get_track_preference_row(conn, track_id)

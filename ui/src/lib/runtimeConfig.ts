@@ -4,7 +4,7 @@ export const DEFAULT_BACKEND_URL = "http://192.168.1.146:8711"
 
 export function isNative(): boolean {
   // Capacitor injects itself as a global — no import needed
-  return !!(window as unknown as { Capacitor?: { isNativePlatform(): boolean } }).Capacitor?.isNativePlatform()
+  return !!(globalThis as unknown as { Capacitor?: { isNativePlatform(): boolean } }).Capacitor?.isNativePlatform()
 }
 
 let cachedBackendUrl: string | null = null

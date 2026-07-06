@@ -10,8 +10,8 @@ const NAV = [
 ]
 
 interface MobileNavProps {
-  open: boolean
-  onClose: () => void
+  readonly open: boolean
+  readonly onClose: () => void
 }
 
 export default function MobileNav({ open, onClose }: MobileNavProps) {

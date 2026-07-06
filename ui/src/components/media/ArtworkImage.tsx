@@ -2,11 +2,11 @@ import { useState } from "react"
 import { cn } from "@/lib/utils"
 
 interface ArtworkImageProps {
-  src: string | null | undefined
-  alt: string
-  size?: number
-  className?: string
-  fallbackLetter?: string
+  readonly src: string | null | undefined
+  readonly alt: string
+  readonly size?: number
+  readonly className?: string
+  readonly fallbackLetter?: string
 }
 
 export default function ArtworkImage({ src, alt, size, className, fallbackLetter }: ArtworkImageProps) {

@@ -2,12 +2,12 @@ import TrackRow from "./TrackRow"
 import type { TrackSummary, ReleaseTrackItem, ArtistTopTrack } from "@/api/types"
 
 interface TrackTableProps {
-  tracks: (TrackSummary | ReleaseTrackItem | ArtistTopTrack)[]
-  showArtwork?: boolean
-  showRelease?: boolean
-  sourceLabel?: string
-  releaseContextId?: number
-  indexOffset?: number
+  readonly tracks: (TrackSummary | ReleaseTrackItem | ArtistTopTrack)[]
+  readonly showArtwork?: boolean
+  readonly showRelease?: boolean
+  readonly sourceLabel?: string
+  readonly releaseContextId?: number
+  readonly indexOffset?: number
 }
 
 export default function TrackTable({

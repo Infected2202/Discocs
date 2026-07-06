@@ -17,7 +17,7 @@ function applyPalette(
   root.style.setProperty("--track-accent-foreground", palette.foreground)
   root.dataset.trackAccentArtwork = artworkUrl ?? ""
   root.dataset.trackAccentColor = palette.accent
-  window.dispatchEvent(
+  globalThis.dispatchEvent(
     new CustomEvent("trackaccentchange", {
       detail: {
         artworkUrl: artworkUrl ?? "",

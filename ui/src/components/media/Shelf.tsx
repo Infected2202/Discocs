@@ -8,10 +8,10 @@ import { animateScroll } from "@/lib/animateScroll"
 const SCROLL_DURATION = 500 // ms
 
 interface ShelfProps {
-  title?: string
-  subtitle?: string | null
-  items: MediaCardProps[]
-  shelfKey?: string
+  readonly title?: string
+  readonly subtitle?: string | null
+  readonly items: MediaCardProps[]
+  readonly shelfKey?: string
 }
 
 export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfProps) {

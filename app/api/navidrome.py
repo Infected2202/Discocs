@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from time import perf_counter
+from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
@@ -224,8 +225,8 @@ def set_track_navidrome_star(track_id: int, request: NavidromeStarRequest) -> di
 )
 def get_navidrome_starred_similar(
     model: str = "discogs_multi",
-    count: int = Query(default=50, ge=1, le=500),
-    max_per_artist: int = Query(default=2, ge=1, le=100),
+    count: Annotated[int, Query(ge=1, le=500)] = 50,
+    max_per_artist: Annotated[int, Query(ge=1, le=100)] = 2,
     exclude_same_album: bool = True,
 ) -> dict[str, object]:
     store, settings = context()
@@ -287,9 +288,9 @@ def get_navidrome_starred_similar(
 )
 def get_navidrome_similar(
     item_id: str,
-    count: int = Query(default=50, ge=1, le=500),
+    count: Annotated[int, Query(ge=1, le=500)] = 50,
     model: str | None = None,
-    max_per_artist: int | None = Query(default=None, ge=1, le=100),
+    max_per_artist: Annotated[int | None, Query(ge=1, le=100)] = None,
     exclude_same_album: bool | None = None,
 ) -> NavidromeSimilarResponse:
     started = perf_counter()

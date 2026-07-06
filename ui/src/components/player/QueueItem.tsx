@@ -15,13 +15,13 @@ import { QueueItemLiveTime, formatTime } from "@/components/player/PlaybackProgr
 import type { TrackSummary, PlaybackEnvelope } from "@/api/types"
 
 export interface QueueItemProps {
-  track: TrackSummary | null
-  trackId?: number
+  readonly track: TrackSummary | null
+  readonly trackId?: number
   /** Queue/pool item id — used to jump. Omit for rows that are not jumpable. */
-  itemId?: string
-  variant?: "queue" | "autoplay"
-  isCurrent?: boolean
-  dimmed?: boolean
+  readonly itemId?: string
+  readonly variant?: "queue" | "autoplay"
+  readonly isCurrent?: boolean
+  readonly dimmed?: boolean
 }
 
 function QueueItem({ track, trackId, itemId, variant = "queue", isCurrent, dimmed }: QueueItemProps) {

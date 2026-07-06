@@ -1,7 +1,7 @@
 import { useLocation } from "react-router"
 import { useEffect, useRef, useState, type ReactNode } from "react"
 
-export default function PageTransition({ children }: { children: ReactNode }) {
+export default function PageTransition({ children }: { readonly children: ReactNode }) {
   const location = useLocation()
   const [visible, setVisible] = useState(true)
   const prevPath = useRef(location.pathname)

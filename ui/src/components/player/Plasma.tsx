@@ -75,11 +75,11 @@ void main() {
 }`
 
 interface PlasmaProps {
-  active: boolean
-  accent: string
-  speed?: number
-  scale?: number
-  opacity?: number
+  readonly active: boolean
+  readonly accent: string
+  readonly speed?: number
+  readonly scale?: number
+  readonly opacity?: number
 }
 
 export default function Plasma({
@@ -130,7 +130,7 @@ export default function Plasma({
       return
     }
 
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
+    const reducedMotion = globalThis.matchMedia("(prefers-reduced-motion: reduce)")
     if (reducedMotion.matches) {
       currentColorRef.current = nextColor
       transitionRef.current = null
@@ -167,7 +167,7 @@ export default function Plasma({
         webgl: 2,
         alpha: true,
         antialias: false,
-        dpr: Math.min(window.devicePixelRatio || 1, 1.25),
+        dpr: Math.min(globalThis.devicePixelRatio || 1, 1.25),
       })
     } catch {
       return
@@ -229,7 +229,7 @@ export default function Plasma({
       height: gl.drawingBufferHeight,
     })
 
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
+    const reducedMotion = globalThis.matchMedia("(prefers-reduced-motion: reduce)")
     let elapsed = 0
     let lastFrameTime = performance.now()
     let animationFrame = 0

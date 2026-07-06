@@ -7,7 +7,7 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover"
 
-export default function ProfileButton({ mobile = false }: { mobile?: boolean }) {
+export default function ProfileButton({ mobile = false }: { readonly mobile?: boolean }) {
   const navigate = useNavigate()
   const { status, isLoading } = useNavidromeStatus()
 

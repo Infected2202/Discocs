@@ -15,8 +15,8 @@ import type { PlaybackEnvelope } from "@/api/types"
 import type { TrackSummary, ReleaseTrackItem } from "@/api/types"
 
 interface TrackMenuProps {
-  track: TrackSummary | ReleaseTrackItem
-  sourceLabel?: string
+  readonly track: TrackSummary | ReleaseTrackItem
+  readonly sourceLabel?: string
 }
 
 export default function TrackMenu({ track, sourceLabel }: TrackMenuProps) {

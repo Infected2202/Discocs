@@ -113,8 +113,6 @@ def apply_flow_event(
     if len(recent_events) > 20:
         recent_events = recent_events[-20:]
 
-    region_switched = False
-
     if event_type in _STRONG_POSITIVE:
         if tid_key:
             session_accepted[tid_key] = session_accepted.get(tid_key, 0) + 2
@@ -153,7 +151,6 @@ def apply_flow_event(
                 active_region_id = next_region_id
                 recent_events = []   # reset window after switch
                 consecutive_accepted = 0
-                region_switched = True
                 changed["region_switched"] = next_region_id
 
     elif event_type in _NEGATIVE_EVENTS:

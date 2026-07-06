@@ -806,8 +806,6 @@ class JobsStoreMixin:
             total = int(counts["total"] or 0)
             done = int(counts["done"] or 0)
             failed = int(counts["failed"] or 0)
-            queued = int(counts["queued"] or 0)
-            leased = int(counts["leased"] or 0)
             completed = done + failed >= total
             status = "completed" if completed else "running"
             message = f"Analyzed {done}/{total} tracks, failed {failed}"

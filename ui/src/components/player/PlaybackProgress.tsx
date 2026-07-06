@@ -15,11 +15,11 @@ export function formatTime(seconds: number): string {
 }
 
 interface SeekIndicatorsProps {
-  fillClassName: string
-  thumbClassName: string
-  fillStyle?: React.CSSProperties
+  readonly fillClassName: string
+  readonly thumbClassName: string
+  readonly fillStyle?: React.CSSProperties
   /** When set (active drag), overrides the live progress. `null` → use currentTime. */
-  override?: number | null
+  readonly override?: number | null
 }
 
 /**
@@ -47,8 +47,8 @@ export function SeekIndicators({
 }
 
 interface TimeReadoutProps {
-  variant: "inline" | "split"
-  className?: string
+  readonly variant: "inline" | "split"
+  readonly className?: string
 }
 
 /**

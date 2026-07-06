@@ -4,6 +4,8 @@ Extracted from app/main.py — Stage 6b.
 """
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Query
 
 from app.api.deps import context
@@ -25,9 +27,9 @@ router = APIRouter()
 @router.get("/api/v1/search", response_model=SearchResponse)
 def api_v1_search(
     q: str = "",
-    type: str = Query(default="all", pattern="^(all|artist|release|track)$"),
-    limit: int = Query(default=8, ge=1, le=50),
-    offset: int = Query(default=0, ge=0),
+    type: Annotated[str, Query(pattern="^(all|artist|release|track)$")] = "all",
+    limit: Annotated[int, Query(ge=1, le=50)] = 8,
+    offset: Annotated[int, Query(ge=0)] = 0,
     include_debug: bool = False,
 ) -> dict[str, object]:
     store, settings = context()

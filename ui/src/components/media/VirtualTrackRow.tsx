@@ -17,11 +17,11 @@ function formatDuration(seconds: number | null | undefined): string {
 }
 
 interface VirtualTrackRowProps {
-  track: TrackSummary
-  index: number
-  showArtwork?: boolean
-  showRelease?: boolean
-  sourceLabel?: string
+  readonly track: TrackSummary
+  readonly index: number
+  readonly showArtwork?: boolean
+  readonly showRelease?: boolean
+  readonly sourceLabel?: string
 }
 
 export default function VirtualTrackRow({

@@ -5,7 +5,6 @@ Extracted from app/main.py — Stage 6e.
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 import logging
 import socket
@@ -407,7 +406,7 @@ def decode_worker_vector(item: WorkerResultItem) -> np.ndarray:
         raise ValueError("Only float32 worker vectors are supported")
     try:
         raw = base64.b64decode(item.vector_b64, validate=True)
-    except (binascii.Error, ValueError) as exc:
+    except ValueError as exc:
         raise ValueError("Invalid base64 vector") from exc
     expected = item.dim * np.dtype(np.float32).itemsize
     if len(raw) != expected:
@@ -426,7 +425,7 @@ def decode_worker_scores(item: WorkerHeadOutputItem) -> np.ndarray:
         raise ValueError("Only float32 worker scores are supported")
     try:
         raw = base64.b64decode(item.scores_b64, validate=True)
-    except (binascii.Error, ValueError) as exc:
+    except ValueError as exc:
         raise ValueError("Invalid base64 scores") from exc
     expected = item.dim * np.dtype(np.float32).itemsize
     if len(raw) != expected:

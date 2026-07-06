@@ -47,7 +47,7 @@ function makeTrack(id: number): TrackSummary {
   }
 }
 
-function Wrapper({ tracks }: { tracks: TrackSummary[] }) {
+function Wrapper({ tracks }: { readonly tracks: TrackSummary[] }) {
   const ref = useRef<HTMLElement>(null)
   return (
     <MemoryRouter>

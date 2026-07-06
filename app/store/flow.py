@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from uuid import uuid4
 
 import numpy as np
@@ -17,56 +18,56 @@ from app.models import (
 logger = logging.getLogger(__name__)
 
 
-def _row_to_flow_profile(row: object) -> FlowProfile:
+def _row_to_flow_profile(row: sqlite3.Row) -> FlowProfile:
     return FlowProfile(
-        id=str(row["id"]),  # type: ignore[index]
-        status=str(row["status"]),  # type: ignore[index]
-        model_key=str(row["model_key"]),  # type: ignore[index]
-        settings_json=row["settings_json"],  # type: ignore[index]
-        created_at=str(row["created_at"]),  # type: ignore[index]
-        updated_at=str(row["updated_at"]),  # type: ignore[index]
-        last_built_at=row["last_built_at"],  # type: ignore[index]
+        id=str(row["id"]),
+        status=str(row["status"]),
+        model_key=str(row["model_key"]),
+        settings_json=row["settings_json"],
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+        last_built_at=row["last_built_at"],
     )
 
 
-def _row_to_flow_region(row: object) -> FlowRegion:
+def _row_to_flow_region(row: sqlite3.Row) -> FlowRegion:
     return FlowRegion(
-        id=str(row["id"]),  # type: ignore[index]
-        profile_id=str(row["profile_id"]),  # type: ignore[index]
-        region_index=int(row["region_index"]),  # type: ignore[index]
-        centroid_ref=row["centroid_ref"],  # type: ignore[index]
-        medoid_track_id=int(row["medoid_track_id"]) if row["medoid_track_id"] is not None else None,  # type: ignore[index]
-        weight=float(row["weight"]),  # type: ignore[index]
-        seed_count=int(row["seed_count"]),  # type: ignore[index]
-        candidate_count=int(row["candidate_count"]),  # type: ignore[index]
-        summary_json=row["summary_json"],  # type: ignore[index]
-        quality_json=row["quality_json"],  # type: ignore[index]
-        created_at=str(row["created_at"]),  # type: ignore[index]
-        updated_at=str(row["updated_at"]),  # type: ignore[index]
+        id=str(row["id"]),
+        profile_id=str(row["profile_id"]),
+        region_index=int(row["region_index"]),
+        centroid_ref=row["centroid_ref"],
+        medoid_track_id=int(row["medoid_track_id"]) if row["medoid_track_id"] is not None else None,
+        weight=float(row["weight"]),
+        seed_count=int(row["seed_count"]),
+        candidate_count=int(row["candidate_count"]),
+        summary_json=row["summary_json"],
+        quality_json=row["quality_json"],
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
     )
 
 
-def _row_to_flow_region_track(row: object) -> FlowRegionTrack:
+def _row_to_flow_region_track(row: sqlite3.Row) -> FlowRegionTrack:
     return FlowRegionTrack(
-        region_id=str(row["region_id"]),  # type: ignore[index]
-        track_id=int(row["track_id"]),  # type: ignore[index]
-        role=str(row["role"]),  # type: ignore[index]
-        weight=float(row["weight"]) if row["weight"] is not None else None,  # type: ignore[index]
-        distance=float(row["distance"]) if row["distance"] is not None else None,  # type: ignore[index]
+        region_id=str(row["region_id"]),
+        track_id=int(row["track_id"]),
+        role=str(row["role"]),
+        weight=float(row["weight"]) if row["weight"] is not None else None,
+        distance=float(row["distance"]) if row["distance"] is not None else None,
     )
 
 
-def _row_to_flow_generation_run(row: object) -> FlowGenerationRun:
+def _row_to_flow_generation_run(row: sqlite3.Row) -> FlowGenerationRun:
     return FlowGenerationRun(
-        id=str(row["id"]),  # type: ignore[index]
-        session_id=row["session_id"],  # type: ignore[index]
-        profile_id=row["profile_id"],  # type: ignore[index]
-        region_id=row["region_id"],  # type: ignore[index]
-        settings_json=row["settings_json"],  # type: ignore[index]
-        candidate_count=int(row["candidate_count"]) if row["candidate_count"] is not None else None,  # type: ignore[index]
-        selected_count=int(row["selected_count"]) if row["selected_count"] is not None else None,  # type: ignore[index]
-        score_summary_json=row["score_summary_json"],  # type: ignore[index]
-        created_at=str(row["created_at"]),  # type: ignore[index]
+        id=str(row["id"]),
+        session_id=row["session_id"],
+        profile_id=row["profile_id"],
+        region_id=row["region_id"],
+        settings_json=row["settings_json"],
+        candidate_count=int(row["candidate_count"]) if row["candidate_count"] is not None else None,
+        selected_count=int(row["selected_count"]) if row["selected_count"] is not None else None,
+        score_summary_json=row["score_summary_json"],
+        created_at=str(row["created_at"]),
     )
 
 

@@ -32,7 +32,7 @@ vi.mock("./gridLayout", () => ({
   computeGridColumns: () => 4,
 }))
 
-function Wrapper({ items }: { items: string[] }) {
+function Wrapper({ items }: { readonly items: string[] }) {
   const ref = useRef<HTMLElement>(null)
   return (
     <ScrollContext.Provider value={ref}>

@@ -8,6 +8,7 @@ import logging
 import sqlite3
 from pathlib import Path
 from time import perf_counter
+from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
@@ -49,8 +50,8 @@ _GENERATED_MIX_NOT_FOUND = "Generated mix not found"
 
 @router.get("/api/v1/mixes", response_model=None)
 def api_v1_mixes(
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
     include_debug: bool = False,
 ) -> dict[str, object]:
     store, settings = context()
@@ -217,8 +218,8 @@ def api_v1_play_mix(mix_id: str) -> dict[str, object] | JSONResponse:
     responses={503: {"description": "Instant mix history could not be read from SQLite"}},
 )
 def list_instant_mix_requests(
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> dict[str, object]:
     store, _settings = context()
     try:

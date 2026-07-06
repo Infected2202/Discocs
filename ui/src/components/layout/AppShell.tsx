@@ -35,8 +35,8 @@ export default function AppShell() {
       const accent = (e as CustomEvent<{ accent?: string }>).detail?.accent
       if (accent) setPlasmaAccent(accent)
     }
-    window.addEventListener("trackaccentchange", handler)
-    return () => window.removeEventListener("trackaccentchange", handler)
+    globalThis.addEventListener("trackaccentchange", handler)
+    return () => globalThis.removeEventListener("trackaccentchange", handler)
   }, [])
 
 

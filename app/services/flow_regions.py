@@ -301,7 +301,7 @@ def _estimate_candidate_coverage(
     if region.centroid is None:
         return 0
     try:
-        from app.recommender import Recommender, StaleIndexError
+        from app.recommender import Recommender
         rec = Recommender(store, app_settings, model_key)
         seed_ids = {s.track_id for s in region.seeds}
         results = rec.similar_vector(
@@ -314,7 +314,7 @@ def _estimate_candidate_coverage(
             candidate_multiplier=2,
         )
         return len(results)
-    except (FileNotFoundError, StaleIndexError, LookupError) as exc:
+    except (FileNotFoundError, LookupError) as exc:
         logger.debug("Coverage estimation skipped: %s", exc)
         return 0
     except Exception:

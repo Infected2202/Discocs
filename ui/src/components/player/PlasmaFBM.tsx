@@ -101,11 +101,11 @@ void main() {
 }`
 
 interface PlasmaFBMProps {
-  active: boolean
-  accent: string
-  speed?: number
-  scale?: number
-  opacity?: number
+  readonly active: boolean
+  readonly accent: string
+  readonly speed?: number
+  readonly scale?: number
+  readonly opacity?: number
 }
 
 export default function PlasmaFBM({
@@ -138,7 +138,7 @@ export default function PlasmaFBM({
     const program = programRef.current
     if (!program) { currentColorRef.current = nextColor; return }
 
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
+    const reducedMotion = globalThis.matchMedia("(prefers-reduced-motion: reduce)")
     if (reducedMotion.matches) {
       currentColorRef.current = nextColor
       transitionRef.current = null
@@ -195,7 +195,7 @@ export default function PlasmaFBM({
     ro.observe(container)
     setSize()
 
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
+    const reducedMotion = globalThis.matchMedia("(prefers-reduced-motion: reduce)")
     let elapsed = 0, lastFrameTime = performance.now(), raf = 0
 
     const render = (time: number) => {

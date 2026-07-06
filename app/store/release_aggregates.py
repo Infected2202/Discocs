@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -14,19 +15,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _row_to_release_aggregate(row: object) -> ReleaseAggregate:
+def _row_to_release_aggregate(row: sqlite3.Row) -> ReleaseAggregate:
     return ReleaseAggregate(
-        release_id=int(row["release_id"]),  # type: ignore[index]
-        track_count=int(row["track_count"]),  # type: ignore[index]
-        available_track_count=int(row["available_track_count"]),  # type: ignore[index]
-        duration=float(row["duration"]) if row["duration"] is not None else None,  # type: ignore[index]
-        centroid_model=row["centroid_model"],  # type: ignore[index]
-        medoid_track_id=int(row["medoid_track_id"]) if row["medoid_track_id"] is not None else None,  # type: ignore[index]
-        embedding_status=str(row["embedding_status"]),  # type: ignore[index]
-        top_region_matches_json=row["top_region_matches_json"],  # type: ignore[index]
-        audio_summary_json=row["audio_summary_json"],  # type: ignore[index]
-        preference_summary_json=row["preference_summary_json"],  # type: ignore[index]
-        updated_at=str(row["updated_at"]),  # type: ignore[index]
+        release_id=int(row["release_id"]),
+        track_count=int(row["track_count"]),
+        available_track_count=int(row["available_track_count"]),
+        duration=float(row["duration"]) if row["duration"] is not None else None,
+        centroid_model=row["centroid_model"],
+        medoid_track_id=int(row["medoid_track_id"]) if row["medoid_track_id"] is not None else None,
+        embedding_status=str(row["embedding_status"]),
+        top_region_matches_json=row["top_region_matches_json"],
+        audio_summary_json=row["audio_summary_json"],
+        preference_summary_json=row["preference_summary_json"],
+        updated_at=str(row["updated_at"]),
     )
 
 

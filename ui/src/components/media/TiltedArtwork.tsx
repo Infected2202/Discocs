@@ -5,8 +5,8 @@ const ROTATE_AMPLITUDE = 9
 const SCALE_ON_HOVER = 1.03
 
 interface TiltedArtworkProps {
-  children: React.ReactNode
-  className?: string
+  readonly children: React.ReactNode
+  readonly className?: string
 }
 
 /**

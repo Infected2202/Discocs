@@ -4,11 +4,11 @@ import { useScrollRef } from "@/contexts/ScrollContext"
 import { computeGridColumns } from "./gridLayout"
 
 interface VirtualCardGridProps<T> {
-  items: T[]
-  getKey: (item: T, index: number) => string
-  renderItem: (item: T, index: number) => React.ReactNode
-  minColumnWidth?: number
-  gap?: number
+  readonly items: T[]
+  readonly getKey: (item: T, index: number) => string
+  readonly renderItem: (item: T, index: number) => React.ReactNode
+  readonly minColumnWidth?: number
+  readonly gap?: number
 }
 
 // Виртуализированный адаптивный грид. Держит в DOM только видимые строки

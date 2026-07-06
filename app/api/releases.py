@@ -5,6 +5,7 @@ Extracted from app/main.py — Stage 6b.
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse, Response
@@ -82,7 +83,7 @@ def api_v1_release_related_discography(release_id: int) -> dict[str, object] | J
 @router.get("/api/v1/releases/{release_id}/recommendations", response_model=None)
 def api_v1_release_recommendations(
     release_id: int,
-    limit: int = Query(default=12, ge=1, le=50),
+    limit: Annotated[int, Query(ge=1, le=50)] = 12,
     include_debug: bool = False,
 ) -> dict[str, object] | JSONResponse:
     store, settings = context()
@@ -142,7 +143,7 @@ def api_v1_release_recommendations(
 @router.get("/api/v1/releases/{release_id}/cover", response_model=None)
 def api_v1_release_cover(
     release_id: int,
-    size: int = Query(default=300, ge=32, le=1000),
+    size: Annotated[int, Query(ge=32, le=1000)] = 300,
 ) -> Response | JSONResponse:
     store, settings = context()
     release = store.get_release(release_id)

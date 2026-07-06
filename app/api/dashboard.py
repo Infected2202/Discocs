@@ -4,6 +4,8 @@ Extracted from app/main.py — Stage 6b.
 """
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
@@ -15,7 +17,7 @@ router = APIRouter()
 
 @router.get("/api/v1/dashboard", response_model=None)
 def api_v1_dashboard(
-    limit: int = Query(default=12, ge=1, le=50),
+    limit: Annotated[int, Query(ge=1, le=50)] = 12,
     include_debug: bool = False,
 ) -> dict[str, object]:
     store, settings = context()
@@ -52,8 +54,8 @@ def api_v1_dashboard(
 @router.get("/api/v1/dashboard/shelves/{key}", response_model=None)
 def api_v1_dashboard_shelf(
     key: str,
-    limit: int = Query(default=12, ge=1, le=50),
-    offset: int = Query(default=0, ge=0),
+    limit: Annotated[int, Query(ge=1, le=50)] = 12,
+    offset: Annotated[int, Query(ge=0)] = 0,
     include_debug: bool = False,
 ) -> dict[str, object] | JSONResponse:
     store, settings = context()

@@ -10,9 +10,9 @@ function Field({
   hint,
   children,
 }: {
-  label: string
-  hint?: string
-  children: React.ReactNode
+  readonly label: string
+  readonly hint?: string
+  readonly children: React.ReactNode
 }) {
   return (
     <div className="space-y-1.5">
@@ -30,11 +30,11 @@ function Input({
   placeholder,
   disabled,
 }: {
-  value: string
-  onChange: (v: string) => void
-  type?: string
-  placeholder?: string
-  disabled?: boolean
+  readonly value: string
+  readonly onChange: (v: string) => void
+  readonly type?: string
+  readonly placeholder?: string
+  readonly disabled?: boolean
 }) {
   return (
     <input

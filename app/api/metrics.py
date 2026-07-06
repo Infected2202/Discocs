@@ -4,6 +4,8 @@ Extracted from app/main.py — Stage 6b.
 """
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Query
 
 from app.api.deps import context
@@ -17,7 +19,7 @@ router = APIRouter()
 
 @router.get("/metrics/features")
 def metrics_features(
-    source: str = Query(default="audio_features", pattern="^(audio_features|heads)$"),
+    source: Annotated[str, Query(pattern="^(audio_features|heads)$")] = "audio_features",
     extractor: str = AUDIO_FEATURE_EXTRACTOR,
 ):
     store, _settings = context()
@@ -64,9 +66,9 @@ def metrics_features(
 @router.get("/metrics/features/{feature_name}/values")
 def metrics_feature_values(
     feature_name: str,
-    source: str = Query(default="audio_features", pattern="^(audio_features|heads)$"),
+    source: Annotated[str, Query(pattern="^(audio_features|heads)$")] = "audio_features",
     extractor: str = AUDIO_FEATURE_EXTRACTOR,
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ):
     store, _settings = context()
     if source == "heads":

@@ -43,10 +43,10 @@ function VolumeControl({
   onToggleMute,
   onVolumeChange,
 }: {
-  volume: number
-  muted: boolean
-  onToggleMute: () => void
-  onVolumeChange: (value: number) => void
+  readonly volume: number
+  readonly muted: boolean
+  readonly onToggleMute: () => void
+  readonly onVolumeChange: (value: number) => void
 }) {
   const [hovered, setHovered] = useState(false)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -76,12 +76,12 @@ function VolumeControl({
     }
 
     function onUp() {
-      window.removeEventListener("mousemove", onMove)
-      window.removeEventListener("mouseup", onUp)
+      globalThis.removeEventListener("mousemove", onMove)
+      globalThis.removeEventListener("mouseup", onUp)
     }
 
-    window.addEventListener("mousemove", onMove)
-    window.addEventListener("mouseup", onUp)
+    globalThis.addEventListener("mousemove", onMove)
+    globalThis.addEventListener("mouseup", onUp)
   }
 
   return (
@@ -172,7 +172,7 @@ export default function PlayerBar() {
     let cancelled = false
     let showFrame: number | undefined
     let swapTimeout: number | undefined
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
+    const reducedMotion = globalThis.matchMedia("(prefers-reduced-motion: reduce)")
 
     void preloadArtworkImage(nextSnapshot.track?.artwork?.url).then(() => {
       if (cancelled) return
@@ -181,7 +181,7 @@ export default function PlayerBar() {
         if (cancelled) return
         visibleTrackKeyRef.current = nextSnapshot.key
         setVisibleSnapshot(nextSnapshot)
-        showFrame = window.requestAnimationFrame(() => {
+        showFrame = globalThis.requestAnimationFrame(() => {
           if (!cancelled) setTrackDetailsHidden(false)
         })
       }
@@ -192,7 +192,7 @@ export default function PlayerBar() {
       }
 
       setTrackDetailsHidden(true)
-      swapTimeout = window.setTimeout(
+      swapTimeout = globalThis.setTimeout(
         swapTrack,
         readTrackAccentTransitionDurationMs() / 2
       )
@@ -200,8 +200,8 @@ export default function PlayerBar() {
 
     return () => {
       cancelled = true
-      if (swapTimeout !== undefined) window.clearTimeout(swapTimeout)
-      if (showFrame !== undefined) window.cancelAnimationFrame(showFrame)
+      if (swapTimeout !== undefined) globalThis.clearTimeout(swapTimeout)
+      if (showFrame !== undefined) globalThis.cancelAnimationFrame(showFrame)
     }
   }, [currentTrack, currentTrackId])
 
@@ -225,12 +225,12 @@ export default function PlayerBar() {
       const v = progressFrom(ev.clientX)
       if (v !== null) seek(v)
       setDragProgress(null)
-      window.removeEventListener("mousemove", onMove)
-      window.removeEventListener("mouseup", onUp)
+      globalThis.removeEventListener("mousemove", onMove)
+      globalThis.removeEventListener("mouseup", onUp)
     }
 
-    window.addEventListener("mousemove", onMove)
-    window.addEventListener("mouseup", onUp)
+    globalThis.addEventListener("mousemove", onMove)
+    globalThis.addEventListener("mouseup", onUp)
   }
 
 const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:text-foreground disabled:opacity-30"
@@ -361,7 +361,7 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
   )
 }
 
-function TrackMoreMenu({ trackId }: { trackId: number }) {
+function TrackMoreMenu({ trackId }: { readonly trackId: number }) {
   const recordEvent = usePlayerStore((s) => s.recordEvent)
 
   async function handleInstantMix() {
@@ -405,11 +405,11 @@ function TrackDetails({
   toggleLike,
   liked,
 }: {
-  snapshot: PlayerBarTrackSnapshot
-  iconBtn: string
-  activeBtn: string
-  toggleLike: (trackId: number) => void
-  liked: boolean
+  readonly snapshot: PlayerBarTrackSnapshot
+  readonly iconBtn: string
+  readonly activeBtn: string
+  readonly toggleLike: (trackId: number) => void
+  readonly liked: boolean
 }) {
   const { track, trackId } = snapshot
 
