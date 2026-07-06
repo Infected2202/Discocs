@@ -5,7 +5,7 @@
 # Скан идёт в RUN (а не ENTRYPOINT+`docker run`), чтобы --mount=type=cache
 # сохранял БД уязвимостей Trivy между билдами — иначе ~150+ МБ качались бы заново
 # на каждый билд.
-FROM aquasec/trivy:latest
+FROM aquasec/trivy:0.72.0
 WORKDIR /repo
 COPY . .
 RUN --mount=type=cache,target=/root/.cache/trivy \
