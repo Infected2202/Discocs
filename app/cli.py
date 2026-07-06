@@ -1136,6 +1136,39 @@ def normalize_worker_models(models: list[str]) -> list[str]:
     return list(dict.fromkeys(model for model in normalized if model))
 
 
+def fallback_to_essentia_embedding(
+    settings: Settings,
+    model_name: str,
+    gpu_batch_size: int,
+    audio_path: Path,
+    task: dict[str, object],
+    results: list[dict[str, object]],
+    failures: list[dict[str, object]],
+    completed_task_ids: set[str],
+) -> None:
+    task_id = str(task["task_id"])
+    try:
+        vector = np.asarray(
+            DiscogsEffnetEmbedder(
+                settings,
+                model_name,
+                batch_size=gpu_batch_size,
+                backend="essentia",
+            ).extract_track_vector(audio_path),
+            dtype=np.float32,
+        )
+        append_embedding_result(results, task, model_name, vector)
+        completed_task_ids.add(task_id)
+        typer.echo(
+            f"ok task_id={task_id} track_id={task['track_id']} "
+            f"model={model_name} backend=essentia-fallback"
+        )
+    except Exception as fallback_exc:
+        append_worker_failure(failures, task_id, fallback_exc)
+        completed_task_ids.add(task_id)
+        typer.echo(f"failed task_id={task_id}: {fallback_exc}", err=True)
+
+
 @cli.command("worker")
 def worker(
     server: Annotated[str, typer.Option("--server")] = "http://127.0.0.1:8711",
@@ -1447,26 +1480,16 @@ def worker(
                                 task_id = str(task["task_id"])
                                 audio_path = item["audio_path"]
                                 if embedding_backend == "auto":
-                                    try:
-                                        vector = np.asarray(
-                                            DiscogsEffnetEmbedder(
-                                                settings,
-                                                model_name,
-                                                batch_size=gpu_batch_size,
-                                                backend="essentia",
-                                            ).extract_track_vector(audio_path),
-                                            dtype=np.float32,
-                                        )
-                                        append_embedding_result(results, task, model_name, vector)
-                                        completed_task_ids.add(task_id)
-                                        typer.echo(
-                                            f"ok task_id={task_id} track_id={task['track_id']} "
-                                            f"model={model_name} backend=essentia-fallback"
-                                        )
-                                    except Exception as fallback_exc:
-                                        append_worker_failure(failures, task_id, fallback_exc)
-                                        completed_task_ids.add(task_id)
-                                        typer.echo(f"failed task_id={task_id}: {fallback_exc}", err=True)
+                                    fallback_to_essentia_embedding(
+                                        settings,
+                                        model_name,
+                                        gpu_batch_size,
+                                        audio_path,
+                                        task,
+                                        results,
+                                        failures,
+                                        completed_task_ids,
+                                    )
                                 else:
                                     append_worker_failure(failures, task_id, exc)
                                     completed_task_ids.add(task_id)
@@ -1618,26 +1641,16 @@ def worker(
                                 if embedding_backend == "auto":
                                     if close_inactive_task(task_id, model_name, audio_path):
                                         continue
-                                    try:
-                                        vector = np.asarray(
-                                            DiscogsEffnetEmbedder(
-                                                settings,
-                                                model_name,
-                                                batch_size=gpu_batch_size,
-                                                backend="essentia",
-                                            ).extract_track_vector(audio_path),
-                                            dtype=np.float32,
-                                        )
-                                        append_embedding_result(results, task, model_name, vector)
-                                        completed_task_ids.add(task_id)
-                                        typer.echo(
-                                            f"ok task_id={task_id} track_id={task['track_id']} "
-                                            f"model={model_name} backend=essentia-fallback"
-                                        )
-                                    except Exception as fallback_exc:
-                                        append_worker_failure(failures, task_id, fallback_exc)
-                                        completed_task_ids.add(task_id)
-                                        typer.echo(f"failed task_id={task_id}: {fallback_exc}", err=True)
+                                    fallback_to_essentia_embedding(
+                                        settings,
+                                        model_name,
+                                        gpu_batch_size,
+                                        audio_path,
+                                        task,
+                                        results,
+                                        failures,
+                                        completed_task_ids,
+                                    )
                                 else:
                                     append_worker_failure(failures, task_id, exc)
                                     completed_task_ids.add(task_id)
