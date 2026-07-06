@@ -47,8 +47,12 @@ export function parsePlasmaColor(value: string): PlasmaRgb {
     ]
   }
 
+  // A single `[\s,]+` per separator instead of `\s*[, ]\s*` — three adjacent
+  // optional/quantified whitespace matches let backtracking split the same
+  // whitespace run multiple ways, which is what made this pattern polynomial
+  // on whitespace-heavy input (S5852).
   const rgb =
-    /^rgba?\(\s*(\d+(?:\.\d+)?)\s*[, ]\s*(\d+(?:\.\d+)?)\s*[, ]\s*(\d+(?:\.\d+)?)/i.exec(
+    /^rgba?\(\s*(\d+(?:\.\d+)?)[\s,]+(\d+(?:\.\d+)?)[\s,]+(\d+(?:\.\d+)?)/i.exec(
       color
     )
   if (rgb) {

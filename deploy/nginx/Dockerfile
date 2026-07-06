@@ -5,8 +5,8 @@ RUN npm install -g pnpm@11 && pnpm install --frozen-lockfile
 COPY ui/ ./
 RUN pnpm build
 
-FROM nginx:alpine
+FROM nginxinc/nginx-unprivileged:alpine
 # Template is processed by nginx entrypoint via envsubst on startup
 COPY deploy/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=ui-builder /build/dist /usr/share/nginx/html
-EXPOSE 80
+EXPOSE 8080

@@ -1,4 +1,7 @@
+import time
+
 from app.library import (
+    _ARTIST_CREDIT_SPLIT_RE,
     TrackMetadataEnvelope,
     normalize_text,
     parse_artist_credit,
@@ -15,6 +18,24 @@ def test_artist_credit_parser_splits_clear_separators():
 
     assert [credit.name for credit in credits] == ["Alpha", "Beta", "Gamma"]
     assert {credit.credit_text for credit in credits} == {"Alpha & Beta feat. Gamma"}
+
+
+def test_artist_credit_parser_keeps_bare_ampersand_together():
+    credits = parse_artist_credit("AT&T Band")
+    assert [credit.name for credit in credits] == ["AT&T Band"]
+
+
+def test_artist_credit_split_regex_handles_whitespace_flood_without_hanging():
+    # Regression for S5852: the old `\s...\s` pattern let backtracking split
+    # a long whitespace run in polynomially many ways once no delimiter
+    # followed. clean_display_text() collapses whitespace before the regex
+    # ever sees it in the normal call path, so this exercises the compiled
+    # pattern directly to guard against it being reused elsewhere (or the
+    # normalization step being removed) without this protection.
+    pathological = "Artist" + " " * 50_000
+    started = time.perf_counter()
+    _ARTIST_CREDIT_SPLIT_RE.split(pathological)
+    assert time.perf_counter() - started < 1.0
 
 
 def test_release_identity_prefers_provider_release_id():
