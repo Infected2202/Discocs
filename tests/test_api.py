@@ -1053,6 +1053,16 @@ def test_listener_surface_routes_serve_shell():
         assert "settingsTabs" in response.text
 
 
+def test_admin_uses_literal_replace_all_for_quote_escaping():
+    response = TestClient(app).get("/admin")
+
+    assert response.status_code == 200
+    assert response.text.count("""replaceAll("'", "%27")""") == 2
+    assert r"""replaceAll('"', '\\"')""" in response.text
+    assert "replaceAll(/'/g" not in response.text
+    assert 'replaceAll(/"/g' not in response.text
+
+
 def test_navidrome_sync_job_imports_catalog(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
 
