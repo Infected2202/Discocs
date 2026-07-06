@@ -19,7 +19,7 @@ function formatDuration(seconds: number | null | undefined): string {
 const playCountFormatter = new Intl.NumberFormat("ru", { notation: "compact", compactDisplay: "short" })
 
 function formatPlayCount(count: number): string {
-  return `${playCountFormatter.format(count)} прослушиваний`
+  return playCountFormatter.format(count)
 }
 
 interface TrackRowProps {
@@ -93,12 +93,14 @@ export default function TrackRow({
       {/* Artwork */}
       {showArtwork && (
         <td className="w-10 py-1.5 pr-3">
-          <ArtworkImage
-            src={track.artwork?.url}
-            alt={track.title}
-            size={36}
-            fallbackLetter={track.title[0]}
-          />
+          <button onClick={handlePlay} className="block" aria-label={isPlaying ? "Pause" : "Play"}>
+            <ArtworkImage
+              src={track.artwork?.url}
+              alt={track.title}
+              size={36}
+              fallbackLetter={track.title[0]}
+            />
+          </button>
         </td>
       )}
 
@@ -155,7 +157,12 @@ export default function TrackRow({
       {/* Duration / play count */}
       <td className="py-2 pr-2 text-right text-xs text-muted-foreground tabular-nums whitespace-nowrap">
         {"play_count" in track
-          ? track.play_count > 0 ? formatPlayCount(track.play_count) : ""
+          ? track.play_count > 0 && (
+              <>
+                {formatPlayCount(track.play_count)}
+                <span className="hidden sm:inline"> прослушиваний</span>
+              </>
+            )
           : formatDuration(track.duration)}
       </td>
 

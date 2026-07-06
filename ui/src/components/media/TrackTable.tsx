@@ -29,7 +29,7 @@ export default function TrackTable({
         {showArtwork && <col className="w-12" />}
         <col />
         {showRelease && <col className="hidden md:table-column w-[180px]" />}
-        <col className={showPlayCount ? "w-44" : "w-14"} />
+        <col className={showPlayCount ? "w-14 sm:w-44" : "w-14"} />
         <col className="w-8" />
         <col className="w-8" />
       </colgroup>

@@ -90,12 +90,14 @@ export default function VirtualTrackRow({
       {/* Artwork */}
       {showArtwork && (
         <div className="py-1.5 pr-2">
-          <ArtworkImage
-            src={track.artwork?.url}
-            alt={track.title}
-            size={36}
-            fallbackLetter={track.title[0]}
-          />
+          <button onClick={handlePlay} className="block" aria-label={isPlaying ? "Pause" : "Play"}>
+            <ArtworkImage
+              src={track.artwork?.url}
+              alt={track.title}
+              size={36}
+              fallbackLetter={track.title[0]}
+            />
+          </button>
         </div>
       )}
 
