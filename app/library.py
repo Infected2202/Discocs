@@ -203,8 +203,23 @@ def explicit_release_type(value: str | None) -> str:
 # `\s*(?:...)\s*` pattern polynomial on whitespace-heavy input (S5852).
 # Delimiters that require surrounding whitespace use lookaround instead, and
 # clean_display_text() strips the leftover boundary spaces from each part.
+_ARTIST_CREDIT_ALWAYS_DELIMITER_RE = r"[;\u2022]"
+_ARTIST_CREDIT_SPACED_DELIMITER_RES = (
+    r"&",
+    r"feat\.",
+    r"ft\.",
+    r"featuring",
+)
 _ARTIST_CREDIT_SPLIT_RE = re.compile(
-    r"[;•]|(?<=\s)&(?=\s)|(?<=\s)feat\.(?=\s)|(?<=\s)ft\.(?=\s)|(?<=\s)featuring(?=\s)",
+    "|".join(
+        (
+            _ARTIST_CREDIT_ALWAYS_DELIMITER_RE,
+            *(
+                rf"(?<=\s){delimiter_re}(?=\s)"
+                for delimiter_re in _ARTIST_CREDIT_SPACED_DELIMITER_RES
+            ),
+        )
+    ),
     re.IGNORECASE,
 )
 

@@ -387,8 +387,12 @@ def _track_metadata_key(track: Track) -> tuple[str, str] | None:
 # `\s+...\s+` pattern polynomial on whitespace-heavy input (S5852).
 # Delimiters that require surrounding whitespace use lookaround instead; the
 # caller strips the leftover boundary spaces from each part.
+_ARTIST_KEY_ALWAYS_DELIMITER_RE = r"[;&+]"
+_ARTIST_KEY_SPACED_DELIMITER_RE = (
+    r"(?<=\s)(?:\u2022|feat\.?|ft\.?|featuring|with|vs\.?|x)(?=\s)"
+)
 _ARTIST_KEY_SPLIT_RE = re.compile(
-    r"(?<=\s)•(?=\s)|(?<=\s)(?:feat\.?|ft\.?|featuring|with|vs\.?|x)(?=\s)|[;&+]",
+    "|".join((_ARTIST_KEY_SPACED_DELIMITER_RE, _ARTIST_KEY_ALWAYS_DELIMITER_RE)),
     re.IGNORECASE,
 )
 

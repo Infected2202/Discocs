@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from app.recommender import _ARTIST_KEY_SPLIT_RE, _artist_credit_keys, _same_album
 from app.store import Track
 
@@ -29,6 +31,28 @@ def test_artist_credit_keys_splits_collaborators():
     # unlike `feat.`/`ft.`/`featuring`/etc, which require it.
     assert _artist_credit_keys("AT&T Band") == ("at", "t band")
     assert _artist_credit_keys("Solo Artist", count_collaboration_artists=False) == ("solo artist",)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Alpha;Beta", ("alpha", "beta")),
+        ("Alpha&Beta", ("alpha", "beta")),
+        ("Alpha+Beta", ("alpha", "beta")),
+        ("Alpha \u2022 Beta", ("alpha", "beta")),
+        ("Alpha feat Beta", ("alpha", "beta")),
+        ("Alpha feat. Beta", ("alpha", "beta")),
+        ("Alpha ft Beta", ("alpha", "beta")),
+        ("Alpha featuring Beta", ("alpha", "beta")),
+        ("Alpha with Beta", ("alpha", "beta")),
+        ("Alpha vs. Beta", ("alpha", "beta")),
+        ("Alpha x Beta", ("alpha", "beta")),
+        ("Defeat Victory", ("defeat victory",)),
+        ("Alpha\u2022Beta", ("alpha\u2022beta",)),
+    ],
+)
+def test_artist_credit_keys_preserves_delimiter_rules(value, expected):
+    assert _artist_credit_keys(value) == expected
 
 
 def test_artist_credit_split_regex_handles_whitespace_flood_without_hanging():

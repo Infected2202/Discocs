@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from app.library import (
     _ARTIST_CREDIT_SPLIT_RE,
     TrackMetadataEnvelope,
@@ -23,6 +25,24 @@ def test_artist_credit_parser_splits_clear_separators():
 def test_artist_credit_parser_keeps_bare_ampersand_together():
     credits = parse_artist_credit("AT&T Band")
     assert [credit.name for credit in credits] == ["AT&T Band"]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Alpha;Beta", ["Alpha", "Beta"]),
+        ("Alpha\u2022Beta", ["Alpha", "Beta"]),
+        ("Alpha & Beta", ["Alpha", "Beta"]),
+        ("Alpha feat. Beta", ["Alpha", "Beta"]),
+        ("Alpha ft. Beta", ["Alpha", "Beta"]),
+        ("Alpha featuring Beta", ["Alpha", "Beta"]),
+        ("AT&T Band", ["AT&T Band"]),
+        ("Alpha& Beta", ["Alpha& Beta"]),
+        ("Defeat. Victory", ["Defeat. Victory"]),
+    ],
+)
+def test_artist_credit_parser_preserves_delimiter_rules(value, expected):
+    assert [credit.name for credit in parse_artist_credit(value)] == expected
 
 
 def test_artist_credit_split_regex_handles_whitespace_flood_without_hanging():
