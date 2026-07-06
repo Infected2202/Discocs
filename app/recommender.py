@@ -381,11 +381,14 @@ def _track_metadata_key(track: Track) -> tuple[str, str] | None:
     return artist, title
 
 
-# Lookaround instead of `\s+...\s+` so whitespace is consumed once by the
-# outer `\s*`, not duplicated between it and each alternative — that
-# duplication made the old pattern polynomial on whitespace-heavy input (S5852).
+# No wrapping `\s*` around the alternation: an unbounded quantifier that
+# frequently fails to find its delimiter forces re.split to rescan the
+# remaining string from every position, which is what made the old
+# `\s+...\s+` pattern polynomial on whitespace-heavy input (S5852).
+# Delimiters that require surrounding whitespace use lookaround instead; the
+# caller strips the leftover boundary spaces from each part.
 _ARTIST_KEY_SPLIT_RE = re.compile(
-    r"\s*(?:(?<=\s)•(?=\s)|(?<=\s)(?:feat\.?|ft\.?|featuring|with|vs\.?|x)(?=\s)|[;&+])\s*",
+    r"(?<=\s)•(?=\s)|(?<=\s)(?:feat\.?|ft\.?|featuring|with|vs\.?|x)(?=\s)|[;&+]",
     re.IGNORECASE,
 )
 
@@ -400,7 +403,7 @@ def _artist_credit_keys(
         return ()
     if not count_collaboration_artists:
         return (key,)
-    parts = _ARTIST_KEY_SPLIT_RE.split(key)
+    parts = (part.strip() for part in _ARTIST_KEY_SPLIT_RE.split(key))
     keys = tuple(dict.fromkeys(part for part in parts if part))
     return keys or (key,)
 

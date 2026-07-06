@@ -26,12 +26,14 @@ def test_artist_credit_parser_keeps_bare_ampersand_together():
 
 
 def test_artist_credit_split_regex_handles_whitespace_flood_without_hanging():
-    # Regression for S5852: the old `\s...\s` pattern let backtracking split
-    # a long whitespace run in polynomially many ways once no delimiter
-    # followed. clean_display_text() collapses whitespace before the regex
-    # ever sees it in the normal call path, so this exercises the compiled
-    # pattern directly to guard against it being reused elsewhere (or the
-    # normalization step being removed) without this protection.
+    # Regression for S5852: the old `\s*(?:...)\s*` pattern wrapped the
+    # alternation in an unbounded quantifier, so re.split had to rescan the
+    # remaining whitespace run from every position once no delimiter
+    # followed — quadratic in the run length. clean_display_text() collapses
+    # whitespace before the regex ever sees it in the normal call path, so
+    # this exercises the compiled pattern directly to guard against it being
+    # reused elsewhere (or the normalization step being removed) without
+    # this protection.
     pathological = "Artist" + " " * 50_000
     started = time.perf_counter()
     _ARTIST_CREDIT_SPLIT_RE.split(pathological)

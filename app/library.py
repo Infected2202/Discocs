@@ -197,13 +197,14 @@ def explicit_release_type(value: str | None) -> str:
     return _normalize_release_type(value)
 
 
-# Delimiters that require whitespace around them use lookaround instead of
-# `\s...\s` so the whitespace is only ever consumed once (by the outer
-# `\s*`), not by both the outer wrapper and the alternative itself — that
-# duplication is what made the old pattern polynomial on whitespace-heavy
-# input (S5852).
+# No wrapping `\s*` around the alternation: an unbounded quantifier that
+# frequently fails to find its delimiter forces re.split to rescan the
+# remaining string from every position, which is what made the old
+# `\s*(?:...)\s*` pattern polynomial on whitespace-heavy input (S5852).
+# Delimiters that require surrounding whitespace use lookaround instead, and
+# clean_display_text() strips the leftover boundary spaces from each part.
 _ARTIST_CREDIT_SPLIT_RE = re.compile(
-    r"\s*(?:[;•]|(?<=\s)&(?=\s)|(?<=\s)feat\.(?=\s)|(?<=\s)ft\.(?=\s)|(?<=\s)featuring(?=\s))\s*",
+    r"[;•]|(?<=\s)&(?=\s)|(?<=\s)feat\.(?=\s)|(?<=\s)ft\.(?=\s)|(?<=\s)featuring(?=\s)",
     re.IGNORECASE,
 )
 
