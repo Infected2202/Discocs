@@ -63,6 +63,8 @@ interface PlayerState {
   playbackState: PlaybackState
   currentTime: number
   duration: number
+  /** Furthest downloaded position ahead of currentTime, as a 0-1 fraction of duration. */
+  buffered: number
   volume: number
   muted: boolean
   error: string | null
@@ -95,6 +97,7 @@ interface PlayerState {
 
   // Internal — called by AudioEngine callbacks
   _setTime(currentTime: number, duration: number): void
+  _setBuffered(fraction: number): void
   _setPlaybackState(state: PlaybackState): void
   _setError(message: string): void
 }
@@ -119,6 +122,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
   // Wire AudioEngine callbacks once at store creation
   audioEngine.init({
     onTimeUpdate: (currentTime, duration) => throttledSetTime(currentTime, duration),
+    onBufferUpdate: (fraction) => get()._setBuffered(fraction),
     onPlaybackStateChange: (state) => get()._setPlaybackState(state),
     onEnded: () => get().handleTrackEnded(),
     onError: (message) => get()._setError(message),
@@ -215,6 +219,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     playbackState: "idle",
     currentTime: 0,
     duration: 0,
+    buffered: 0,
     volume: initVolume,
     muted: initMuted,
     error: null,
@@ -343,6 +348,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
     seek(fraction) {
       audioEngine.seek(fraction)
+      // Optimistic update — avoids a visible jump back to the stale currentTime
+      // before the next native `timeupdate` tick (~250ms) catches up.
+      const { duration } = get()
+      if (Number.isFinite(duration) && duration > 0) {
+        set({ currentTime: fraction * duration })
+      }
     },
 
     async skipNext() {
@@ -564,6 +575,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     // --- Internal callbacks from AudioEngine ---
     _setTime(currentTime, duration) {
       set({ currentTime, duration })
+    },
+    _setBuffered(fraction) {
+      set({ buffered: fraction })
     },
     _setPlaybackState(state) {
       set({ playbackState: state })

@@ -5,6 +5,7 @@ export type PlaybackState = "idle" | "loading" | "playing" | "paused" | "error"
 interface AudioEngineCallbacks {
   onTimeUpdate(currentTime: number, duration: number): void
   onPlaybackStateChange(state: PlaybackState): void
+  onBufferUpdate(fraction: number): void
   onEnded(): void
   onError(message: string): void
 }
@@ -35,6 +36,10 @@ class AudioEngine {
     this.el.muted = prev.muted
     this.el.src = url
     this.el.load()
+
+    // Reset immediately — otherwise the buffered indicator briefly shows
+    // the previous track's fully-downloaded range on the new one.
+    this.callbacks?.onBufferUpdate(0)
   }
 
   async play(): Promise<void> {
@@ -111,6 +116,24 @@ class AudioEngine {
     el.addEventListener("timeupdate", () => {
       this.callbacks?.onTimeUpdate(el.currentTime, el.duration || 0)
     })
+
+    const reportBuffered = () => {
+      if (!Number.isFinite(el.duration) || el.duration <= 0) return
+      // `buffered` can have gaps after a seek — use the range that covers
+      // (or is closest ahead of) currentTime, not just the last one.
+      const { buffered, currentTime } = el
+      let end = 0
+      for (let i = 0; i < buffered.length; i++) {
+        if (buffered.start(i) <= currentTime && buffered.end(i) > end) {
+          end = buffered.end(i)
+        }
+      }
+      this.callbacks?.onBufferUpdate(Math.min(1, end / el.duration))
+    }
+
+    el.addEventListener("progress", reportBuffered)
+    el.addEventListener("loadedmetadata", reportBuffered)
+    el.addEventListener("canplaythrough", reportBuffered)
 
     el.addEventListener("play", () => {
       this.callbacks?.onPlaybackStateChange("playing")

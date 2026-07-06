@@ -15,6 +15,12 @@ function setTime(currentTime: number, duration: number) {
   })
 }
 
+function setBuffered(fraction: number) {
+  act(() => {
+    usePlayerStore.getState()._setBuffered(fraction)
+  })
+}
+
 describe("formatTime", () => {
   it("форматирует секунды в m:ss", () => {
     expect(formatTime(0)).toBe("0:00")
@@ -72,6 +78,31 @@ describe("SeekIndicators", () => {
     )
     const fill = container.querySelector(".fill") as HTMLElement
     expect(fill.style.width).toBe("0%")
+  })
+
+  it("без bufferedClassName полоска буфера не рендерится", () => {
+    setBuffered(0.6)
+    const { container } = render(
+      <SeekIndicators fillClassName="fill" thumbClassName="thumb" />
+    )
+    expect(container.querySelector(".buffered")).not.toBeInTheDocument()
+  })
+
+  it("ширина буфера = buffered из стора, независимо от override", () => {
+    setTime(50, 200) // 25% живого прогресса
+    setBuffered(0.6)
+    const { container } = render(
+      <SeekIndicators
+        fillClassName="fill"
+        thumbClassName="thumb"
+        bufferedClassName="buffered"
+        override={0.8}
+      />
+    )
+    const buffered = container.querySelector(".buffered") as HTMLElement
+    const fill = container.querySelector(".fill") as HTMLElement
+    expect(buffered.style.width).toBe("60%")
+    expect(fill.style.width).toBe("80%")
   })
 })
 

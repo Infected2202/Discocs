@@ -20,26 +20,34 @@ interface SeekIndicatorsProps {
   readonly fillStyle?: React.CSSProperties
   /** When set (active drag), overrides the live progress. `null` → use currentTime. */
   readonly override?: number | null
+  /** Renders a lighter fill behind the playback fill showing download progress. */
+  readonly bufferedClassName?: string
 }
 
 /**
- * Renders the seek bar fill (width) and thumb (left). Self-subscribes to
- * currentTime/duration; while dragging, the parent passes `override` so the
- * indicators follow the pointer instead of playback.
+ * Renders the seek bar buffered fill, playback fill (width) and thumb (left).
+ * Self-subscribes to currentTime/duration/buffered; while dragging, the
+ * parent passes `override` so the indicators follow the pointer instead of
+ * playback.
  */
 export function SeekIndicators({
   fillClassName,
   thumbClassName,
   fillStyle,
   override = null,
+  bufferedClassName,
 }: SeekIndicatorsProps) {
   const currentTime = usePlayerStore((s) => s.currentTime)
   const duration = usePlayerStore((s) => s.duration)
+  const buffered = usePlayerStore((s) => s.buffered)
   const progress = override ?? (duration > 0 ? currentTime / duration : 0)
   const pct = progress * 100
 
   return (
     <>
+      {bufferedClassName && (
+        <div className={bufferedClassName} style={{ width: `${buffered * 100}%` }} />
+      )}
       <div className={fillClassName} style={{ ...fillStyle, width: `${pct}%` }} />
       <div className={thumbClassName} style={{ left: `calc(${pct}% - 6px)` }} />
     </>

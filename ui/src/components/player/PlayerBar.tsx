@@ -15,6 +15,7 @@ import styles from "./PlayerBar.module.css"
 import { readTrackAccentTransitionDurationMs } from "./plasmaUtils.ts"
 import { preloadArtworkImage } from "./playerBarTransitionUtils.ts"
 import { SeekIndicators, TimeReadout } from "@/components/player/PlaybackProgress"
+import { useDragSlider } from "@/components/player/useDragSlider"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuTrigger, DropdownMenuSeparator,
@@ -50,8 +51,8 @@ function VolumeControl({
 }) {
   const [hovered, setHovered] = useState(false)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const sliderRef = useRef<HTMLDivElement>(null)
   const effective = muted ? 0 : volume
+  const { trackRef: sliderRef, handleMouseDown } = useDragSlider({ onChange: onVolumeChange })
 
   function handleEnter() {
     if (hideTimer.current) clearTimeout(hideTimer.current)
@@ -60,28 +61,6 @@ function VolumeControl({
 
   function handleLeave() {
     hideTimer.current = setTimeout(() => setHovered(false), 1000)
-  }
-
-  function valueFromClientX(clientX: number) {
-    const rect = sliderRef.current!.getBoundingClientRect()
-    return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
-  }
-
-  function handleMouseDown(e: React.MouseEvent<HTMLDivElement>) {
-    e.preventDefault()
-    onVolumeChange(valueFromClientX(e.clientX))
-
-    function onMove(ev: MouseEvent) {
-      onVolumeChange(valueFromClientX(ev.clientX))
-    }
-
-    function onUp() {
-      globalThis.removeEventListener("mousemove", onMove)
-      globalThis.removeEventListener("mouseup", onUp)
-    }
-
-    globalThis.addEventListener("mousemove", onMove)
-    globalThis.addEventListener("mouseup", onUp)
   }
 
   return (
@@ -153,7 +132,6 @@ export default function PlayerBar() {
   const repeatOne  = session?.repeat_mode === "one"
   const autoplay   = session?.autoplay_enabled ?? false
 
-  const seekBarRef = useRef<HTMLDivElement>(null)
   const [dragProgress, setDragProgress] = useState<number | null>(null)
   const [visibleSnapshot, setVisibleSnapshot] = useState<PlayerBarTrackSnapshot>(
     buildTrackSnapshot(currentTrack, currentTrackId)
@@ -205,33 +183,13 @@ export default function PlayerBar() {
     }
   }, [currentTrack, currentTrackId])
 
-  function handleSeekMouseDown(e: React.MouseEvent<HTMLDivElement>) {
-    e.preventDefault()
-
-    function progressFrom(clientX: number) {
-      const r = seekBarRef.current?.getBoundingClientRect()
-      if (!r) return null
-      return Math.max(0, Math.min(1, (clientX - r.left) / r.width))
-    }
-
-    setDragProgress(progressFrom(e.clientX) ?? 0)
-
-    function onMove(ev: MouseEvent) {
-      const v = progressFrom(ev.clientX)
-      if (v !== null) setDragProgress(v)
-    }
-
-    function onUp(ev: MouseEvent) {
-      const v = progressFrom(ev.clientX)
-      if (v !== null) seek(v)
+  const { trackRef: seekBarRef, handleMouseDown: handleSeekMouseDown } = useDragSlider({
+    onChange: setDragProgress,
+    onCommit: (v) => {
+      seek(v)
       setDragProgress(null)
-      globalThis.removeEventListener("mousemove", onMove)
-      globalThis.removeEventListener("mouseup", onUp)
-    }
-
-    globalThis.addEventListener("mousemove", onMove)
-    globalThis.addEventListener("mouseup", onUp)
-  }
+    },
+  })
 
 const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:text-foreground disabled:opacity-30"
   const activeBtn = "text-primary hover:text-primary"
@@ -243,15 +201,23 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
         isPlaying={isPlaying}
       />
 
-      {/* Seek bar — top edge */}
+      {/* Seek bar — top edge. Outer div is an oversized hit area (thin visual
+          line + thumb sit inside it) so the bar is easy to grab and the thumb
+          — centered on the box — has room to render without being clipped by
+          the player's outer `overflow-hidden`. */}
       <div
-        className="relative z-10 h-1 w-full bg-muted/75 cursor-pointer group/seek shrink-0"
+        className="relative z-10 h-3 w-full cursor-pointer group/seek shrink-0"
         onMouseDown={handleSeekMouseDown}
         ref={seekBarRef}
       >
+        <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-1 bg-muted/75" />
         <SeekIndicators
           override={dragProgress}
-          fillClassName="h-full bg-primary transition-[width] duration-100"
+          bufferedClassName="absolute top-1/2 -translate-y-1/2 left-0 h-1 bg-foreground/25"
+          fillClassName={cn(
+            "absolute top-1/2 -translate-y-1/2 left-0 h-1 bg-primary",
+            dragProgress === null && "transition-[width] duration-100",
+          )}
           thumbClassName="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary opacity-0 group-hover/seek:opacity-100 transition-opacity"
         />
       </div>

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import QueueItem from "@/components/player/QueueItem"
 import { SeekIndicators, TimeReadout } from "@/components/player/PlaybackProgress"
+import { useDragSlider } from "@/components/player/useDragSlider"
 import type { TrackSummary } from "@/api/types"
 
 // Upgrade artwork URL to max backend resolution (le=600)
@@ -28,6 +29,7 @@ function hiresUrl(url: string | null | undefined): string | undefined {
 export default function ExpandedPlayer() {
   const [mobileTab, setMobileTab] = useState<"player" | "queue">("player")
   const [artworkPulse, setArtworkPulse] = useState<"play" | "pause" | null>(null)
+  const [dragProgress, setDragProgress] = useState<number | null>(null)
 
   const expanded           = usePlayerStore((s) => s.expanded)
   const currentTrack       = usePlayerStore((s) => s.currentTrack)
@@ -65,15 +67,17 @@ export default function ExpandedPlayer() {
   const autoplay   = session?.autoplay_enabled ?? false
   const effective  = muted ? 0 : volume
 
-  function handleSeekClick(e: React.MouseEvent<HTMLDivElement>) {
-    const rect = e.currentTarget.getBoundingClientRect()
-    seek(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)))
-  }
+  const { trackRef: seekBarRef, handleMouseDown: handleSeekMouseDown } = useDragSlider({
+    onChange: setDragProgress,
+    onCommit: (v) => {
+      seek(v)
+      setDragProgress(null)
+    },
+  })
 
-  function handleVolumeClick(e: React.MouseEvent<HTMLDivElement>) {
-    const rect = e.currentTarget.getBoundingClientRect()
-    setVolume(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)))
-  }
+  const { trackRef: volumeBarRef, handleMouseDown: handleVolumeMouseDown } = useDragSlider({
+    onChange: setVolume,
+  })
 
   async function handleInstantMix() {
     if (!currentTrackId) return
@@ -224,12 +228,22 @@ export default function ExpandedPlayer() {
               </div>
             </div>
 
-            {/* Seek bar */}
+            {/* Seek bar — outer div is an oversized hit area, same pattern as PlayerBar */}
             <div className="w-full max-w-sm mx-auto space-y-1">
-              <div className="h-1 w-full bg-muted rounded cursor-pointer group/seek relative"
-                onClick={handleSeekClick}>
+              <div
+                className="h-4 w-full cursor-pointer group/seek relative"
+                onMouseDown={handleSeekMouseDown}
+                onClick={(e) => e.stopPropagation()}
+                ref={seekBarRef}
+              >
+                <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-1 bg-muted rounded" />
                 <SeekIndicators
-                  fillClassName="h-full bg-primary rounded transition-[width] duration-100"
+                  override={dragProgress}
+                  bufferedClassName="absolute top-1/2 -translate-y-1/2 left-0 h-1 bg-foreground/25 rounded"
+                  fillClassName={cn(
+                    "absolute top-1/2 -translate-y-1/2 left-0 h-1 bg-primary rounded",
+                    dragProgress === null && "transition-[width] duration-100",
+                  )}
                   thumbClassName="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary opacity-0 group-hover/seek:opacity-100 transition-opacity shadow"
                 />
               </div>
@@ -268,8 +282,14 @@ export default function ExpandedPlayer() {
                 <button onClick={toggleMute} className="text-muted-foreground hover:text-foreground shrink-0">
                   {effective === 0 ? <VolumeX size={16} /> : effective < 0.5 ? <Volume1 size={16} /> : <Volume2 size={16} />}
                 </button>
-                <div className="flex-1 h-1.5 bg-muted rounded cursor-pointer relative group/vol" onClick={handleVolumeClick}>
-                  <div className="h-full bg-foreground/80 rounded" style={{ width: `${effective * 100}%` }} />
+                <div
+                  className="flex-1 h-4 cursor-pointer relative group/vol"
+                  onMouseDown={handleVolumeMouseDown}
+                  onClick={(e) => e.stopPropagation()}
+                  ref={volumeBarRef}
+                >
+                  <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-1.5 bg-muted rounded" />
+                  <div className="absolute top-1/2 -translate-y-1/2 left-0 h-1.5 bg-foreground/80 rounded" style={{ width: `${effective * 100}%` }} />
                   <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-foreground opacity-0 group-hover/vol:opacity-100 transition-opacity"
                     style={{ left: `calc(${effective * 100}% - 6px)` }} />
                 </div>
