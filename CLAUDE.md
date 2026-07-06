@@ -52,22 +52,36 @@ Write tests that would fail if the tested logic were removed or inverted. A fail
 
 - **Качество кода / coverage / security hotspots** — SonarQube MCP
   (`mcp__sonarqube__*`), проект `discocs`. Не через Jenkins API.
-- **Прошла ли сборка, статус конкретной стадии, Trivy-отчёт** — Jenkins API,
-  джоба `http://192.168.1.41:8077/job/HS/job/discocs_build`. Креды
-  (`JENKINS_USER`/`JENKINS_TOKEN`, read-only юзер) — в `.claude/settings.local.json`
-  (не в гите, локально на этой машине).
+- **Прошла ли сборка, статус стадии, тесты, Trivy** — Jenkins API, джоба
+  `http://192.168.1.41:8077/job/HS/job/discocs_build` (адрес не менять, даже
+  если джоба временно недоступна/упала — это постоянный путь, не разовый).
+  Креды (`JENKINS_USER`/`JENKINS_TOKEN`, read-only юзер) — в
+  `.claude/settings.local.json` (не в гите, локально на этой машине).
 
 Алгоритм — от дешёвого к дорогому, не тяни лог, если не нужен:
 
 1. `GET lastBuild/api/json?tree=number,building,result` — легчайший запрос,
    поллить пока не увидишь `building:false` на нужном номере (сравнивай
    с номером, который был до пуша).
-2. Если `result != SUCCESS`, или нужны данные, которых нет в Sonar (Trivy) —
-   `GET lastBuild/wfapi/describe`: статус по каждой стадии (Test/Sonar/
-   Build&Push/Security Scan) без консоли вообще.
-3. Только если конкретная стадия упала/непонятна — `lastBuild/consoleText`
-   целиком (десятки-сотни КБ, не мегабайты) и искать нужный кусок локально
-   (по имени стадии / `ERROR`), не заливать весь лог в контекст.
+2. `result == SUCCESS` — обычно этого достаточно, дальше не лезть.
+3. `result != SUCCESS` — сначала структурированные источники, не консоль:
+   - **Тесты** (backend/бот/фронт) — `GET lastBuild/testReport/api/json?tree=failCount,passCount,skipCount`;
+     если `failCount > 0` — `testReport/api/json?tree=suites%5Bcases%5Bname,className,status,errorDetails%5D%5D`
+     (квадратные скобки в `tree=` **обязательно** percent-encode `%5B`/`%5D` —
+     иначе curl молча возвращает пустой ответ без ошибки, проверено вживую),
+     отфильтровать по `status != PASSED`, там же название теста и `errorDetails` —
+     не нужно искать по логу вручную (стадия `Test` публикует `junit '*.xml'`, см. `docs/cicd.md`).
+   - **Security Scan (Trivy)** — HTML-отчёт по образу читаем прямо curl'ом:
+     `lastBuild/Trivy_3a_20backend/` (аналогично `..._frontend`/`..._bot` —
+     это реальное имя каталога, под которым HTML Publisher архивирует отчёт
+     `Trivy: backend`, проверено на билде #55/#56) — обычная HTML-страница,
+     можно грепать таблицу CVE так же, как текст.
+   - **Любая другая стадия** (Sonar/Docker Login/Build&Push/Deploy) —
+     `GET lastBuild/wfapi/describe`: статус по каждой стадии без консоли вообще.
+4. Только если ничего из структурированного не объясняет причину —
+   `lastBuild/consoleText` целиком (десятки-сотни КБ, не мегабайты) и искать
+   нужный кусок локально (по имени стадии / `ERROR`), не заливать весь лог
+   в контекст.
 
 ## UI Rule
 
