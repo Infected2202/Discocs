@@ -143,9 +143,16 @@
   `SPECIFIC_ANALYSIS` для анализа
   `c72246a8-d97a-4df3-bda7-d1a6c8521c7e` вернула `403 Forbidden`: доступный
   токен SonarQube имеет права чтения, но не изменения project settings.
+  В UI текущей SonarQube Community для проекта доступны только
+  `Previous version` и `Number of days`, поэтому закрепить baseline на
+  конкретном анализе через интерфейс тоже нельзя.
   Решение Сани: отложить фиксацию baseline и продолжить remediation с явным
   пониманием, что метрики `new_*` пока остаются зависимыми от текущего режима
   `PREVIOUS_VERSION`.
+
+Итог этапа 0: частично завершён. Границы работ и актуальные issue/hotspot
+зафиксированы, но baseline `New Code Period` остаётся внешним ограничением
+текущей SonarQube-конфигурации.
 
 ### Этап 1. Security Hotspots и реальные дефекты
 
