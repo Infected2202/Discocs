@@ -127,7 +127,7 @@ async def _run_bot() -> None:
     try:
         await asyncio.Event().wait()
     except asyncio.CancelledError:
-        pass
+        raise
     finally:
         await _shutdown(application)
         release(settings.sqlite_path.parent)
