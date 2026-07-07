@@ -126,7 +126,13 @@ def _load_bot_main(monkeypatch: pytest.MonkeyPatch):
         _stub_module("bot.utils.single_instance", acquire=lambda path: None, release=lambda path: None),
     )
 
-    module_path = Path(__file__).resolve().parents[1] / "discocs_bot" / "bot" / "main.py"
+    workspace_root = Path(__file__).resolve().parents[1]
+    module_candidates = [
+        workspace_root / "discocs_bot" / "bot" / "main.py",
+        workspace_root / "bot" / "main.py",
+    ]
+    module_path = next((candidate for candidate in module_candidates if candidate.exists()), None)
+    assert module_path is not None
     spec = importlib.util.spec_from_file_location("_discocs_bot_main_under_test", module_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
