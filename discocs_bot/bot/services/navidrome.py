@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 import secrets
@@ -122,10 +123,13 @@ class NavidromeClient:
         try:
             async with self._client.stream("GET", url, params=params) as response:
                 response.raise_for_status()
-                with open(destination, "wb") as file:
+                file = await asyncio.to_thread(Path(destination).open, "wb")
+                try:
                     async for chunk in response.aiter_bytes():
-                        file.write(chunk)
+                        await asyncio.to_thread(file.write, chunk)
                         bytes_written += len(chunk)
+                finally:
+                    await asyncio.to_thread(file.close)
         except httpx.HTTPError as exc:
             raise NavidromeError(str(exc)) from exc
         logger.debug(

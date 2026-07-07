@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.modules.pop("bot.main", None)
+sys.modules.pop("bot", None)
 
 from bot import main as bot_main
 
