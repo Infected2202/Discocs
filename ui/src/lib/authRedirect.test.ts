@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, vi, afterEach } from "vitest"
 import { ApiError } from "@/api/client"
 import { isUnauthorized, redirectToLogin, LOGIN_PATH } from "./authRedirect"
 
@@ -13,25 +13,21 @@ describe("isUnauthorized", () => {
 })
 
 describe("redirectToLogin", () => {
-  let assign: ReturnType<typeof vi.fn>
-
-  beforeEach(() => {
-    assign = vi.fn()
-    vi.spyOn(globalThis.location, "assign").mockImplementation(assign)
-  })
-
   afterEach(() => {
-    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it("navigates to the login page when elsewhere", () => {
-    globalThis.history.pushState({}, "", "/dashboard")
+    const assign = vi.fn()
+    // location.assign is non-configurable in jsdom, so replace the whole object.
+    vi.stubGlobal("location", { pathname: "/dashboard", assign })
     redirectToLogin()
     expect(assign).toHaveBeenCalledWith(LOGIN_PATH)
   })
 
   it("does not navigate when already on the login page", () => {
-    globalThis.history.pushState({}, "", LOGIN_PATH)
+    const assign = vi.fn()
+    vi.stubGlobal("location", { pathname: LOGIN_PATH, assign })
     redirectToLogin()
     expect(assign).not.toHaveBeenCalled()
   })
