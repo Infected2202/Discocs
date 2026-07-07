@@ -51,22 +51,31 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
   const pages = Array.from({ length: totalPages }, (_, i) =>
     sliced.slice(i * cols, (i + 1) * cols)
   )
+  const shelfHref = shelfKey ? `/shelf/${shelfKey}` : null
 
   return (
     <section className="shelf-section space-y-1">
       {/* Header */}
       {(title || shelfKey || (!isMobile && totalPages > 1)) && <div className="px-4 sm:px-6 flex items-center gap-2 min-w-0">
-        <h2
-          className={shelfKey ? "text-sm font-semibold shrink-0 cursor-pointer hover:underline" : "text-sm font-semibold shrink-0"}
-          onClick={shelfKey ? () => navigate(`/shelf/${shelfKey}`) : undefined}
-        >{title}</h2>
+        {shelfHref ? (
+          <button
+            type="button"
+            className="text-sm font-semibold shrink-0 hover:underline"
+            onClick={() => navigate(shelfHref)}
+          >
+            {title}
+          </button>
+        ) : (
+          <h2 className="text-sm font-semibold shrink-0">{title}</h2>
+        )}
         {subtitle && (
           <span className="text-xs text-muted-foreground truncate hidden sm:inline">{subtitle}</span>
         )}
         <div className="ml-auto flex items-center gap-1 shrink-0">
-          {shelfKey && (
+          {shelfHref && (
             <button
-              onClick={() => navigate(`/shelf/${shelfKey}`)}
+              type="button"
+              onClick={() => navigate(shelfHref)}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors px-1.5 py-0.5 rounded hover:bg-muted"
             >
               More
@@ -75,14 +84,18 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
           {!isMobile && totalPages > 1 && (
             <>
               <button
+                type="button"
                 onClick={() => canPrev && goTo(page - 1)}
+                disabled={!canPrev}
                 className={`flex items-center justify-center w-5 h-5 rounded-full border border-border transition-colors ${canPrev ? "hover:bg-muted" : "opacity-30 pointer-events-none"}`}
                 aria-label="Previous"
               >
                 <ChevronLeft size={11} />
               </button>
               <button
+                type="button"
                 onClick={() => canNext && goTo(page + 1)}
+                disabled={!canNext}
                 className={`flex items-center justify-center w-5 h-5 rounded-full border border-border transition-colors ${canNext ? "hover:bg-muted" : "opacity-30 pointer-events-none"}`}
                 aria-label="Next"
               >

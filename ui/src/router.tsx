@@ -1,5 +1,7 @@
 import { createBrowserRouter } from "react-router"
 import AppShell from "@/components/layout/AppShell"
+import RequireAuth from "@/components/auth/RequireAuth"
+import LoginPage from "@/pages/LoginPage"
 import DashboardPage from "@/pages/DashboardPage"
 import SearchPage from "@/pages/SearchPage"
 import ArtistPage from "@/pages/ArtistPage"
@@ -10,17 +12,23 @@ import ShelfPage from "@/pages/ShelfPage"
 import PlaylistPage from "@/pages/PlaylistPage"
 
 export const router = createBrowserRouter([
+  { path: "/login", Component: LoginPage },
   {
-    Component: AppShell,
+    Component: RequireAuth,
     children: [
-      { index: true, Component: DashboardPage },
-      { path: "search", Component: SearchPage },
-      { path: "artists/:id", Component: ArtistPage },
-      { path: "releases/:id", Component: ReleasePage },
-      { path: "mixes/:id", Component: MixPage },
-      { path: "settings", Component: SettingsPage },
-      { path: "shelf/:key", Component: ShelfPage },
-      { path: "playlists/:id", Component: PlaylistPage },
+      {
+        Component: AppShell,
+        children: [
+          { index: true, Component: DashboardPage },
+          { path: "search", Component: SearchPage },
+          { path: "artists/:id", Component: ArtistPage },
+          { path: "releases/:id", Component: ReleasePage },
+          { path: "mixes/:id", Component: MixPage },
+          { path: "settings", Component: SettingsPage },
+          { path: "shelf/:key", Component: ShelfPage },
+          { path: "playlists/:id", Component: PlaylistPage },
+        ],
+      },
     ],
   },
 ])

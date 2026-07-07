@@ -672,13 +672,23 @@ def analyze(
     typer.echo(f"analyzed={done} failed={failed} embeddings={store.count_embeddings(model)}")
 
 
+def _service_headers() -> dict[str, str]:
+    """Machine-principal header for the backend access gate.
+
+    Only sent when DISCOCS_SERVICE_TOKEN is configured, so behaviour is
+    unchanged while the gate is off (DISCOCS_AUTH_ENABLED unset).
+    """
+    token = os.getenv("DISCOCS_SERVICE_TOKEN", "").strip()
+    return {"X-Discocs-Service-Token": token} if token else {}
+
+
 def post_json(server: str, path: str, payload: dict[str, object], *, timeout: float = 60) -> dict[str, object]:
     url = urljoin(server.rstrip("/") + "/", path.lstrip("/"))
     data = json.dumps(payload).encode("utf-8")
     request = Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **_service_headers()},
         method="POST",
     )
     with urlopen(request, timeout=timeout) as response:
@@ -708,7 +718,8 @@ def register_worker_with_retry(
 
 def download_task_audio(server: str, audio_url: str, target: Path) -> None:
     url = urljoin(server.rstrip("/") + "/", audio_url.lstrip("/"))
-    with urlopen(url, timeout=300) as response:
+    request = Request(url, headers=_service_headers())
+    with urlopen(request, timeout=300) as response:
         payload = response.read()
         content_type = response.headers.get("Content-Type", "")
     if not payload:
@@ -756,7 +767,8 @@ def worker_task_state(server: str, worker_id: str, task_id: str) -> dict[str, ob
         server.rstrip("/") + "/",
         f"/workers/tasks/{task_id}/state?worker_id={worker_id}",
     )
-    with urlopen(url, timeout=30) as response:
+    request = Request(url, headers=_service_headers())
+    with urlopen(request, timeout=30) as response:
         return json.loads(response.read().decode("utf-8"))
 
 

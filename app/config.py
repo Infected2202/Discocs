@@ -78,6 +78,43 @@ class NavidromeSettings:
 
 
 @dataclass(frozen=True)
+class AuthSettings:
+    """Access-gate settings (Phase 1: Navidrome-as-IdP session auth).
+
+    ``enabled`` defaults to False so the gate ships dark: turning it on is a
+    deliberate config step done when the service is exposed to a public domain.
+    Every push auto-deploys via Jenkins, so a default-on gate would lock out the
+    running bot/workers/plugin before service tokens are provisioned.
+    """
+
+    enabled: bool = False
+    session_cookie_name: str = "discocs_session"
+    session_ttl_hours: int = 720  # 30 days absolute expiry
+    service_token: str = ""
+    login_max_attempts: int = 5
+    login_lockout_seconds: int = 900  # 15 min per-IP lockout window
+
+    @classmethod
+    def from_env(cls) -> "AuthSettings":
+        return cls(
+            enabled=_env_flag("DISCOCS_AUTH_ENABLED", False),
+            session_cookie_name=os.getenv(
+                "DISCOCS_SESSION_COOKIE_NAME", "discocs_session"
+            ),
+            session_ttl_hours=_positive_int(
+                os.getenv("DISCOCS_SESSION_TTL_HOURS"), 720
+            ),
+            service_token=os.getenv("DISCOCS_SERVICE_TOKEN", ""),
+            login_max_attempts=_positive_int(
+                os.getenv("DISCOCS_LOGIN_MAX_ATTEMPTS"), 5
+            ),
+            login_lockout_seconds=_positive_int(
+                os.getenv("DISCOCS_LOGIN_LOCKOUT_SECONDS"), 900
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class Settings:
     data_dir: Path
     db_path: Path
@@ -85,6 +122,7 @@ class Settings:
     index_dir: Path
     default_model: str = "discogs_multi"
     navidrome: NavidromeSettings = field(default_factory=NavidromeSettings)
+    auth: AuthSettings = field(default_factory=AuthSettings)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -100,6 +138,7 @@ class Settings:
             index_dir=index_dir,
             default_model=default_model,
             navidrome=NavidromeSettings.from_env(data_dir),
+            auth=AuthSettings.from_env(),
         )
 
     def model_path(self, model_name: str | None = None) -> Path:
@@ -124,6 +163,13 @@ def _positive_int(value: str | None, default: int) -> int:
     except ValueError:
         return default
     return parsed if parsed > 0 else default
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _non_negative_int(value: str | None, default: int) -> int:

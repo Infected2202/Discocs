@@ -45,6 +45,13 @@ export default function MediaCard({
     onPlay?.()
   }
 
+  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (disabled) return
+    if (e.key !== "Enter" && e.key !== " ") return
+    e.preventDefault()
+    handleClick()
+  }
+
   return (
     <div
       className={cn(
@@ -58,7 +65,8 @@ export default function MediaCard({
       onClick={handleClick}
       role={disabled ? undefined : "button"}
       tabIndex={disabled ? undefined : 0}
-      onKeyDown={(e) => !disabled && e.key === "Enter" && handleClick()}
+      aria-disabled={disabled || undefined}
+      onKeyDown={handleKeyDown}
     >
       {/* Artwork */}
       <div className="relative mb-[5px]">
@@ -80,6 +88,7 @@ export default function MediaCard({
         {/* Play button overlay */}
         {onPlay && !disabled && (
           <button
+            type="button"
             onClick={handlePlay}
             className="absolute bottom-2 right-2 flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg opacity-0 translate-y-1 transition-all group-hover:opacity-100 group-hover:translate-y-0"
             aria-label={`Play ${title}`}
@@ -103,12 +112,13 @@ export default function MediaCard({
             {subtitleLinks.map((link, i) => (
               <span key={link.href}>
                 {i > 0 && ", "}
-                <span
+                <button
+                  type="button"
                   className="hover:text-foreground hover:underline cursor-pointer transition-colors"
                   onClick={(e) => { e.stopPropagation(); navigate(link.href) }}
                 >
                   {link.label}
-                </span>
+                </button>
               </span>
             ))}
           </p>

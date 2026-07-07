@@ -29,6 +29,12 @@ services:
       DISCOCS_DATA_DIR: /app/data
       DISCOCS_MODEL_DIR: /app/models
       DISCOCS_INDEX_DIR: /app/data
+      # Access gate (Phase 1). Off by default; turn on only after the service
+      # token is set on every internal caller (bot/worker/plugin). See docs/auth.md.
+      DISCOCS_AUTH_ENABLED: ${DISCOCS_AUTH_ENABLED:-false}
+      DISCOCS_SERVICE_TOKEN: ${DISCOCS_SERVICE_TOKEN:-}
+      DISCOCS_SESSION_TTL_HOURS: ${DISCOCS_SESSION_TTL_HOURS:-720}
+      DISCOCS_CORS_ORIGINS: ${DISCOCS_CORS_ORIGINS:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7752/health')"]
       interval: 30s
@@ -87,6 +93,8 @@ services:
       NAVIDROME_USERNAME: ${NAVIDROME_USERNAME}
       NAVIDROME_PASSWORD: ${NAVIDROME_PASSWORD}
       DISCOCS_BASE_URL: ${DISCOCS_BASE_URL:-http://backend:7752}
+      # Same token as the backend — lets the bot pass the access gate when on.
+      DISCOCS_SERVICE_TOKEN: ${DISCOCS_SERVICE_TOKEN:-}
       SQLITE_PATH: /data/bot.sqlite
       TEMP_DIR: /data/tmp
     volumes:

@@ -1,0 +1,141 @@
+import { useState } from "react"
+import { useNavigate } from "react-router"
+import { useQueryClient } from "@tanstack/react-query"
+import { User, Lock, ArrowRight, Loader2 } from "lucide-react"
+import PlasmaFBM from "@/components/player/PlasmaFBM"
+import { Button } from "@/components/ui/button"
+import { login } from "@/api/auth"
+import { ApiError } from "@/api/client"
+
+export default function LoginPage() {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const [username, setUsername] = useState("")
+  const [password, setPassword] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (submitting) return
+    setError(null)
+    setSubmitting(true)
+    try {
+      const result = await login(username, password)
+      // Prime the session cache so RequireAuth doesn't read a stale
+      // "unauthenticated" entry and bounce us straight back to /login.
+      queryClient.setQueryData(["auth", "session"], {
+        authenticated: true,
+        username: result.username,
+        enabled: true,
+      })
+      navigate("/", { replace: true })
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 429) {
+        setError("Слишком много попыток. Попробуйте позже.")
+      } else if (err instanceof ApiError && err.status === 401) {
+        setError("Неверный логин или пароль.")
+      } else {
+        setError("Сервис недоступен. Попробуйте ещё раз.")
+      }
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="relative h-svh w-full overflow-hidden bg-background">
+      {/* Plasma */}
+      <div className="fixed inset-0 pointer-events-none z-0" style={{ filter: "blur(4px)" }}>
+        <PlasmaFBM active accent="#3b6bff" speed={0.7} scale={1.0} opacity={0.9} />
+      </div>
+
+      {/* Centered card */}
+      <div className="relative z-[1] flex h-full items-center justify-center px-6">
+        <form
+          onSubmit={handleSubmit}
+          className="w-full max-w-[320px] rounded-3xl border border-border/40 bg-background/40 p-8 shadow-2xl backdrop-blur-xl"
+        >
+          <div className="mb-7 text-center text-xl font-semibold tracking-tight text-foreground">
+            discocs
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <Field
+              icon={<User className="size-4" />}
+              type="text"
+              placeholder="Логин"
+              autoComplete="username"
+              value={username}
+              onChange={setUsername}
+              ariaLabel="Логин Navidrome"
+            />
+            <Field
+              icon={<Lock className="size-4" />}
+              type="password"
+              placeholder="Пароль"
+              autoComplete="current-password"
+              value={password}
+              onChange={setPassword}
+              ariaLabel="Пароль Navidrome"
+            />
+          </div>
+
+          {error && (
+            <p className="mt-3 text-center text-sm text-destructive" role="alert">
+              {error}
+            </p>
+          )}
+
+          <Button
+            type="submit"
+            size="lg"
+            disabled={submitting || !username || !password}
+            className="mt-5 w-full"
+          >
+            {submitting ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <>
+                Войти
+                <ArrowRight className="size-4" />
+              </>
+            )}
+          </Button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function Field({
+  icon,
+  type,
+  placeholder,
+  autoComplete,
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  icon: React.ReactNode
+  type: string
+  placeholder: string
+  autoComplete: string
+  value: string
+  onChange: (v: string) => void
+  ariaLabel: string
+}) {
+  return (
+    <div className="flex items-center gap-2.5 rounded-2xl border border-border/50 bg-background/50 px-3.5 py-2.5 focus-within:border-ring">
+      <span className="text-muted-foreground">{icon}</span>
+      <input
+        type={type}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        aria-label={ariaLabel}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+      />
+    </div>
+  )
+}

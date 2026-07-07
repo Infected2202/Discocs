@@ -18,17 +18,19 @@ export async function preloadArtworkImage(
   await new Promise<void>((resolve) => {
     let settled = false
 
-    const finish = async () => {
+    const finish = () => {
       if (settled) return
       settled = true
 
-      try {
-        await image.decode?.()
-      } catch {
-        // ArtworkImage will show its regular fallback if decoding failed.
-      }
+      void (async () => {
+        try {
+          await image.decode?.()
+        } catch {
+          // ArtworkImage will show its regular fallback if decoding failed.
+        }
 
-      resolve()
+        resolve()
+      })()
     }
 
     image.onload = finish

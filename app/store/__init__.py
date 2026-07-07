@@ -16,6 +16,7 @@ from app.store.jobs import JobsStoreMixin
 from app.store.embeddings import EmbeddingsStoreMixin
 from app.store.release_aggregates import ReleaseAggregatesStoreMixin
 from app.store.flow import FlowStoreMixin
+from app.store.sessions import SessionsStoreMixin
 from app.store._helpers import (
     playback_event_is_completion,
     playback_event_is_early_skip,
@@ -94,5 +95,6 @@ class Store(
     EmbeddingsStoreMixin,
     ReleaseAggregatesStoreMixin,
     FlowStoreMixin,
+    SessionsStoreMixin,
 ):
     """Assembled Store — all domain mixins composed into one class."""

@@ -332,6 +332,7 @@ from app.serializers.tracks import (  # noqa: E402
 
 from app.api import (  # noqa: E402
     artists as _api_artists,
+    auth as _api_auth,
     dashboard as _api_dashboard,
     metrics as _api_metrics,
     releases as _api_releases,
@@ -347,6 +348,7 @@ from app.api import (  # noqa: E402
     flow as _api_flow,
 )
 
+app.include_router(_api_auth.router)
 app.include_router(_api_dashboard.router)
 app.include_router(_api_search.router)
 app.include_router(_api_artists.router)
@@ -365,14 +367,30 @@ app.include_router(_api_flow.router)
 
 
 from app.api.middleware import log_http_request as _log_http_request  # noqa: E402
+from app.api.auth_middleware import auth_gate as _auth_gate  # noqa: E402
 app.middleware("http")(_log_http_request)
+app.middleware("http")(_auth_gate)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS: same-origin SPA does not need it. Set DISCOCS_CORS_ORIGINS (comma list)
+# to lock down to an explicit allowlist with cookie credentials when exposing to
+# a domain; unset keeps the permissive wildcard (no credentials) for local dev
+# and the native app.
+_cors_origins_env = os.getenv("DISCOCS_CORS_ORIGINS", "").strip()
+if _cors_origins_env:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip() for o in _cors_origins_env.split(",") if o.strip()],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 

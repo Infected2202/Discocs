@@ -16,9 +16,28 @@ from app.services.jobs import maybe_start_next_deferred_job, sync_memory_jobs_fr
 logger = logging.getLogger(__name__)
 
 _ALBUMS_FOR_YOU_REFRESH_HOURS = 6.0
+_SESSION_PURGE_INTERVAL_SECONDS = 3600.0
 
 # Monotonic timestamp of the last Navidrome play-state refresh (throttling).
 _last_play_state_refresh: float | None = None
+# Monotonic timestamp of the last expired-session purge (throttling).
+_last_session_purge: float | None = None
+
+
+def _maybe_purge_expired_sessions(store) -> None:
+    global _last_session_purge
+    now = monotonic()
+    if (
+        _last_session_purge is not None
+        and now - _last_session_purge < _SESSION_PURGE_INTERVAL_SECONDS
+    ):
+        return
+    _last_session_purge = now
+    try:
+        from app.models import utc_now  # noqa: PLC0415
+        store.purge_expired_sessions(utc_now())
+    except Exception:
+        logger.exception("Expired-session purge failed")
 
 
 def _maybe_refresh_navidrome_play_state(store, settings) -> None:
@@ -65,6 +84,7 @@ def run_maintenance_tick(store=None) -> None:
     maybe_start_next_deferred_job()
     _maybe_refresh_albums_for_you(store, settings)
     _maybe_refresh_navidrome_play_state(store, settings)
+    _maybe_purge_expired_sessions(store)
 
 
 def maintenance_loop() -> None:

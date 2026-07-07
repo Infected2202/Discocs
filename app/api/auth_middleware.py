@@ -1,0 +1,87 @@
+"""Access-gate middleware — Phase 1.
+
+Enforced in the backend (not just the SPA) so /admin and every API router are
+covered: a login page in the frontend is cosmetic if the API stays open.
+
+A request is authorized if ANY of:
+  * the gate is disabled (``DISCOCS_AUTH_ENABLED`` unset/false), or
+  * the path is public (health + the auth endpoints themselves), or
+  * it carries a valid ``X-Discocs-Service-Token`` (machine principal:
+    workers/bot/plugin), or
+  * it carries a valid session cookie.
+
+Otherwise it is rejected with 401. See docs/auth.md.
+"""
+from __future__ import annotations
+
+import os
+
+from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
+from starlette.requests import Request
+
+from app import auth
+from app.config import Settings
+from app.store import Store
+
+
+def _gate_enabled() -> bool:
+    """Cheap env-only check so the disabled default adds no per-request file IO.
+
+    (Settings.from_env reads settings.json from disk; skip it when the gate is
+    off, which is the default for every request in the current deployment.)
+    """
+    return os.getenv("DISCOCS_AUTH_ENABLED", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+# Reachable without a session: liveness probe and the auth handshake endpoints.
+PUBLIC_PATHS = frozenset(
+    {
+        "/health",
+        "/api/v1/auth/login",
+        "/api/v1/auth/logout",
+        "/api/v1/auth/session",
+    }
+)
+
+
+def _service_token_ok(request: Request, service_token: str) -> bool:
+    if not service_token:
+        return False
+    presented = request.headers.get("x-discocs-service-token", "")
+    return bool(presented) and auth.constant_time_eq(presented, service_token)
+
+
+def _resolve_username(settings: Settings, token: str | None) -> str | None:
+    store = Store(settings.db_path)
+    store.init()
+    return auth.resolve_session(store, token)
+
+
+async def auth_gate(request: Request, call_next):
+    # Cheapest exit first: no Settings/DB work when the gate is off.
+    if not _gate_enabled():
+        return await call_next(request)
+
+    if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
+        return await call_next(request)
+
+    settings = Settings.from_env()
+    # Machine principal (workers/bot/plugin) bypasses the session requirement.
+
+    if _service_token_ok(request, settings.auth.service_token):
+        request.state.principal = "service"
+        return await call_next(request)
+
+    token = request.cookies.get(settings.auth.session_cookie_name)
+    username = await run_in_threadpool(_resolve_username, settings, token)
+    if username is not None:
+        request.state.principal = username
+        return await call_next(request)
+
+    return JSONResponse(
+        status_code=401,
+        content={"error": {"code": "unauthorized", "message": "Authentication required."}},
+    )

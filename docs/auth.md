@@ -1,0 +1,127 @@
+# Авторизация (Phase 1 — access gate)
+
+Цель: закрыть discocs перед выносом в публичный домен. Фаза 1 — **гейт доступа**
+поверх общих данных. Разделение данных по пользователям (персональные
+рекомендации) — отдельный будущий эпик, схема пока одно-пользовательская.
+
+## Модель
+
+**Navidrome как источник личности (IdP).** Своей базы паролей нет. Логин-форма —
+два поля (логин + пароль); URL Navidrome зашит в конфиге. Бэкенд проверяет
+креды Subsonic-`ping`'ом к настроенному Navidrome. Успех → создаётся серверная
+сессия, ставится cookie. **Пароль после проверки выбрасывается — нигде не
+хранится.** Войти может любой, у кого валидный лог/пас на настроенном Navidrome.
+
+Действия в Navidrome (звёзды, скроблинг, sync) по-прежнему выполняются под
+аккаунтом из настроек приложения — логин лишь впускает.
+
+## Где стоит гейт
+
+Гейт — **middleware в бэкенде** (`app/api/auth_middleware.py`), а не только в SPA:
+окно логина во фронте косметично, если API открыт. Middleware покрывает и
+`/admin`, и все API-роутеры.
+
+Запрос авторизован, если выполнено **любое**:
+
+1. гейт выключен (`DISCOCS_AUTH_ENABLED` не `true`), **или**
+2. путь публичный: `/health`, `/api/v1/auth/{login,logout,session}`, **или**
+3. валидный заголовок `X-Discocs-Service-Token` (машинный принципал:
+   воркеры/бот/плагин), **или**
+4. валидная session-cookie.
+
+Иначе — `401`.
+
+### Почему нужен service-token, а не «доверие подсети»
+
+В compose весь браузерный трафик приходит на бэкенд от frontend-nginx (docker-IP),
+и воркеры/бот — тоже с docker-IP. По одному source-IP «свой/чужой» не различить,
+поэтому машинные вызовы аутентифицируются общим токеном.
+
+## Сессии
+
+- Таблица `sessions` (см. `app/store/base.py`). Хранится только **SHA-256 токена**,
+  не сам токен: утечка БД не воскрешает живую сессию. Пароли не хранятся.
+- Токен — 256-бит из `secrets.token_urlsafe`. Cookie: `HttpOnly`, `SameSite=Lax`,
+  `Secure` (когда запрос по HTTPS — по `X-Forwarded-Proto`), `Path=/`.
+- Абсолютный срок жизни — `DISCOCS_SESSION_TTL_HOURS` (по умолчанию 720 ч = 30 дней).
+  Протухшие сессии удаляются лениво при обращении.
+
+## Защита от брутфорса
+
+Логин лимитируется по IP (in-memory, без Redis): `DISCOCS_LOGIN_MAX_ATTEMPTS`
+неудач в окне `DISCOCS_LOGIN_LOCKOUT_SECONDS` → `429`. Успешный вход сбрасывает
+счётчик. За nginx нужен корректный `X-Forwarded-For` (иначе все клиенты за
+прокси сольются в один IP).
+
+## Переменные окружения
+
+| Переменная | По умолчанию | Назначение |
+|---|---|---|
+| `DISCOCS_AUTH_ENABLED` | `false` | Мастер-выключатель гейта |
+| `DISCOCS_SERVICE_TOKEN` | `` | Машинный токен (одинаковый у backend/bot/worker) |
+| `DISCOCS_SESSION_TTL_HOURS` | `720` | Срок жизни сессии |
+| `DISCOCS_SESSION_COOKIE_NAME` | `discocs_session` | Имя cookie |
+| `DISCOCS_LOGIN_MAX_ATTEMPTS` | `5` | Порог блокировки логина |
+| `DISCOCS_LOGIN_LOCKOUT_SECONDS` | `900` | Окно блокировки |
+| `DISCOCS_CORS_ORIGINS` | `` | Явный allowlist origin'ов (с куками). Пусто = wildcard без кук |
+| `DISCOCS_NAVIDROME_URL` | из settings.json | Адрес Navidrome для проверки логина |
+
+## Почему гейт по умолчанию выключен
+
+Каждый push авто-деплоится через Jenkins. Гейт, включённый по умолчанию,
+залочил бы работающие бот/воркеры/плагин на ближайшем деплое до раздачи токенов.
+Поэтому изменение приезжает «тёмным»; включение — сознательный конфиг-шаг при
+выносе в домен.
+
+## Чек-лист включения (при выносе в домен)
+
+1. Сгенерировать токен: `openssl rand -hex 32`.
+2. Прописать `DISCOCS_SERVICE_TOKEN` **одинаково** у backend, bot, worker
+   (см. `deploy/prod/.env.example`, `deploy/worker/docker-compose.yml`).
+3. Плагин Navidrome: если используется с гейтом — задать тот же токен в его
+   HTTP-заголовках; иначе его эндпоинты доступны только на внутреннем
+   (не проксируемом наружу) порту.
+4. Убедиться, что настроен `DISCOCS_NAVIDROME_URL` (или сохранён в settings.json).
+5. Поставить `DISCOCS_AUTH_ENABLED=true`.
+6. На доменном nginx: TLS (Let's Encrypt), проксировать **только** SPA и
+   браузерный API; **не** пробрасывать наружу `/workers` и порт бэкенда 8711.
+7. Проверить: аноним → редирект на `/login`; вход валидными кредами Navidrome →
+   доступ; воркер/бот с токеном работают.
+
+## Пример доменного nginx (Let's Encrypt)
+
+Терминирует TLS и проксирует на frontend-контейнер. Пробрасывает
+`X-Forwarded-Proto`/`X-Forwarded-For`; вырезает входящий `X-Discocs-Service-Token`
+(чтобы публичный клиент не мог подставить машинный токен).
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name discocs.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/discocs.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/discocs.example.com/privkey.pem;
+
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header X-Frame-Options "DENY" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:80;   # frontend-контейнер discocs
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Никогда не доверять машинному токену от внешнего клиента:
+        proxy_set_header X-Discocs-Service-Token "";
+        proxy_read_timeout 300s;
+    }
+}
+
+server {
+    listen 80;
+    server_name discocs.example.com;
+    return 301 https://$host$request_uri;
+}
+```

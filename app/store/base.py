@@ -710,6 +710,23 @@ class StoreBase:
                     stage TEXT,
                     message TEXT
                 );
+
+                -- Auth sessions. Only the SHA-256 of the opaque session token is
+                -- stored, never the token itself: a DB leak cannot resurrect a
+                -- live session. No password is stored (Navidrome verifies creds
+                -- at login; the password is discarded afterwards).
+                CREATE TABLE IF NOT EXISTS sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    ip TEXT,
+                    user_agent TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_sessions_expires
+                    ON sessions(expires_at);
                 """
             )
             self._ensure_column(conn, "tracks", "genre", "TEXT")

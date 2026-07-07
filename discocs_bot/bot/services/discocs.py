@@ -23,7 +23,10 @@ class DiscocsClient:
         self._settings = settings
         self._navidrome = navidrome
         self._base_url = settings.discocs_base_url.rstrip("/")
-        self._client = httpx.AsyncClient(timeout=120.0)
+        headers = {}
+        if settings.discocs_service_token:
+            headers["X-Discocs-Service-Token"] = settings.discocs_service_token
+        self._client = httpx.AsyncClient(timeout=120.0, headers=headers)
 
     async def close(self) -> None:
         await self._client.aclose()

@@ -28,6 +28,9 @@ class Settings(BaseSettings):
 
     discocs_base_url: str = Field(alias="DISCOCS_BASE_URL")
     discocs_count: int = Field(default=10, alias="DISCOCS_COUNT")
+    # Machine-principal token for the discocs access gate. Only sent when set;
+    # empty keeps current behaviour while the gate is off.
+    discocs_service_token: str = Field(default="", alias="DISCOCS_SERVICE_TOKEN")
 
     sqlite_path: Path = Field(default=Path("data/bot.sqlite"), alias="SQLITE_PATH")
     temp_dir: Path = Field(default=Path("data/tmp"), alias="TEMP_DIR")

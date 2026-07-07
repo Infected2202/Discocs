@@ -1,15 +1,32 @@
 import { useNavigate } from "react-router"
-import { Settings, User } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
+import { Settings, User, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useNavidromeStatus } from "@/api/hooks/useNavidromeStatus"
 import { Button } from "@/components/ui/button"
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover"
+import { getSession, logout } from "@/api/auth"
+import { redirectToLogin } from "@/lib/authRedirect"
 
 export default function ProfileButton({ mobile = false }: { readonly mobile?: boolean }) {
   const navigate = useNavigate()
   const { status, isLoading } = useNavidromeStatus()
+  const { data: session } = useQuery({
+    queryKey: ["auth", "session"],
+    queryFn: getSession,
+    retry: false,
+    staleTime: 60_000,
+  })
+
+  async function handleLogout() {
+    try {
+      await logout()
+    } finally {
+      redirectToLogin()
+    }
+  }
 
   const dotColor = isLoading
     ? "bg-muted-foreground"
@@ -49,6 +66,17 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
             <Settings size={14} className="mr-2" />
             Open settings
           </Button>
+          {session?.enabled && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full text-muted-foreground"
+              onClick={handleLogout}
+            >
+              <LogOut size={14} className="mr-2" />
+              {session.username ? `Выйти (${session.username})` : "Выйти"}
+            </Button>
+          )}
         </div>
       </PopoverContent>
     </Popover>
