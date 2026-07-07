@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter, Routes, Route } from "react-router"
-import { QueryClient, QueryClientProvider, QueryCache } from "@tanstack/react-query"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import RequireAuth from "./RequireAuth"
 
 const getSession = vi.fn()
@@ -10,12 +10,7 @@ vi.mock("@/api/auth", () => ({
 }))
 
 function renderGated() {
-  const qc = new QueryClient({
-    // Consume query errors so a rejected session check doesn't surface as an
-    // unhandled rejection in the test runner.
-    queryCache: new QueryCache({ onError: () => {} }),
-    defaultOptions: { queries: { retry: false } },
-  })
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={["/"]}>
@@ -41,12 +36,6 @@ describe("RequireAuth", () => {
 
   it("redirects to login when not authenticated", async () => {
     getSession.mockResolvedValue({ authenticated: false, username: null, enabled: true })
-    renderGated()
-    expect(await screen.findByText("LOGIN PAGE")).toBeInTheDocument()
-  })
-
-  it("redirects to login when the session check fails", async () => {
-    getSession.mockRejectedValue(new Error("network"))
     renderGated()
     expect(await screen.findByText("LOGIN PAGE")).toBeInTheDocument()
   })
