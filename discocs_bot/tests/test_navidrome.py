@@ -1,8 +1,7 @@
+import asyncio
 from pathlib import Path
 import sys
 from types import SimpleNamespace
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.modules.pop("bot.services", None)
@@ -48,8 +47,7 @@ class _FakeAsyncClient:
         return None
 
 
-@pytest.mark.asyncio
-async def test_download_stream_offloads_file_io_to_thread(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_download_stream_offloads_file_io_to_thread(tmp_path: Path, monkeypatch):
     settings = SimpleNamespace(
         navidrome_base_url="http://navidrome:4533",
         navidrome_password="secret",
@@ -82,7 +80,10 @@ async def test_download_stream_offloads_file_io_to_thread(tmp_path: Path, monkey
 
     destination = tmp_path / "stream.bin"
 
-    written = await client.download_stream("song-1", destination, max_bit_rate=192)
+    async def run_download() -> int:
+        return await client.download_stream("song-1", destination, max_bit_rate=192)
+
+    written = asyncio.run(run_download())
 
     assert written == len(b"first-second")
     assert destination.read_bytes() == b"first-second"
