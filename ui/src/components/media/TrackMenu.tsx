@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router"
-import { MoreHorizontal, Play, ListEnd, User, Disc3, Radio } from "lucide-react"
+import { MoreHorizontal, Play, ListEnd, ListPlus, User, Disc3, Radio } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { apiFetch } from "@/api/client"
 import { patchQueue } from "@/api/playback"
 import { usePlayerStore } from "@/store/playerStore"
+import { useUIStore } from "@/store/uiStore"
 import type { PlaybackEnvelope, TrackSummary, ReleaseTrackItem } from "@/api/types"
 
 interface TrackMenuProps {
@@ -24,6 +25,7 @@ export default function TrackMenu({ track, sourceLabel }: TrackMenuProps) {
   const playSource     = usePlayerStore((s) => s.playSource)
   const refreshQueue   = usePlayerStore((s) => s.refreshQueue)
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
+  const openAddToPlaylist = useUIStore((s) => s.openAddToPlaylist)
   const release = track.release
 
   async function handlePlay() {
@@ -76,6 +78,11 @@ export default function TrackMenu({ track, sourceLabel }: TrackMenuProps) {
         <DropdownMenuItem onClick={handleInstantMix}>
           <Radio size={14} className="mr-2" />
           Instant mix
+        </DropdownMenuItem>
+
+        <DropdownMenuItem onClick={() => openAddToPlaylist([track.id])}>
+          <ListPlus size={14} className="mr-2" />
+          Add to playlist
         </DropdownMenuItem>
 
         {track.artists.length > 0 && (

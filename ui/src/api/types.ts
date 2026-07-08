@@ -251,6 +251,36 @@ export interface MixTrackItem {
 }
 
 // ----------------------------------------------------------------------------
+// Playlists
+// ----------------------------------------------------------------------------
+
+export interface PlaylistSummary {
+  id: number
+  title: string
+  kind: string
+  description: string | null
+  track_count: number
+  artwork: ImageRef
+  source: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+  action: { type: string; target: string }
+  play_action: { type: "post"; endpoint: string }
+}
+
+export interface PlaylistDetail extends PlaylistSummary {
+  tracks: TrackSummary[]
+}
+
+export interface PlaylistListResponse {
+  items: PlaylistSummary[]
+  total: number
+  limit: number
+  offset: number
+  next_offset: number | null
+}
+
+// ----------------------------------------------------------------------------
 // Playback
 // ----------------------------------------------------------------------------
 

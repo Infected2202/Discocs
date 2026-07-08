@@ -4,6 +4,7 @@ import Sidebar from "./Sidebar"
 import AppHeader from "./AppHeader"
 import PlayerBar from "@/components/player/PlayerBar"
 import ExpandedPlayer from "@/components/player/ExpandedPlayer"
+import PlaylistDialogs from "@/components/playlists/PlaylistDialogs"
 import ErrorBoundary from "@/components/common/ErrorBoundary"
 import PageTransition from "@/components/common/PageTransition"
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts"
@@ -71,6 +72,7 @@ export default function AppShell() {
           {/* Player — always mounted, never unmounts */}
           <PlayerBar />
           <ExpandedPlayer />
+          <PlaylistDialogs />
         </div>
       </div>
     </ScrollContext.Provider>

@@ -244,12 +244,12 @@ CreatePlaylistDialog (сабмит с предзаполнением), TrackMenu
 Gitea) → проверка CI в Jenkins → подтверждение Сани → следующая фаза.**
 
 1. **Фаза 1 — store:** схема (description, cover_path, PLAYLIST_KINDS),
-   store-методы, row_to_playlist, тесты store.
-2. **Фаза 2 — обложки:** обобщение mix_covers под плейлисты + тесты.
+   store-методы, row_to_playlist, тесты store. ✅
+2. **Фаза 2 — обложки:** обобщение mix_covers под плейлисты + тесты. ✅
 3. **Фаза 3 — API:** роуты, сериализатор, схемы, расширение mix save,
-   тесты API.
+   тесты API. ✅ (билд #101)
 4. **Фаза 4 — UI, модалки:** api-слой, AddToPlaylistDialog,
-   CreatePlaylistDialog, пункт в TrackMenu + vitest.
+   CreatePlaylistDialog, пункт в TrackMenu + vitest. ✅
 5. **Фаза 5 — UI, интеграции:** кнопка в ExpandedPlayer, save-флоу MixPage.
 6. **Фаза 6 — UI, страницы:** PlaylistPage generic (Play/Edit/Delete,
    selection-режим), шелф Playlists + карточка For You.

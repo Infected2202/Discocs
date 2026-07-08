@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import type { PlaylistSummary } from "@/api/types"
 
 const STORAGE_KEY = "discocs.uiState.v1"
 
@@ -21,9 +22,35 @@ function persist(collapsed: boolean) {
   }
 }
 
+export interface CreatePlaylistValues {
+  title: string
+  description: string
+  visibility: "public" | "private"
+}
+
+export interface CreatePlaylistDialogOptions {
+  /** Prefill for the form (e.g. mix title when saving a mix). */
+  defaultTitle?: string
+  defaultDescription?: string
+  /** Tracks to add to the playlist right after creation. */
+  trackIds?: number[]
+  /** Edit mode: PATCH this playlist instead of creating a new one. */
+  playlist?: PlaylistSummary
+  /** Replaces the default create call entirely (e.g. mix save flow). */
+  onSubmit?: (values: CreatePlaylistValues) => Promise<void>
+}
+
 interface UIState {
   sidebarCollapsed: boolean
   toggleSidebar(): void
+  /** Tracks pending "add to playlist"; null = dialog closed. */
+  addToPlaylistTrackIds: number[] | null
+  openAddToPlaylist(trackIds: number[]): void
+  closeAddToPlaylist(): void
+  /** Options for the create/edit playlist dialog; null = dialog closed. */
+  createPlaylistOptions: CreatePlaylistDialogOptions | null
+  openCreatePlaylist(options?: CreatePlaylistDialogOptions): void
+  closeCreatePlaylist(): void
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
@@ -32,5 +59,19 @@ export const useUIStore = create<UIState>((set, get) => ({
     const next = !get().sidebarCollapsed
     set({ sidebarCollapsed: next })
     persist(next)
+  },
+  addToPlaylistTrackIds: null,
+  openAddToPlaylist(trackIds) {
+    set({ addToPlaylistTrackIds: trackIds, createPlaylistOptions: null })
+  },
+  closeAddToPlaylist() {
+    set({ addToPlaylistTrackIds: null })
+  },
+  createPlaylistOptions: null,
+  openCreatePlaylist(options) {
+    set({ createPlaylistOptions: options ?? {}, addToPlaylistTrackIds: null })
+  },
+  closeCreatePlaylist() {
+    set({ createPlaylistOptions: null })
   },
 }))
