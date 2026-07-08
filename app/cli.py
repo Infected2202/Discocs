@@ -1198,8 +1198,7 @@ class WorkerRuntime:
     """Mutable state and per-cycle logic for `worker()`'s claim/process/submit loop.
 
     Replaces the 7 nonlocal-sharing closures that used to live inside
-    `worker()` (see plans/cli-refactoring-plan.md, Stage 6) with methods over
-    explicit instance state.
+    `worker()` with methods over explicit instance state.
     """
 
     def __init__(

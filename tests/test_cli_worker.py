@@ -1,11 +1,10 @@
 """Safety-net tests for the internal logic of `app.cli.worker()`.
 
 `worker()` is a single ~680-line command built from closures over shared
-mutable state (see plans/cli-refactoring-plan.md, Stage 1). The closures are
-not reachable directly, so these tests drive them through the public `recs
-worker --once` CLI entrypoint with every I/O boundary (HTTP calls, audio
-download, model inference) monkeypatched. This is the safety net that stages
-2-4 (deduplication) and any later structural refactor must keep green.
+mutable state. The closures are not reachable directly, so these tests drive
+them through the public `recs worker --once` CLI entrypoint with every I/O
+boundary (HTTP calls, audio download, model inference) monkeypatched. This is
+the safety net that any structural refactor of `worker()` must keep green.
 """
 
 from __future__ import annotations

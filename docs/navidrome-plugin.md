@@ -1,7 +1,7 @@
 # Navidrome Instant Mix Plugin
 
 > **Known breaking change:** the discocs backend moved all REST routes under
-> `/api/v1/*` (see `plans/api-v1-namespace-migration.md`) to stop bare backend
+> `/api/v1/*` (see `docs/architecture.md`, "API Routing") to stop bare backend
 > paths from colliding with the new web UI's client-side routes
 > (`/artists/:id`, `/releases/:id`, `/settings`). The plugin (Go, compiled
 > into `plugins/navidrome-instant-mix/main.go`) still calls the old bare
