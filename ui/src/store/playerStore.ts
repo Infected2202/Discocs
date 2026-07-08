@@ -150,7 +150,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       ...(resetHistory ? { playedHistory: [] } : {}),
       currentTrackId: session.current_track_id,
       currentQueueItemId: currentItem?.id ?? null,
-      currentTrack: (currentItem?.track as TrackSummary | null) ?? null,
+      currentTrack: currentItem?.track ?? null,
     })
     return { session, queue, currentItem }
   }

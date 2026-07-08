@@ -1,8 +1,23 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { fetchDashboard } from "../dashboard"
 import { apiFetch, apiUrl } from "../client"
-import type { Shelf } from "../types"
+import type { DashboardResponse, Shelf } from "../types"
 import { useEffect } from "react"
+
+type HistoryShelf = Shelf & { items: unknown[] }
+
+function replaceHistoryShelf(dashboard: DashboardResponse, items: unknown[]): DashboardResponse {
+  return {
+    ...dashboard,
+    shelves: dashboard.shelves.map((shelf) =>
+      shelf.key === "history" ? { ...shelf, items } : shelf
+    ),
+  }
+}
+
+async function refreshHistoryShelf(limit: number): Promise<HistoryShelf> {
+  return apiFetch(apiUrl("/api/v1/dashboard/shelves/history", { limit }))
+}
 
 export function useDashboard(limit = 12) {
   const queryClient = useQueryClient()
@@ -11,14 +26,10 @@ export function useDashboard(limit = 12) {
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
-        const shelf: Shelf & { items: unknown[] } = await apiFetch(apiUrl("/api/v1/dashboard/shelves/history", { limit }))
-        queryClient.setQueryData(["dashboard", limit], (old: { shelves: (Shelf & { key: string })[] } | undefined) => {
-          if (!old) return old
-          return {
-            ...old,
-            shelves: old.shelves.map((s) => s.key === "history" ? { ...s, items: shelf.items } : s),
-          }
-        })
+        const shelf = await refreshHistoryShelf(limit)
+        queryClient.setQueryData(["dashboard", limit], (old: DashboardResponse | undefined) =>
+          old ? replaceHistoryShelf(old, shelf.items) : old
+        )
       } catch { /* ignore */ }
     }, 60_000)
     return () => clearInterval(interval)

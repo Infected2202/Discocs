@@ -11,8 +11,7 @@ import { Button } from "@/components/ui/button"
 import { apiFetch } from "@/api/client"
 import { patchQueue } from "@/api/playback"
 import { usePlayerStore } from "@/store/playerStore"
-import type { PlaybackEnvelope } from "@/api/types"
-import type { TrackSummary, ReleaseTrackItem } from "@/api/types"
+import type { PlaybackEnvelope, TrackSummary, ReleaseTrackItem } from "@/api/types"
 
 interface TrackMenuProps {
   readonly track: TrackSummary | ReleaseTrackItem
@@ -93,7 +92,7 @@ export default function TrackMenu({ track, sourceLabel }: TrackMenuProps) {
         {track.release && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => navigate(`/releases/${track.release!.id}`)}>
+            <DropdownMenuItem onClick={() => navigate(`/releases/${track.release.id}`)}>
               <Disc3 size={14} className="mr-2" />
               Go to {track.release.title}
             </DropdownMenuItem>

@@ -1,5 +1,4 @@
-import { useParams } from "react-router"
-import { Link } from "react-router"
+import { Link, useParams } from "react-router"
 import { Play, Shuffle, Heart } from "lucide-react"
 import { useRelease, useReleaseTracks, useReleaseRelated, useReleaseRecommendations } from "@/api/hooks/useRelease"
 import { Button } from "@/components/ui/button"
