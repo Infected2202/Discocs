@@ -107,5 +107,5 @@ export function refillAutoplay(params: RefillParams): Promise<AutoplayRefillResp
 }
 
 export function trackAudioUrl(trackId: number): string {
-  return `/tracks/${trackId}/audio`
+  return `/api/v1/tracks/${trackId}/audio`
 }
