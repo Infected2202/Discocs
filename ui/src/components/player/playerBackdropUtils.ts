@@ -1,9 +1,21 @@
 const BACKDROP_ARTWORK_SIZE = 320
+const SIZE_PARAM_PATTERN = /([?&])size=\d+/
 
 export type BackdropAnimationState = "running" | "paused"
 export interface BackdropLayerState {
   visibleUrl: string | undefined
   fadingUrl: string | undefined
+}
+
+function splitHash(url: string) {
+  const hashIndex = url.indexOf("#")
+  if (hashIndex < 0) {
+    return { base: url, hash: "" }
+  }
+  return {
+    base: url.slice(0, hashIndex),
+    hash: url.slice(hashIndex),
+  }
 }
 
 export function artworkBackdropUrl(
@@ -12,12 +24,10 @@ export function artworkBackdropUrl(
 ): string | undefined {
   if (!url) return undefined
 
-  const hashIndex = url.indexOf("#")
-  const base = hashIndex >= 0 ? url.slice(0, hashIndex) : url
-  const hash = hashIndex >= 0 ? url.slice(hashIndex) : ""
+  const { base, hash } = splitHash(url)
 
-  if (/([?&])size=\d+/.test(base)) {
-    return `${base.replace(/([?&])size=\d+/, `$1size=${size}`)}${hash}`
+  if (SIZE_PARAM_PATTERN.test(base)) {
+    return `${base.replace(SIZE_PARAM_PATTERN, `$1size=${size}`)}${hash}`
   }
 
   return `${base}${base.includes("?") ? "&" : "?"}size=${size}${hash}`

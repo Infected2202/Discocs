@@ -4,11 +4,13 @@ import { useRef } from "react"
 import { ScrollContext } from "@/contexts/ScrollContext"
 import VirtualCardGrid from "./VirtualCardGrid"
 
+const noop = vi.fn()
+
 // jsdom has no ResizeObserver — stub it so the column-measuring effect runs
 class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
+  observe = noop
+  unobserve = noop
+  disconnect = noop
 }
 vi.stubGlobal("ResizeObserver", ResizeObserverStub)
 
@@ -23,7 +25,7 @@ vi.mock("@tanstack/react-virtual", () => ({
         start: i * estimateSize(),
         size: estimateSize(),
       })),
-    measureElement: () => {},
+    measureElement: noop,
   }),
 }))
 
@@ -49,7 +51,6 @@ function Wrapper({ items }: { readonly items: string[] }) {
 
 describe("VirtualCardGrid", () => {
   it("groups items into rows of `columns` per row", () => {
-    // 10 items, 4 columns → ceil(10/4) = 3 rows
     const items = Array.from({ length: 10 }, (_, i) => `item-${i}`)
     render(<Wrapper items={items} />)
     const rows = document.querySelectorAll("[data-index]")
@@ -64,7 +65,6 @@ describe("VirtualCardGrid", () => {
   })
 
   it("keeps the last (partial) row's items", () => {
-    // 5 items, 4 columns → row 0 = 4 items, row 1 = 1 item
     const items = Array.from({ length: 5 }, (_, i) => `item-${i}`)
     render(<Wrapper items={items} />)
     const rows = document.querySelectorAll("[data-index]")
