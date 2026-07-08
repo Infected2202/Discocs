@@ -83,6 +83,7 @@ from app.models import (
     Playlist,
     PlaylistItem,
     PlaybackEvent,
+    PlaybackEventCreate,
     PLAYBACK_EVENT_TYPES,
     PlaybackEventResult,
     PLAYBACK_MODES,
@@ -516,38 +517,26 @@ class PlaybackStoreMixin:
             ).fetchone()
         return row_to_queue_item(refreshed) if refreshed else None
 
-    def record_playback_event(
-        self,
-        *,
-        event_type: str,
-        session_id: str | None = None,
-        queue_item_id: str | None = None,
-        track_id: int | None = None,
-        release_id: int | None = None,
-        artist_id: int | None = None,
-        position_seconds: float | None = None,
-        duration_seconds: float | None = None,
-        play_fraction: float | None = None,
-        client_event_id: str | None = None,
-        source: str = "web",
-        payload: dict[str, object] | None = None,
-        event_id: str | None = None,
-        created_at: str | None = None,
-    ) -> PlaybackEventResult:
-        _require_choice(event_type, PLAYBACK_EVENT_TYPES, "event_type")
-        created_at = created_at or utc_now()
-        event_id = event_id or str(uuid4())
+    def record_playback_event(self, event: PlaybackEventCreate) -> PlaybackEventResult:
+        _require_choice(event.event_type, PLAYBACK_EVENT_TYPES, "event_type")
+        created_at = event.created_at or utc_now()
+        event_id = event.event_id or str(uuid4())
         play_fraction = _normalized_play_fraction(
-            play_fraction,
-            position_seconds=position_seconds,
-            duration_seconds=duration_seconds,
+            event.play_fraction,
+            position_seconds=event.position_seconds,
+            duration_seconds=event.duration_seconds,
         )
-        payload_json = _json_dumps(payload)
+        payload_json = _json_dumps(event.payload)
+        session_id = event.session_id
+        queue_item_id = event.queue_item_id
+        track_id = event.track_id
+        release_id = event.release_id
+        artist_id = event.artist_id
         with self.connect() as conn:
-            if client_event_id:
+            if event.client_event_id:
                 duplicate = conn.execute(
                     "SELECT * FROM playback_events WHERE client_event_id = ?",
-                    (client_event_id,),
+                    (event.client_event_id,),
                 ).fetchone()
                 if duplicate is not None:
                     return PlaybackEventResult(
@@ -582,13 +571,13 @@ class PlaybackStoreMixin:
                     track_id,
                     release_id,
                     artist_id,
-                    event_type,
-                    position_seconds,
-                    duration_seconds,
+                    event.event_type,
+                    event.position_seconds,
+                    event.duration_seconds,
                     play_fraction,
                     created_at,
-                    client_event_id,
-                    source or "web",
+                    event.client_event_id,
+                    event.source or "web",
                     payload_json,
                 ),
             )

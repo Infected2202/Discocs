@@ -33,7 +33,11 @@ from app.main import app
 from app.navidrome import DownloadedTrack
 from app.navidrome import NavidromeSong
 from app.scanner import ScannedTrack
-from app.store import INITIALIZED_DB_PATHS, Store, Track, TrackFeature, TrackPrediction
+from app.store import INITIALIZED_DB_PATHS, PlaybackEventCreate, Store, Track, TrackFeature, TrackPrediction
+
+
+def playback_event(event_type: str, **kwargs) -> PlaybackEventCreate:
+    return PlaybackEventCreate(event_type=event_type, **kwargs)
 
 
 def init_api_store(tmp_path: Path, monkeypatch) -> Store:
@@ -740,14 +744,18 @@ def test_api_v1_dashboard_shelves_use_library_and_playback_history(tmp_path: Pat
             """
         )
     store.record_playback_event(
-        track_id=old_id,
-        event_type="play_threshold_reached",
-        created_at="2024-02-01T00:00:00+00:00",
+        playback_event(
+            "play_threshold_reached",
+            track_id=old_id,
+            created_at="2024-02-01T00:00:00+00:00",
+        )
     )
     store.record_playback_event(
-        track_id=old_id,
-        event_type="completed",
-        created_at="2024-02-01T00:03:00+00:00",
+        playback_event(
+            "completed",
+            track_id=old_id,
+            created_at="2024-02-01T00:03:00+00:00",
+        )
     )
     client = TestClient(app)
 
@@ -854,11 +862,13 @@ def test_api_v1_dashboard_auto_generates_mixes_for_you(tmp_path: Path, monkeypat
         store.save_embedding(track_id, "discogs_multi", np.array(vector, dtype=np.float32))
     for track_id in [ids[0], ids[2]]:
         store.record_playback_event(
-            track_id=track_id,
-            event_type="completed",
-            position_seconds=123.0,
-            duration_seconds=123.0,
-            play_fraction=1.0,
+            playback_event(
+                "completed",
+                track_id=track_id,
+                position_seconds=123.0,
+                duration_seconds=123.0,
+                play_fraction=1.0,
+            )
         )
     client = TestClient(app)
 
@@ -950,11 +960,13 @@ def test_api_v1_generated_mixes_generate_detail_save_play_and_dashboard(tmp_path
 
     monkeypatch.setattr(mixes_module, "generate_mix_cover", fake_generate_mix_cover)
     store.record_playback_event(
-        track_id=first_id,
-        event_type="completed",
-        position_seconds=123.0,
-        duration_seconds=123.0,
-        play_fraction=1.0,
+        playback_event(
+            "completed",
+            track_id=first_id,
+            position_seconds=123.0,
+            duration_seconds=123.0,
+            play_fraction=1.0,
+        )
     )
     client = TestClient(app)
 
@@ -1013,11 +1025,13 @@ def test_api_v1_dashboard_refreshes_expired_full_generated_mix_shelf(tmp_path: P
     store.save_embedding(first_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
     store.save_embedding(second_id, "discogs_multi", np.array([0.95, 0.05], dtype=np.float32))
     store.record_playback_event(
-        track_id=first_id,
-        event_type="completed",
-        position_seconds=123.0,
-        duration_seconds=123.0,
-        play_fraction=1.0,
+        playback_event(
+            "completed",
+            track_id=first_id,
+            position_seconds=123.0,
+            duration_seconds=123.0,
+            play_fraction=1.0,
+        )
     )
     client = TestClient(app)
     client.put(

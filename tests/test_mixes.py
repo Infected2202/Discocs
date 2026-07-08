@@ -15,7 +15,11 @@ from app.mixes import (
 from app.recommender import build_index
 from app.scanner import ScannedTrack
 from app.serializers.mixes import generated_mix_summary_dict
-from app.store import Store
+from app.store import PlaybackEventCreate, Store
+
+
+def playback_event(event_type: str, **kwargs) -> PlaybackEventCreate:
+    return PlaybackEventCreate(event_type=event_type, **kwargs)
 
 
 def app_settings(tmp_path: Path) -> Settings:
@@ -56,11 +60,13 @@ def add_track(
 
 def mark_positive(store: Store, track_id: int, event_type: str = "completed") -> None:
     store.record_playback_event(
-        track_id=track_id,
-        event_type=event_type,
-        position_seconds=180.0,
-        duration_seconds=180.0,
-        play_fraction=1.0,
+        playback_event(
+            event_type,
+            track_id=track_id,
+            position_seconds=180.0,
+            duration_seconds=180.0,
+            play_fraction=1.0,
+        )
     )
 
 
@@ -85,11 +91,13 @@ def test_taste_regions_use_listening_history_seed_source(tmp_path: Path):
     played = add_track(store, tmp_path, "played", [1.0, 0.0], artist="Played", album="History")
     liked = add_track(store, tmp_path, "liked", [0.0, 1.0], artist="Liked", album="Likes")
     store.record_playback_event(
-        track_id=played,
-        event_type="play_threshold_reached",
-        position_seconds=45.0,
-        duration_seconds=180.0,
-        play_fraction=0.25,
+        playback_event(
+            "play_threshold_reached",
+            track_id=played,
+            position_seconds=45.0,
+            duration_seconds=180.0,
+            play_fraction=0.25,
+        )
     )
     mark_positive(store, liked, "liked")
 

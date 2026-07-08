@@ -4,6 +4,7 @@ Extracted from app/main.py — Stage 6c.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 import sqlite3
 from pathlib import Path
@@ -25,7 +26,7 @@ from app.api.deps import (
 )
 from app.config import load_runtime_settings, save_runtime_settings
 from app.mixes import dashboard_mix_generation_plan, generate_mixes
-from app.models import utc_now
+from app.models import InstantMixRequestParams, InstantMixRequestRecord, utc_now
 from app.recommender import Recommender
 from app.schemas.requests import GeneratedMixSettingsRequest, MixGenerateRequest
 from app.schemas.responses import (
@@ -350,6 +351,22 @@ def _fill_instant_mix_queue(
     if seed is None:
         logger.warning("Instant mix background: seed track missing track_id=%s", seed_track_id)
         return
+    base_record = InstantMixRequestRecord(
+        request_id=request_id,
+        provider="local",
+        seed_item_id=seed_item_id,
+        seed_track_id=seed_track_id,
+        model_name=model,
+        params=InstantMixRequestParams(
+            effective_model=model,
+            effective_count=effective_count,
+            max_per_artist=effective_max_per_artist,
+            exclude_same_album=effective_exclude_same_album,
+            count_collaboration_artists=effective_count_collaboration_artists,
+            min_similarity=min_similarity,
+        ),
+        status="pending",
+    )
 
     try:
         candidates = Recommender(store, _settings, model).similar(
@@ -362,23 +379,12 @@ def _fill_instant_mix_queue(
     except (FileNotFoundError, LookupError) as exc:
         record_instant_mix_request(
             store,
-            request_id=request_id,
-            item_id=seed_item_id,
-            seed_track_id=seed_track_id,
-            model=model,
-            requested_model=None,
-            requested_count=None,
-            effective_count=effective_count,
-            max_per_artist=effective_max_per_artist,
-            exclude_same_album=effective_exclude_same_album,
-            count_collaboration_artists=effective_count_collaboration_artists,
-            min_similarity=min_similarity,
-            status="failed",
-            results=[],
-            skipped_without_external_id=0,
-            duration_ms=(perf_counter() - started) * 1000,
-            provider="local",
-            error=str(exc),
+            replace(
+                base_record,
+                status="failed",
+                duration_ms=(perf_counter() - started) * 1000,
+                error=str(exc),
+            ),
         )
         logger.warning("Instant mix background failed track_id=%s model=%s error=%s", seed_track_id, model, exc)
         return
@@ -408,22 +414,12 @@ def _fill_instant_mix_queue(
 
     record_instant_mix_request(
         store,
-        request_id=request_id,
-        item_id=seed_item_id,
-        seed_track_id=seed_track_id,
-        model=model,
-        requested_model=None,
-        requested_count=None,
-        effective_count=effective_count,
-        max_per_artist=effective_max_per_artist,
-        exclude_same_album=effective_exclude_same_album,
-        count_collaboration_artists=effective_count_collaboration_artists,
-        min_similarity=min_similarity,
-        status="completed",
-        results=results,
-        skipped_without_external_id=0,
-        duration_ms=(perf_counter() - started) * 1000,
-        provider="local",
+        replace(
+            base_record,
+            status="completed",
+            results=tuple(results),
+            duration_ms=(perf_counter() - started) * 1000,
+        ),
     )
 
     result_track_ids = [item.track_id for item in results if item.track_id is not None]

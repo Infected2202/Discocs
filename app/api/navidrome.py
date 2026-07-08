@@ -4,6 +4,7 @@ Extracted from app/main.py — Stage 6c.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 from time import perf_counter
 from typing import Annotated
@@ -17,6 +18,7 @@ from app.api.deps import (
     instant_mix_settings,
     record_instant_mix_request,
 )
+from app.models import InstantMixRequestParams, InstantMixRequestRecord
 from app.logging_config import get_navidrome_plugin_logger
 from app.navidrome import parse_song
 from app.navidrome_starred import (
@@ -303,6 +305,26 @@ def get_navidrome_similar(
     effective_max_per_artist = int(mix_settings["max_per_artist"])
     effective_exclude_same_album = bool(mix_settings["exclude_same_album"])
     effective_count_collaboration_artists = bool(mix_settings["count_collaboration_artists"])
+    request_params = InstantMixRequestParams(
+        requested_model=requested_model,
+        effective_model=model,
+        requested_count=count,
+        requested_max_per_artist=max_per_artist,
+        requested_exclude_same_album=exclude_same_album,
+        effective_count=effective_count,
+        max_per_artist=effective_max_per_artist,
+        exclude_same_album=effective_exclude_same_album,
+        count_collaboration_artists=effective_count_collaboration_artists,
+        min_similarity=min_similarity,
+    )
+    base_record = InstantMixRequestRecord(
+        request_id=request_id,
+        seed_item_id=item_id,
+        seed_track_id=None,
+        model_name=model,
+        params=request_params,
+        status="pending",
+    )
     navidrome_logger.info(
         "Navidrome similar request request_id=%s item_id=%s requested_model=%s model=%s requested_count=%s effective_count=%s max_per_artist=%s exclude_same_album=%s min_similarity=%s",
         request_id,
@@ -332,24 +354,12 @@ def get_navidrome_similar(
         duration_ms = (perf_counter() - started) * 1000
         record_instant_mix_request(
             store,
-            request_id=request_id,
-            item_id=item_id,
-            seed_track_id=None,
-            model=model,
-            requested_model=requested_model,
-            requested_count=count,
-            requested_max_per_artist=max_per_artist,
-            requested_exclude_same_album=exclude_same_album,
-            effective_count=effective_count,
-            max_per_artist=effective_max_per_artist,
-            exclude_same_album=effective_exclude_same_album,
-            count_collaboration_artists=effective_count_collaboration_artists,
-            min_similarity=min_similarity,
-            status="failed",
-            results=[],
-            skipped_without_external_id=0,
-            duration_ms=duration_ms,
-            error="Navidrome item_id is not synced",
+            replace(
+                base_record,
+                status="failed",
+                duration_ms=duration_ms,
+                error="Navidrome item_id is not synced",
+            ),
         )
         navidrome_logger.warning(
             "Navidrome similar failed request_id=%s item_id=%s reason=no_external_mapping",
@@ -376,24 +386,7 @@ def get_navidrome_similar(
         duration_ms = (perf_counter() - started) * 1000
         record_instant_mix_request(
             store,
-            request_id=request_id,
-            item_id=item_id,
-            seed_track_id=seed.id,
-            model=model,
-            requested_model=requested_model,
-            requested_count=count,
-            requested_max_per_artist=max_per_artist,
-            requested_exclude_same_album=exclude_same_album,
-            effective_count=effective_count,
-            max_per_artist=effective_max_per_artist,
-            exclude_same_album=effective_exclude_same_album,
-            count_collaboration_artists=effective_count_collaboration_artists,
-            min_similarity=min_similarity,
-            status="failed",
-            results=[],
-            skipped_without_external_id=0,
-            duration_ms=duration_ms,
-            error=str(exc),
+            replace(base_record, seed_track_id=seed.id, status="failed", duration_ms=duration_ms, error=str(exc)),
         )
         navidrome_logger.warning(
             "Navidrome similar failed request_id=%s item_id=%s track_id=%s model=%s reason=missing_index error=%s",
@@ -408,24 +401,7 @@ def get_navidrome_similar(
         duration_ms = (perf_counter() - started) * 1000
         record_instant_mix_request(
             store,
-            request_id=request_id,
-            item_id=item_id,
-            seed_track_id=seed.id,
-            model=model,
-            requested_model=requested_model,
-            requested_count=count,
-            requested_max_per_artist=max_per_artist,
-            requested_exclude_same_album=exclude_same_album,
-            effective_count=effective_count,
-            max_per_artist=effective_max_per_artist,
-            exclude_same_album=effective_exclude_same_album,
-            count_collaboration_artists=effective_count_collaboration_artists,
-            min_similarity=min_similarity,
-            status="failed",
-            results=[],
-            skipped_without_external_id=0,
-            duration_ms=duration_ms,
-            error=str(exc),
+            replace(base_record, seed_track_id=seed.id, status="failed", duration_ms=duration_ms, error=str(exc)),
         )
         navidrome_logger.warning(
             "Navidrome similar failed request_id=%s item_id=%s track_id=%s model=%s reason=missing_embedding error=%s",
@@ -440,24 +416,7 @@ def get_navidrome_similar(
         duration_ms = (perf_counter() - started) * 1000
         record_instant_mix_request(
             store,
-            request_id=request_id,
-            item_id=item_id,
-            seed_track_id=seed.id,
-            model=model,
-            requested_model=requested_model,
-            requested_count=count,
-            requested_max_per_artist=max_per_artist,
-            requested_exclude_same_album=exclude_same_album,
-            effective_count=effective_count,
-            max_per_artist=effective_max_per_artist,
-            exclude_same_album=effective_exclude_same_album,
-            count_collaboration_artists=effective_count_collaboration_artists,
-            min_similarity=min_similarity,
-            status="failed",
-            results=[],
-            skipped_without_external_id=0,
-            duration_ms=duration_ms,
-            error=str(exc),
+            replace(base_record, seed_track_id=seed.id, status="failed", duration_ms=duration_ms, error=str(exc)),
         )
         navidrome_logger.exception(
             "Navidrome similar failed request_id=%s item_id=%s track_id=%s model=%s reason=unexpected",
@@ -500,23 +459,14 @@ def get_navidrome_similar(
     duration_ms = (perf_counter() - started) * 1000
     record_instant_mix_request(
         store,
-        request_id=request_id,
-        item_id=item_id,
-        seed_track_id=seed.id,
-        model=model,
-        requested_model=requested_model,
-        requested_count=count,
-        requested_max_per_artist=max_per_artist,
-        requested_exclude_same_album=exclude_same_album,
-        effective_count=effective_count,
-        max_per_artist=effective_max_per_artist,
-        exclude_same_album=effective_exclude_same_album,
-        count_collaboration_artists=effective_count_collaboration_artists,
-        min_similarity=min_similarity,
-        status="completed",
-        results=results,
-        skipped_without_external_id=skipped_without_external_id,
-        duration_ms=duration_ms,
+        replace(
+            base_record,
+            seed_track_id=seed.id,
+            status="completed",
+            results=tuple(results),
+            skipped_without_external_id=skipped_without_external_id,
+            duration_ms=duration_ms,
+        ),
     )
     navidrome_logger.info(
         "Navidrome similar completed request_id=%s item_id=%s track_id=%s model=%s results=%s skipped_without_external_id=%s duration_ms=%.1f",

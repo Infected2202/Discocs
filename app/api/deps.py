@@ -4,6 +4,7 @@ Extracted from app/main.py.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import logging
 
@@ -19,12 +20,12 @@ from app.models import (
     EARLY_SKIP_FRACTION,
     EARLY_SKIP_SECONDS,
     InstantMixRequest,
+    InstantMixRequestRecord,
     LATE_SKIP_FRACTION,
     MEANINGFUL_LISTEN_FRACTION,
     MEANINGFUL_LISTEN_SECONDS,
 )
 from app.navidrome import NavidromeClient
-from app.schemas.responses import NavidromeSimilarItem
 from app.state import TEXT_SEARCH_EMBEDDER, TEXT_SEARCH_EMBEDDER_LOCK
 from app.store import Store
 
@@ -240,55 +241,11 @@ def instant_mix_request_dict(
 
 def record_instant_mix_request(
     store: Store,
-    *,
-    request_id: str,
-    item_id: str,
-    seed_track_id: int | None,
-    model: str,
-    requested_model: str | None,
-    requested_count: int | None,
-    effective_count: int,
-    max_per_artist: int,
-    exclude_same_album: bool,
-    count_collaboration_artists: bool,
-    min_similarity: float | None,
-    status: str,
-    results: list[NavidromeSimilarItem],
-    skipped_without_external_id: int,
-    duration_ms: float | None,
-    requested_max_per_artist: int | None = None,
-    requested_exclude_same_album: bool | None = None,
-    provider: str = "navidrome",
-    error: str | None = None,
+    record: InstantMixRequestRecord,
 ) -> None:
-    params = {
-        "requested_model": requested_model,
-        "effective_model": model,
-        "requested_count": requested_count,
-        "requested_max_per_artist": requested_max_per_artist,
-        "requested_exclude_same_album": requested_exclude_same_album,
-        "effective_count": effective_count,
-        "max_per_artist": max_per_artist,
-        "exclude_same_album": exclude_same_album,
-        "count_collaboration_artists": count_collaboration_artists,
-        "min_similarity": min_similarity,
-    }
-    store.record_instant_mix_request(
-        request_id=request_id,
-        provider=provider,
-        seed_item_id=item_id,
-        seed_track_id=seed_track_id,
-        model_name=model,
-        requested_count=requested_count,
-        effective_count=effective_count,
-        max_per_artist=max_per_artist,
-        exclude_same_album=exclude_same_album,
-        min_similarity=min_similarity,
-        status=status,
-        result_count=len(results),
-        skipped_without_external_id=skipped_without_external_id,
-        duration_ms=duration_ms,
-        error=error,
-        params_json=json.dumps(params, ensure_ascii=True, sort_keys=True),
-        results_json=json.dumps([model_to_dict(item) for item in results], ensure_ascii=True),
-    )
+    params = record.params
+    normalized_results = [
+        model_to_dict(item) if isinstance(item, BaseModel) else item
+        for item in record.results
+    ]
+    store.record_instant_mix_request(replace(record, results=tuple(normalized_results)))

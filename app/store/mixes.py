@@ -63,6 +63,7 @@ from app.models import (
     GENERATED_MIX_TYPES,
     HeadSummary,
     InstantMixRequest,
+    InstantMixRequestRecord,
     LATE_SKIP_FRACTION,
     MEANINGFUL_LISTEN_FRACTION,
     MEANINGFUL_LISTEN_SECONDS,
@@ -386,28 +387,25 @@ class MixesStoreMixin:
             for row in rows:
                 self._apply_playback_event_preferences(conn, row)
 
-    def record_instant_mix_request(
-        self,
-        request_id: str,
-        provider: str,
-        seed_item_id: str,
-        seed_track_id: int | None,
-        model_name: str,
-        requested_count: int | None,
-        effective_count: int,
-        max_per_artist: int,
-        exclude_same_album: bool,
-        min_similarity: float | None,
-        status: str,
-        result_count: int,
-        skipped_without_external_id: int,
-        duration_ms: float | None,
-        error: str | None,
-        params_json: str,
-        results_json: str,
-        created_at: str | None = None,
-    ) -> InstantMixRequest:
-        created_at = created_at or utc_now()
+    def record_instant_mix_request(self, record: InstantMixRequestRecord) -> InstantMixRequest:
+        created_at = record.created_at or utc_now()
+        params_json = json.dumps(
+            {
+                "requested_model": record.params.requested_model,
+                "effective_model": record.params.effective_model,
+                "requested_count": record.params.requested_count,
+                "requested_max_per_artist": record.params.requested_max_per_artist,
+                "requested_exclude_same_album": record.params.requested_exclude_same_album,
+                "effective_count": record.params.effective_count,
+                "max_per_artist": record.params.max_per_artist,
+                "exclude_same_album": record.params.exclude_same_album,
+                "count_collaboration_artists": record.params.count_collaboration_artists,
+                "min_similarity": record.params.min_similarity,
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+        )
+        results_json = json.dumps(list(record.results), ensure_ascii=True)
         with self.connect() as conn:
             conn.execute(
                 """
@@ -420,21 +418,21 @@ class MixesStoreMixin:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    request_id,
-                    provider,
-                    seed_item_id,
-                    seed_track_id,
-                    model_name,
-                    requested_count,
-                    effective_count,
-                    max_per_artist,
-                    1 if exclude_same_album else 0,
-                    min_similarity,
-                    status,
-                    result_count,
-                    skipped_without_external_id,
-                    duration_ms,
-                    error,
+                    record.request_id,
+                    record.provider,
+                    record.seed_item_id,
+                    record.seed_track_id,
+                    record.model_name,
+                    record.params.requested_count,
+                    record.params.effective_count,
+                    record.params.max_per_artist,
+                    1 if record.params.exclude_same_album else 0,
+                    record.params.min_similarity,
+                    record.status,
+                    len(record.results),
+                    record.skipped_without_external_id,
+                    record.duration_ms,
+                    record.error,
                     params_json,
                     results_json,
                     created_at,
@@ -442,7 +440,7 @@ class MixesStoreMixin:
             )
             row = conn.execute(
                 "SELECT * FROM instant_mix_requests NOT INDEXED WHERE id = ?",
-                (request_id,),
+                (record.request_id,),
             ).fetchone()
         return row_to_instant_mix_request(row)
 

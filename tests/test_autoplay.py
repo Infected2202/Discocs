@@ -15,7 +15,11 @@ from app.autoplay import (
 from app.config import Settings
 from app.recommender import build_index
 from app.scanner import ScannedTrack
-from app.store import Store
+from app.store import PlaybackEventCreate, Store
+
+
+def playback_event(event_type: str, **kwargs) -> PlaybackEventCreate:
+    return PlaybackEventCreate(event_type=event_type, **kwargs)
 
 
 def settings(tmp_path: Path) -> Settings:
@@ -234,11 +238,13 @@ def test_autoplay_source_context_merges_seed_and_exclude_ids_without_duplicates(
     )
     store.append_queue_items(session.id, [{"track_id": second_id, "origin": "manual"}])
     store.record_playback_event(
-        session_id=session.id,
-        queue_item_id=queue[0].id,
-        track_id=first_id,
-        event_type="completed",
-        play_fraction=1.0,
+        playback_event(
+            "completed",
+            session_id=session.id,
+            queue_item_id=queue[0].id,
+            track_id=first_id,
+            play_fraction=1.0,
+        )
     )
     refreshed = store.get_playback_session(session.id)
     assert refreshed is not None
@@ -265,10 +271,12 @@ def test_autoplay_skip_penalty_is_session_local_and_does_not_blacklist_globally(
         autoplay_enabled=True,
     )
     store.record_playback_event(
-        session_id=session.id,
-        track_id=skipped_id,
-        event_type="skipped",
-        play_fraction=0.1,
+        playback_event(
+            "skipped",
+            session_id=session.id,
+            track_id=skipped_id,
+            play_fraction=0.1,
+        )
     )
     session = store.get_playback_session(session.id)
     assert session is not None
@@ -313,7 +321,7 @@ def test_autoplay_source_weight_dominates_personal_bias_by_default(tmp_path: Pat
     source_near_id = add_track(store, tmp_path, "source-near", [0.98, 0.02], artist="Near", album="Near")
     personal_fav_id = add_track(store, tmp_path, "personal-fav", [0.2, 0.8], artist="Fav", album="Fav")
     build_index(store, app_settings, "discogs_multi")
-    store.record_playback_event(track_id=personal_fav_id, event_type="liked")
+    store.record_playback_event(playback_event("liked", track_id=personal_fav_id))
     session, _queue = store.create_playback_session(
         source_type="track",
         source_id=seed_id,

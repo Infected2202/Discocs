@@ -16,6 +16,7 @@ from app.api.deps import (
     playback_settings_defaults,
     request_field_names,
 )
+from app.models import PlaybackEventCreate
 from app.autoplay import refill_autoplay_queue
 from app.schemas.requests import (
     AutoplayRefillRequest,
@@ -44,6 +45,16 @@ from app.serializers.playback import (
 router = APIRouter(prefix="/api/v1")
 
 _PLAYBACK_SESSION_NOT_FOUND = "Playback session not found"
+
+
+def _queue_event(session_id: str, queue_item_id: str, track_id: int, event_type: str) -> PlaybackEventCreate:
+    return PlaybackEventCreate(
+        session_id=session_id,
+        queue_item_id=queue_item_id,
+        track_id=track_id,
+        event_type=event_type,
+        source="api",
+    )
 
 
 @router.get("/playback/settings", response_model=PlaybackSettingsResponse)
@@ -189,13 +200,7 @@ def api_v1_patch_playback_queue(
             item = store.remove_queue_item(session_id, request.queue_item_id)
             if item is None:
                 return api_error(404, "not_found", "Queue item not found")
-            store.record_playback_event(
-                session_id=session_id,
-                queue_item_id=request.queue_item_id,
-                track_id=item.track_id,
-                event_type="removed_from_queue",
-                source="api",
-            )
+            store.record_playback_event(_queue_event(session_id, request.queue_item_id, item.track_id, "removed_from_queue"))
         elif request.operation == "move":
             if not request.queue_item_id or request.position is None:
                 return api_error(400, "invalid_request", "move requires queue_item_id and position")
@@ -207,13 +212,7 @@ def api_v1_patch_playback_queue(
             if item is None:
                 return api_error(404, "not_found", "Queue item not found")
             event_type = "queue_click" if request.operation == "jump" else "track_started"
-            store.record_playback_event(
-                session_id=session_id,
-                queue_item_id=request.queue_item_id,
-                track_id=item.track_id,
-                event_type=event_type,
-                source="api",
-            )
+            store.record_playback_event(_queue_event(session_id, request.queue_item_id, item.track_id, event_type))
         else:
             return api_error(400, "invalid_request", "Unsupported queue operation")
     except ValueError as exc:
@@ -228,18 +227,20 @@ def api_v1_record_playback_event(request: PlaybackEventRequest) -> dict[str, obj
     store, settings = context()
     try:
         result = store.record_playback_event(
-            session_id=request.session_id,
-            queue_item_id=request.queue_item_id,
-            track_id=request.track_id,
-            release_id=request.release_id,
-            artist_id=request.artist_id,
-            event_type=request.event_type,
-            position_seconds=request.position_seconds,
-            duration_seconds=request.duration_seconds,
-            play_fraction=request.play_fraction,
-            client_event_id=request.client_event_id,
-            source=request.source,
-            payload=request.payload,
+            PlaybackEventCreate(
+                session_id=request.session_id,
+                queue_item_id=request.queue_item_id,
+                track_id=request.track_id,
+                release_id=request.release_id,
+                artist_id=request.artist_id,
+                event_type=request.event_type,
+                position_seconds=request.position_seconds,
+                duration_seconds=request.duration_seconds,
+                play_fraction=request.play_fraction,
+                client_event_id=request.client_event_id,
+                source=request.source,
+                payload=request.payload,
+            )
         )
     except ValueError as exc:
         return api_error(400, "invalid_request", str(exc))

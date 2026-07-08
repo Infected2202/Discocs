@@ -206,6 +206,36 @@ class InstantMixRequest:
     created_at: str
 
 
+@dataclass(frozen=True)
+class InstantMixRequestParams:
+    effective_model: str
+    effective_count: int
+    max_per_artist: int
+    exclude_same_album: bool
+    count_collaboration_artists: bool
+    requested_model: str | None = None
+    requested_count: int | None = None
+    requested_max_per_artist: int | None = None
+    requested_exclude_same_album: bool | None = None
+    min_similarity: float | None = None
+
+
+@dataclass(frozen=True)
+class InstantMixRequestRecord:
+    request_id: str
+    seed_item_id: str
+    model_name: str
+    params: InstantMixRequestParams
+    status: str
+    provider: str = "navidrome"
+    seed_track_id: int | None = None
+    results: tuple[object, ...] = ()
+    skipped_without_external_id: int = 0
+    duration_ms: float | None = None
+    error: str | None = None
+    created_at: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Track listings / similarity
 # ---------------------------------------------------------------------------
@@ -406,6 +436,24 @@ class PlaybackEvent:
     client_event_id: str | None
     source: str
     payload_json: str | None
+
+
+@dataclass(frozen=True)
+class PlaybackEventCreate:
+    event_type: str
+    session_id: str | None = None
+    queue_item_id: str | None = None
+    track_id: int | None = None
+    release_id: int | None = None
+    artist_id: int | None = None
+    position_seconds: float | None = None
+    duration_seconds: float | None = None
+    play_fraction: float | None = None
+    client_event_id: str | None = None
+    source: str = "web"
+    payload: dict[str, object] | None = None
+    event_id: str | None = None
+    created_at: str | None = None
 
 
 @dataclass(frozen=True)

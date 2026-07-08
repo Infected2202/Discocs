@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 
 from app.scanner import ScannedTrack
-from app.store import Store, TrackFeature, TrackPrediction
+from app.store import PlaybackEventCreate, Store, TrackFeature, TrackPrediction
+
+
+def playback_event(event_type: str, **kwargs) -> PlaybackEventCreate:
+    return PlaybackEventCreate(event_type=event_type, **kwargs)
 
 
 def test_store_upsert_and_embedding_round_trip(tmp_path: Path):
@@ -1117,12 +1121,14 @@ def test_playback_queue_click_is_navigation_not_skip(tmp_path: Path):
     session, queue = store.create_playback_session(source_type="track", source_id=track_id, track_ids=[track_id])
 
     result = store.record_playback_event(
-        session_id=session.id,
-        queue_item_id=queue[0].id,
-        event_type="queue_click",
-        position_seconds=5.0,
-        duration_seconds=200.0,
-        client_event_id="queue-click-1",
+        playback_event(
+            "queue_click",
+            session_id=session.id,
+            queue_item_id=queue[0].id,
+            position_seconds=5.0,
+            duration_seconds=200.0,
+            client_event_id="queue-click-1",
+        )
     )
 
     assert result.duplicate is False
@@ -1158,18 +1164,22 @@ def test_playback_skip_strength_and_recompute_from_raw_events(tmp_path: Path):
     )
 
     store.record_playback_event(
-        track_id=early_id,
-        event_type="skipped",
-        position_seconds=10.0,
-        duration_seconds=240.0,
-        client_event_id="early-skip",
+        playback_event(
+            "skipped",
+            track_id=early_id,
+            position_seconds=10.0,
+            duration_seconds=240.0,
+            client_event_id="early-skip",
+        )
     )
     store.record_playback_event(
-        track_id=late_id,
-        event_type="skipped",
-        position_seconds=220.0,
-        duration_seconds=240.0,
-        client_event_id="late-skip",
+        playback_event(
+            "skipped",
+            track_id=late_id,
+            position_seconds=220.0,
+            duration_seconds=240.0,
+            client_event_id="late-skip",
+        )
     )
 
     early = store.get_track_preference(early_id)
@@ -1218,15 +1228,15 @@ def test_playback_completion_like_dislike_replay_save_and_duplicate_idempotency(
     release_id = store.search_entities("Signals")["releases"]["items"][0].release.id
     artist_id = store.search_entities("Positive Artist")["artists"]["items"][0].artist.id
 
-    store.record_playback_event(track_id=track_id, event_type="play_threshold_reached", client_event_id="threshold")
-    store.record_playback_event(track_id=track_id, event_type="completed", play_fraction=0.5, client_event_id="low-complete")
-    store.record_playback_event(track_id=track_id, event_type="completed", play_fraction=0.95, client_event_id="complete")
-    store.record_playback_event(track_id=track_id, event_type="liked", client_event_id="liked")
-    duplicate = store.record_playback_event(track_id=track_id, event_type="liked", client_event_id="liked")
-    store.record_playback_event(track_id=track_id, event_type="disliked", client_event_id="disliked")
-    store.record_playback_event(track_id=track_id, event_type="replayed", client_event_id="replayed")
-    store.record_playback_event(track_id=track_id, event_type="saved_to_playlist", client_event_id="saved")
-    store.record_playback_event(track_id=track_id, event_type="removed_from_queue", client_event_id="removed")
+    store.record_playback_event(playback_event("play_threshold_reached", track_id=track_id, client_event_id="threshold"))
+    store.record_playback_event(playback_event("completed", track_id=track_id, play_fraction=0.5, client_event_id="low-complete"))
+    store.record_playback_event(playback_event("completed", track_id=track_id, play_fraction=0.95, client_event_id="complete"))
+    store.record_playback_event(playback_event("liked", track_id=track_id, client_event_id="liked"))
+    duplicate = store.record_playback_event(playback_event("liked", track_id=track_id, client_event_id="liked"))
+    store.record_playback_event(playback_event("disliked", track_id=track_id, client_event_id="disliked"))
+    store.record_playback_event(playback_event("replayed", track_id=track_id, client_event_id="replayed"))
+    store.record_playback_event(playback_event("saved_to_playlist", track_id=track_id, client_event_id="saved"))
+    store.record_playback_event(playback_event("removed_from_queue", track_id=track_id, client_event_id="removed"))
 
     pref = store.get_track_preference(track_id)
     assert duplicate.duplicate is True
@@ -1275,8 +1285,8 @@ def test_top_tracks_for_artist_orders_by_play_count_desc(tmp_path: Path):
     artist_id = store.search_entities("Shared Artist")["artists"]["items"][0].artist.id
 
     for _ in range(3):
-        store.record_playback_event(track_id=loud_id, event_type="play_threshold_reached")
-    store.record_playback_event(track_id=medium_id, event_type="play_threshold_reached")
+        store.record_playback_event(playback_event("play_threshold_reached", track_id=loud_id))
+    store.record_playback_event(playback_event("play_threshold_reached", track_id=medium_id))
 
     top = store.top_tracks_for_artist(artist_id, limit=5)
 
@@ -1309,7 +1319,7 @@ def test_top_tracks_for_artist_excludes_other_artists(tmp_path: Path):
             mtime=1,
         )
     )
-    store.record_playback_event(track_id=own_id, event_type="play_threshold_reached")
+    store.record_playback_event(playback_event("play_threshold_reached", track_id=own_id))
     artist_id = store.search_entities("Own Artist")["artists"]["items"][0].artist.id
 
     top = store.top_tracks_for_artist(artist_id, limit=5)
@@ -1342,11 +1352,13 @@ def test_playback_queue_rejects_missing_tracks_and_low_completion_does_not_finis
         store.replace_queue_items(session.id, [{"track_id": 999}])
 
     store.record_playback_event(
-        session_id=session.id,
-        queue_item_id=queue[0].id,
-        track_id=track_id,
-        event_type="completed",
-        play_fraction=0.5,
+        playback_event(
+            "completed",
+            session_id=session.id,
+            queue_item_id=queue[0].id,
+            track_id=track_id,
+            play_fraction=0.5,
+        )
     )
 
     assert store.list_queue_items(session.id)[0].status == "queued"
