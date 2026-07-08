@@ -163,7 +163,7 @@ class JobsStoreMixin:
             if not tracks:
                 conn.execute(
                     "UPDATE analysis_jobs SET finished_at = ?, message = ? WHERE id = ?",
-                    (now, f"Analyzed 0 tracks, failed 0", job_id),
+                    (now, "Analyzed 0 tracks, failed 0", job_id),
                 )
         return self.get_analysis_job(job_id)  # type: ignore[return-value]
 

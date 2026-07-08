@@ -347,6 +347,20 @@ def test_analysis_tasks_claim_retry_and_complete(tmp_path: Path):
     assert finished.final_failed == 1
 
 
+def test_create_analysis_job_without_tracks_finishes_immediately(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+
+    job = store.create_analysis_job("discogs_multi", None)
+
+    assert job.status == "completed"
+    assert job.total == 0
+    assert job.done == 0
+    assert job.failed == 0
+    assert job.message == "Analyzed 0 tracks, failed 0"
+    assert job.finished_at is not None
+
+
 def test_expired_analysis_lease_returns_to_queue(tmp_path: Path):
     store = Store(tmp_path / "app.db")
     store.init()
