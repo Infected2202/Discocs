@@ -8,6 +8,14 @@ from app.serializers.entities import _json_object, image_ref, track_summary_dict
 from app.store import Store
 
 
+def _generated_mix_artwork(mix, items) -> dict[str, object]:
+    if mix.cover_path:
+        return image_ref(f"/api/v1/mixes/{mix.id}/cover", "generated_mix")
+    if items:
+        return image_ref(f"/tracks/{items[0].track_id}/cover?size=512", "track")
+    return image_ref(None, "none")
+
+
 def generated_mix_summary_dict(store: Store, mix) -> dict[str, object]:
     items = store.list_generated_mix_items(mix.id)
     anchor = _json_object(mix.anchor_json)
@@ -18,11 +26,7 @@ def generated_mix_summary_dict(store: Store, mix) -> dict[str, object]:
         str(anchor.get("representative_album") or ""),
     ]
     subtitle = ", ".join(value for value in subtitle_parts if value) or f"{len(items)} tracks"
-    artwork = (
-        image_ref(f"/api/v1/mixes/{mix.id}/cover", "generated_mix")
-        if mix.cover_path
-        else (image_ref(f"/tracks/{items[0].track_id}/cover?size=512", "track") if items else image_ref(None, "none"))
-    )
+    artwork = _generated_mix_artwork(mix, items)
     return {
         "id": mix.id,
         "title": mix.title,

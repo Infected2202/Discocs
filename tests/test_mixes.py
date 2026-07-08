@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -7,6 +8,7 @@ from app.config import Settings
 from app.mixes import build_taste_regions, ensure_dashboard_mixes, generate_mixes, resolve_mix_settings
 from app.recommender import build_index
 from app.scanner import ScannedTrack
+from app.serializers.mixes import generated_mix_summary_dict
 from app.store import Store
 
 
@@ -383,3 +385,55 @@ def test_generated_mix_listing_keeps_generation_order(tmp_path: Path):
 
     titles = [mix.title for mix in store.list_generated_mixes(statuses=["active"], limit=8)]
     assert [title.split(":", 1)[0] for title in titles] == [f"Mix {index}" for index in range(1, 9)]
+
+
+def test_generated_mix_summary_uses_expected_artwork_source():
+    class FakeStore:
+        def __init__(self, items):
+            self._items = items
+
+        def list_generated_mix_items(self, _mix_id):
+            return self._items
+
+    base_mix = {
+        "id": "mix-1",
+        "title": "Mix 1",
+        "mix_type": "generated",
+        "status": "active",
+        "anchor_json": None,
+        "settings_json": None,
+        "score_summary_json": None,
+        "created_at": "2026-07-08T00:00:00+00:00",
+        "updated_at": "2026-07-08T00:00:00+00:00",
+        "expires_at": None,
+        "saved_playlist_id": None,
+    }
+
+    with_cover = generated_mix_summary_dict(
+        FakeStore([SimpleNamespace(track_id=42)]),
+        SimpleNamespace(**base_mix, cover_path="cover.jpg"),
+    )
+    with_track_cover = generated_mix_summary_dict(
+        FakeStore([SimpleNamespace(track_id=42)]),
+        SimpleNamespace(**base_mix, cover_path=None),
+    )
+    without_artwork = generated_mix_summary_dict(
+        FakeStore([]),
+        SimpleNamespace(**base_mix, cover_path=None),
+    )
+
+    assert with_cover["artwork"] == {
+        "url": "/api/v1/mixes/mix-1/cover",
+        "source": "generated_mix",
+        "placeholder": False,
+    }
+    assert with_track_cover["artwork"] == {
+        "url": "/tracks/42/cover?size=512",
+        "source": "track",
+        "placeholder": False,
+    }
+    assert without_artwork["artwork"] == {
+        "url": None,
+        "source": "none",
+        "placeholder": True,
+    }
