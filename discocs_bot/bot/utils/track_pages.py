@@ -263,6 +263,7 @@ async def show_or_update_track_results(
     session_key: str,
     has_next: bool,
 ) -> None:
+    _ = anchor
     view = get_results_view(context)
     new_session = (
         view is None

@@ -89,3 +89,51 @@ def test_result_callbacks_delegate_with_expected_slot(monkeypatch, tmp_path: Pat
             context.bot_data["settings"].temp_dir,
         )
     ]
+
+
+def test_show_or_update_track_results_creates_new_session_card(monkeypatch, tmp_path: Path) -> None:
+    context = SimpleNamespace(user_data={}, bot_data={})
+    bot = SimpleNamespace()
+    track = SimpleNamespace(id="track-1", album_id="album-1")
+    sent: list[tuple[object, int, object, object, Path, int, object, str]] = []
+
+    async def fake_send_track_card(
+        passed_bot,
+        chat_id: int,
+        passed_track,
+        *,
+        navidrome,
+        temp_dir: Path,
+        index: int,
+        keyboard,
+        caption_prefix: str,
+    ) -> SimpleNamespace:
+        sent.append((passed_bot, chat_id, passed_track, navidrome, temp_dir, index, keyboard, caption_prefix))
+        return SimpleNamespace(message_id=42)
+
+    monkeypatch.setattr(track_pages_module, "carousel_keyboard", lambda **kwargs: kwargs)
+    monkeypatch.setattr(track_pages_module, "send_track_card", fake_send_track_card)
+
+    asyncio.run(
+        track_pages_module.show_or_update_track_results(
+            context,
+            bot,
+            chat_id=99,
+            anchor=None,
+            tracks=[track],
+            navidrome=SimpleNamespace(),
+            temp_dir=tmp_path / "temp",
+            header="Results",
+            page_size=10,
+            page_kind="search",
+            session_key="query",
+            has_next=False,
+        )
+    )
+
+    view = track_pages_module.get_results_view(context)
+    assert sent == [(bot, 99, track, sent[0][3], tmp_path / "temp", 1, sent[0][6], "Results")]
+    assert view is not None
+    assert view.chat_id == 99
+    assert view.message_id == 42
+    assert view.session_key == "query"
