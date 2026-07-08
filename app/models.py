@@ -541,6 +541,8 @@ class Playlist:
     id: int
     title: str
     kind: str
+    description: str | None
+    cover_path: str | None
     source_json: str | None
     created_at: str
     updated_at: str
@@ -584,6 +586,7 @@ QUEUE_ORIGINS = {"source", "manual", "autoplay", "flow", "generated_mix"}
 QUEUE_STATUSES = {"queued", "playing", "played", "skipped", "removed"}
 GENERATED_MIX_TYPES = {"taste_region", "supermix", "forgotten", "discovery", "manual_seed", "debug"}
 GENERATED_MIX_STATUSES = {"active", "stale", "saved", "archived"}
+PLAYLIST_KINDS = {"manual", "saved_mix"}
 PLAYBACK_EVENT_TYPES = {
     "track_started",
     "progress",

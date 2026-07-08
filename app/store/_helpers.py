@@ -285,6 +285,8 @@ def row_to_playlist(row: sqlite3.Row) -> Playlist:
         id=int(row["id"]),
         title=str(row["title"]),
         kind=str(row["kind"]),
+        description=row["description"],
+        cover_path=row["cover_path"],
         source_json=row["source_json"],
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),

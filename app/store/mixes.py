@@ -70,6 +70,7 @@ from app.models import (
     NormalizationStatus,
     Playlist,
     PlaylistItem,
+    PLAYLIST_KINDS,
     PlaybackEvent,
     PLAYBACK_EVENT_TYPES,
     PlaybackEventResult,
@@ -102,6 +103,11 @@ logger = logging.getLogger(__name__)
 INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
 _SELECT_GENERATED_MIX_BY_ID = "SELECT * FROM generated_mixes WHERE id = ?"
+_SELECT_PLAYLIST_BY_ID = "SELECT * FROM playlists WHERE id = ?"
+_INSERT_PLAYLIST_ITEM = (
+    "INSERT INTO playlist_items (playlist_id, position, track_id, created_at) VALUES (?, ?, ?, ?)"
+)
+_UNSET: object = object()
 
 class MixesStoreMixin:
     def save_generated_mix(
@@ -358,6 +364,212 @@ class MixesStoreMixin:
                 (playlist_id,),
             ).fetchall()
         return [row_to_playlist_item(row) for row in rows]
+
+    def create_playlist(
+        self,
+        *,
+        title: str,
+        description: str | None = None,
+        kind: str = "manual",
+        source: dict[str, object] | None = None,
+        track_ids: list[int] | None = None,
+    ) -> Playlist:
+        _require_choice(kind, PLAYLIST_KINDS, "kind")
+        clean_title = title.strip()
+        if not clean_title:
+            raise ValueError("Playlist title must not be empty")
+        now = utc_now()
+        ids = [int(track_id) for track_id in (track_ids or [])]
+        with self.connect() as conn:
+            _validate_track_ids(conn, ids)
+            cursor = conn.execute(
+                """
+                INSERT INTO playlists (title, kind, description, source_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (clean_title, kind, description, _json_dumps(source), now, now),
+            )
+            playlist_id = int(cursor.lastrowid)
+            position = 0
+            seen: set[int] = set()
+            for track_id in ids:
+                if track_id in seen:
+                    continue
+                seen.add(track_id)
+                conn.execute(_INSERT_PLAYLIST_ITEM, (playlist_id, position, track_id, now))
+                position += 1
+            row = conn.execute(_SELECT_PLAYLIST_BY_ID, (playlist_id,)).fetchone()
+        return row_to_playlist(row)
+
+    def update_playlist(
+        self,
+        playlist_id: int,
+        *,
+        title: str | None = None,
+        description: str | None | object = _UNSET,
+    ) -> Playlist | None:
+        sets: list[str] = []
+        params: list[object] = []
+        if title is not None:
+            clean_title = title.strip()
+            if not clean_title:
+                raise ValueError("Playlist title must not be empty")
+            sets.append("title = ?")
+            params.append(clean_title)
+        if description is not _UNSET:
+            sets.append("description = ?")
+            params.append(description)
+        with self.connect() as conn:
+            if sets:
+                sets.append("updated_at = ?")
+                params.append(utc_now())
+                cursor = conn.execute(
+                    f"UPDATE playlists SET {', '.join(sets)} WHERE id = ?",
+                    [*params, playlist_id],
+                )
+                if cursor.rowcount == 0:
+                    return None
+            row = conn.execute(_SELECT_PLAYLIST_BY_ID, (playlist_id,)).fetchone()
+        return row_to_playlist(row) if row else None
+
+    def delete_playlist(self, playlist_id: int) -> bool:
+        now = utc_now()
+        with self.connect() as conn:
+            # Saved mixes point at their playlist; deleting the playlist makes the
+            # mix saveable again instead of leaving a dangling reference.
+            conn.execute(
+                """
+                UPDATE generated_mixes
+                SET status = CASE WHEN status = 'saved' THEN 'active' ELSE status END,
+                    saved_playlist_id = NULL,
+                    updated_at = ?
+                WHERE saved_playlist_id = ?
+                """,
+                (now, playlist_id),
+            )
+            cursor = conn.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,))
+            return cursor.rowcount > 0
+
+    def list_playlists(self, *, limit: int = 50, offset: int = 0) -> list[Playlist]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM playlists
+                ORDER BY updated_at DESC, id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (int(limit), int(offset)),
+            ).fetchall()
+        return [row_to_playlist(row) for row in rows]
+
+    def count_playlists(self) -> int:
+        with self.connect() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM playlists").fetchone()[0])
+
+    def playlist_track_counts(self, playlist_ids: list[int]) -> dict[int, int]:
+        if not playlist_ids:
+            return {}
+        unique_ids = sorted({int(playlist_id) for playlist_id in playlist_ids})
+        placeholders = ", ".join("?" for _ in unique_ids)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT playlist_id, COUNT(*) AS track_count
+                FROM playlist_items
+                WHERE playlist_id IN ({placeholders})
+                GROUP BY playlist_id
+                """,
+                unique_ids,
+            ).fetchall()
+        return {int(row["playlist_id"]): int(row["track_count"]) for row in rows}
+
+    def playlist_track_ids(self, playlist_id: int) -> list[int]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT track_id FROM playlist_items
+                WHERE playlist_id = ?
+                ORDER BY position
+                """,
+                (playlist_id,),
+            ).fetchall()
+        return [int(row["track_id"]) for row in rows]
+
+    def add_playlist_tracks(self, playlist_id: int, track_ids: list[int]) -> int:
+        now = utc_now()
+        ids = [int(track_id) for track_id in track_ids]
+        with self.connect() as conn:
+            if conn.execute(_SELECT_PLAYLIST_BY_ID, (playlist_id,)).fetchone() is None:
+                raise ValueError(f"Playlist not found: {playlist_id}")
+            _validate_track_ids(conn, ids)
+            existing = {
+                int(row["track_id"])
+                for row in conn.execute(
+                    "SELECT track_id FROM playlist_items WHERE playlist_id = ?",
+                    (playlist_id,),
+                )
+            }
+            position = int(
+                conn.execute(
+                    "SELECT COALESCE(MAX(position) + 1, 0) FROM playlist_items WHERE playlist_id = ?",
+                    (playlist_id,),
+                ).fetchone()[0]
+            )
+            added = 0
+            for track_id in ids:
+                if track_id in existing:
+                    continue
+                existing.add(track_id)
+                conn.execute(_INSERT_PLAYLIST_ITEM, (playlist_id, position, track_id, now))
+                position += 1
+                added += 1
+            if added:
+                conn.execute("UPDATE playlists SET updated_at = ? WHERE id = ?", (now, playlist_id))
+        return added
+
+    def remove_playlist_tracks(self, playlist_id: int, track_ids: list[int]) -> int:
+        now = utc_now()
+        ids = sorted({int(track_id) for track_id in track_ids})
+        if not ids:
+            return 0
+        placeholders = ", ".join("?" for _ in ids)
+        with self.connect() as conn:
+            cursor = conn.execute(
+                f"DELETE FROM playlist_items WHERE playlist_id = ? AND track_id IN ({placeholders})",
+                [playlist_id, *ids],
+            )
+            removed = int(cursor.rowcount)
+            if removed:
+                self._repack_playlist_positions(conn, playlist_id)
+                conn.execute("UPDATE playlists SET updated_at = ? WHERE id = ?", (now, playlist_id))
+        return removed
+
+    def _repack_playlist_positions(self, conn: sqlite3.Connection, playlist_id: int) -> None:
+        # Re-insert to keep positions contiguous without tripping the
+        # (playlist_id, position) primary key during shifts.
+        rows = conn.execute(
+            """
+            SELECT track_id, created_at FROM playlist_items
+            WHERE playlist_id = ?
+            ORDER BY position
+            """,
+            (playlist_id,),
+        ).fetchall()
+        conn.execute("DELETE FROM playlist_items WHERE playlist_id = ?", (playlist_id,))
+        for position, row in enumerate(rows):
+            conn.execute(
+                _INSERT_PLAYLIST_ITEM,
+                (playlist_id, position, int(row["track_id"]), str(row["created_at"])),
+            )
+
+    def set_playlist_cover_path(self, playlist_id: int, cover_path: str | None) -> Playlist | None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE playlists SET cover_path = ? WHERE id = ?",
+                (cover_path, playlist_id),
+            )
+            row = conn.execute(_SELECT_PLAYLIST_BY_ID, (playlist_id,)).fetchone()
+        return row_to_playlist(row) if row else None
 
     def mark_generated_mixes_stale(self, *, mix_type: str | None = None) -> int:
         params: list[object] = [utc_now()]

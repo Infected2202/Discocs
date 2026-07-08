@@ -758,6 +758,8 @@ class StoreBase:
             self._ensure_column(conn, "playback_events", "source", "TEXT NOT NULL DEFAULT 'web'")
             self._ensure_column(conn, "playback_events", "payload_json", "TEXT")
             self._ensure_column(conn, "generated_mixes", "cover_path", "TEXT")
+            self._ensure_column(conn, "playlists", "description", "TEXT")
+            self._ensure_column(conn, "playlists", "cover_path", "TEXT")
             self._backfill_added_timestamps(conn)
 
     def _ensure_column(
