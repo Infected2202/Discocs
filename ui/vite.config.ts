@@ -6,26 +6,7 @@ import { defineConfig } from "vite"
 
 const BACKEND = "http://localhost:8711"
 
-const proxyPaths = [
-  "/api",
-  "/tracks",
-  "/artists",
-  "/releases",
-  "/mixes",
-  "/settings",
-  "/stats",
-  "/jobs",
-  "/feedback",
-  "/navidrome",
-  "/dashboard",
-  "/workers",
-  "/models",
-  "/index",
-  "/metrics",
-  "/playback",
-  "/likes",
-  "/health",
-]
+const proxyPaths = ["/api", "/health", "/admin"]
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],

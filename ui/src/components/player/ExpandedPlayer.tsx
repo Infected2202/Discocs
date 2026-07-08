@@ -84,7 +84,7 @@ export default function ExpandedPlayer() {
     try {
       const { apiFetch } = await import("@/api/client")
       const envelope = await apiFetch<import("@/api/types").PlaybackEnvelope>(
-        `/tracks/${currentTrackId}/instant-mix`,
+        `/api/v1/tracks/${currentTrackId}/instant-mix`,
         { method: "POST" }
       )
       await playFromEnvelope(envelope)

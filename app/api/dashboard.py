@@ -12,10 +12,10 @@ from fastapi.responses import JSONResponse
 from app.api.deps import api_error, context
 from app.services.dashboard import dashboard_shelf_response, ensure_dashboard_mixes_fast
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 
 
-@router.get("/api/v1/dashboard", response_model=None)
+@router.get("/dashboard", response_model=None)
 def api_v1_dashboard(
     limit: Annotated[int, Query(ge=1, le=50)] = 12,
     include_debug: bool = False,
@@ -51,7 +51,7 @@ def api_v1_dashboard(
     }
 
 
-@router.get("/api/v1/dashboard/shelves/{key}", response_model=None)
+@router.get("/dashboard/shelves/{key}", response_model=None)
 def api_v1_dashboard_shelf(
     key: str,
     limit: Annotated[int, Query(ge=1, le=50)] = 12,

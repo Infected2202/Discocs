@@ -21,10 +21,10 @@ from app.serializers.search import (
     search_top_result,
 )
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 
 
-@router.get("/api/v1/search", response_model=SearchResponse)
+@router.get("/search", response_model=SearchResponse)
 def api_v1_search(
     q: str = "",
     type: Annotated[str, Query(pattern="^(all|artist|release|track)$")] = "all",

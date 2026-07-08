@@ -452,7 +452,7 @@ def test_generated_mix_summary_uses_expected_artwork_source():
         "placeholder": False,
     }
     assert with_track_cover["artwork"] == {
-        "url": "/tracks/42/cover?size=512",
+        "url": "/api/v1/tracks/42/cover?size=512",
         "source": "track",
         "placeholder": False,
     }

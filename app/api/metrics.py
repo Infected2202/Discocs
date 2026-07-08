@@ -14,7 +14,7 @@ from app.models import FeatureFilter
 from app.schemas.requests import FeatureSearchRequest
 from app.serializers.tracks import enriched_feature_track_dict
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 
 
 @router.get("/metrics/features")

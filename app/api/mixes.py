@@ -39,7 +39,7 @@ from app.services.dashboard import ensure_dashboard_mixes_fast
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 
 _GENERATED_MIX_NOT_FOUND = "Generated mix not found"
 
@@ -48,7 +48,7 @@ _GENERATED_MIX_NOT_FOUND = "Generated mix not found"
 # Generated mixes
 # ---------------------------------------------------------------------------
 
-@router.get("/api/v1/mixes", response_model=None)
+@router.get("/mixes", response_model=None)
 def api_v1_mixes(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -77,13 +77,13 @@ def api_v1_mixes(
     return response
 
 
-@router.get("/api/v1/mixes/settings", response_model=None)
+@router.get("/mixes/settings", response_model=None)
 def api_v1_mix_settings() -> dict[str, object]:
     _store, settings = context()
     return {"settings": generated_mix_settings(settings)}
 
 
-@router.get("/api/v1/mixes/status", response_model=None)
+@router.get("/mixes/status", response_model=None)
 def api_v1_mix_status() -> dict[str, object]:
     store, settings = context()
     mix_settings = generated_mix_settings(settings)
@@ -97,7 +97,7 @@ def api_v1_mix_status() -> dict[str, object]:
     return {"generation": diagnostics}
 
 
-@router.put("/api/v1/mixes/settings", response_model=None)
+@router.put("/mixes/settings", response_model=None)
 def api_v1_update_mix_settings(request: GeneratedMixSettingsRequest) -> dict[str, object]:
     _store, settings = context()
     runtime = load_runtime_settings(settings.data_dir)
@@ -110,7 +110,7 @@ def api_v1_update_mix_settings(request: GeneratedMixSettingsRequest) -> dict[str
     return {"settings": generated_mix_settings(settings)}
 
 
-@router.get("/api/v1/mixes/{mix_id}", response_model=None)
+@router.get("/mixes/{mix_id}", response_model=None)
 def api_v1_mix_detail(mix_id: str, include_debug: bool = False) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     mix = store.get_generated_mix(mix_id)
@@ -125,7 +125,7 @@ def api_v1_mix_detail(mix_id: str, include_debug: bool = False) -> dict[str, obj
     return detail
 
 
-@router.get("/api/v1/mixes/{mix_id}/cover", response_model=None)
+@router.get("/mixes/{mix_id}/cover", response_model=None)
 def api_v1_mix_cover(mix_id: str) -> FileResponse | JSONResponse:
     store, _settings = context()
     mix = store.get_generated_mix(mix_id)
@@ -139,7 +139,7 @@ def api_v1_mix_cover(mix_id: str) -> FileResponse | JSONResponse:
     return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
 
-@router.post("/api/v1/mixes/generate", response_model=None)
+@router.post("/mixes/generate", response_model=None)
 def api_v1_generate_mixes(request: MixGenerateRequest) -> dict[str, object] | JSONResponse:
     store, settings = context()
     request_settings = {**generated_mix_settings(settings), **request.settings}
@@ -160,7 +160,7 @@ def api_v1_generate_mixes(request: MixGenerateRequest) -> dict[str, object] | JS
     }
 
 
-@router.post("/api/v1/mixes/{mix_id}/save", response_model=None)
+@router.post("/mixes/{mix_id}/save", response_model=None)
 def api_v1_save_mix(mix_id: str) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     mix = store.save_generated_mix_as_playlist(mix_id)
@@ -169,7 +169,7 @@ def api_v1_save_mix(mix_id: str) -> dict[str, object] | JSONResponse:
     return generated_mix_summary_dict(store, mix)
 
 
-@router.post("/api/v1/mixes/{mix_id}/play", response_model=PlaybackSessionEnvelopeResponse)
+@router.post("/mixes/{mix_id}/play", response_model=PlaybackSessionEnvelopeResponse)
 def api_v1_play_mix(mix_id: str) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     mix = store.get_generated_mix(mix_id)

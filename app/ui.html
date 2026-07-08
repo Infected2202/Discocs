@@ -1239,7 +1239,7 @@
       lastAutoplayStatus = "Instant Mix is loading...";
       renderPlayerState();
       try {
-        const data = await json(`/tracks/${id}/instant-mix`, {
+        const data = await json(`/api/v1/tracks/${id}/instant-mix`, {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           timeoutMs: 60000,
@@ -1565,7 +1565,7 @@
       }
       try {
         seedId = seed;
-        seedTrack = await json(`/tracks/${seed}`);
+        seedTrack = await json(`/api/v1/tracks/${seed}`);
         document.getElementById("seedPanel").innerHTML = renderTrack({...seedTrack, has_embedding: true}, "seed");
         document.getElementById("refreshSimilarBtn").disabled = false;
         await loadSimilar(seed, {updateUrl: false});
@@ -2393,7 +2393,7 @@
       statsInFlight = true;
       const listenerDashboardPromise = loadListenerDashboard();
       try {
-        const data = await json(`/stats?model=${encodeURIComponent(model())}`, {timeoutMs: 30000});
+        const data = await json(`/api/v1/stats?model=${encodeURIComponent(model())}`, {timeoutMs: 30000});
         renderDashboardCards(data);
         renderModelCards(data);
         const indexStatus = data.index_status || (data.index_exists ? "ready" : "missing");
@@ -2521,7 +2521,7 @@
       const statusTarget = document.getElementById("audioFeaturesStatus");
       if (!statusTarget) return;
       try {
-        const data = await json(`/stats?model=${encodeURIComponent(model())}`, {timeoutMs: 30000});
+        const data = await json(`/api/v1/stats?model=${encodeURIComponent(model())}`, {timeoutMs: 30000});
         const audio = data.audio_features || {};
         const extractor = audio.extractor || audioFeaturesExtractor();
         statusTarget.textContent =
@@ -2532,7 +2532,7 @@
     }
     async function loadNavidromeSettings() {
       try {
-        const data = await json("/settings/navidrome");
+        const data = await json("/api/v1/settings/navidrome");
         document.getElementById("navidromeUrl").value = data.url || "";
         document.getElementById("navidromeUser").value = data.user || "";
         document.getElementById("navidromePassword").value = "";
@@ -2557,7 +2557,7 @@
       };
       if (password) body.password = password;
       try {
-        const data = await json("/settings/navidrome", {
+        const data = await json("/api/v1/settings/navidrome", {
           method: "PUT",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify(body)
@@ -2570,7 +2570,7 @@
     }
     async function pingNavidrome() {
       try {
-        const data = await json("/navidrome/ping", {method: "POST"});
+        const data = await json("/api/v1/navidrome/ping", {method: "POST"});
         const version = [data.version, data.server_version].filter(Boolean).join(" / ");
         setNavidromeStatus(`Navidrome ping OK${version ? `: ${version}` : ""}.`);
       } catch (err) {
@@ -2579,7 +2579,7 @@
     }
     async function startNavidromeSync() {
       try {
-        await json("/jobs/navidrome-sync", {
+        await json("/api/v1/jobs/navidrome-sync", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({page_size: 500, mark_stale: true})
@@ -2743,7 +2743,7 @@
     }
     async function loadInstantMixSettings() {
       try {
-        const data = await json("/instant-mix/settings");
+        const data = await json("/api/v1/instant-mix/settings");
         document.getElementById("instantMixModel").value = data.model || "discogs_multi";
         document.getElementById("instantMixCount").value = data.count ?? 50;
         document.getElementById("instantMixMinSimilarity").value = data.min_similarity ?? "";
@@ -2766,7 +2766,7 @@
         count_collaboration_artists: document.getElementById("instantMixCountCollaborationArtists").checked,
       };
       try {
-        await json("/instant-mix/settings", {
+        await json("/api/v1/instant-mix/settings", {
           method: "PUT",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify(body)
@@ -2802,7 +2802,7 @@
     }
     async function loadInstantMixRequests({updateUrl = true} = {}) {
       try {
-        const data = await json("/instant-mix/requests?limit=100");
+        const data = await json("/api/v1/instant-mix/requests?limit=100");
         const requests = data.results || [];
         const html = requests.map(renderInstantMixRequestCard).join("");
         document.getElementById("instantMixRequests").innerHTML = html || `<div class="meta">No instant mix requests yet.</div>`;
@@ -2923,7 +2923,7 @@
     async function fetchAndApplyNavidromeLikeIds({silent = false} = {}) {
       try {
         setNavidromeLikeDebug("GET /navidrome/starred/ids start");
-        const data = await json(`/navidrome/starred/ids?_=${Date.now()}`, {timeoutMs: 15000});
+        const data = await json(`/api/v1/navidrome/starred/ids?_=${Date.now()}`, {timeoutMs: 15000});
         applyNavidromeLikeIds(data);
         setNavidromeLikeDebug("GET /navidrome/starred/ids ok", {
           user: data.user,
@@ -2945,8 +2945,8 @@
       const buttons = document.querySelectorAll(`.navidrome-like-button[data-track-id="${id}"]`);
       buttons.forEach(button => button.disabled = true);
       try {
-        setNavidromeLikeDebug(`PUT /tracks/${id}/navidrome-star start`, {starred: nextLiked});
-        await json(`/tracks/${id}/navidrome-star`, {
+        setNavidromeLikeDebug(`PUT /api/v1/tracks/${id}/navidrome-star start`, {starred: nextLiked});
+        await json(`/api/v1/tracks/${id}/navidrome-star`, {
           method: "PUT",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({starred: nextLiked}),
@@ -3043,7 +3043,7 @@
     }
     async function loadInstantMixRequestDetail(requestId, {updateUrl = true} = {}) {
       try {
-        const item = await json(`/instant-mix/requests/${encodeURIComponent(requestId)}`);
+        const item = await json(`/api/v1/instant-mix/requests/${encodeURIComponent(requestId)}`);
         currentInstantMixRequestId = item.id;
         const params = item.params || {};
         const results = item.results || [];
@@ -3082,7 +3082,7 @@
     }
     function coverMarkup(t) {
       return `<div class="cover">
-        <img src="/tracks/${t.id}/cover?size=128" loading="lazy" alt="" onerror="this.parentElement.classList.add('empty'); this.remove()">
+        <img src="/api/v1/tracks/${t.id}/cover?size=128" loading="lazy" alt="" onerror="this.parentElement.classList.add('empty'); this.remove()">
       </div>`;
     }
     function renderTrack(t, mode) {
@@ -3171,7 +3171,7 @@
       document.getElementById("analysisSubtitle").textContent = `#${trackId}`;
       document.getElementById("analysisContent").innerHTML = `<div class="meta">Loading analysis metadata...</div>`;
       try {
-        const data = await json(`/tracks/${trackId}/analysis`);
+        const data = await json(`/api/v1/tracks/${trackId}/analysis`);
         const track = data.track;
         document.getElementById("analysisSubtitle").textContent = `#${track.id} ${label(track)}`;
         const outputs = data.outputs || [];
@@ -3233,7 +3233,7 @@
         </table>`;
     }
     async function loadLostFiles() {
-      const data = await json(`/lost-files?page=${lostFilesPage}&page_size=${lostFilesPageSize}`);
+      const data = await json(`/api/v1/lost-files?page=${lostFilesPage}&page_size=${lostFilesPageSize}`);
       if (data.results.length === 0 && data.count > 0 && lostFilesPage > 1) {
         lostFilesPage -= 1;
         return loadLostFiles();
@@ -3277,7 +3277,7 @@
         </table>`;
     }
     async function loadErroredFiles() {
-      const data = await json(`/analysis/errors?page=${erroredFilesPage}&page_size=${erroredFilesPageSize}`);
+      const data = await json(`/api/v1/analysis/errors?page=${erroredFilesPage}&page_size=${erroredFilesPageSize}`);
       if (data.results.length === 0 && data.count > 0 && erroredFilesPage > 1) {
         erroredFilesPage -= 1;
         return loadErroredFiles();
@@ -3291,7 +3291,7 @@
       const ids = Array.from(document.querySelectorAll(".errored-checkbox:checked")).map(input => input.value);
       if (!ids.length) return;
       if (!confirm(`Remove ${ids.length} error record(s) from the error list?`)) return;
-      await json("/analysis/errors", {
+      await json("/api/v1/analysis/errors", {
         method: "DELETE",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({task_ids: ids})
@@ -3300,7 +3300,7 @@
     }
     async function deleteAllErroredFiles() {
       if (!confirm("Remove all current error records from the error list?")) return;
-      await json("/analysis/errors", {
+      await json("/api/v1/analysis/errors", {
         method: "DELETE",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({all_errors: true})
@@ -3313,7 +3313,7 @@
       routeTo({view: "erroredFiles", page: String(erroredFilesPage - 1), model: model()}, {reset: true});
     }
     async function nextErroredFilesPage() {
-      const data = await json(`/analysis/errors?page=${erroredFilesPage}&page_size=${erroredFilesPageSize}`);
+      const data = await json(`/api/v1/analysis/errors?page=${erroredFilesPage}&page_size=${erroredFilesPageSize}`);
       if (erroredFilesPage >= data.pages) return;
       routeTo({view: "erroredFiles", page: String(erroredFilesPage + 1), model: model()}, {reset: true});
     }
@@ -3325,19 +3325,19 @@
       routeTo({view: "lostFiles", page: String(lostFilesPage - 1), model: model()}, {reset: true});
     }
     async function nextLostFilesPage() {
-      const data = await json(`/lost-files?page=${lostFilesPage}&page_size=${lostFilesPageSize}`);
+      const data = await json(`/api/v1/lost-files?page=${lostFilesPage}&page_size=${lostFilesPageSize}`);
       if (lostFilesPage >= data.pages) return;
       routeTo({view: "lostFiles", page: String(lostFilesPage + 1), model: model()}, {reset: true});
     }
     async function checkMissingFiles() {
-      await json("/jobs/check-missing-files", {method: "POST"});
+      await json("/api/v1/jobs/check-missing-files", {method: "POST"});
       await refreshJobs();
     }
     async function deleteSelectedLostFiles() {
       const ids = Array.from(document.querySelectorAll(".lost-checkbox:checked")).map(input => Number(input.value));
       if (!ids.length) return;
       if (!confirm(`Remove ${ids.length} lost file record(s) from the library?`)) return;
-      await json("/lost-files", {
+      await json("/api/v1/lost-files", {
         method: "DELETE",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({track_ids: ids})
@@ -3347,7 +3347,7 @@
     }
     async function deleteAllLostFiles() {
       if (!confirm("Remove all lost file records from the library?")) return;
-      await json("/lost-files", {
+      await json("/api/v1/lost-files", {
         method: "DELETE",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({all_missing: true})
@@ -3363,12 +3363,12 @@
         routeTo({view: "library", query: q, embedding_status: status, model: model()}, {reset: true});
         return;
       }
-      const data = await json(`/tracks?query=${encodeURIComponent(q)}&limit=80&embedding_status=${status}&model=${encodeURIComponent(model())}`);
+      const data = await json(`/api/v1/tracks?query=${encodeURIComponent(q)}&limit=80&embedding_status=${status}&model=${encodeURIComponent(model())}`);
       document.getElementById("tracksList").innerHTML = data.results.map(t => renderTrack(t, "library")).join("");
     }
     async function searchSeeds() {
       const q = document.getElementById("seedQuery").value;
-      const data = await json(`/tracks?query=${encodeURIComponent(q)}&limit=30&embedding_status=ready&model=${encodeURIComponent(model())}`);
+      const data = await json(`/api/v1/tracks?query=${encodeURIComponent(q)}&limit=30&embedding_status=ready&model=${encodeURIComponent(model())}`);
       document.getElementById("seedResults").innerHTML = data.results.map(t => renderTrack(t, "seed")).join("");
     }
     function facetButton(kind, item) {
@@ -3392,7 +3392,7 @@
         return;
       }
       const status = document.getElementById("browseEmbeddingStatus").value;
-      const data = await json(`/browse/facets?embedding_status=${status}&model=${encodeURIComponent(model())}`);
+      const data = await json(`/api/v1/browse/facets?embedding_status=${status}&model=${encodeURIComponent(model())}`);
       renderFacets(data);
       await loadBrowseTracks();
     }
@@ -3418,7 +3418,7 @@
         model: model()
       });
       Object.entries(browseFilters).forEach(([key, value]) => params.set(key, value));
-      const data = await json(`/tracks?${params.toString()}`);
+      const data = await json(`/api/v1/tracks?${params.toString()}`);
       const labels = Object.entries(browseFilters).map(([key, value]) => `${key}: ${value}`);
       document.getElementById("browseFilterLabel").textContent = labels.join(" / ") || "all tracks";
       document.getElementById("browseTracks").innerHTML = data.results.map(t => renderTrack(t, "browse")).join("") || `<div class="meta">No tracks match this browser filter.</div>`;
@@ -3428,7 +3428,7 @@
         showSection("evaluation");
         return;
       }
-      const track = await json(`/tracks/${id}`);
+      const track = await json(`/api/v1/tracks/${id}`);
       seedBasket.push(track);
       renderSeedBasket();
       showSection("evaluation");
@@ -3611,7 +3611,7 @@
       const errorTarget = document.getElementById("likedStatusError");
       errorTarget.textContent = "";
       try {
-        likedCatalog = await json(`/navidrome/starred?model=${encodeURIComponent(model())}`);
+        likedCatalog = await json(`/api/v1/navidrome/starred?model=${encodeURIComponent(model())}`);
         renderLikedStatus();
         renderLikedTracks();
         await fetchAndApplyNavidromeLikeIds({silent: true});
@@ -3649,7 +3649,7 @@
             max_per_artist: String(max),
             exclude_same_album: String(exclude)
           });
-          data = await json(`/tracks/similar/mix?${params.toString()}`);
+          data = await json(`/api/v1/tracks/similar/mix?${params.toString()}`);
           document.getElementById("likedSimilarSubtitle").textContent =
             `Recommendations from liked blend · average of ${readyIds.length} tracks`;
           const skipped = (data.skipped_seed_ids || []).length
@@ -3663,7 +3663,7 @@
             max_per_artist: String(max),
             exclude_same_album: String(exclude)
           });
-          data = await json(`/navidrome/starred/similar?${params.toString()}`);
+          data = await json(`/api/v1/navidrome/starred/similar?${params.toString()}`);
           document.getElementById("likedSimilarSubtitle").textContent =
             `Recommendations from liked blend · average of ${data.ready_count} liked tracks`;
           const skipped = (data.skipped_seed_ids || []).length
@@ -3713,7 +3713,7 @@
       const errorTarget = document.getElementById("likedStatusError");
       target.innerHTML = `<div class="meta">Searching...</div>`;
       try {
-        const data = await json(`/tracks?query=${encodeURIComponent(q)}&limit=30&embedding_status=${embeddingStatus}&model=${encodeURIComponent(model())}`);
+        const data = await json(`/api/v1/tracks?query=${encodeURIComponent(q)}&limit=30&embedding_status=${embeddingStatus}&model=${encodeURIComponent(model())}`);
         if (!data.results.length) {
           target.innerHTML = `<div class="meta">${showMissing ? "No tracks found." : "No ready tracks found. Enable 'Show tracks without embeddings' or analyze missing tracks."}</div>`;
           return;
@@ -3833,7 +3833,7 @@
       await Promise.all(names.map(async name => {
         const summary = metricSummaries.find(item => item.name === name);
         if (!summary || !summary.text_count) return;
-        const values = await json(`/metrics/features/${encodeURIComponent(name)}/values?source=${encodeURIComponent(metricsSource())}&extractor=${encodeURIComponent(document.getElementById("metricsExtractor").value)}`, {signal, timeoutMs: 30000});
+        const values = await json(`/api/v1/metrics/features/${encodeURIComponent(name)}/values?source=${encodeURIComponent(metricsSource())}&extractor=${encodeURIComponent(document.getElementById("metricsExtractor").value)}`, {signal, timeoutMs: 30000});
         valueLists.set(name, values.values || []);
       }));
       const blocks = [];
@@ -3885,7 +3885,7 @@
       document.getElementById("metricsSummary").innerHTML = `<div class="meta">Loading metrics...</div>`;
       document.getElementById("metricFilterList").innerHTML = `<div class="meta">Loading filters...</div>`;
       try {
-      const data = await json(`/metrics/features?source=${encodeURIComponent(metricsSource())}&extractor=${encodeURIComponent(extractor)}`, {signal, timeoutMs: 30000});
+      const data = await json(`/api/v1/metrics/features?source=${encodeURIComponent(metricsSource())}&extractor=${encodeURIComponent(extractor)}`, {signal, timeoutMs: 30000});
       if (seq !== metricsLoadSeq || signal.aborted) return;
       metricSummaries = data.features || [];
       const known = new Set(metricSummaries.map(item => item.name));
@@ -3962,7 +3962,7 @@
       document.getElementById("metricsResultCount").textContent = "searching";
       document.getElementById("metricsResults").innerHTML = `<div class="meta">Searching...</div>`;
       try {
-      const data = await json("/metrics/search", {
+      const data = await json("/api/v1/metrics/search", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         signal,
@@ -4019,7 +4019,7 @@
       const k = document.getElementById("k").value;
       const max = document.getElementById("maxPerArtist").value;
       const exclude = document.getElementById("excludeSameAlbum").checked;
-      const data = await json(`/tracks/${id}/similar?model=${encodeURIComponent(model())}&k=${k}&max_per_artist=${max}&exclude_same_album=${exclude}`);
+      const data = await json(`/api/v1/tracks/${id}/similar?model=${encodeURIComponent(model())}&k=${k}&max_per_artist=${max}&exclude_same_album=${exclude}`);
       currentSimilarTracks = data.results.map(t => ({id: t.id, label: label(t)}));
       const html = data.results.map(t => renderRecommendationTrack(t, {seedTrackId: id})).join("");
       document.getElementById("similarList").innerHTML = html;
@@ -4079,7 +4079,7 @@
       target.innerHTML = `<div class="meta">Searching...</div>`;
       try {
         const started = performance.now();
-        const data = await json("/text-search", {
+        const data = await json("/api/v1/text-search", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify(payload),
@@ -4113,7 +4113,7 @@
       player.pause();
       player.removeAttribute("src");
       player.load();
-      player.src = `/tracks/${id}/audio?player=${encodeURIComponent(UI_BUILD_ID)}`;
+      player.src = `/api/v1/tracks/${id}/audio?player=${encodeURIComponent(UI_BUILD_ID)}`;
       applyPlayerVolume();
       player.load();
       renderPlayerState();
@@ -4154,7 +4154,7 @@
     }
     async function rateForSeed(seedTrackId, resultId, rating) {
       if (!seedTrackId) return;
-      await json("/feedback", {
+      await json("/api/v1/feedback", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({seed_track_id: seedTrackId, result_track_id: resultId, model: model(), rating})
@@ -4176,7 +4176,7 @@
       const rawTfThreads = document.getElementById("tfThreads").value;
       const executionMode = document.getElementById("analyzeExecutionMode").value;
       const parsedLimit = rawLimit ? Number(rawLimit) : null;
-      await json("/jobs/analyze", {
+      await json("/api/v1/jobs/analyze", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
           model: modelName,
@@ -4190,14 +4190,14 @@
       await refreshJobs();
     }
     async function downloadHeadModels() {
-      await json("/jobs/download-head-models", {method: "POST"});
+      await json("/api/v1/jobs/download-head-models", {method: "POST"});
       await refreshJobs();
     }
     async function startAnalyzeHeads() {
       const rawLimit = document.getElementById("limit").value;
       const executionMode = document.getElementById("analyzeExecutionMode").value;
       const parsedLimit = rawLimit ? Number(rawLimit) : null;
-      await json("/jobs/analyze-heads", {
+      await json("/api/v1/jobs/analyze-heads", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
           limit: parsedLimit && parsedLimit > 0 ? parsedLimit : null,
@@ -4212,7 +4212,7 @@
       const rawWorkers = document.getElementById("audioFeatureWorkers").value;
       const executionMode = document.getElementById("analyzeExecutionMode").value;
       const parsedLimit = rawLimit ? Number(rawLimit) : null;
-      await json("/jobs/analyze-audio-features", {
+      await json("/api/v1/jobs/analyze-audio-features", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
           limit: parsedLimit && parsedLimit > 0 ? parsedLimit : null,
@@ -4234,7 +4234,7 @@
       const statusTarget = document.getElementById("audioFeaturesRescanStatus");
       if (!confirm(`Delete existing ${extractor} features for ${scope} and queue them for re-analysis?`)) return;
       try {
-        const data = await json("/jobs/analyze-audio-features", {
+        const data = await json("/api/v1/jobs/analyze-audio-features", {
           method: "POST", headers: {"Content-Type": "application/json"},
           body: JSON.stringify({
             limit,
@@ -4259,7 +4259,7 @@
     async function loadAlbumsForYouStatus() {
       const el = document.getElementById("albumsForYouStatus");
       try {
-        const data = await json("/jobs/albums-for-you/status");
+        const data = await json("/api/v1/jobs/albums-for-you/status");
         const age = data.cache_age_hours != null ? `${data.cache_age_hours.toFixed(1)}h ago` : "never";
         el.textContent = `Cached: ${data.cached_count} albums (model: ${data.model_name}, computed: ${age})`;
       } catch (err) {
@@ -4270,7 +4270,7 @@
       const statusEl = document.getElementById("albumsForYouRecomputeStatus");
       statusEl.textContent = "Starting recompute…";
       try {
-        const data = await json("/jobs/albums-for-you", { method: "POST" });
+        const data = await json("/api/v1/jobs/albums-for-you", { method: "POST" });
         statusEl.textContent = `Started (model: ${data.model_name}). Will complete in the background.`;
         setTimeout(loadAlbumsForYouStatus, 3000);
       } catch (err) {
@@ -4278,7 +4278,7 @@
       }
     }
     async function startIndex(modelName = model()) {
-      await json("/jobs/index", {
+      await json("/api/v1/jobs/index", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({model: modelName})
       });
@@ -4286,7 +4286,7 @@
     }
     async function cancelJob(jobId) {
       if (!confirm("Cancel this job? Queued and leased tasks will be marked cancelled.")) return;
-      await json(`/jobs/${encodeURIComponent(jobId)}/cancel`, {
+      await json(`/api/v1/jobs/${encodeURIComponent(jobId)}/cancel`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({reason: "Cancelled from web UI"})
@@ -4294,7 +4294,7 @@
       await refreshJobs();
     }
     async function loadJobDetail(jobId, {updateUrl = true} = {}) {
-      const data = await json(`/jobs/${encodeURIComponent(jobId)}`);
+      const data = await json(`/api/v1/jobs/${encodeURIComponent(jobId)}`);
       const tasks = data.tasks || [];
       const job = data.job || {};
       const taskHtml = tasks.length ? tasks.map(task => `
@@ -4366,7 +4366,7 @@
     }
     async function refreshWorkers() {
       try {
-        const data = await json("/workers", {timeoutMs: 8000});
+        const data = await json("/api/v1/workers", {timeoutMs: 8000});
         renderWorkers(data.workers || []);
       } catch (err) {
         const workerList = document.getElementById("workersList");
@@ -4379,7 +4379,7 @@
       if (jobsInFlight) return;
       jobsInFlight = true;
       try {
-      const jobsUrl = history ? "/jobs?include_completed=true&detail=true" : "/jobs";
+      const jobsUrl = history ? "/api/v1/jobs?include_completed=true&detail=true" : "/api/v1/jobs";
       const data = await json(jobsUrl, {timeoutMs: 8000});
       lastJobs = data.jobs;
       const setDisabled = (id, disabled) => {

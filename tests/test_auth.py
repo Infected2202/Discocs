@@ -206,7 +206,7 @@ def test_gate_disabled_is_open(tmp_path, monkeypatch):
     session = client.get("/api/v1/auth/session").json()
     assert session == {"authenticated": True, "username": None, "enabled": False}
     # A normally-protected route stays reachable with no session.
-    assert client.get("/settings/navidrome").status_code == 200
+    assert client.get("/api/v1/settings/navidrome").status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +236,7 @@ def test_gate_blocks_anonymous_but_allows_public(tmp_path, monkeypatch):
     assert session["enabled"] is True
 
     # Protected route rejected without a session.
-    resp = client.get("/settings/navidrome")
+    resp = client.get("/api/v1/settings/navidrome")
     assert resp.status_code == 401
     assert resp.json()["error"]["code"] == "unauthorized"
 
@@ -254,7 +254,7 @@ def test_login_bad_then_good_creds(tmp_path, monkeypatch):
     assert good.json()["authenticated"] is True
     # Session cookie issued and now grants access to protected routes.
     assert client.cookies.get("discocs_session")
-    assert client.get("/settings/navidrome").status_code == 200
+    assert client.get("/api/v1/settings/navidrome").status_code == 200
     assert client.get("/api/v1/auth/session").json()["username"] == "alice"
 
 
@@ -264,10 +264,10 @@ def test_service_token_grants_access(tmp_path, monkeypatch):
     client = TestClient(app)
 
     # No session, but a valid machine token works (workers/bot/plugin path).
-    ok = client.get("/settings/navidrome", headers={"X-Discocs-Service-Token": "svc-secret"})
+    ok = client.get("/api/v1/settings/navidrome", headers={"X-Discocs-Service-Token": "svc-secret"})
     assert ok.status_code == 200
     # Wrong token is rejected.
-    bad = client.get("/settings/navidrome", headers={"X-Discocs-Service-Token": "nope"})
+    bad = client.get("/api/v1/settings/navidrome", headers={"X-Discocs-Service-Token": "nope"})
     assert bad.status_code == 401
 
 
@@ -277,11 +277,11 @@ def test_logout_revokes_session(tmp_path, monkeypatch):
     client = TestClient(app)
 
     client.post("/api/v1/auth/login", json={"username": "alice", "password": "correct"})
-    assert client.get("/settings/navidrome").status_code == 200
+    assert client.get("/api/v1/settings/navidrome").status_code == 200
 
     client.post("/api/v1/auth/logout")
     # Cookie cleared client-side; session revoked server-side.
-    assert client.get("/settings/navidrome").status_code == 401
+    assert client.get("/api/v1/settings/navidrome").status_code == 401
 
 
 def test_login_lockout_after_max_attempts(tmp_path, monkeypatch):

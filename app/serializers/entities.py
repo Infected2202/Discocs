@@ -154,7 +154,7 @@ def track_summary_dict(store: Store, track: Track, artists: list[Artist] | None 
         "artists": [artist_link_dict(artist) for artist in (artists or [])],
         "duration": track.duration,
         "release": release,
-        "artwork": image_ref(f"/tracks/{track.id}/cover", "local"),
+        "artwork": image_ref(f"/api/v1/tracks/{track.id}/cover", "local"),
         "navidrome_item_id": navidrome_item_id,
         "explicit": False,
         "liked": False,

@@ -10,7 +10,7 @@ from app.schemas.responses import PlaybackSessionEnvelopeResponse
 from app.serializers.playback import playback_session_response
 from app.serializers.entities import track_summary_dict
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 
 
 def _liked_track_ids(store, settings) -> list[int]:
@@ -24,7 +24,7 @@ def _liked_track_ids(store, settings) -> list[int]:
 
 
 @router.get(
-    "/api/v1/playlists/likes",
+    "/playlists/likes",
     response_model=None,
     responses={502: {"description": "Navidrome starred lookup failed"}},
 )
@@ -43,7 +43,7 @@ def api_v1_likes_playlist() -> dict[str, object]:
 
 
 @router.post(
-    "/api/v1/playlists/likes/play",
+    "/playlists/likes/play",
     response_model=PlaybackSessionEnvelopeResponse,
     responses={502: {"description": "Navidrome starred lookup failed"}},
 )

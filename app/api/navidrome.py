@@ -32,7 +32,7 @@ from app.serializers.tracks import enriched_similar_track_dict
 navidrome_logger = logging.getLogger("discocs.navidrome")
 navidrome_plugin_logger = get_navidrome_plugin_logger()
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 
 
 @router.get("/navidrome/starred", responses={502: {"description": "Navidrome starred lookup failed"}})

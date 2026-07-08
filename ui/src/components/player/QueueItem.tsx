@@ -48,7 +48,7 @@ function QueueItem({ track, trackId, itemId, variant = "queue", isCurrent, dimme
   async function handleInstantMix() {
     if (!track) return
     try {
-      const envelope = await apiFetch<PlaybackEnvelope>(`/tracks/${track.id}/instant-mix`, { method: "POST" })
+      const envelope = await apiFetch<PlaybackEnvelope>(`/api/v1/tracks/${track.id}/instant-mix`, { method: "POST" })
       await playFromEnvelope(envelope)
     } catch { /* ignore */ }
   }

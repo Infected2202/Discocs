@@ -2,7 +2,7 @@ import { apiFetch } from "./client"
 import type { NavidromePingResponse, NavidromeSettings } from "./types"
 
 export function fetchNavidromeSettings(): Promise<NavidromeSettings> {
-  return apiFetch("/settings/navidrome")
+  return apiFetch("/api/v1/settings/navidrome")
 }
 
 export interface NavidromeSettingsPayload {
@@ -16,12 +16,12 @@ export interface NavidromeSettingsPayload {
 }
 
 export function saveNavidromeSettings(data: NavidromeSettingsPayload): Promise<NavidromeSettings> {
-  return apiFetch("/settings/navidrome", {
+  return apiFetch("/api/v1/settings/navidrome", {
     method: "PUT",
     body: JSON.stringify(data),
   })
 }
 
 export function pingNavidrome(): Promise<NavidromePingResponse> {
-  return apiFetch("/navidrome/ping", { method: "POST" })
+  return apiFetch("/api/v1/navidrome/ping", { method: "POST" })
 }

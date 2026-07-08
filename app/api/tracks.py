@@ -49,7 +49,7 @@ from app.models import Track
 logger = logging.getLogger(__name__)
 navidrome_logger = logging.getLogger("discocs.navidrome")
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 
 _EMBEDDING_STATUS_PATTERN = "^(all|ready|missing)$"
 _TRACK_NOT_FOUND = "Track not found"

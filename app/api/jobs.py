@@ -72,7 +72,7 @@ from app.state import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 
 _WAITING_TO_SYNC_NAVIDROME = "Waiting to sync Navidrome catalog"
 
@@ -650,7 +650,7 @@ def rebuild_index(request: IndexRequest) -> dict[str, object]:
     return {"status": "ok", "model": request.model, "index": str(path)}
 
 
-@router.post("/api/v1/jobs/release-aggregates")
+@router.post("/jobs/release-aggregates")
 def api_v1_release_aggregates_job(
     model_name: Annotated[str, Query()] = "discogs_multi",
     limit: Annotated[int, Query(ge=0, description="Max releases to process (0 = all)")] = 0,
@@ -681,13 +681,13 @@ def api_v1_release_aggregates_job(
     }
 
 
-@router.get("/api/v1/albums/settings")
+@router.get("/albums/settings")
 def api_v1_album_recommendation_settings() -> dict[str, object]:
     """Return default album recommendation settings."""
     return {"settings": release_recommendation_defaults()}
 
 
-@router.get("/api/v1/jobs/release-aggregates/status")
+@router.get("/jobs/release-aggregates/status")
 def api_v1_release_aggregates_status(
     model_name: Annotated[str, Query()] = "discogs_multi",
 ) -> dict[str, object]:
@@ -702,7 +702,7 @@ def api_v1_release_aggregates_status(
     }
 
 
-@router.post("/api/v1/jobs/albums-for-you")
+@router.post("/jobs/albums-for-you")
 def api_v1_albums_for_you_job(
     background_tasks: BackgroundTasks,
 ) -> dict[str, object]:
@@ -726,7 +726,7 @@ def api_v1_albums_for_you_job(
     }
 
 
-@router.get("/api/v1/jobs/albums-for-you/status")
+@router.get("/jobs/albums-for-you/status")
 def api_v1_albums_for_you_status() -> dict[str, object]:
     store, settings = context()
     model_name = settings.default_model
@@ -741,7 +741,7 @@ def api_v1_albums_for_you_status() -> dict[str, object]:
     }
 
 
-@router.post("/api/v1/jobs/flow-profile")
+@router.post("/jobs/flow-profile")
 def api_v1_flow_profile_rebuild_job(
     background_tasks: BackgroundTasks,
     model_key: Annotated[str, Query()] = "discogs_multi",
@@ -762,7 +762,7 @@ def api_v1_flow_profile_rebuild_job(
     return {"status": "started", "model_key": model_key}
 
 
-@router.get("/api/v1/jobs/flow-profile/status")
+@router.get("/jobs/flow-profile/status")
 def api_v1_flow_profile_status(
     model_key: Annotated[str, Query()] = "discogs_multi",
 ) -> dict[str, object]:

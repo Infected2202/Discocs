@@ -41,7 +41,7 @@ export const useNavidromeStore = create<NavidromeStore>((set, get) => ({
     set({ likedIds: next })
 
     try {
-      await apiFetch(`/tracks/${trackId}/navidrome-star`, {
+      await apiFetch(`/api/v1/tracks/${trackId}/navidrome-star`, {
         method: "PUT",
         body: JSON.stringify({ starred: !liked }),
       })
@@ -63,7 +63,7 @@ export const useNavidromeStore = create<NavidromeStore>((set, get) => ({
     set({ likedAlbumIds: next })
 
     try {
-      await apiFetch(`/releases/${releaseId}/navidrome-star`, {
+      await apiFetch(`/api/v1/releases/${releaseId}/navidrome-star`, {
         method: "PUT",
         body: JSON.stringify({ starred: !liked }),
       })
@@ -82,7 +82,7 @@ export const useNavidromeStore = create<NavidromeStore>((set, get) => ({
     set({ likedArtistIds: next })
 
     try {
-      await apiFetch(`/artists/${artistId}/navidrome-star`, {
+      await apiFetch(`/api/v1/artists/${artistId}/navidrome-star`, {
         method: "PUT",
         body: JSON.stringify({ starred: !liked }),
       })
@@ -95,7 +95,7 @@ export const useNavidromeStore = create<NavidromeStore>((set, get) => ({
 
   async fetchLikedIds() {
     try {
-      const data = await apiFetch<{ track_ids: number[]; album_ids?: number[]; artist_ids?: number[] }>("/navidrome/starred/ids")
+      const data = await apiFetch<{ track_ids: number[]; album_ids?: number[]; artist_ids?: number[] }>("/api/v1/navidrome/starred/ids")
       set({
         likedIds: new Set(data.track_ids),
         likedAlbumIds: new Set(data.album_ids ?? []),

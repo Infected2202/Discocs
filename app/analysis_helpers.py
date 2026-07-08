@@ -233,7 +233,7 @@ def analysis_task_dict(task: AnalysisTask) -> dict[str, object]:
         "error": task.error,
         "error_type": task.error_type,
         "stage": task.stage,
-        "audio_url": f"/workers/tasks/{task.id}/audio",
+        "audio_url": f"/api/v1/workers/tasks/{task.id}/audio",
     }
 
 

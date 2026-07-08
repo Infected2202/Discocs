@@ -167,7 +167,7 @@ def _track_shelf_item(
         str(summary["title"]),
         _compact_artist_names(artist_objs),
         target,
-        artwork_url=f"/tracks/{track.id}/cover?size=512",
+        artwork_url=f"/api/v1/tracks/{track.id}/cover?size=512",
         play_source_type="track",
         play_source_id=track.id,
         reason=reason,
@@ -192,7 +192,7 @@ def _discover_track_shelf_item(
         str(summary["title"]),
         _compact_artist_names(artist_objs),
         target,
-        artwork_url=f"/tracks/{track.id}/cover?size=512",
+        artwork_url=f"/api/v1/tracks/{track.id}/cover?size=512",
         play_source_type="track",
         play_source_id=track.id,
         reason=reason,
@@ -202,6 +202,6 @@ def _discover_track_shelf_item(
     # Automatically trigger instant-mix for discover-random tracks on play click
     item["play_action"] = {
         "type": "post",
-        "endpoint": f"/tracks/{track.id}/instant-mix",
+        "endpoint": f"/api/v1/tracks/{track.id}/instant-mix",
     }
     return item

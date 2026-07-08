@@ -704,7 +704,7 @@ def register_worker_with_retry(
 ) -> None:
     while True:
         try:
-            post_json(server, "/workers/register", {"worker_id": worker_id, "models": models})
+            post_json(server, "/api/v1/workers/register", {"worker_id": worker_id, "models": models})
             return
         except (URLError, TimeoutError, ConnectionError) as exc:
             typer.echo(
@@ -765,7 +765,7 @@ def task_is_active(server: str, worker_id: str, task_id: str) -> bool:
 def worker_task_state(server: str, worker_id: str, task_id: str) -> dict[str, object]:
     url = urljoin(
         server.rstrip("/") + "/",
-        f"/workers/tasks/{task_id}/state?worker_id={worker_id}",
+        f"/api/v1/workers/tasks/{task_id}/state?worker_id={worker_id}",
     )
     request = Request(url, headers=_service_headers())
     with urlopen(request, timeout=30) as response:
@@ -1030,7 +1030,7 @@ def submit_worker_buffers(
         result_count = len(results) + len(feature_results) + len(head_results)
         response = post_worker_submit_json(
             server,
-            "/workers/results",
+            "/api/v1/workers/results",
             {
                 "worker_id": worker_id,
                 "results": results,
@@ -1054,7 +1054,7 @@ def submit_worker_buffers(
         head_results.clear()
     if failures:
         failure_count = len(failures)
-        response = post_worker_submit_json(server, "/workers/failures", {"worker_id": worker_id, "failures": failures})
+        response = post_worker_submit_json(server, "/api/v1/workers/failures", {"worker_id": worker_id, "failures": failures})
         failed = [str(task_id) for task_id in response.get("failed", []) if task_id]
         acknowledged.update(failed)
         typer.echo(f"submitted failures={failure_count} accepted={len(failed)}")
@@ -1351,7 +1351,7 @@ class WorkerRuntime:
         limit = min(max(self.claim_batch_size, 1), capacity)
         claimed = post_json(
             self.server,
-            "/workers/claim",
+            "/api/v1/workers/claim",
             {
                 "worker_id": self.worker_id,
                 "models": self.models,
@@ -1730,7 +1730,7 @@ class WorkerRuntime:
                 if self.once:
                     typer.echo("no tasks" if not self.processed_any else "done")
                     return False
-                post_json(self.server, "/workers/heartbeat", {"worker_id": self.worker_id, "models": self.models})
+                post_json(self.server, "/api/v1/workers/heartbeat", {"worker_id": self.worker_id, "models": self.models})
                 time.sleep(self.poll_seconds)
                 continue
 
@@ -1789,7 +1789,7 @@ class WorkerRuntime:
                 try:
                     post_json(
                         self.server,
-                        "/workers/release",
+                        "/api/v1/workers/release",
                         {"worker_id": self.worker_id, "task_ids": unreleased},
                     )
                 except Exception as exc:

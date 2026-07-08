@@ -11,7 +11,7 @@ from app.api.deps import context
 from app.schemas.requests import FlowStartRequest, FlowRefillRequest, FlowEventRequest
 from app.serializers.playback import playback_session_dict, queue_item_dict
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 logger = logging.getLogger(__name__)
 
 # Default window for cross-session recently-played exclusion (days). Tracks
@@ -70,7 +70,7 @@ def _maybe_rebuild_stale_profile(store, app_settings, profile, request_settings)
 # GET /api/v1/flow/profile  (Slice 6)
 # ---------------------------------------------------------------------------
 
-@router.get("/api/v1/flow/profile")
+@router.get("/flow/profile")
 def api_v1_flow_profile(
     model_key: str = "discogs_multi",
     include_debug: bool = False,
@@ -218,7 +218,7 @@ def _region_summary(region) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 @router.post(
-    "/api/v1/flow/start",
+    "/flow/start",
     responses={409: {"description": "Flow profile not ready or has no regions/candidates"}},
 )
 def api_v1_flow_start(request: FlowStartRequest) -> dict[str, object]:
@@ -362,7 +362,7 @@ def api_v1_flow_start(request: FlowStartRequest) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 @router.post(
-    "/api/v1/flow/refill",
+    "/flow/refill",
     responses={
         400: {"description": "Session is not a Flow session"},
         404: {"description": "Playback session, flow profile, or region not found"},
@@ -486,7 +486,7 @@ def api_v1_flow_refill(request: FlowRefillRequest) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 @router.post(
-    "/api/v1/flow/event",
+    "/flow/event",
     responses={
         400: {"description": "Session is not a Flow session"},
         404: {"description": "Playback session not found"},

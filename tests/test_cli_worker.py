@@ -107,21 +107,21 @@ def _make_post_json(claim_sequence: list[list[dict]]):
         # submit_worker_buffers clears its result/failure lists in place right after
         # calling post_json, so the recorded payload must be a snapshot, not a reference.
         calls.append((path, copy.deepcopy(payload)))
-        if path == "/workers/register":
+        if path == "/api/v1/workers/register":
             return {}
-        if path == "/workers/claim":
+        if path == "/api/v1/workers/claim":
             tasks = next(claim_iter, [])
             return {"tasks": tasks}
-        if path == "/workers/results":
+        if path == "/api/v1/workers/results":
             accepted = (
                 [r["task_id"] for r in payload["results"]]
                 + [r["task_id"] for r in payload["feature_results"]]
                 + [r["task_id"] for r in payload["head_results"]]
             )
             return {"accepted": accepted, "rejected": []}
-        if path == "/workers/failures":
+        if path == "/api/v1/workers/failures":
             return {"failed": [f["task_id"] for f in payload["failures"]]}
-        if path == "/workers/heartbeat":
+        if path == "/api/v1/workers/heartbeat":
             return {}
         raise AssertionError(f"unexpected worker endpoint: {path}")
 
@@ -211,11 +211,11 @@ def test_claim_more_and_flush_round_trip(tmp_path, monkeypatch):
     )
 
     assert result.exit_code == 0, result.output
-    result_calls = [payload for path, payload in calls if path == "/workers/results"]
+    result_calls = [payload for path, payload in calls if path == "/api/v1/workers/results"]
     assert any(
         r["task_id"] == "t1" for call in result_calls for r in call["results"]
     ), calls
-    assert not any(path == "/workers/failures" for path, _ in calls)
+    assert not any(path == "/api/v1/workers/failures" for path, _ in calls)
 
 
 def test_close_inactive_task_via_active_false(tmp_path, monkeypatch):
@@ -233,11 +233,11 @@ def test_close_inactive_task_via_active_false(tmp_path, monkeypatch):
     assert not any(
         r.get("task_id") == "t1"
         for path, payload in calls
-        if path == "/workers/results"
+        if path == "/api/v1/workers/results"
         for r in payload["head_results"]
     )
     assert not any(
-        f.get("task_id") == "t1" for path, payload in calls if path == "/workers/failures" for f in payload["failures"]
+        f.get("task_id") == "t1" for path, payload in calls if path == "/api/v1/workers/failures" for f in payload["failures"]
     )
 
 
@@ -256,11 +256,11 @@ def test_close_inactive_task_via_404(tmp_path, monkeypatch):
     assert not any(
         r.get("task_id") == "t1"
         for path, payload in calls
-        if path == "/workers/results"
+        if path == "/api/v1/workers/results"
         for r in payload["head_results"]
     )
     assert not any(
-        f.get("task_id") == "t1" for path, payload in calls if path == "/workers/failures" for f in payload["failures"]
+        f.get("task_id") == "t1" for path, payload in calls if path == "/api/v1/workers/failures" for f in payload["failures"]
     )
 
 
@@ -278,9 +278,9 @@ def test_essentia_fallback_recovers_from_direct_backend_failure(tmp_path, monkey
 
     assert result.exit_code == 0, result.output
     assert "backend=essentia-fallback" in result.output
-    result_calls = [payload for path, payload in calls if path == "/workers/results"]
+    result_calls = [payload for path, payload in calls if path == "/api/v1/workers/results"]
     assert any(r["task_id"] == "t1" for call in result_calls for r in call["results"]), calls
-    assert not any(path == "/workers/failures" for path, _ in calls)
+    assert not any(path == "/api/v1/workers/failures" for path, _ in calls)
 
 
 def test_worker_failure_recorded_without_fallback_when_backend_pinned(tmp_path, monkeypatch):
@@ -296,7 +296,7 @@ def test_worker_failure_recorded_without_fallback_when_backend_pinned(tmp_path, 
     )
 
     assert result.exit_code == 0, result.output
-    failure_calls = [payload for path, payload in calls if path == "/workers/failures"]
+    failure_calls = [payload for path, payload in calls if path == "/api/v1/workers/failures"]
     assert failure_calls, calls
     [failure] = failure_calls[0]["failures"]
     assert failure["task_id"] == "t1"
@@ -325,7 +325,7 @@ def test_process_ready_embedding_batches_accumulates_until_target_patches(tmp_pa
 
     assert result.exit_code == 0, result.output
     assert "gpu batch model=discogs_multi tasks=2 patches=4 padded=0" in result.output
-    result_calls = [payload for path, payload in calls if path == "/workers/results"]
+    result_calls = [payload for path, payload in calls if path == "/api/v1/workers/results"]
     submitted_ids = {r["task_id"] for call in result_calls for r in call["results"]}
     assert submitted_ids == {"t1", "t2"}
-    assert not any(path == "/workers/failures" for path, _ in calls)
+    assert not any(path == "/api/v1/workers/failures" for path, _ in calls)

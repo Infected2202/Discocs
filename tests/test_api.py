@@ -1088,7 +1088,7 @@ def test_navidrome_sync_job_imports_catalog(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     response = client.post(
-        "/jobs/navidrome-sync",
+        "/api/v1/jobs/navidrome-sync",
         json={"page_size": 10, "mark_stale": True},
     )
 
@@ -1101,7 +1101,7 @@ def test_navidrome_sync_job_imports_catalog(tmp_path: Path, monkeypatch):
     assert imported.path == "navidrome://song-1"
     artist_id = store.search_entities("Artist")["artists"]["items"][0].artist.id
     assert store.external_id_for_entity("navidrome", "artist", artist_id) == "artist-1"
-    jobs = client.get("/jobs?include_completed=true").json()["jobs"]
+    jobs = client.get("/api/v1/jobs?include_completed=true").json()["jobs"]
     sync_job = next(job for job in jobs if job["id"] == body["job_id"])
     assert sync_job["status"] == "completed"
     assert "seen=1 imported=1" in sync_job["message"]
@@ -1151,7 +1151,7 @@ def test_test_ui_loads():
     assert "Metrics" in response.text
     assert "metricsSummary" in response.text
     assert "Discogs-EffNet heads" in response.text
-    assert "/metrics/search" in response.text
+    assert "/api/v1/metrics/search" in response.text
     assert "coverMarkup(t)" in response.text
     assert "Lost files" in response.text
     assert "Errored files" in response.text
@@ -1162,7 +1162,7 @@ def test_test_ui_loads():
     assert "Recommendations from liked blend" in response.text
     assert "addToBlendExtra" in response.text
     assert "discocs.blendExtra.v1" in response.text
-    assert "/navidrome/starred" in response.text
+    assert "/api/v1/navidrome/starred" in response.text
     assert "Evaluation" in response.text
     assert "Jobs" in response.text
     assert "Settings" in response.text
@@ -1189,7 +1189,7 @@ def test_test_ui_loads():
     assert "Remove selected" in response.text
     assert "Remove all" in response.text
     assert "lostFilesPage" in response.text
-    assert "/lost-files" in response.text
+    assert "/api/v1/lost-files" in response.text
     assert "Model files: ${ready}/${required} loaded" in response.text
     assert "modelFiles.filter(file => file.ready).length" in response.text
     assert "tracks analyzed`" not in response.text
@@ -1236,13 +1236,13 @@ def test_navidrome_settings_round_trip(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
 
-    initial = client.get("/settings/navidrome")
+    initial = client.get("/api/v1/settings/navidrome")
 
     assert initial.status_code == 200
     assert initial.json()["password_set"] is False
 
     saved = client.put(
-        "/settings/navidrome",
+        "/api/v1/settings/navidrome",
         json={
             "url": "http://navidrome:4533",
             "user": "tester",
@@ -1271,7 +1271,7 @@ def test_navidrome_plugin_event_is_accepted(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     response = client.post(
-        "/navidrome/plugin-event",
+        "/api/v1/navidrome/plugin-event",
         json={
             "event": "similar_called",
             "item_id": "song-1",
@@ -1319,7 +1319,7 @@ def test_stats_includes_pipeline_fields(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
 
-    response = client.get("/stats")
+    response = client.get("/api/v1/stats")
 
     assert response.status_code == 200
     data = response.json()
@@ -1358,7 +1358,7 @@ def test_audio_feature_missing_count_ignores_missing_files(tmp_path: Path, monke
         main_module.STATS_CACHE.clear()
     client = TestClient(app)
 
-    data = client.get("/stats").json()
+    data = client.get("/api/v1/stats").json()
 
     assert data["audio_features_missing_tracks"] == 1
     assert missing_feature_id != missing_file_id
@@ -1378,7 +1378,7 @@ def test_stats_reports_stale_index_counts(tmp_path: Path, monkeypatch):
 
     with main_module.STATS_CACHE_LOCK:
         main_module.STATS_CACHE.clear()
-    ready = client.get("/stats?model=discogs_multi").json()
+    ready = client.get("/api/v1/stats?model=discogs_multi").json()
     assert ready["index_status"] == "ready"
     assert ready["index_count"] == 1
     assert ready["index_embedding_count"] == 1
@@ -1386,7 +1386,7 @@ def test_stats_reports_stale_index_counts(tmp_path: Path, monkeypatch):
     store.save_embedding(second_id, "discogs_multi", np.array([0.0, 1.0], dtype=np.float32))
     with main_module.STATS_CACHE_LOCK:
         main_module.STATS_CACHE.clear()
-    stale = client.get("/stats?model=discogs_multi").json()
+    stale = client.get("/api/v1/stats?model=discogs_multi").json()
     assert stale["index_status"] == "stale"
     assert stale["index_count"] == 1
     assert stale["index_embedding_count"] == 2
@@ -1414,16 +1414,16 @@ def test_metrics_features_summary_and_search(tmp_path: Path, monkeypatch):
     )
     client = TestClient(app)
 
-    summary = client.get("/metrics/features").json()
+    summary = client.get("/api/v1/metrics/features").json()
     bpm = next(item for item in summary["features"] if item["name"] == "bpm")
     assert bpm["track_count"] == 2
     assert bpm["min_value"] == 128.0
     assert bpm["max_value"] == 142.0
-    values = client.get("/metrics/features/key/values").json()["values"]
+    values = client.get("/api/v1/metrics/features/key/values").json()["values"]
     assert values == [{"value": "A", "track_count": 1}, {"value": "C", "track_count": 1}]
 
     response = client.post(
-        "/metrics/search",
+        "/api/v1/metrics/search",
         json={
             "filters": [
                 {"name": "bpm", "min_value": 120, "max_value": 130},
@@ -1479,18 +1479,18 @@ def test_metrics_heads_summary_and_search(tmp_path: Path, monkeypatch):
     )
     client = TestClient(app)
 
-    summary = client.get("/metrics/features?source=heads").json()
+    summary = client.get("/api/v1/metrics/features?source=heads").json()
     genre = next(item for item in summary["features"] if item["name"] == "genre_discogs400")
     assert genre["track_count"] == 2
     assert genre["text_count"] == 0
     assert genre["max_value"] == 1.0
     labels = client.get(
-        "/metrics/features/genre_discogs400/values?source=heads"
+        "/api/v1/metrics/features/genre_discogs400/values?source=heads"
     ).json()["values"]
     assert labels[0]["value"] in {"Electronic---House", "Electronic---Techno"}
 
     response = client.post(
-        "/metrics/search",
+        "/api/v1/metrics/search",
         json={
             "source": "heads",
             "filters": [
@@ -1522,7 +1522,7 @@ def test_worker_claim_audio_and_submit_embedding(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     response = client.post(
-        "/workers/claim",
+        "/api/v1/workers/claim",
         json={"worker_id": "gpu-1", "models": ["discogs_multi"], "limit": 4},
     )
 
@@ -1539,7 +1539,7 @@ def test_worker_claim_audio_and_submit_embedding(tmp_path: Path, monkeypatch):
 
     vector = np.array([0.1, 0.2, 0.3], dtype=np.float32)
     submit = client.post(
-        "/workers/results",
+        "/api/v1/workers/results",
         json={
             "worker_id": "gpu-1",
             "results": [
@@ -1567,13 +1567,13 @@ def test_worker_heartbeat_skips_fresh_write(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
     register = client.post(
-        "/workers/register",
+        "/api/v1/workers/register",
         json={"worker_id": "gpu-1", "models": ["discogs_multi"]},
     )
     initial = store.list_analysis_workers()[0]
 
     heartbeat = client.post(
-        "/workers/heartbeat",
+        "/api/v1/workers/heartbeat",
         json={"worker_id": "gpu-1", "models": ["discogs_multi"]},
     )
 
@@ -1594,7 +1594,7 @@ def test_worker_register_reports_sqlite_disk_io_error(tmp_path: Path, monkeypatc
     client = TestClient(app)
 
     response = client.post(
-        "/workers/register",
+        "/api/v1/workers/register",
         json={"worker_id": "gpu-1", "models": ["discogs_multi"]},
     )
 
@@ -1637,7 +1637,7 @@ def test_worker_audio_endpoint_downloads_navidrome_track(tmp_path: Path, monkeyp
     monkeypatch.setattr("app.audio_source.NavidromeClient", FakeNavidromeClient)
     client = TestClient(app)
     task = client.post(
-        "/workers/claim",
+        "/api/v1/workers/claim",
         json={"worker_id": "gpu-1", "models": ["discogs_multi"], "limit": 4},
     ).json()["tasks"][0]
 
@@ -1718,7 +1718,7 @@ def test_worker_submit_audio_feature_result(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     response = client.post(
-        "/workers/results",
+        "/api/v1/workers/results",
         json={
             "worker_id": "gpu-1",
             "feature_results": [
@@ -1767,7 +1767,7 @@ def test_worker_submit_sqlite_lock_returns_retryable_error(tmp_path: Path, monke
     client = TestClient(app)
 
     response = client.post(
-        "/workers/results",
+        "/api/v1/workers/results",
         json={
             "worker_id": "gpu-1",
             "results": [
@@ -1808,7 +1808,7 @@ def test_worker_submit_head_result(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     response = client.post(
-        "/workers/results",
+        "/api/v1/workers/results",
         json={
             "worker_id": "gpu-1",
             "head_results": [
@@ -1855,7 +1855,7 @@ def test_worker_submit_rejects_stale_result(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     response = client.post(
-        "/workers/results",
+        "/api/v1/workers/results",
         json={
             "worker_id": "gpu-1",
             "results": [
@@ -1889,12 +1889,12 @@ def test_workers_endpoint_and_jobs_include_worker_status(tmp_path: Path, monkeyp
     client = TestClient(app)
 
     claim = client.post(
-        "/workers/claim",
+        "/api/v1/workers/claim",
         json={"worker_id": "gpu-1", "models": ["discogs_multi"], "limit": 1},
     )
     assert claim.status_code == 200
 
-    workers = client.get("/workers")
+    workers = client.get("/api/v1/workers")
     assert workers.status_code == 200
     worker = workers.json()["workers"][0]
     assert worker["worker_id"] == "gpu-1"
@@ -1902,14 +1902,14 @@ def test_workers_endpoint_and_jobs_include_worker_status(tmp_path: Path, monkeyp
     assert worker["claimed_count"] == 1
     assert worker["stage"] == "claimed"
 
-    jobs = client.get("/jobs?detail=true")
+    jobs = client.get("/api/v1/jobs?detail=true")
     assert jobs.status_code == 200
     assert "workers" not in jobs.json()
     first_job = jobs.json()["jobs"][0]
     assert first_job["leased"] == 1
     assert first_job["oldest_lease"]["worker_id"] == "gpu-1"
 
-    detail = client.get(f"/jobs/{first_job['id']}")
+    detail = client.get(f"/api/v1/jobs/{first_job['id']}")
     assert detail.status_code == 200
     detail_data = detail.json()
     assert detail_data["job"]["id"] == first_job["id"]
@@ -1927,7 +1927,7 @@ def test_cancel_analysis_job_endpoint_marks_zombie_cancelled(tmp_path: Path, mon
     client = TestClient(app)
 
     response = client.post(
-        f"/jobs/{job.id}/cancel",
+        f"/api/v1/jobs/{job.id}/cancel",
         json={"reason": "test cancel"},
     )
 
@@ -1937,7 +1937,7 @@ def test_cancel_analysis_job_endpoint_marks_zombie_cancelled(tmp_path: Path, mon
     assert cancelled is not None
     assert cancelled.status == "cancelled"
     assert cancelled.failed == 1
-    jobs = client.get("/jobs?include_completed=true").json()["jobs"]
+    jobs = client.get("/api/v1/jobs?include_completed=true").json()["jobs"]
     assert jobs[0]["status"] == "cancelled"
 
 
@@ -1948,7 +1948,7 @@ def test_head_pack_endpoint_returns_readiness_and_counts(tmp_path: Path, monkeyp
     add_track(store, path)
     client = TestClient(app)
 
-    response = client.get("/models/head-pack")
+    response = client.get("/api/v1/models/head-pack")
 
     assert response.status_code == 200
     data = response.json()
@@ -1994,7 +1994,7 @@ def test_track_analysis_endpoint_returns_outputs_predictions_and_features(tmp_pa
     )
     client = TestClient(app)
 
-    response = client.get(f"/tracks/{track_id}/analysis")
+    response = client.get(f"/api/v1/tracks/{track_id}/analysis")
 
     assert response.status_code == 200
     data = response.json()
@@ -2009,7 +2009,7 @@ def test_track_analysis_endpoint_returns_outputs_predictions_and_features(tmp_pa
 def test_jobs_list_endpoint():
     client = TestClient(app)
 
-    response = client.get("/jobs")
+    response = client.get("/api/v1/jobs")
 
     assert response.status_code == 200
     assert "jobs" in response.json()
@@ -2031,13 +2031,13 @@ def test_job_created_while_memory_job_runs_is_deferred(tmp_path: Path, monkeypat
     monkeypatch.setattr(api_jobs_module, "_index_job", fake_index_job)
     client = TestClient(app)
 
-    response = client.post("/jobs/index", json={"model": "discogs_multi"})
+    response = client.post("/api/v1/jobs/index", json={"model": "discogs_multi"})
 
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "deferred"
     assert not ran.is_set()
-    jobs = client.get("/jobs?include_completed=true").json()["jobs"]
+    jobs = client.get("/api/v1/jobs?include_completed=true").json()["jobs"]
     deferred = next(job for job in jobs if job["id"] == body["job_id"])
     assert jobs[0]["id"] == body["job_id"]
     assert deferred["status"] == "deferred"
@@ -2066,10 +2066,10 @@ def test_deferred_job_starts_after_remote_analysis_completes(tmp_path: Path, mon
     monkeypatch.setattr(api_jobs_module, "_index_job", fake_index_job)
     client = TestClient(app)
     analysis_response = client.post(
-        "/jobs/analyze",
+        "/api/v1/jobs/analyze",
         json={"model": "discogs_multi", "limit": 1, "execution_mode": "remote"},
     )
-    index_response = client.post("/jobs/index", json={"model": "discogs_multi"})
+    index_response = client.post("/api/v1/jobs/index", json={"model": "discogs_multi"})
 
     assert analysis_response.status_code == 200
     assert index_response.status_code == 200
@@ -2082,7 +2082,7 @@ def test_deferred_job_starts_after_remote_analysis_completes(tmp_path: Path, mon
         )
     maintenance_module.run_maintenance_tick(store)
 
-    jobs = client.get("/jobs?include_completed=true").json()["jobs"]
+    jobs = client.get("/api/v1/jobs?include_completed=true").json()["jobs"]
 
     assert ran.wait(2)
     assert started == [(index_response.json()["job_id"], "discogs_multi")]
@@ -2122,7 +2122,7 @@ def test_finished_transient_job_elapsed_is_frozen(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(services_jobs_module, "perf_counter", lambda: 999.0)
     client = TestClient(app)
 
-    jobs = client.get("/jobs?include_completed=true").json()["jobs"]
+    jobs = client.get("/api/v1/jobs?include_completed=true").json()["jobs"]
 
     job = next(item for item in jobs if item["id"] == job_id)
     assert job["status"] == "completed"
@@ -2147,11 +2147,11 @@ def test_finished_durable_job_elapsed_is_frozen(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     first = next(
-        item for item in client.get("/jobs?include_completed=true").json()["jobs"] if item["id"] == job.id
+        item for item in client.get("/api/v1/jobs?include_completed=true").json()["jobs"] if item["id"] == job.id
     )
     monkeypatch.setattr(store_jobs_module, "utc_now", lambda: "2026-01-01T00:10:00+00:00")
     second = next(
-        item for item in client.get("/jobs?include_completed=true").json()["jobs"] if item["id"] == job.id
+        item for item in client.get("/api/v1/jobs?include_completed=true").json()["jobs"] if item["id"] == job.id
     )
 
     assert first["status"] == "completed"
@@ -2165,7 +2165,7 @@ def test_analyze_job_accepts_limit(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     response = client.post(
-        "/jobs/analyze",
+        "/api/v1/jobs/analyze",
         json={"model": "discogs_multi", "limit": 1, "workers": 2},
     )
 
@@ -2180,7 +2180,7 @@ def test_analyze_job_defaults_to_benchmarked_runtime_when_available(tmp_path: Pa
     client = TestClient(app)
 
     response = client.post(
-        "/jobs/analyze",
+        "/api/v1/jobs/analyze",
         json={"model": "discogs_multi", "limit": 1},
     )
 
@@ -2194,7 +2194,7 @@ def test_analyze_job_accepts_tf_threads(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     response = client.post(
-        "/jobs/analyze",
+        "/api/v1/jobs/analyze",
         json={"model": "discogs_multi", "limit": 1, "workers": 2, "tf_threads": 4},
     )
 
@@ -2211,7 +2211,7 @@ def test_analyze_job_remote_mode_disables_local_executor(tmp_path: Path, monkeyp
 
     monkeypatch.setattr(api_jobs_module, "_analyze_job", fail_if_called)
     response = client.post(
-        "/jobs/analyze",
+        "/api/v1/jobs/analyze",
         json={"model": "discogs_multi", "limit": 1, "execution_mode": "remote"},
     )
 
@@ -2232,7 +2232,7 @@ def test_analyze_audio_features_remote_mode_queues_worker_task(tmp_path: Path, m
 
     monkeypatch.setattr(api_jobs_module, "_analyze_audio_features_job", fail_if_called)
     response = client.post(
-        "/jobs/analyze-audio-features",
+        "/api/v1/jobs/analyze-audio-features",
         json={"execution_mode": "remote", "local_executor_enabled": False},
     )
 
@@ -2242,10 +2242,10 @@ def test_analyze_audio_features_remote_mode_queues_worker_task(tmp_path: Path, m
     assert job.kind == "analyze-audio-features"
     assert job.model_name == AUDIO_FEATURE_EXTRACTOR
     assert job.queued == 1
-    jobs = client.get("/jobs?detail=true").json()["jobs"]
+    jobs = client.get("/api/v1/jobs?detail=true").json()["jobs"]
     assert "Waiting for worker supporting audio_features_v1" in jobs[0]["status_hint"]
     claim = client.post(
-        "/workers/claim",
+        "/api/v1/workers/claim",
         json={"worker_id": "gpu-1", "models": [AUDIO_FEATURE_EXTRACTOR], "limit": 1},
     )
     assert claim.status_code == 200
@@ -2280,7 +2280,7 @@ def test_analyze_audio_features_reset_existing_requeues_processed_track(
 
     monkeypatch.setattr(api_jobs_module, "_analyze_audio_features_job", fail_if_called)
     response = client.post(
-        "/jobs/analyze-audio-features",
+        "/api/v1/jobs/analyze-audio-features",
         json={
             "execution_mode": "remote",
             "local_executor_enabled": False,
@@ -2296,7 +2296,7 @@ def test_analyze_audio_features_reset_existing_requeues_processed_track(
     assert job is not None
     assert job.queued == 1
     claim = client.post(
-        "/workers/claim",
+        "/api/v1/workers/claim",
         json={"worker_id": "gpu-1", "models": [AUDIO_FEATURE_EXTRACTOR], "limit": 1},
     )
     assert claim.status_code == 200
@@ -2315,7 +2315,7 @@ def test_analyze_heads_remote_mode_queues_worker_task(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr(api_jobs_module, "_analyze_heads_job", fail_if_called)
     response = client.post(
-        "/jobs/analyze-heads",
+        "/api/v1/jobs/analyze-heads",
         json={"execution_mode": "remote", "local_executor_enabled": False},
     )
 
@@ -2325,10 +2325,10 @@ def test_analyze_heads_remote_mode_queues_worker_task(tmp_path: Path, monkeypatc
     assert job.kind == "analyze-heads"
     assert job.model_name == "discogs-effnet-heads"
     assert job.queued == 1
-    jobs = client.get("/jobs?detail=true").json()["jobs"]
+    jobs = client.get("/api/v1/jobs?detail=true").json()["jobs"]
     assert "Waiting for worker supporting discogs-effnet-heads" in jobs[0]["status_hint"]
     claim = client.post(
-        "/workers/claim",
+        "/api/v1/workers/claim",
         json={"worker_id": "gpu-1", "models": ["discogs-effnet-heads"], "limit": 1},
     )
     assert claim.status_code == 200
@@ -2342,7 +2342,7 @@ def test_analyze_heads_job_accepts_limit(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     response = client.post(
-        "/jobs/analyze-heads",
+        "/api/v1/jobs/analyze-heads",
         json={"limit": 1},
     )
 
@@ -2354,7 +2354,7 @@ def test_check_missing_files_job_accepts_request(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
 
-    response = client.post("/jobs/check-missing-files")
+    response = client.post("/api/v1/jobs/check-missing-files")
 
     assert response.status_code == 200
     assert response.json()["status"] == "accepted"
@@ -2380,7 +2380,7 @@ def test_download_head_pack_endpoint_reports_downloads(tmp_path: Path, monkeypat
     )
     client = TestClient(app)
 
-    response = client.post("/models/download-head-pack")
+    response = client.post("/api/v1/models/download-head-pack")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
@@ -2493,7 +2493,7 @@ def test_analyze_job_rejects_invalid_workers(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     response = client.post(
-        "/jobs/analyze",
+        "/api/v1/jobs/analyze",
         json={"model": "discogs_multi", "limit": 1, "workers": 0},
     )
 
@@ -2505,7 +2505,7 @@ def test_analyze_job_rejects_zero_limit(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     response = client.post(
-        "/jobs/analyze",
+        "/api/v1/jobs/analyze",
         json={"model": "discogs_multi", "limit": 0},
     )
 
@@ -2516,7 +2516,7 @@ def test_track_audio_returns_404_for_missing_track(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
 
-    response = client.get("/tracks/999/audio")
+    response = client.get("/api/v1/tracks/999/audio")
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Track not found"
@@ -2527,7 +2527,7 @@ def test_track_audio_returns_clear_missing_file_error(tmp_path: Path, monkeypatc
     track_id = add_track(store, tmp_path / "missing.flac")
     client = TestClient(app)
 
-    response = client.get(f"/tracks/{track_id}/audio")
+    response = client.get(f"/api/v1/tracks/{track_id}/audio")
 
     assert response.status_code == 410
     assert "not mounted" in response.json()["detail"]
@@ -2576,7 +2576,7 @@ def test_track_audio_uses_navidrome_mapping_for_local_path(tmp_path: Path, monke
     monkeypatch.setattr("app.api.tracks.urlopen", fake_urlopen)
     client = TestClient(app)
 
-    response = client.get(f"/tracks/{track_id}/audio", headers={"Range": "bytes=0-14"})
+    response = client.get(f"/api/v1/tracks/{track_id}/audio", headers={"Range": "bytes=0-14"})
 
     assert response.status_code == 206
     assert response.headers["content-type"].startswith("audio/flac")
@@ -2631,7 +2631,7 @@ def test_track_audio_head_proxies_navidrome_stream_headers(tmp_path: Path, monke
     monkeypatch.setattr("app.api.tracks.urlopen", fake_urlopen)
     client = TestClient(app)
 
-    response = client.head(f"/tracks/{track_id}/audio", headers={"Range": "bytes=0-63"})
+    response = client.head(f"/api/v1/tracks/{track_id}/audio", headers={"Range": "bytes=0-63"})
 
     assert response.status_code == 206
     assert response.content == b""
@@ -2656,7 +2656,7 @@ def test_lost_files_list_paginates_and_delete_missing_tracks(tmp_path: Path, mon
     store.mark_track_missing(second_missing_id, "2026-05-29T20:01:00+00:00")
     client = TestClient(app)
 
-    response = client.get("/lost-files?page=1&page_size=1")
+    response = client.get("/api/v1/lost-files?page=1&page_size=1")
 
     assert response.status_code == 200
     data = response.json()
@@ -2668,7 +2668,7 @@ def test_lost_files_list_paginates_and_delete_missing_tracks(tmp_path: Path, mon
 
     delete_response = client.request(
         "DELETE",
-        "/lost-files",
+        "/api/v1/lost-files",
         json={"track_ids": [missing_id, present_id]},
     )
 
@@ -2679,7 +2679,7 @@ def test_lost_files_list_paginates_and_delete_missing_tracks(tmp_path: Path, mon
 
     delete_all_response = client.request(
         "DELETE",
-        "/lost-files",
+        "/api/v1/lost-files",
         json={"all_missing": True},
     )
 
@@ -2706,7 +2706,7 @@ def test_analysis_errors_list_paths_and_errors(tmp_path: Path, monkeypatch):
     )
 
     client = TestClient(app)
-    response = client.get("/analysis/errors")
+    response = client.get("/api/v1/analysis/errors")
 
     assert response.status_code == 200
     payload = response.json()
@@ -2748,9 +2748,9 @@ def test_tracks_list_includes_has_embedding_and_filters(tmp_path: Path, monkeypa
     store.save_embedding(ready_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
     client = TestClient(app)
 
-    all_response = client.get("/tracks?query=&limit=10&embedding_status=all&model=discogs_multi")
-    ready_response = client.get("/tracks?embedding_status=ready&model=discogs_multi")
-    missing_response = client.get("/tracks?embedding_status=missing&model=discogs_multi")
+    all_response = client.get("/api/v1/tracks?query=&limit=10&embedding_status=all&model=discogs_multi")
+    ready_response = client.get("/api/v1/tracks?embedding_status=ready&model=discogs_multi")
+    missing_response = client.get("/api/v1/tracks?embedding_status=missing&model=discogs_multi")
 
     assert all_response.status_code == 200
     assert {track["has_embedding"] for track in all_response.json()["results"]} == {True, False}
@@ -2788,10 +2788,10 @@ def test_tracks_list_filters_by_browser_metadata(tmp_path: Path, monkeypatch):
     store.save_embedding(ready_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
     client = TestClient(app)
 
-    genre_response = client.get("/tracks?genre=Techno&model=discogs_multi")
-    year_response = client.get("/tracks?year=2001&model=discogs_multi")
+    genre_response = client.get("/api/v1/tracks?genre=Techno&model=discogs_multi")
+    year_response = client.get("/api/v1/tracks?year=2001&model=discogs_multi")
     folder_response = client.get(
-        f"/tracks?folder={techno_path.parent}&embedding_status=ready&model=discogs_multi"
+        f"/api/v1/tracks?folder={techno_path.parent}&embedding_status=ready&model=discogs_multi"
     )
 
     assert [track["title"] for track in genre_response.json()["results"]] == ["Ready"]
@@ -2813,7 +2813,7 @@ def test_browse_facets_include_counts_and_hide_missing_genres(tmp_path: Path, mo
     store.save_embedding(tagged_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
     client = TestClient(app)
 
-    response = client.get("/browse/facets?model=discogs_multi")
+    response = client.get("/api/v1/browse/facets?model=discogs_multi")
 
     assert response.status_code == 200
     data = response.json()
@@ -2839,7 +2839,7 @@ def test_similar_mix_returns_blended_results(tmp_path: Path, monkeypatch):
     client = TestClient(app)
 
     response = client.get(
-        f"/tracks/similar/mix?seed_ids={first_id},{second_id}&model=discogs_multi&k=5"
+        f"/api/v1/tracks/similar/mix?seed_ids={first_id},{second_id}&model=discogs_multi&k=5"
     )
 
     assert response.status_code == 200
@@ -2854,7 +2854,7 @@ def test_similar_mix_reports_missing_tracks(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
 
-    response = client.get("/tracks/similar/mix?seed_ids=999")
+    response = client.get("/api/v1/tracks/similar/mix?seed_ids=999")
 
     assert response.status_code == 404
     assert "Tracks not found" in response.json()["detail"]
@@ -2864,7 +2864,7 @@ def test_similar_mix_rejects_empty_seed_ids(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
 
-    response = client.get("/tracks/similar/mix?seed_ids=")
+    response = client.get("/api/v1/tracks/similar/mix?seed_ids=")
 
     assert response.status_code == 400
 
@@ -2873,7 +2873,7 @@ def test_similar_mix_rejects_invalid_seed_ids(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
 
-    response = client.get("/tracks/similar/mix?seed_ids=1,abc")
+    response = client.get("/api/v1/tracks/similar/mix?seed_ids=1,abc")
 
     assert response.status_code == 400
     assert "Invalid seed id" in response.json()["detail"]
@@ -2887,7 +2887,7 @@ def test_similar_mix_reports_missing_index(tmp_path: Path, monkeypatch):
     store.save_embedding(seed_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
     client = TestClient(app)
 
-    response = client.get(f"/tracks/similar/mix?seed_ids={seed_id}&model=discogs_multi")
+    response = client.get(f"/api/v1/tracks/similar/mix?seed_ids={seed_id}&model=discogs_multi")
 
     assert response.status_code == 503
     assert "Index not found" in response.json()["detail"]
@@ -2906,7 +2906,7 @@ def test_similar_reports_stale_index(tmp_path: Path, monkeypatch):
     store.save_embedding(result_id, "discogs_multi", np.array([0.9, 0.1], dtype=np.float32))
     client = TestClient(app)
 
-    response = client.get(f"/tracks/{seed_id}/similar?model=discogs_multi&k=1")
+    response = client.get(f"/api/v1/tracks/{seed_id}/similar?model=discogs_multi&k=1")
 
     assert response.status_code == 503
     assert "Index is stale" in response.json()["detail"]
@@ -2919,7 +2919,7 @@ def test_similar_mix_reports_missing_embeddings(tmp_path: Path, monkeypatch):
     seed_id = add_track(store, seed_path, title="Seed")
     client = TestClient(app)
 
-    response = client.get(f"/tracks/similar/mix?seed_ids={seed_id}&model=discogs_multi")
+    response = client.get(f"/api/v1/tracks/similar/mix?seed_ids={seed_id}&model=discogs_multi")
 
     assert response.status_code == 404
     assert "No embeddings for mix seeds" in response.json()["detail"]
@@ -2941,7 +2941,7 @@ def test_similar_mix_skips_seeds_without_embeddings(tmp_path: Path, monkeypatch)
     client = TestClient(app)
 
     response = client.get(
-        f"/tracks/similar/mix?seed_ids={ready_id},{missing_id}&model=discogs_multi&k=1"
+        f"/api/v1/tracks/similar/mix?seed_ids={ready_id},{missing_id}&model=discogs_multi&k=1"
     )
 
     assert response.status_code == 200
@@ -2997,7 +2997,7 @@ def test_similar_tracks_include_saved_rating(tmp_path: Path, monkeypatch):
     main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
     client = TestClient(app)
 
-    response = client.get(f"/tracks/{seed_id}/similar?model=discogs_multi&k=1")
+    response = client.get(f"/api/v1/tracks/{seed_id}/similar?model=discogs_multi&k=1")
 
     assert response.status_code == 200
     result = response.json()["results"][0]
@@ -3046,7 +3046,7 @@ def test_navidrome_starred_catalog(tmp_path: Path, monkeypatch):
     store.save_embedding(ready_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
     client = TestClient(app)
 
-    response = client.get("/navidrome/starred?model=discogs_multi")
+    response = client.get("/api/v1/navidrome/starred?model=discogs_multi")
 
     assert response.status_code == 200
     data = response.json()
@@ -3088,7 +3088,7 @@ def test_navidrome_starred_ids_maps_current_user_likes(tmp_path: Path, monkeypat
     store.upsert_external_track("navidrome", "like-1", track_id)
     client = TestClient(app)
 
-    response = client.get("/navidrome/starred/ids")
+    response = client.get("/api/v1/navidrome/starred/ids")
 
     assert response.status_code == 200
     assert calls == 1
@@ -3124,8 +3124,8 @@ def test_set_track_navidrome_star_uses_configured_client(tmp_path: Path, monkeyp
     store.upsert_external_track("navidrome", "song-1", track_id)
     client = TestClient(app)
 
-    starred = client.put(f"/tracks/{track_id}/navidrome-star", json={"starred": True})
-    unstarred = client.put(f"/tracks/{track_id}/navidrome-star", json={"starred": False})
+    starred = client.put(f"/api/v1/tracks/{track_id}/navidrome-star", json={"starred": True})
+    unstarred = client.put(f"/api/v1/tracks/{track_id}/navidrome-star", json={"starred": False})
 
     assert starred.status_code == 200
     assert starred.json() == {
@@ -3145,7 +3145,7 @@ def test_set_track_navidrome_star_requires_mapping(tmp_path: Path, monkeypatch):
     track_id = add_track(store, tmp_path / "local.flac")
     client = TestClient(app)
 
-    response = client.put(f"/tracks/{track_id}/navidrome-star", json={"starred": True})
+    response = client.put(f"/api/v1/tracks/{track_id}/navidrome-star", json={"starred": True})
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Track has no Navidrome mapping"
@@ -3178,7 +3178,7 @@ def test_navidrome_starred_similar_blends_ready_likes(tmp_path: Path, monkeypatc
     main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
     client = TestClient(app)
 
-    response = client.get("/navidrome/starred/similar?model=discogs_multi&count=5")
+    response = client.get("/api/v1/navidrome/starred/similar?model=discogs_multi&count=5")
 
     assert response.status_code == 200
     data = response.json()
@@ -3205,7 +3205,7 @@ def test_navidrome_starred_similar_requires_ready_embeddings(tmp_path: Path, mon
     store.upsert_external_track("navidrome", "like-1", like_id)
     client = TestClient(app)
 
-    response = client.get("/navidrome/starred/similar?model=discogs_multi")
+    response = client.get("/api/v1/navidrome/starred/similar?model=discogs_multi")
 
     assert response.status_code == 404
     assert "No ready liked tracks" in response.json()["detail"]
@@ -3214,7 +3214,7 @@ def test_navidrome_starred_similar_requires_ready_embeddings(tmp_path: Path, mon
 def test_navidrome_similar_openapi_uses_annotated_response_model():
     client = TestClient(app)
 
-    response_schema = client.get("/openapi.json").json()["paths"]["/navidrome/similar"]["get"][
+    response_schema = client.get("/openapi.json").json()["paths"]["/api/v1/navidrome/similar"]["get"][
         "responses"
     ]["200"]["content"]["application/json"]["schema"]
 
@@ -3232,7 +3232,7 @@ def test_navidrome_similar_returns_external_ids(tmp_path: Path, monkeypatch):
     main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
     client = TestClient(app)
 
-    response = client.get("/navidrome/similar?item_id=seed&model=discogs_multi&count=1")
+    response = client.get("/api/v1/navidrome/similar?item_id=seed&model=discogs_multi&count=1")
 
     assert response.status_code == 200
     data = response.json()
@@ -3268,7 +3268,7 @@ def test_navidrome_similar_uses_instant_mix_settings_for_count_and_history(
     main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
     client = TestClient(app)
     settings_response = client.put(
-        "/instant-mix/settings",
+        "/api/v1/instant-mix/settings",
         json={
             "count": 2,
             "min_similarity": 0.0,
@@ -3280,7 +3280,7 @@ def test_navidrome_similar_uses_instant_mix_settings_for_count_and_history(
     assert settings_response.status_code == 200
     assert settings_response.json()["count_collaboration_artists"] is False
 
-    response = client.get("/navidrome/similar?item_id=seed&model=discogs_multi&count=100")
+    response = client.get("/api/v1/navidrome/similar?item_id=seed&model=discogs_multi&count=100")
 
     assert response.status_code == 200
     data = response.json()
@@ -3289,19 +3289,19 @@ def test_navidrome_similar_uses_instant_mix_settings_for_count_and_history(
     assert [item["item_id"] for item in data["results"]] == ["first", "second"]
     assert data["results"][0]["similarity"] >= data["results"][1]["similarity"]
     web_response = client.get(
-        f"/tracks/{seed_id}/similar?model=discogs_multi&k=2&max_per_artist=10&exclude_same_album=false"
+        f"/api/v1/tracks/{seed_id}/similar?model=discogs_multi&k=2&max_per_artist=10&exclude_same_album=false"
     )
     assert web_response.status_code == 200
     assert [item["track_id"] for item in data["results"]] == [
         item["id"] for item in web_response.json()["results"]
     ]
-    history_response = client.get("/instant-mix/requests")
+    history_response = client.get("/api/v1/instant-mix/requests")
     assert history_response.status_code == 200
     history = history_response.json()["results"]
     assert history[0]["id"] == data["request_id"]
     assert history[0]["requested_count"] == 100
     assert history[0]["effective_count"] == 2
-    detail_response = client.get(f"/instant-mix/requests/{data['request_id']}")
+    detail_response = client.get(f"/api/v1/instant-mix/requests/{data['request_id']}")
     assert detail_response.status_code == 200
     detail = detail_response.json()
     assert detail["params"]["count_collaboration_artists"] is False
@@ -3319,7 +3319,7 @@ def test_navidrome_similar_uses_saved_instant_mix_model(tmp_path: Path, monkeypa
     main_module.build_index(store, main_module.Settings.from_env(), "muq_mulan")
     client = TestClient(app)
     settings_response = client.put(
-        "/instant-mix/settings",
+        "/api/v1/instant-mix/settings",
         json={
             "model": "muq_mulan",
             "count": 1,
@@ -3331,13 +3331,13 @@ def test_navidrome_similar_uses_saved_instant_mix_model(tmp_path: Path, monkeypa
     )
     assert settings_response.status_code == 200
 
-    response = client.get("/navidrome/similar?item_id=seed&model=discogs_multi")
+    response = client.get("/api/v1/navidrome/similar?item_id=seed&model=discogs_multi")
 
     assert response.status_code == 200
     data = response.json()
     assert data["model"] == "muq_mulan"
     assert [item["item_id"] for item in data["results"]] == ["result"]
-    detail_response = client.get(f"/instant-mix/requests/{data['request_id']}")
+    detail_response = client.get(f"/api/v1/instant-mix/requests/{data['request_id']}")
     assert detail_response.status_code == 200
     detail = detail_response.json()
     assert detail["params"]["requested_model"] == "discogs_multi"
@@ -3353,7 +3353,7 @@ def test_instant_mix_requests_database_error_returns_json(tmp_path: Path, monkey
     monkeypatch.setattr(store_module.Store, "list_instant_mix_requests", fail_list)
     client = TestClient(app)
 
-    response = client.get("/instant-mix/requests?limit=100")
+    response = client.get("/api/v1/instant-mix/requests?limit=100")
 
     assert response.status_code == 503
     assert response.headers["content-type"].startswith("application/json")
@@ -3377,7 +3377,7 @@ def test_navidrome_similar_filters_by_instant_mix_similarity_threshold(
     main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
     client = TestClient(app)
     settings_response = client.put(
-        "/instant-mix/settings",
+        "/api/v1/instant-mix/settings",
         json={
             "count": 50,
             "min_similarity": 0.9,
@@ -3387,7 +3387,7 @@ def test_navidrome_similar_filters_by_instant_mix_similarity_threshold(
     )
     assert settings_response.status_code == 200
 
-    response = client.get("/navidrome/similar?item_id=seed&model=discogs_multi")
+    response = client.get("/api/v1/navidrome/similar?item_id=seed&model=discogs_multi")
 
     assert response.status_code == 200
     data = response.json()
@@ -3404,7 +3404,7 @@ def test_track_instant_mix_creates_local_history_request(tmp_path: Path, monkeyp
     main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
     client = TestClient(app)
     settings_response = client.put(
-        "/instant-mix/settings",
+        "/api/v1/instant-mix/settings",
         json={
             "count": 1,
             "min_similarity": 0.0,
@@ -3414,7 +3414,7 @@ def test_track_instant_mix_creates_local_history_request(tmp_path: Path, monkeyp
     )
     assert settings_response.status_code == 200
 
-    response = client.post(f"/tracks/{seed_id}/instant-mix")
+    response = client.post(f"/api/v1/tracks/{seed_id}/instant-mix")
 
     assert response.status_code == 200
     data = response.json()
@@ -3426,7 +3426,7 @@ def test_track_instant_mix_creates_local_history_request(tmp_path: Path, monkeyp
     assert data["session"]["settings"]["instant_mix_request_id"] == request_id
     # Seed track is the only item in the queue at response time; results arrive in background.
     assert seed_id in [item["track_id"] for item in data["queue"]["items"]]
-    detail_response = client.get(f"/instant-mix/requests/{request_id}")
+    detail_response = client.get(f"/api/v1/instant-mix/requests/{request_id}")
     assert detail_response.status_code == 200
     assert detail_response.json()["provider"] == "local"
 
@@ -3435,7 +3435,7 @@ def test_navidrome_similar_rejects_unsynced_seed(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
 
-    response = client.get("/navidrome/similar?item_id=missing")
+    response = client.get("/api/v1/navidrome/similar?item_id=missing")
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Navidrome item_id is not synced"
@@ -3448,7 +3448,7 @@ def test_navidrome_similar_reports_missing_index(tmp_path: Path, monkeypatch):
     store.save_embedding(seed_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
     client = TestClient(app)
 
-    response = client.get("/navidrome/similar?item_id=seed&model=discogs_multi")
+    response = client.get("/api/v1/navidrome/similar?item_id=seed&model=discogs_multi")
 
     assert response.status_code == 503
     assert "Index not found" in response.json()["detail"]
@@ -3464,7 +3464,7 @@ def test_navidrome_similar_reports_missing_seed_embedding(tmp_path: Path, monkey
     main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
     client = TestClient(app)
 
-    response = client.get("/navidrome/similar?item_id=seed&model=discogs_multi")
+    response = client.get("/api/v1/navidrome/similar?item_id=seed&model=discogs_multi")
 
     assert response.status_code == 404
     assert "No embedding for track" in response.json()["detail"]
@@ -3485,7 +3485,7 @@ def test_navidrome_similar_skips_results_without_external_id(tmp_path: Path, mon
     main_module.build_index(store, main_module.Settings.from_env(), "discogs_multi")
     client = TestClient(app)
 
-    response = client.get("/navidrome/similar?item_id=seed&model=discogs_multi&count=2")
+    response = client.get("/api/v1/navidrome/similar?item_id=seed&model=discogs_multi&count=2")
 
     assert response.status_code == 200
     assert [item["item_id"] for item in response.json()["results"]] == ["mapped"]
@@ -3644,7 +3644,7 @@ def test_analyze_audio_features_job_accepts_workers(tmp_path: Path, monkeypatch)
     client = TestClient(app)
 
     response = client.post(
-        "/jobs/analyze-audio-features",
+        "/api/v1/jobs/analyze-audio-features",
         json={"limit": 1, "workers": 2},
     )
 

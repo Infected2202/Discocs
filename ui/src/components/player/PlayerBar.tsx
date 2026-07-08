@@ -335,7 +335,7 @@ function TrackMoreMenu({ trackId }: { readonly trackId: number }) {
     const { usePlayerStore: store } = await import("@/store/playerStore")
     try {
       const envelope = await apiFetch<import("@/api/types").PlaybackEnvelope>(
-        `/tracks/${trackId}/instant-mix`,
+        `/api/v1/tracks/${trackId}/instant-mix`,
         { method: "POST" }
       )
       await store.getState().playFromEnvelope(envelope)

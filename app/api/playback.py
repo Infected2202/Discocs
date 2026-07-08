@@ -41,17 +41,17 @@ from app.serializers.playback import (
     queue_patch_items,
 )
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 
 _PLAYBACK_SESSION_NOT_FOUND = "Playback session not found"
 
 
-@router.get("/api/v1/playback/settings", response_model=PlaybackSettingsResponse)
+@router.get("/playback/settings", response_model=PlaybackSettingsResponse)
 def api_v1_playback_settings() -> dict[str, object]:
     return {"settings": playback_settings_defaults()}
 
 
-@router.post("/api/v1/autoplay/refill", response_model=AutoplayRefillResponse)
+@router.post("/autoplay/refill", response_model=AutoplayRefillResponse)
 def api_v1_autoplay_refill(
     request: AutoplayRefillRequest,
     include_debug: Annotated[bool, Query()] = False,
@@ -92,7 +92,7 @@ def api_v1_autoplay_refill(
     }
 
 
-@router.post("/api/v1/playback/sessions", response_model=PlaybackSessionEnvelopeResponse)
+@router.post("/playback/sessions", response_model=PlaybackSessionEnvelopeResponse)
 def api_v1_create_playback_session(request: PlaybackSessionCreateRequest) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     try:
@@ -116,7 +116,7 @@ def api_v1_create_playback_session(request: PlaybackSessionCreateRequest) -> dic
     return playback_session_response(store, session)
 
 
-@router.get("/api/v1/playback/sessions/{session_id}", response_model=PlaybackSessionEnvelopeResponse)
+@router.get("/playback/sessions/{session_id}", response_model=PlaybackSessionEnvelopeResponse)
 def api_v1_get_playback_session(session_id: str) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     session = store.get_playback_session(session_id)
@@ -125,7 +125,7 @@ def api_v1_get_playback_session(session_id: str) -> dict[str, object] | JSONResp
     return playback_session_response(store, session)
 
 
-@router.patch("/api/v1/playback/sessions/{session_id}", response_model=PlaybackSessionEnvelopeResponse)
+@router.patch("/playback/sessions/{session_id}", response_model=PlaybackSessionEnvelopeResponse)
 def api_v1_update_playback_session(
     session_id: str,
     request: PlaybackSessionPatchRequest,
@@ -153,7 +153,7 @@ def api_v1_update_playback_session(
     return playback_session_response(store, session)
 
 
-@router.get("/api/v1/playback/sessions/{session_id}/queue", response_model=PlaybackSessionEnvelopeResponse)
+@router.get("/playback/sessions/{session_id}/queue", response_model=PlaybackSessionEnvelopeResponse)
 def api_v1_get_playback_queue(
     session_id: str,
     include_debug: bool = False,
@@ -166,7 +166,7 @@ def api_v1_get_playback_queue(
     return {"session": playback_session_dict(store, session), "queue": playback_queue_dict(store, session, items, include_debug)}
 
 
-@router.patch("/api/v1/playback/sessions/{session_id}/queue", response_model=PlaybackSessionEnvelopeResponse)
+@router.patch("/playback/sessions/{session_id}/queue", response_model=PlaybackSessionEnvelopeResponse)
 def api_v1_patch_playback_queue(
     session_id: str,
     request: PlaybackQueuePatchRequest,
@@ -223,7 +223,7 @@ def api_v1_patch_playback_queue(
     return {"session": playback_session_dict(store, session), "queue": playback_queue_dict(store, session, items)}
 
 
-@router.post("/api/v1/playback/events", response_model=PlaybackEventIngestResponse)
+@router.post("/playback/events", response_model=PlaybackEventIngestResponse)
 def api_v1_record_playback_event(request: PlaybackEventRequest) -> dict[str, object] | JSONResponse:
     store, settings = context()
     try:

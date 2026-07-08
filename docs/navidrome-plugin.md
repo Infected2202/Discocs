@@ -1,5 +1,16 @@
 # Navidrome Instant Mix Plugin
 
+> **Known breaking change:** the discocs backend moved all REST routes under
+> `/api/v1/*` (see `plans/api-v1-namespace-migration.md`) to stop bare backend
+> paths from colliding with the new web UI's client-side routes
+> (`/artists/:id`, `/releases/:id`, `/settings`). The plugin (Go, compiled
+> into `plugins/navidrome-instant-mix/main.go`) still calls the old bare
+> `/navidrome/similar` and `/navidrome/plugin-event` paths and was
+> **intentionally not updated** — it is planned for retirement. Until the
+> plugin is rebuilt against `/api/v1/navidrome/similar` /
+> `/api/v1/navidrome/plugin-event` (or retired), Instant Mix via the Navidrome
+> plugin will 404 against a migrated discocs backend.
+
 The discocs Navidrome plugin replaces Navidrome's standard Instant Mix similar
 track source with recommendations from the local discocs embedding index.
 

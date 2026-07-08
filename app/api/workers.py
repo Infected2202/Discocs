@@ -39,7 +39,7 @@ from app.state import WORKER_HEARTBEAT_WRITE_INTERVAL_SECONDS
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 
 _TASK_NOT_FOUND = "Task not found"
 _SQLITE_BUSY_RETRY_SUBMIT = "SQLite is busy; retry submit"

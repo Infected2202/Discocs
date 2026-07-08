@@ -26,12 +26,12 @@ from app.serializers.entities import (
     track_summary_dict,
 )
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 
 _ARTIST_NOT_FOUND = "Artist not found"
 
 
-@router.get("/api/v1/artists/{artist_id}", response_model=ArtistResponse)
+@router.get("/artists/{artist_id}", response_model=ArtistResponse)
 def api_v1_artist(artist_id: int) -> dict[str, object] | JSONResponse:
     store, settings = context()
     artist = store.get_artist(artist_id)
@@ -57,7 +57,7 @@ def api_v1_artist(artist_id: int) -> dict[str, object] | JSONResponse:
     }
 
 
-@router.get("/api/v1/artists/{artist_id}/discography", response_model=ArtistDiscographyResponse)
+@router.get("/artists/{artist_id}/discography", response_model=ArtistDiscographyResponse)
 def api_v1_artist_discography(
     artist_id: int,
     sort: Annotated[str, Query(pattern="^(release_date_desc|release_date_asc|title)$")] = "release_date_desc",
@@ -106,7 +106,7 @@ def api_v1_artist_discography(
     return {"artist": artist_link_dict(artist.artist), "groups": groups}
 
 
-@router.get("/api/v1/artists/{artist_id}/image", response_model=ImageInfoResponse)
+@router.get("/artists/{artist_id}/image", response_model=ImageInfoResponse)
 def api_v1_artist_image(artist_id: int) -> dict[str, object] | JSONResponse:
     store, settings = context()
     artist = store.get_artist(artist_id)
@@ -119,7 +119,7 @@ def api_v1_artist_image(artist_id: int) -> dict[str, object] | JSONResponse:
     return {"image": image}
 
 
-@router.get("/api/v1/artists/{artist_id}/cover", response_model=None)
+@router.get("/artists/{artist_id}/cover", response_model=None)
 def api_v1_artist_cover(artist_id: int) -> JSONResponse | RedirectResponse:
     """Redirect to the artist's image URL, fetching from Navidrome if not yet cached."""
     store, settings = context()
@@ -134,7 +134,7 @@ def api_v1_artist_cover(artist_id: int) -> JSONResponse | RedirectResponse:
     return RedirectResponse(url=str(url), status_code=302)
 
 
-@router.get("/api/v1/artists/{artist_id}/top-tracks", response_model=ArtistAvailabilityStubResponse)
+@router.get("/artists/{artist_id}/top-tracks", response_model=ArtistAvailabilityStubResponse)
 def api_v1_artist_top_tracks(artist_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     artist = store.get_artist(artist_id)
@@ -155,7 +155,7 @@ def api_v1_artist_top_tracks(artist_id: int) -> dict[str, object] | JSONResponse
     }
 
 
-@router.get("/api/v1/artists/{artist_id}/similar", response_model=ArtistAvailabilityStubResponse)
+@router.get("/artists/{artist_id}/similar", response_model=ArtistAvailabilityStubResponse)
 def api_v1_artist_similar(artist_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     artist = store.get_artist(artist_id)

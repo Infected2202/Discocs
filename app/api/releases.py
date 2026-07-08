@@ -29,12 +29,12 @@ from app.services.release_similarity import find_similar_releases
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 
 _RELEASE_NOT_FOUND = "Release not found"
 
 
-@router.get("/api/v1/releases/{release_id}", response_model=ReleaseResponse)
+@router.get("/releases/{release_id}", response_model=ReleaseResponse)
 def api_v1_release(release_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     release = store.get_release(release_id)
@@ -51,7 +51,7 @@ def api_v1_release(release_id: int) -> dict[str, object] | JSONResponse:
     }
 
 
-@router.get("/api/v1/releases/{release_id}/tracks", response_model=ReleaseTracksResponse)
+@router.get("/releases/{release_id}/tracks", response_model=ReleaseTracksResponse)
 def api_v1_release_tracks(release_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     release = store.get_release(release_id)
@@ -63,7 +63,7 @@ def api_v1_release_tracks(release_id: int) -> dict[str, object] | JSONResponse:
     }
 
 
-@router.get("/api/v1/releases/{release_id}/related-discography", response_model=RelatedDiscographyResponse)
+@router.get("/releases/{release_id}/related-discography", response_model=RelatedDiscographyResponse)
 def api_v1_release_related_discography(release_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     release = store.get_release(release_id)
@@ -80,7 +80,7 @@ def api_v1_release_related_discography(release_id: int) -> dict[str, object] | J
     }
 
 
-@router.get("/api/v1/releases/{release_id}/recommendations", response_model=None)
+@router.get("/releases/{release_id}/recommendations", response_model=None)
 def api_v1_release_recommendations(
     release_id: int,
     limit: Annotated[int, Query(ge=1, le=50)] = 12,
@@ -140,7 +140,7 @@ def api_v1_release_recommendations(
     }
 
 
-@router.get("/api/v1/releases/{release_id}/cover", response_model=None)
+@router.get("/releases/{release_id}/cover", response_model=None)
 def api_v1_release_cover(
     release_id: int,
     size: Annotated[int, Query(ge=32, le=1000)] = 300,

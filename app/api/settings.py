@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 navidrome_logger = logging.getLogger("discocs.navidrome")
 navidrome_plugin_logger = get_navidrome_plugin_logger()
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 
 
 # ---------------------------------------------------------------------------

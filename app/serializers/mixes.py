@@ -12,7 +12,7 @@ def _generated_mix_artwork(mix, items) -> dict[str, object]:
     if mix.cover_path:
         return image_ref(f"/api/v1/mixes/{mix.id}/cover", "generated_mix")
     if items:
-        return image_ref(f"/tracks/{items[0].track_id}/cover?size=512", "track")
+        return image_ref(f"/api/v1/tracks/{items[0].track_id}/cover?size=512", "track")
     return image_ref(None, "none")
 
 

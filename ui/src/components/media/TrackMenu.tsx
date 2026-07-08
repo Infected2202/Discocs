@@ -33,7 +33,7 @@ export default function TrackMenu({ track, sourceLabel }: TrackMenuProps) {
   async function handleInstantMix() {
     try {
       const envelope = await apiFetch<PlaybackEnvelope>(
-        `/tracks/${track.id}/instant-mix`,
+        `/api/v1/tracks/${track.id}/instant-mix`,
         { method: "POST" }
       )
       await playFromEnvelope(envelope)

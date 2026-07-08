@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 
 def should_log_http_request(path: str) -> bool:
-    if path in {"/stats", "/jobs"}:
+    if path in {"/api/v1/stats", "/api/v1/jobs"}:
         return True
-    if path.startswith(("/metrics", "/navidrome", "/instant-mix", "/text-search")):
+    if path.startswith(("/api/v1/metrics", "/api/v1/navidrome", "/api/v1/instant-mix", "/api/v1/text-search")):
         return True
-    return path.startswith("/tracks/") and path.endswith(
+    return path.startswith("/api/v1/tracks/") and path.endswith(
         ("/cover", "/similar", "/navidrome-star")
     )
 

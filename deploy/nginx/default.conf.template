@@ -4,8 +4,8 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
-    # All backend API paths
-    location ~ ^/(api|tracks|artists|releases|mixes|settings|stats|jobs|feedback|navidrome|dashboard|workers|metrics|playback|likes|health|admin)(/|$) {
+    # All backend API paths — everything else falls through to the SPA
+    location ~ ^/(api|health|admin)(/|$) {
         proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

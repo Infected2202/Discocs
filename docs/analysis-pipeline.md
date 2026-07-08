@@ -48,10 +48,10 @@ python scripts/download_head_models.py --out-dir models
 Main API/UI actions:
 
 ```text
-POST /jobs/download-head-models
-POST /jobs/analyze-heads
-GET  /models/head-pack
-GET  /tracks/{track_id}/analysis
+POST /api/v1/jobs/download-head-models
+POST /api/v1/jobs/analyze-heads
+GET  /api/v1/models/head-pack
+GET  /api/v1/tracks/{track_id}/analysis
 ```
 
 ## Stored Head Data
@@ -120,7 +120,7 @@ recs analyze-audio-features --limit 20
 Main API/UI action:
 
 ```text
-POST /jobs/analyze-audio-features
+POST /api/v1/jobs/analyze-audio-features
 ```
 
 Stored data lives in `track_features`:
@@ -141,7 +141,7 @@ created_at
 Every track card has a tablet-icon button. It opens a modal backed by:
 
 ```text
-GET /tracks/{track_id}/analysis
+GET /api/v1/tracks/{track_id}/analysis
 ```
 
 The response includes:
@@ -172,7 +172,7 @@ Current behavior:
 Main API/UI actions:
 
 ```text
-POST   /jobs/check-missing-files
-GET    /lost-files
-DELETE /lost-files
+POST   /api/v1/jobs/check-missing-files
+GET    /api/v1/lost-files
+DELETE /api/v1/lost-files
 ```

@@ -17,7 +17,7 @@ class DiscocsError(Exception):
 
 
 class DiscocsClient:
-    """Discocs /navidrome/similar — модель и фильтры берутся из настроек Discocs."""
+    """Discocs /api/v1/navidrome/similar — модель и фильтры берутся из настроек Discocs."""
 
     def __init__(self, settings: Settings, navidrome: NavidromeClient) -> None:
         self._settings = settings
@@ -45,7 +45,7 @@ class DiscocsClient:
             "count": count or self._settings.discocs_count,
         }
         try:
-            response = await self._client.get(f"{self._base_url}/navidrome/similar", params=params)
+            response = await self._client.get(f"{self._base_url}/api/v1/navidrome/similar", params=params)
         except httpx.HTTPError as exc:
             raise DiscocsError(str(exc)) from exc
 
