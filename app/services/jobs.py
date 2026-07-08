@@ -149,7 +149,7 @@ def maybe_start_next_deferred_job() -> str | None:
         if has_active_job():
             return None
         next_job_id = None
-        for candidate in list(DEFERRED_JOB_ORDER):
+        for candidate in DEFERRED_JOB_ORDER.copy():
             with JOBS_LOCK:
                 job = JOBS.get(candidate)
                 is_waiting = job is not None and job.status == "deferred"

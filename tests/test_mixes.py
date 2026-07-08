@@ -461,3 +461,29 @@ def test_generated_mix_summary_uses_expected_artwork_source():
         "source": "none",
         "placeholder": True,
     }
+
+
+def test_generated_mix_summary_uses_track_count_when_anchor_has_no_subtitle_parts():
+    class FakeStore:
+        def list_generated_mix_items(self, _mix_id):
+            return [SimpleNamespace(track_id=1), SimpleNamespace(track_id=2), SimpleNamespace(track_id=3)]
+
+    summary = generated_mix_summary_dict(
+        FakeStore(),
+        SimpleNamespace(
+            id="mix-2",
+            title="Mix 2",
+            mix_type="generated",
+            status="active",
+            cover_path=None,
+            anchor_json='{"representative_artist": "", "representative_album": null}',
+            settings_json=None,
+            score_summary_json=None,
+            created_at="2026-07-08T00:00:00+00:00",
+            updated_at="2026-07-08T00:00:00+00:00",
+            expires_at=None,
+            saved_playlist_id=None,
+        ),
+    )
+
+    assert summary["subtitle"] == "3 tracks"

@@ -16,16 +16,23 @@ def _generated_mix_artwork(mix, items) -> dict[str, object]:
     return image_ref(None, "none")
 
 
+def _generated_mix_subtitle(anchor: dict[str, object], item_count: int) -> str:
+    subtitle_parts = [
+        str(anchor.get("representative_artist") or ""),
+        str(anchor.get("representative_album") or ""),
+    ]
+    subtitle = ", ".join(value for value in subtitle_parts if value)
+    if subtitle:
+        return subtitle
+    return f"{item_count} tracks"
+
+
 def generated_mix_summary_dict(store: Store, mix) -> dict[str, object]:
     items = store.list_generated_mix_items(mix.id)
     anchor = _json_object(mix.anchor_json)
     settings = _json_object(mix.settings_json)
     score_summary = _json_object(mix.score_summary_json)
-    subtitle_parts = [
-        str(anchor.get("representative_artist") or ""),
-        str(anchor.get("representative_album") or ""),
-    ]
-    subtitle = ", ".join(value for value in subtitle_parts if value) or f"{len(items)} tracks"
+    subtitle = _generated_mix_subtitle(anchor, len(items))
     artwork = _generated_mix_artwork(mix, items)
     return {
         "id": mix.id,

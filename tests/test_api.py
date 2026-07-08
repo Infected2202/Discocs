@@ -2089,6 +2089,29 @@ def test_deferred_job_starts_after_remote_analysis_completes(tmp_path: Path, mon
     assert any(job["id"] == analysis_response.json()["job_id"] and job["status"] == "completed" for job in jobs)
 
 
+def test_maybe_start_next_deferred_job_skips_stale_queue_entries(monkeypatch):
+    clear_runtime_jobs()
+    stale_job_id = "stale-job"
+    ready_job_id = main_module.create_job("index", "ready")
+    main_module.update_job(ready_job_id, status="deferred", message="waiting")
+    started = Event()
+
+    def starter() -> None:
+        started.set()
+        main_module.finish_job(ready_job_id, "completed", "done")
+
+    main_module.DEFERRED_JOB_ORDER.extend([stale_job_id, ready_job_id])
+    main_module.DEFERRED_JOB_STARTERS[ready_job_id] = starter
+    monkeypatch.setattr(services_jobs_module, "has_active_job", lambda store=None: False)
+
+    next_job_id = services_jobs_module.maybe_start_next_deferred_job()
+
+    assert next_job_id == ready_job_id
+    assert started.wait(2)
+    assert stale_job_id not in main_module.DEFERRED_JOB_ORDER
+    assert ready_job_id not in main_module.DEFERRED_JOB_ORDER
+
+
 def test_finished_transient_job_elapsed_is_frozen(tmp_path: Path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     clear_runtime_jobs()

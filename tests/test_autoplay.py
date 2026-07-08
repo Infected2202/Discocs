@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import replace
 import json
 
 import numpy as np
@@ -218,6 +219,34 @@ def test_autoplay_source_context_supports_release_artist_playlist_search_and_gen
     assert search_context.source_track_ids == [search_first_id, search_second_id]
     assert mix_context.source_track_ids == [mix_first_id, mix_second_id]
     assert mix_context.source_debug["strategy"] == "generated_mix_items"
+
+
+def test_autoplay_source_context_merges_seed_and_exclude_ids_without_duplicates(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    first_id = add_track(store, tmp_path, "first", [1.0, 0.0], artist="Artist", album="One")
+    second_id = add_track(store, tmp_path, "second", [0.9, 0.1], artist="Artist", album="Two")
+    session, queue = store.create_playback_session(
+        source_type="track",
+        source_id=first_id,
+        track_ids=[first_id],
+        autoplay_enabled=True,
+    )
+    store.append_queue_items(session.id, [{"track_id": second_id, "origin": "manual"}])
+    store.record_playback_event(
+        session_id=session.id,
+        queue_item_id=queue[0].id,
+        track_id=first_id,
+        event_type="completed",
+        play_fraction=1.0,
+    )
+    refreshed = store.get_playback_session(session.id)
+    assert refreshed is not None
+
+    context = build_source_context(store, replace(refreshed, current_track_id=second_id))
+
+    assert context.seed_track_ids == [first_id]
+    assert context.exclude_track_ids == {first_id, second_id}
 
 
 def test_autoplay_skip_penalty_is_session_local_and_does_not_blacklist_globally(tmp_path: Path):

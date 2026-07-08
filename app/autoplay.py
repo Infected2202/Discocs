@@ -170,10 +170,10 @@ def build_source_context(store: Store, session: PlaybackSession) -> SourceContex
     current_ids = [session.current_track_id] if session.current_track_id else []
     existing_queue_ids = [item.track_id for item in items if item.status != "removed"]
     source_ids, source_debug = _source_seed_track_ids(store, session, items)
-    seed_ids = _dedupe([*accepted_ids, *source_ids])
+    seed_ids = _dedupe(accepted_ids + source_ids)
     exclude_ids = set(
         int(track_id)
-        for track_id in [*existing_queue_ids, *played_ids, *current_ids, *skipped_ids]
+        for track_id in existing_queue_ids + played_ids + current_ids + skipped_ids
         if track_id
     )
     return SourceContext(
