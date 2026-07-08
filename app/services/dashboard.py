@@ -301,7 +301,7 @@ def _dashboard_liked_artists(
     store: Store,
     limit: int,
     offset: int,
-    include_debug: bool = False,
+    _include_debug: bool = False,
 ) -> tuple[list[dict[str, object]], int]:
     from app.serializers.search import dashboard_shelf_item  # noqa: PLC0415
     with store.connect() as conn:
@@ -339,7 +339,7 @@ def _dashboard_liked_releases(
     store: Store,
     limit: int,
     offset: int,
-    include_debug: bool = False,
+    _include_debug: bool = False,
 ) -> tuple[list[dict[str, object]], int]:
     from app.serializers.search import _release_shelf_item  # noqa: PLC0415
     with store.connect() as conn:
@@ -370,7 +370,7 @@ def _dashboard_new_releases(
     store: Store,
     limit: int,
     offset: int,
-    include_debug: bool = False,
+    _include_debug: bool = False,
 ) -> tuple[list[dict[str, object]], int]:
     from app.serializers.search import _release_shelf_item  # noqa: PLC0415
     with store.connect() as conn:
@@ -412,7 +412,7 @@ def _dashboard_albums_for_you(
     store: Store,
     limit: int,
     offset: int,
-    include_debug: bool = False,
+    _include_debug: bool = False,
 ) -> tuple[list[dict[str, object]], int]:
     import json  # noqa: PLC0415
     try:
