@@ -116,3 +116,70 @@ def test_load_cover_requests_a_telegram_thumbnail_sized_cover(tmp_path: Path):
 
     assert cover_path is not None
     assert navidrome.cover_art_calls == [("cover-1", THUMBNAIL_COVER_SIZE)]
+
+
+class _RecordingDb:
+    def __init__(self) -> None:
+        self.saved: list[dict[str, object]] = []
+
+    async def save_cached_file_id(self, **payload) -> None:
+        self.saved.append(payload)
+
+
+def test_cache_from_messages_uses_audio_duration_and_document_payload():
+    db = _RecordingDb()
+    settings = SimpleNamespace(transcode_bitrate="320k")
+    service = DeliveryService(settings=settings, navidrome=None, transcoder=None, db=db)
+    prepared = [
+        SimpleNamespace(
+            track=Track(id="song-a", title="A", artist="Artist", album="Album"),
+            cache_bitrate="mp3:320",
+            as_document=False,
+            duration=120,
+        ),
+        SimpleNamespace(
+            track=Track(id="song-b", title="B", artist="Artist", album="Album"),
+            cache_bitrate="flac",
+            as_document=True,
+            duration=240,
+        ),
+    ]
+    messages = [
+        SimpleNamespace(
+            audio=SimpleNamespace(file_id="audio-id", file_unique_id="audio-uid", file_size=111, duration=123),
+            document=None,
+        ),
+        SimpleNamespace(
+            audio=None,
+            document=SimpleNamespace(file_id="doc-id", file_unique_id="doc-uid", file_size=222),
+        ),
+    ]
+
+    asyncio.run(service._cache_from_messages(messages, prepared))
+
+    assert db.saved == [
+        {
+            "song_id": "song-a",
+            "file_id": "audio-id",
+            "file_unique_id": "audio-uid",
+            "bitrate": "mp3:320",
+            "file_size": 111,
+            "duration": 123,
+            "title": "A",
+            "artist": "Artist",
+            "album": "Album",
+            "created_at": db.saved[0]["created_at"],
+        },
+        {
+            "song_id": "song-b",
+            "file_id": "doc-id",
+            "file_unique_id": "doc-uid",
+            "bitrate": "flac",
+            "file_size": 222,
+            "duration": 240,
+            "title": "B",
+            "artist": "Artist",
+            "album": "Album",
+            "created_at": db.saved[1]["created_at"],
+        },
+    ]

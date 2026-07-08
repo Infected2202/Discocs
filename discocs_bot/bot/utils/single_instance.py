@@ -79,51 +79,75 @@ def _release_posix_lock() -> None:
     _lock_file = None
 
 
-def acquire(data_dir: Path) -> None:
+def _release_windows_mutex() -> None:
     global _mutex_handle
 
+    if _mutex_handle:
+        ctypes.windll.kernel32.CloseHandle(_mutex_handle)
+        _mutex_handle = None
+
+
+def _acquire_windows_mutex(data_dir: Path) -> None:
+    global _mutex_handle
+
+    kernel32 = ctypes.windll.kernel32
+    mutex_name = _mutex_name(data_dir)
+    handle = kernel32.CreateMutexW(None, True, mutex_name)
+    if not handle:
+        logger.error("Failed to acquire bot instance lock")
+        raise SystemExit(1)
+    if kernel32.GetLastError() == _ERROR_ALREADY_EXISTS:
+        kernel32.CloseHandle(handle)
+        logger.error("Bot already running in this project. Run stop.bat first.")
+        raise SystemExit(1)
+    _mutex_handle = handle
+
+
+def _release_process_lock() -> None:
     if sys.platform == "win32":
-        kernel32 = ctypes.windll.kernel32
-        mutex_name = _mutex_name(data_dir)
-        handle = kernel32.CreateMutexW(None, True, mutex_name)
-        if not handle:
-            logger.error("Failed to acquire bot instance lock")
-            raise SystemExit(1)
-        if kernel32.GetLastError() == _ERROR_ALREADY_EXISTS:
-            kernel32.CloseHandle(handle)
-            logger.error("Bot already running in this project. Run stop.bat first.")
-            raise SystemExit(1)
-        _mutex_handle = handle
-    else:
-        _acquire_posix_lock(data_dir)
+        _release_windows_mutex()
+        return
+    _release_posix_lock()
+
+
+def _acquire_process_lock(data_dir: Path) -> None:
+    if sys.platform == "win32":
+        _acquire_windows_mutex(data_dir)
+        return
+    _acquire_posix_lock(data_dir)
+
+
+def _active_pid_from_file(path: Path) -> int | None:
+    if not path.exists():
+        return None
+    try:
+        old_pid = int(path.read_text(encoding="utf-8").strip())
+    except ValueError:
+        old_pid = 0
+    if old_pid and old_pid != os.getpid() and _is_process_running(old_pid):
+        return old_pid
+    path.unlink(missing_ok=True)
+    return None
+
+
+def acquire(data_dir: Path) -> None:
+    _acquire_process_lock(data_dir)
 
     data_dir.mkdir(parents=True, exist_ok=True)
     path = pid_file_path(data_dir)
-
-    if path.exists():
-        try:
-            old_pid = int(path.read_text(encoding="utf-8").strip())
-        except ValueError:
-            old_pid = 0
-        if old_pid and old_pid != os.getpid() and _is_process_running(old_pid):
-            if sys.platform == "win32":
-                ctypes.windll.kernel32.CloseHandle(_mutex_handle)
-                _mutex_handle = None
-            else:
-                _release_posix_lock()
-            logger.error(
-                "Bot already running (PID %s). Stop it before starting another instance.",
-                old_pid,
-            )
-            raise SystemExit(1)
-        path.unlink(missing_ok=True)
+    active_pid = _active_pid_from_file(path)
+    if active_pid is not None:
+        _release_process_lock()
+        logger.error(
+            "Bot already running (PID %s). Stop it before starting another instance.",
+            active_pid,
+        )
+        raise SystemExit(1)
 
     path.write_text(str(os.getpid()), encoding="utf-8")
 
 
 def release(data_dir: Path) -> None:
-    global _mutex_handle
-
     path = pid_file_path(data_dir)
     if path.exists():
         try:
@@ -133,9 +157,4 @@ def release(data_dir: Path) -> None:
         if stored_pid == os.getpid():
             path.unlink(missing_ok=True)
 
-    if _mutex_handle:
-        ctypes.windll.kernel32.CloseHandle(_mutex_handle)
-        _mutex_handle = None
-
-    if sys.platform != "win32":
-        _release_posix_lock()
+    _release_process_lock()

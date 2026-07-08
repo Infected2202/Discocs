@@ -60,36 +60,14 @@ class Transcoder:
             raise TranscodeError("input and output paths must differ")
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        cmd = ["ffmpeg", "-y", "-i", str(input_path)]
-        has_cover = cover_path is not None and cover_path.exists()
-        embed_cover = has_cover and audio_format != "opus"
-        if embed_cover:
-            cmd.extend(["-i", str(cover_path)])
-        cmd.extend(["-map", "0:a:0"])
-        if embed_cover:
-            cmd.extend(["-map", "1:v:0"])
-
-        input_suffix = input_path.suffix.lower()
-        if audio_format == "flac":
-            if input_suffix == ".flac" and not embed_cover:
-                cmd.extend(["-c:a", "copy"])
-            else:
-                cmd.extend(["-codec:a", "flac", "-compression_level", "5"])
-            if embed_cover:
-                cmd.extend(["-c:v", "mjpeg", "-disposition:v", "attached_pic"])
-        elif audio_format == "opus":
-            cmd.extend(["-c:a", "libopus", "-b:a", bitrate, "-application", "audio"])
-        elif audio_format == "mp3" and input_suffix == ".mp3" and not embed_cover:
-            cmd.extend(["-c:a", "copy"])
-        else:
-            cmd.extend(["-codec:a", "libmp3lame", "-b:a", bitrate, "-threads", "0"])
-            if self._settings.transcode_fast:
-                cmd.extend(["-compression_level", "0"])
-            if embed_cover:
-                cmd.extend(["-c:v", "mjpeg", "-disposition:v", "attached_pic"])
-
-        cmd.extend(self._metadata_args(track))
-        cmd.append(str(output_path))
+        cmd = self._build_transcode_command(
+            input_path,
+            output_path,
+            track=track,
+            cover_path=cover_path,
+            audio_format=audio_format,
+            bitrate=bitrate,
+        )
 
         async with self._semaphore:
             input_mb = input_path.stat().st_size / (1024 * 1024) if input_path.exists() else 0
@@ -108,6 +86,73 @@ class Transcoder:
             if output_path.exists():
                 output_mb = output_path.stat().st_size / (1024 * 1024)
                 logger.info("Transcode done %s (output=%.1f MB)", output_path.name, output_mb)
+
+    def _build_transcode_command(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        track: Track,
+        cover_path: Path | None,
+        audio_format: str,
+        bitrate: str,
+    ) -> list[str]:
+        cmd = ["ffmpeg", "-y", "-i", str(input_path)]
+        embed_cover = self._should_embed_cover(cover_path, audio_format)
+        if embed_cover and cover_path is not None:
+            cmd.extend(["-i", str(cover_path)])
+        cmd.extend(self._mapping_args(embed_cover))
+        cmd.extend(self._codec_args(input_path, audio_format, bitrate, embed_cover))
+        cmd.extend(self._metadata_args(track))
+        cmd.append(str(output_path))
+        return cmd
+
+    @staticmethod
+    def _should_embed_cover(cover_path: Path | None, audio_format: str) -> bool:
+        return bool(cover_path is not None and cover_path.exists() and audio_format != "opus")
+
+    @staticmethod
+    def _mapping_args(embed_cover: bool) -> list[str]:
+        args = ["-map", "0:a:0"]
+        if embed_cover:
+            args.extend(["-map", "1:v:0"])
+        return args
+
+    def _codec_args(
+        self,
+        input_path: Path,
+        audio_format: str,
+        bitrate: str,
+        embed_cover: bool,
+    ) -> list[str]:
+        input_suffix = input_path.suffix.lower()
+        if audio_format == "flac":
+            return self._flac_codec_args(input_suffix, embed_cover)
+        if audio_format == "opus":
+            return ["-c:a", "libopus", "-b:a", bitrate, "-application", "audio"]
+        if audio_format == "mp3" and input_suffix == ".mp3" and not embed_cover:
+            return ["-c:a", "copy"]
+        return self._mp3_codec_args(bitrate, embed_cover)
+
+    @staticmethod
+    def _flac_codec_args(input_suffix: str, embed_cover: bool) -> list[str]:
+        args = ["-c:a", "copy"] if input_suffix == ".flac" and not embed_cover else [
+            "-codec:a",
+            "flac",
+            "-compression_level",
+            "5",
+        ]
+        if embed_cover:
+            args.extend(["-c:v", "mjpeg", "-disposition:v", "attached_pic"])
+        return args
+
+    def _mp3_codec_args(self, bitrate: str, embed_cover: bool) -> list[str]:
+        args = ["-codec:a", "libmp3lame", "-b:a", bitrate, "-threads", "0"]
+        if self._settings.transcode_fast:
+            args.extend(["-compression_level", "0"])
+        if embed_cover:
+            args.extend(["-c:v", "mjpeg", "-disposition:v", "attached_pic"])
+        return args
 
     async def make_telegram_thumbnail(self, cover_path: Path, output_path: Path) -> Path | None:
         if not cover_path.exists():

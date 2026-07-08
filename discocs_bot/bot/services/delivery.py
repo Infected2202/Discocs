@@ -75,6 +75,15 @@ def _telegram_audio_metadata(prepared: PreparedAudio) -> dict:
     return fields
 
 
+@dataclass(slots=True)
+class _PreparedSource:
+    source_path: Path
+    out_path: Path
+    temp_paths: list[Path]
+    source_bitrate: int | None
+    use_server_mp3: bool
+
+
 class DeliveryService:
     def __init__(
         self,
@@ -191,24 +200,12 @@ class DeliveryService:
 
         cover_path = await self._load_cover_for_album(album, album_id)
 
+        update_status = self._album_status_updater(status_message)
         workers = max(1, self._settings.transcode_workers)
         semaphore = asyncio.Semaphore(workers)
         errors: list[Exception] = []
         prepared_count = 0
         progress_lock = asyncio.Lock()
-
-        async def update_status(text: str) -> None:
-            if not status_message:
-                return
-            try:
-                await telegram_retry(
-                    lambda: status_message.edit_text(text),
-                    description="update_album_status",
-                )
-            except BadRequest:
-                logger.debug("Could not update album status message")
-            except (NetworkError, TimedOut):
-                logger.debug("Could not update album status message after retries")
 
         await update_status(f"Готовлю альбом... 0/{len(tracks)}")
 
@@ -284,6 +281,51 @@ class DeliveryService:
         )
         self._cleanup(cover_path)
 
+    @staticmethod
+    def _album_status_updater(status_message: Message | None):
+        async def update_status(text: str) -> None:
+            if not status_message:
+                return
+            try:
+                await telegram_retry(
+                    lambda: status_message.edit_text(text),
+                    description="update_album_status",
+                )
+            except BadRequest:
+                logger.debug("Could not update album status message")
+            except (NetworkError, TimedOut):
+                logger.debug("Could not update album status message after retries")
+
+        return update_status
+
+    async def _send_album_items(
+        self,
+        bot: Bot,
+        *,
+        chat_id: int,
+        album_id: str,
+        prepared_items: list[PreparedAudio],
+        cover_path: Path | None,
+        total_count: int,
+        update_status,
+    ) -> int:
+        sent_count = 0
+        for item in prepared_items:
+            await update_status(f"РћС‚РїСЂР°РІР»СЏСЋ Р°Р»СЊР±РѕРј... {sent_count}/{total_count}")
+            try:
+                await self._send_single_audio(
+                    bot,
+                    chat_id=chat_id,
+                    prepared=item,
+                    thumb_path=cover_path,
+                )
+                sent_count += 1
+                logger.info("Album %s: sent %s/%s", album_id, sent_count, total_count)
+            except (NetworkError, TimedOut):
+                logger.exception("send_audio failed for album track %s", item.track.id)
+        await update_status(f"РћС‚РїСЂР°РІР»СЏСЋ Р°Р»СЊР±РѕРј... {sent_count}/{total_count}")
+        return sent_count
+
     async def _prepare_audio(
         self,
         track: Track,
@@ -301,89 +343,38 @@ class DeliveryService:
         source_bitrate = track.bitrate_kbps
 
         if use_cache:
-            async with self._timed_step(timer, "cache_lookup"):
-                cached = await self._lookup_cached(
-                    track,
-                    prefs,
-                    source_bitrate_kbps=source_bitrate,
-                    has_cover=has_cover,
-                )
-            if cached:
-                file_id, cache_key, as_document, extension = cached
-                await self._db.touch_cache(track.id, cache_key, now)
-                await self._db.log_event(
-                    user_id=user_id,
-                    song_id=track.id,
-                    event_type="cache_hit",
-                    context=cache_key,
-                    created_at=now,
-                )
-                if timer:
-                    timer.add_detail("cache", "hit")
-                    timer.add_detail("profile", prefs.profile)
-                    timer.add_detail("cache_key", cache_key)
-                return PreparedAudio(
-                    track=track,
-                    file_id=file_id,
-                    duration=track.duration,
-                    filename=self._audio_filename(track, extension=extension),
-                    cache_bitrate=cache_key,
-                    as_document=as_document,
-                )
-            if timer:
-                timer.add_detail("cache", "miss")
-
-        await self._db.log_event(
-            user_id=user_id,
-            song_id=track.id,
-            event_type="cache_miss",
-            context=prefs.profile,
-            created_at=now,
-        )
-
-        extension = track.suffix or "audio"
-        use_server_mp3 = should_use_navidrome_transcode(
-            track.suffix,
-            source_bitrate,
-            prefs,
-            enabled=self._settings.navidrome_stream_max_bitrate > 0,
-        )
-        if use_server_mp3:
-            source_path = temp_dir / f"{track.id}.source.mp3"
-        else:
-            source_path = temp_dir / f"{track.id}.source.{extension}"
-        out_path = temp_dir / f"{track.id}.out.{prefs.file_extension}"
-        temp_paths = [source_path, out_path]
-
-        max_bit_rate = self._navidrome_stream_bitrate(prefs) if use_server_mp3 else None
-        async with self._timed_step(timer, "download"):
-            downloaded_bytes = await self._navidrome.download_stream(
-                track.id, source_path, max_bit_rate=max_bit_rate
+            cached_audio = await self._resolve_cached_audio(
+                track,
+                prefs,
+                source_bitrate=source_bitrate,
+                has_cover=has_cover,
+                user_id=user_id,
+                now=now,
+                timer=timer,
             )
-        if timer:
-            timer.add_detail("download_mb", round(downloaded_bytes / (1024 * 1024), 2))
-            timer.add_detail("profile", prefs.profile)
-            if use_server_mp3:
-                timer.add_detail("download_mode", "navidrome_mp3")
+            if cached_audio is not None:
+                return cached_audio
 
-        delivery_suffix = "mp3" if use_server_mp3 else track.suffix
-        delivery_bitrate = source_bitrate
-        if delivery_bitrate is None or use_server_mp3:
-            async with self._timed_step(timer, "ffprobe_bitrate"):
-                probed = await self._transcoder.get_audio_bitrate_kbps(source_path)
-                if probed:
-                    delivery_bitrate = probed
-                if timer and delivery_bitrate:
-                    timer.add_detail("source_kbps", delivery_bitrate)
+        await self._record_cache_miss(track, prefs, user_id=user_id, now=now)
+        if timer:
+            timer.add_detail("cache", "miss")
+
+        prepared_source = await self._download_prepared_source(
+            track,
+            prefs,
+            source_bitrate=source_bitrate,
+            temp_dir=temp_dir,
+            timer=timer,
+        )
 
         async with self._timed_step(timer, "transcode"):
             send_path, delivery = await self._prepare_audio_file(
-                source_path,
-                out_path,
+                prepared_source.source_path,
+                prepared_source.out_path,
                 track,
                 prefs=prefs,
-                source_suffix=delivery_suffix,
-                source_bitrate_kbps=delivery_bitrate,
+                source_suffix="mp3" if prepared_source.use_server_mp3 else track.suffix,
+                source_bitrate_kbps=prepared_source.source_bitrate,
                 cover_path=cover_path,
             )
         if timer:
@@ -405,8 +396,8 @@ class DeliveryService:
         elif timer:
             timer.add_detail("ffprobe", "skipped")
 
-        if send_path not in temp_paths:
-            temp_paths.append(send_path)
+        if send_path not in prepared_source.temp_paths:
+            prepared_source.temp_paths.append(send_path)
 
         return PreparedAudio(
             track=track,
@@ -415,8 +406,149 @@ class DeliveryService:
             filename=self._audio_filename(track, extension=delivery.file_extension),
             cache_bitrate=delivery.cache_bitrate,
             as_document=delivery.as_document,
-            temp_paths=temp_paths,
+            temp_paths=prepared_source.temp_paths,
         )
+
+    async def _resolve_cached_audio(
+        self,
+        track: Track,
+        prefs: UserDeliveryPrefs,
+        *,
+        source_bitrate: int | None,
+        has_cover: bool,
+        user_id: int | None,
+        now: str,
+        timer: PrepTimer | None,
+    ) -> PreparedAudio | None:
+        async with self._timed_step(timer, "cache_lookup"):
+            cached = await self._lookup_cached(
+                track,
+                prefs,
+                source_bitrate_kbps=source_bitrate,
+                has_cover=has_cover,
+            )
+        if cached is None:
+            return None
+
+        file_id, cache_key, as_document, extension = cached
+        await self._db.touch_cache(track.id, cache_key, now)
+        await self._db.log_event(
+            user_id=user_id,
+            song_id=track.id,
+            event_type="cache_hit",
+            context=cache_key,
+            created_at=now,
+        )
+        if timer:
+            timer.add_detail("cache", "hit")
+            timer.add_detail("profile", prefs.profile)
+            timer.add_detail("cache_key", cache_key)
+        return PreparedAudio(
+            track=track,
+            file_id=file_id,
+            duration=track.duration,
+            filename=self._audio_filename(track, extension=extension),
+            cache_bitrate=cache_key,
+            as_document=as_document,
+        )
+
+    async def _record_cache_miss(
+        self,
+        track: Track,
+        prefs: UserDeliveryPrefs,
+        *,
+        user_id: int | None,
+        now: str,
+    ) -> None:
+        await self._db.log_event(
+            user_id=user_id,
+            song_id=track.id,
+            event_type="cache_miss",
+            context=prefs.profile,
+            created_at=now,
+        )
+
+    async def _download_prepared_source(
+        self,
+        track: Track,
+        prefs: UserDeliveryPrefs,
+        *,
+        source_bitrate: int | None,
+        temp_dir: Path,
+        timer: PrepTimer | None,
+    ) -> _PreparedSource:
+        prepared_source = self._build_prepared_source(
+            track,
+            prefs,
+            source_bitrate=source_bitrate,
+            temp_dir=temp_dir,
+        )
+        max_bit_rate = self._navidrome_stream_bitrate(prefs) if prepared_source.use_server_mp3 else None
+        async with self._timed_step(timer, "download"):
+            downloaded_bytes = await self._navidrome.download_stream(
+                track.id,
+                prepared_source.source_path,
+                max_bit_rate=max_bit_rate,
+            )
+        if timer:
+            timer.add_detail("download_mb", round(downloaded_bytes / (1024 * 1024), 2))
+            timer.add_detail("profile", prefs.profile)
+            if prepared_source.use_server_mp3:
+                timer.add_detail("download_mode", "navidrome_mp3")
+        prepared_source.source_bitrate = await self._resolve_source_bitrate(
+            prepared_source.source_path,
+            source_bitrate=source_bitrate,
+            use_server_mp3=prepared_source.use_server_mp3,
+            timer=timer,
+        )
+        return prepared_source
+
+    def _build_prepared_source(
+        self,
+        track: Track,
+        prefs: UserDeliveryPrefs,
+        *,
+        source_bitrate: int | None,
+        temp_dir: Path,
+    ) -> _PreparedSource:
+        extension = track.suffix or "audio"
+        use_server_mp3 = should_use_navidrome_transcode(
+            track.suffix,
+            source_bitrate,
+            prefs,
+            enabled=self._settings.navidrome_stream_max_bitrate > 0,
+        )
+        source_path = (
+            temp_dir / f"{track.id}.source.mp3"
+            if use_server_mp3
+            else temp_dir / f"{track.id}.source.{extension}"
+        )
+        out_path = temp_dir / f"{track.id}.out.{prefs.file_extension}"
+        return _PreparedSource(
+            source_path=source_path,
+            out_path=out_path,
+            temp_paths=[source_path, out_path],
+            source_bitrate=source_bitrate,
+            use_server_mp3=use_server_mp3,
+        )
+
+    async def _resolve_source_bitrate(
+        self,
+        source_path: Path,
+        *,
+        source_bitrate: int | None,
+        use_server_mp3: bool,
+        timer: PrepTimer | None,
+    ) -> int | None:
+        resolved_bitrate = source_bitrate
+        if resolved_bitrate is None or use_server_mp3:
+            async with self._timed_step(timer, "ffprobe_bitrate"):
+                probed = await self._transcoder.get_audio_bitrate_kbps(source_path)
+            if probed:
+                resolved_bitrate = probed
+        if timer and resolved_bitrate:
+            timer.add_detail("source_kbps", resolved_bitrate)
+        return resolved_bitrate
 
     async def _lookup_cached(
         self,
@@ -794,29 +926,39 @@ class DeliveryService:
                 )
             except (BadRequest, NetworkError, TimedOut) as exc:
                 logger.error("send_media_group failed: %s", exc)
-                sent_count = 0
-                for item in prepared:
-                    try:
-                        await self._send_single_audio(
-                            bot,
-                            chat_id=chat_id,
-                            prepared=item,
-                            thumb_path=thumb_path,
-                        )
-                        sent_count += 1
-                        if progress and total_count is not None:
-                            await progress(
-                                f"Отправляю альбом... {sent_before + sent_count}/{total_count}"
-                            )
-                    except (NetworkError, TimedOut):
-                        logger.exception("send_audio fallback failed for %s", item.track.id)
-                        continue
-                return sent_count
+                return await self._send_audio_group_fallback(
+                    bot,
+                    chat_id=chat_id,
+                    prepared=prepared,
+                    thumb_path=thumb_path,
+                )
 
         await self._cache_from_messages(messages, prepared)
         if progress and total_count is not None:
             await progress(f"Отправляю альбом... {sent_before + len(messages)}/{total_count}")
         return len(messages)
+
+    async def _send_audio_group_fallback(
+        self,
+        bot: Bot,
+        *,
+        chat_id: int,
+        prepared: list[PreparedAudio],
+        thumb_path: Path | None,
+    ) -> int:
+        sent_count = 0
+        for item in prepared:
+            try:
+                await self._send_single_audio(
+                    bot,
+                    chat_id=chat_id,
+                    prepared=item,
+                    thumb_path=thumb_path,
+                )
+                sent_count += 1
+            except (NetworkError, TimedOut):
+                logger.exception("send_audio fallback failed for %s", item.track.id)
+        return sent_count
 
     def _audio_media(
         self,
@@ -841,23 +983,10 @@ class DeliveryService:
             return
         now = utc_now_iso()
         for message, item in zip(messages, prepared, strict=False):
-            if item.as_document:
-                document = message.document
-                if not document:
-                    continue
-                file_id = document.file_id
-                file_unique_id = document.file_unique_id
-                file_size = document.file_size
-            else:
-                audio = message.audio
-                if not audio:
-                    continue
-                file_id = audio.file_id
-                file_unique_id = audio.file_unique_id
-                file_size = audio.file_size
-            duration = item.duration
-            if not item.as_document and message.audio:
-                duration = message.audio.duration or duration
+            cache_payload = self._message_cache_payload(message, item)
+            if cache_payload is None:
+                continue
+            file_id, file_unique_id, file_size, duration = cache_payload
             await self._db.save_cached_file_id(
                 song_id=item.track.id,
                 file_id=file_id,
@@ -870,6 +999,32 @@ class DeliveryService:
                 album=item.track.album,
                 created_at=now,
             )
+
+    @staticmethod
+    def _message_cache_payload(
+        message,
+        item: PreparedAudio,
+    ) -> tuple[str, str, int | None, int | None] | None:
+        if item.as_document:
+            document = message.document
+            if not document:
+                return None
+            return (
+                document.file_id,
+                document.file_unique_id,
+                document.file_size,
+                item.duration,
+            )
+
+        audio = message.audio
+        if not audio:
+            return None
+        return (
+            audio.file_id,
+            audio.file_unique_id,
+            audio.file_size,
+            audio.duration or item.duration,
+        )
 
     async def _load_cover(self, track: Track, key: str) -> Path | None:
         cover_art_id = track.cover_art_id

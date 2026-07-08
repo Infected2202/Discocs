@@ -220,7 +220,7 @@ async def _handle_get(update: Update, context: ContextTypes.DEFAULT_TYPE, song_i
         elif str(exc) in ("telegram_replace_failed", "telegram_upload_failed"):
             await _safe_edit_loading_message(loading, "Не удалось заменить сообщение загрузки на аудио.")
         else:
-            logger.error("deliver_track_to_message failed: %s", exc)
+            logger.exception("deliver_track_to_message failed: %s", exc)
             await _safe_edit_loading_message(loading, "Не удалось подготовить аудио.")
     except Exception:
         logger.exception("deliver_track_to_message failed for song_id=%s", song_id)
@@ -256,7 +256,7 @@ async def _handle_album(update: Update, context: ContextTypes.DEFAULT_TYPE, albu
                 "Один из треков слишком большой для отправки в Telegram."
             )
         else:
-            logger.error("deliver_album failed: %s", exc)
+            logger.exception("deliver_album failed: %s", exc)
             await _safe_edit_text(status, f"Не удалось отправить альбом в Telegram.\n{exc}")
     except (TimedOut, NetworkError):
         logger.exception("deliver_album timed out for album_id=%s", album_id)
