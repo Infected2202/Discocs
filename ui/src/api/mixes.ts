@@ -17,8 +17,16 @@ export function fetchMix(id: string): Promise<GeneratedMixDetail> {
   return apiFetch(`/api/v1/mixes/${id}`)
 }
 
-export function saveMix(id: string): Promise<GeneratedMixSummary> {
-  return apiFetch(`/api/v1/mixes/${id}/save`, { method: "POST" })
+export interface SaveMixPayload {
+  title?: string
+  description?: string | null
+}
+
+export function saveMix(id: string, payload?: SaveMixPayload): Promise<GeneratedMixSummary> {
+  return apiFetch(`/api/v1/mixes/${id}/save`, {
+    method: "POST",
+    ...(payload ? { body: JSON.stringify(payload) } : {}),
+  })
 }
 
 export function playMix(id: string): Promise<PlaybackEnvelope> {

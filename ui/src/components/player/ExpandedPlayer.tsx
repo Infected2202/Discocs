@@ -3,11 +3,12 @@ import { Link } from "react-router"
 import {
   Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat1, Infinity, ChevronDown,
-  Volume2, VolumeX, Volume1, ThumbsUp, MoreHorizontal,
+  Volume2, VolumeX, Volume1, ThumbsUp, MoreHorizontal, ListPlus,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { usePlayerStore } from "@/store/playerStore"
 import { useNavidromeStore } from "@/store/navidromeStore"
+import { useUIStore } from "@/store/uiStore"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -52,6 +53,10 @@ export default function ExpandedPlayer() {
   const toggleExpanded     = usePlayerStore((s) => s.toggleExpanded)
   const playFromEnvelope     = usePlayerStore((s) => s.playFromEnvelope)
   const recordEvent        = usePlayerStore((s) => s.recordEvent)
+  const openAddToPlaylist  = useUIStore((s) => s.openAddToPlaylist)
+
+  // Все треки очереди (played + current + upcoming + manual), без autoplay_pool.
+  const queueTrackIds = [...new Set((queue?.items ?? []).map((item) => item.track_id))]
 
   useEffect(() => {
     if (!expanded) setMobileTab("player")
@@ -307,7 +312,17 @@ export default function ExpandedPlayer() {
         )}>
           {/* Header — collapse + autoplay toggle */}
           <div className="px-4 pt-3 pb-3 shrink-0 border-b border-border">
-            <div className="flex justify-end mb-2">
+            <div className="flex justify-end gap-1 mb-2">
+              {queueTrackIds.length > 0 && (
+                <button
+                  onClick={() => openAddToPlaylist(queueTrackIds)}
+                  className={iconBtn}
+                  title="Save queue to playlist"
+                  aria-label="Save queue to playlist"
+                >
+                  <ListPlus size={20} />
+                </button>
+              )}
               <button onClick={toggleExpanded} className={iconBtn}>
                 <ChevronDown size={20} />
               </button>

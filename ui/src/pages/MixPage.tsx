@@ -1,8 +1,9 @@
 import { useParams } from "react-router"
 import { Play, Bookmark } from "lucide-react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useQueryClient } from "@tanstack/react-query"
 import { useMix } from "@/api/hooks/useMix"
 import { playMix, saveMix } from "@/api/mixes"
+import { useUIStore } from "@/store/uiStore"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
@@ -39,11 +40,22 @@ export default function MixPage() {
   const queryClient = useQueryClient()
   const { data: mix, isLoading, error } = useMix(mixId)
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
+  const openCreatePlaylist = useUIStore((s) => s.openCreatePlaylist)
 
-  const { mutate: handleSave, isPending: saving } = useMutation({
-    mutationFn: () => saveMix(mixId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["mix", mixId] }),
-  })
+  function handleSave() {
+    if (!mix) return
+    openCreatePlaylist({
+      defaultTitle: mix.title,
+      onSubmit: async (values) => {
+        await saveMix(mixId, {
+          title: values.title,
+          description: values.description || null,
+        })
+        queryClient.invalidateQueries({ queryKey: ["mix", mixId] })
+        queryClient.invalidateQueries({ queryKey: ["playlists"] })
+      },
+    })
+  }
 
   if (isLoading) return <MixPageSkeleton />
   if (error || !mix) {
@@ -94,12 +106,11 @@ export default function MixPage() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => handleSave()}
-                disabled={saving}
+                onClick={handleSave}
                 className="gap-2"
               >
                 <Bookmark size={14} />
-                {saving ? "Saving…" : "Save"}
+                Save
               </Button>
             )}
           </div>
