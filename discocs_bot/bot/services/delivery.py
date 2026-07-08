@@ -33,6 +33,9 @@ TELEGRAM_CONNECT_TIMEOUT = 30
 TELEGRAM_UPLOAD_TIMEOUT = 300
 COVER_FILENAME = "cover.jpg"
 NO_AUDIO_SOURCE_PREPARED = "No audio source prepared"
+# Telegram's `thumbnail` param (audio player artwork, unlike a regular `photo`)
+# must be a JPEG no larger than 320x320 and 200 KB, or it's silently dropped.
+THUMBNAIL_COVER_SIZE = 320
 
 
 @dataclass(slots=True)
@@ -874,7 +877,9 @@ class DeliveryService:
             logger.info("No cover_art_id for track %s, skipping cover", key)
             return None
         cover_path = self._settings.temp_dir / f"{key}.cover.jpg"
-        if await self._navidrome.download_cover_art(cover_art_id, cover_path):
+        if await self._navidrome.download_cover_art(
+            cover_art_id, cover_path, size=THUMBNAIL_COVER_SIZE
+        ):
             return cover_path
         return None
 

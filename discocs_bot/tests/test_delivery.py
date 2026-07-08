@@ -1,7 +1,8 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
-from bot.services.delivery import DeliveryService
+from bot.services.delivery import THUMBNAIL_COVER_SIZE, DeliveryService
 from bot.storage.models import Track
 from bot.storage.user_prefs import delivery_prefs_from_profile
 from bot.utils.audio_quality import source_cache_profile
@@ -91,3 +92,27 @@ def test_prepare_audio_file_original_path_tags_cache_key_with_cover_state(tmp_pa
     assert delivery.cache_bitrate == source_cache_profile(
         "flac", None, transcoded_with_cover=True
     )
+
+
+class _FakeNavidromeCover:
+    def __init__(self) -> None:
+        self.cover_art_calls: list[tuple[str, int | None]] = []
+
+    async def download_cover_art(self, cover_art_id: str, destination: Path, *, size: int | None = 600) -> bool:
+        self.cover_art_calls.append((cover_art_id, size))
+        destination.write_bytes(b"fake-jpeg")
+        return True
+
+
+def test_load_cover_requests_a_telegram_thumbnail_sized_cover(tmp_path: Path):
+    # Telegram silently drops a `thumbnail` bigger than 320x320/200KB with no
+    # error, so this must never regress back to Navidrome's oversized default.
+    settings = SimpleNamespace(temp_dir=tmp_path)
+    navidrome = _FakeNavidromeCover()
+    service = DeliveryService(settings=settings, navidrome=navidrome, transcoder=None, db=_FakeDb({}))
+    track = Track(id="song-3", title="T", artist="A", album="Alb", cover_art_id="cover-1")
+
+    cover_path = asyncio.run(service._load_cover(track, "song-3"))
+
+    assert cover_path is not None
+    assert navidrome.cover_art_calls == [("cover-1", THUMBNAIL_COVER_SIZE)]
