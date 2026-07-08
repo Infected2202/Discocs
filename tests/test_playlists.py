@@ -1,6 +1,7 @@
 """Store tests for user playlists (plans/playlist.md, phase 1)."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -56,7 +57,7 @@ def test_create_playlist_roundtrip(tmp_path: Path):
     assert playlist.kind == "manual"
     assert playlist.description == "Slow burners"
     assert playlist.cover_path is None
-    assert '"visibility": "private"' in (playlist.source_json or "")
+    assert json.loads(playlist.source_json or "{}") == {"visibility": "private"}
     assert store.playlist_track_ids(playlist.id) == tracks
     positions = [item.position for item in store.list_playlist_items(playlist.id)]
     assert positions == [0, 1, 2]
