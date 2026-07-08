@@ -15,6 +15,16 @@ function cardArtwork(icon: React.ReactNode) {
   )
 }
 
+function flowSubtitle(flowAvailable: boolean, flowProfile: { available?: boolean } | undefined) {
+  if (flowAvailable) {
+    return "Your personal stream"
+  }
+  if (flowProfile) {
+    return "Build your profile first"
+  }
+  return "Loading…"
+}
+
 export default function ForYouShelf() {
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
   const { data: flowProfile } = useFlowProfile()
@@ -44,11 +54,7 @@ export default function ForYouShelf() {
       id: "flow",
       type: "static",
       title: "Flow",
-      subtitle: flowAvailable
-        ? "Your personal stream"
-        : flowProfile
-          ? "Build your profile first"
-          : "Loading…",
+      subtitle: flowSubtitle(flowAvailable, flowProfile),
       artworkNode: cardArtwork(<Radio size={72} />),
       variant: "shelf",
       disabled: !flowAvailable,
