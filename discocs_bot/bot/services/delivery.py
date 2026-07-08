@@ -433,8 +433,6 @@ class DeliveryService:
                 )
             )
         keys.append(prefs.cache_profile(with_cover=has_cover))
-        if has_cover:
-            keys.append(prefs.cache_profile(with_cover=False))
 
         seen: set[str] = set()
         for key in keys:
@@ -444,6 +442,7 @@ class DeliveryService:
             file_id = await self._db.get_cached_file_id(track.id, bitrate=key)
             if not file_id:
                 continue
+            logger.debug("Cache hit for track %s using key=%s", track.id, key)
             as_document, extension = self._cache_hit_delivery_attrs(
                 track,
                 prefs,
@@ -872,6 +871,7 @@ class DeliveryService:
     async def _load_cover(self, track: Track, key: str) -> Path | None:
         cover_art_id = track.cover_art_id
         if not cover_art_id:
+            logger.debug("No cover_art_id for track %s, skipping cover", key)
             return None
         cover_path = self._settings.temp_dir / f"{key}.cover.jpg"
         if await self._navidrome.download_cover_art(cover_art_id, cover_path):
