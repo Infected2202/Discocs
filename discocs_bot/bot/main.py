@@ -126,8 +126,6 @@ async def _run_bot() -> None:
     logger.info("Bot is running. Ctrl+C to stop (or stop.bat if it hangs).")
     try:
         await asyncio.Event().wait()
-    except asyncio.CancelledError:
-        raise
     finally:
         await _shutdown(application)
         release(settings.sqlite_path.parent)
