@@ -434,7 +434,7 @@ def _newest_mix_updated(active: list[GeneratedMix]) -> datetime | None:
 
 
 def _prepare_candidate_source(
-    store: Store,
+    _store: Store,
     app_settings: Settings,
     settings: MixSettings,
     ids: np.ndarray,

@@ -5,7 +5,13 @@ from types import SimpleNamespace
 import numpy as np
 
 from app.config import Settings
-from app.mixes import build_taste_regions, ensure_dashboard_mixes, generate_mixes, resolve_mix_settings
+from app.mixes import (
+    _prepare_candidate_source,
+    build_taste_regions,
+    ensure_dashboard_mixes,
+    generate_mixes,
+    resolve_mix_settings,
+)
 from app.recommender import build_index
 from app.scanner import ScannedTrack
 from app.serializers.mixes import generated_mix_summary_dict
@@ -142,6 +148,24 @@ def test_generated_mixes_apply_caps_and_cross_mix_deduplication(tmp_path: Path):
         assert summary["seed_examples"]
         assert all(item.reason_json for item in items)
         assert all(item.score_breakdown_json for item in items)
+
+
+def test_prepare_candidate_source_reports_empty_input_without_index(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+
+    source = _prepare_candidate_source(
+        store,
+        app_settings(tmp_path),
+        resolve_mix_settings({}),
+        np.array([], dtype=np.int64),
+        np.array([], dtype=np.float32),
+    )
+
+    assert source.index is None
+    assert source.diagnostics["type"] == "none"
+    assert source.diagnostics["embedding_count"] == 0
+    assert source.diagnostics["uses_hnsw"] is False
 
 
 def test_generated_mix_novelty_weight_promotes_unheard_candidates(tmp_path: Path):
