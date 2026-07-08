@@ -8,6 +8,20 @@ type CapacitorGlobal = typeof globalThis & {
   }
 }
 
+type PreferencesModule = {
+  Preferences: {
+    get(options: { key: string }): Promise<{ value: string | null }>
+    set(options: { key: string; value: string }): Promise<void>
+    remove(options: { key: string }): Promise<void>
+  }
+}
+
+async function loadPreferencesModule(): Promise<PreferencesModule["Preferences"]> {
+  const moduleName = "@capacitor/preferences"
+  const { Preferences } = await import(/* @vite-ignore */ moduleName) as PreferencesModule
+  return Preferences
+}
+
 export function isNative(): boolean {
   // Capacitor injects itself as a global — no import needed
   return !!(globalThis as CapacitorGlobal).Capacitor?.isNativePlatform()
@@ -19,7 +33,7 @@ export async function getBackendUrl(): Promise<string> {
   if (cachedBackendUrl !== null) return cachedBackendUrl
 
   if (isNative()) {
-    const { Preferences } = await import("@capacitor/preferences")
+    const Preferences = await loadPreferencesModule()
     const { value } = await Preferences.get({ key: BACKEND_URL_KEY })
     cachedBackendUrl = value ?? DEFAULT_BACKEND_URL
   } else {
@@ -34,7 +48,7 @@ export async function setBackendUrl(url: string): Promise<void> {
   cachedBackendUrl = trimmed
 
   if (isNative()) {
-    const { Preferences } = await import("@capacitor/preferences")
+    const Preferences = await loadPreferencesModule()
     if (trimmed) {
       await Preferences.set({ key: BACKEND_URL_KEY, value: trimmed })
     } else {
