@@ -282,8 +282,15 @@ class MixesStoreMixin:
             ).fetchall()
         return [row_to_generated_mix_item(row) for row in rows]
 
-    def save_generated_mix_as_playlist(self, mix_id: str) -> GeneratedMix | None:
+    def save_generated_mix_as_playlist(
+        self,
+        mix_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> GeneratedMix | None:
         now = utc_now()
+        playlist_title = (title or "").strip()
         with self.connect() as conn:
             mix = conn.execute(
                 "SELECT * FROM generated_mixes WHERE id = ? AND status != 'archived'",
@@ -291,6 +298,8 @@ class MixesStoreMixin:
             ).fetchone()
             if mix is None:
                 return None
+            if not playlist_title:
+                playlist_title = str(mix["title"])
             existing_playlist_id = mix["saved_playlist_id"]
             source = {
                 "source_type": "generated_mix",
@@ -300,10 +309,10 @@ class MixesStoreMixin:
             if existing_playlist_id is None:
                 cursor = conn.execute(
                     """
-                    INSERT INTO playlists (title, kind, source_json, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO playlists (title, kind, description, source_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (mix["title"], "saved_mix", _json_dumps(source), now, now),
+                    (playlist_title, "saved_mix", description, _json_dumps(source), now, now),
                 )
                 playlist_id = int(cursor.lastrowid)
             else:
@@ -311,10 +320,10 @@ class MixesStoreMixin:
                 conn.execute(
                     """
                     UPDATE playlists
-                    SET title = ?, kind = ?, source_json = ?, updated_at = ?
+                    SET title = ?, kind = ?, description = ?, source_json = ?, updated_at = ?
                     WHERE id = ?
                     """,
-                    (mix["title"], "saved_mix", _json_dumps(source), now, playlist_id),
+                    (playlist_title, "saved_mix", description, _json_dumps(source), now, playlist_id),
                 )
             conn.execute("DELETE FROM playlist_items WHERE playlist_id = ?", (playlist_id,))
             items = conn.execute(

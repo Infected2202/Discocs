@@ -25,10 +25,11 @@ from app.api.deps import (
     record_instant_mix_request,
 )
 from app.config import load_runtime_settings, save_runtime_settings
+from app.mix_covers import refresh_playlist_cover
 from app.mixes import dashboard_mix_generation_plan, generate_mixes
 from app.models import InstantMixRequestParams, InstantMixRequestRecord, utc_now
 from app.recommender import Recommender
-from app.schemas.requests import GeneratedMixSettingsRequest, MixGenerateRequest
+from app.schemas.requests import GeneratedMixSaveRequest, GeneratedMixSettingsRequest, MixGenerateRequest
 from app.schemas.responses import (
     NavidromeSimilarItem,
     PlaybackSessionEnvelopeResponse,
@@ -162,11 +163,20 @@ def api_v1_generate_mixes(request: MixGenerateRequest) -> dict[str, object] | JS
 
 
 @router.post("/mixes/{mix_id}/save", response_model=None)
-def api_v1_save_mix(mix_id: str) -> dict[str, object] | JSONResponse:
-    store, _settings = context()
-    mix = store.save_generated_mix_as_playlist(mix_id)
+def api_v1_save_mix(
+    mix_id: str,
+    request: GeneratedMixSaveRequest | None = None,
+) -> dict[str, object] | JSONResponse:
+    store, settings = context()
+    mix = store.save_generated_mix_as_playlist(
+        mix_id,
+        title=request.title if request else None,
+        description=request.description if request else None,
+    )
     if mix is None:
         return api_error(404, "not_found", _GENERATED_MIX_NOT_FOUND)
+    if mix.saved_playlist_id is not None:
+        refresh_playlist_cover(store, settings, mix.saved_playlist_id)
     return generated_mix_summary_dict(store, mix)
 
 
