@@ -17,10 +17,8 @@ def should_log_http_request(path: str) -> bool:
         return True
     if path.startswith(("/metrics", "/navidrome", "/instant-mix", "/text-search")):
         return True
-    return path.startswith("/tracks/") and (
-        path.endswith("/cover")
-        or path.endswith("/similar")
-        or path.endswith("/navidrome-star")
+    return path.startswith("/tracks/") and path.endswith(
+        ("/cover", "/similar", "/navidrome-star")
     )
 
 
