@@ -5,6 +5,14 @@ import ArtworkImage from "./ArtworkImage"
 import TiltedArtwork from "./TiltedArtwork"
 import type { ImageRef, SubtitleLink } from "@/api/types"
 
+const ENTITY_HREFS = {
+  artist: (id: number | string) => `/artists/${id}`,
+  release: (id: number | string) => `/releases/${id}`,
+  generated_mix: (id: number | string) => `/mixes/${id}`,
+  playlist: (id: number | string) => `/playlists/${id}`,
+  shelf: (id: number | string) => `/shelf/${id}`,
+} as const
+
 export interface MediaCardProps {
   readonly id: number | string
   readonly type: "artist" | "release" | "generated_mix" | "track" | "playlist" | "shelf" | "static"
@@ -27,29 +35,49 @@ export default function MediaCard({
 }: MediaCardProps) {
   const navigate = useNavigate()
   const isShelf = variant === "shelf"
+  const hasSubtitleLinks = (subtitleLinks?.length ?? 0) > 0
+  const artworkContent = artworkNode ?? (
+    <ArtworkImage
+      src={artwork?.url}
+      alt={title}
+      className={cn(
+        "w-full aspect-square",
+        type === "artist" ? "rounded-full" : "rounded-md",
+      )}
+      fallbackLetter={title[0]}
+    />
+  )
+  const renderedArtwork = isShelf ? <TiltedArtwork>{artworkContent}</TiltedArtwork> : artworkContent
 
   function handleClick() {
     if (disabled) return
-    if (href) { navigate(href); return }
-    if (type === "artist") navigate(`/artists/${id}`)
-    else if (type === "release") navigate(`/releases/${id}`)
-    else if (type === "generated_mix") navigate(`/mixes/${id}`)
-    // track: no fallback — action.target from backend always provides the release URL
-    else if (type === "playlist") navigate(`/playlists/${id}`)
-    else if (type === "shelf") navigate(`/shelf/${id}`)
-    // "static" — no navigation
+    if (href) {
+      navigate(href)
+      return
+    }
+
+    const fallbackHref = ENTITY_HREFS[type as keyof typeof ENTITY_HREFS]?.(id)
+
+    if (fallbackHref) {
+      navigate(fallbackHref)
+    }
   }
 
-  function handlePlay(e: React.MouseEvent) {
-    e.stopPropagation()
+  function handlePlay(event: React.MouseEvent) {
+    event.stopPropagation()
     onPlay?.()
   }
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+  function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
     if (disabled) return
-    if (e.key !== "Enter" && e.key !== " ") return
-    e.preventDefault()
+    if (event.key !== "Enter" && event.key !== " ") return
+    event.preventDefault()
     handleClick()
+  }
+
+  function handleSubtitleClick(event: React.MouseEvent<HTMLButtonElement>, targetHref: string) {
+    event.stopPropagation()
+    navigate(targetHref)
   }
 
   return (
@@ -68,24 +96,9 @@ export default function MediaCard({
       aria-disabled={disabled || undefined}
       onKeyDown={handleKeyDown}
     >
-      {/* Artwork */}
       <div className="relative mb-[5px]">
-        {(() => {
-          const art = artworkNode ?? (
-            <ArtworkImage
-              src={artwork?.url}
-              alt={title}
-              className={cn(
-                "w-full aspect-square",
-                type === "artist" ? "rounded-full" : "rounded-md",
-              )}
-              fallbackLetter={title[0]}
-            />
-          )
-          return isShelf ? <TiltedArtwork>{art}</TiltedArtwork> : art
-        })()}
+        {renderedArtwork}
 
-        {/* Play button overlay */}
         {onPlay && !disabled && (
           <button
             type="button"
@@ -98,24 +111,23 @@ export default function MediaCard({
         )}
 
         {disabled && (
-          <span className="absolute bottom-2 right-2 text-[10px] text-white/60 bg-black/30 px-1.5 py-0.5 rounded">
+          <span className="absolute bottom-2 right-2 rounded bg-black/30 px-1.5 py-0.5 text-[10px] text-white/60">
             Soon
           </span>
         )}
       </div>
 
-      {/* Text */}
       <div className="min-w-0">
         <p className="truncate text-[14px] font-medium leading-none">{title}</p>
-        {subtitleLinks && subtitleLinks.length > 0 ? (
+        {hasSubtitleLinks ? (
           <p className="truncate text-[10px] text-muted-foreground">
-            {subtitleLinks.map((link, i) => (
+            {subtitleLinks?.map((link, index) => (
               <span key={link.href}>
-                {i > 0 && ", "}
+                {index > 0 && ", "}
                 <button
                   type="button"
-                  className="hover:text-foreground hover:underline cursor-pointer transition-colors"
-                  onClick={(e) => { e.stopPropagation(); navigate(link.href) }}
+                  className="cursor-pointer transition-colors hover:text-foreground hover:underline"
+                  onClick={(event) => handleSubtitleClick(event, link.href)}
                 >
                   {link.label}
                 </button>
@@ -123,7 +135,7 @@ export default function MediaCard({
             ))}
           </p>
         ) : subtitle ? (
-          <p className="truncate text-[12px] text-muted-foreground leading-none mt-[4px]">{subtitle}</p>
+          <p className="mt-[4px] truncate text-[12px] leading-none text-muted-foreground">{subtitle}</p>
         ) : null}
       </div>
     </div>

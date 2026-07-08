@@ -14,8 +14,13 @@ export default function Sidebar() {
   const toggleSidebar = useUIStore((s) => s.toggleSidebar)
   const location = useLocation()
 
-  function isactive(to: string, end: boolean) {
+  function isActiveRoute(to: string, end: boolean) {
     return end ? location.pathname === to : location.pathname.startsWith(to)
+  }
+
+  function handleAsideClick(event: React.MouseEvent<HTMLElement>) {
+    if ((event.target as HTMLElement).closest("button, a")) return
+    toggleSidebar()
   }
 
   const textCls = cn(
@@ -31,21 +36,17 @@ export default function Sidebar() {
         "shrink-0 flex flex-col bg-background/30 backdrop-blur-sm border-r border-border h-full pb-[92px] transition-[width] duration-200 cursor-pointer",
         collapsed ? "w-14" : "w-[220px]",
       )}
-      onClick={(e) => {
-        if ((e.target as HTMLElement).closest("button, a")) return
-        toggleSidebar()
-      }}
+      onClick={handleAsideClick}
     >
-      {/* Collapse toggle — top */}
       <div className="px-2 pt-3 pb-1 shrink-0">
         <TooltipProvider delayDuration={200}>
           <Tooltip>
             <TooltipTrigger asChild>
               <button
+                type="button"
                 onClick={toggleSidebar}
                 className={cn(itemCls, "w-full text-muted-foreground hover:text-foreground hover:bg-muted/60")}
               >
-                {/* Cross-fade between the two icons so there's no flash */}
                 <span className="relative shrink-0 w-[18px] h-[18px]">
                   <PanelLeftClose
                     size={18}
@@ -61,18 +62,15 @@ export default function Sidebar() {
                 <span className={textCls}>Collapse</span>
               </button>
             </TooltipTrigger>
-            {collapsed && (
-              <TooltipContent side="right">Expand sidebar</TooltipContent>
-            )}
+            {collapsed && <TooltipContent side="right">Expand sidebar</TooltipContent>}
           </Tooltip>
         </TooltipProvider>
       </div>
 
-      {/* Nav */}
       <nav className="flex-1 px-2 py-1 space-y-1">
         <TooltipProvider delayDuration={200}>
           {NAV.map(({ to, label, icon: Icon, end }) => {
-            const active = isactive(to, end)
+            const active = isActiveRoute(to, end)
             const cls = cn(
               itemCls,
               active

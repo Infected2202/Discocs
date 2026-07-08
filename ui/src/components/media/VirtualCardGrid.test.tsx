@@ -8,9 +8,9 @@ const noop = vi.fn()
 
 // jsdom has no ResizeObserver — stub it so the column-measuring effect runs
 class ResizeObserverStub {
-  observe = noop
-  unobserve = noop
-  disconnect = noop
+  observe = vi.fn()
+  unobserve = vi.fn()
+  disconnect = vi.fn()
 }
 vi.stubGlobal("ResizeObserver", ResizeObserverStub)
 

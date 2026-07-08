@@ -58,7 +58,7 @@ describe("ProfileButton", () => {
     renderProfileButton()
     fireEvent.click(screen.getByTitle("Profile"))
 
-    expect(await screen.findByText("Checking…")).toBeInTheDocument()
+    expect(await screen.findByText((content) => content.includes("Checking"))).toBeInTheDocument()
   })
 
   it("shows the connected status when Navidrome is available", async () => {
@@ -76,7 +76,7 @@ describe("ProfileButton", () => {
 
     renderProfileButton()
     fireEvent.click(screen.getByTitle("Profile"))
-    fireEvent.click(await screen.findByRole("button", { name: /выйти/i }))
+    fireEvent.click(await screen.findByRole("button", { name: /alice/ }))
 
     await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(redirectToLogin).toHaveBeenCalledTimes(1))

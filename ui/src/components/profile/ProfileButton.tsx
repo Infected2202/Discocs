@@ -14,7 +14,7 @@ function navidromeStatusUi(status: string, isLoading: boolean) {
   if (isLoading) {
     return {
       dotColor: "bg-muted-foreground",
-      statusLabel: "Checking…",
+      statusLabel: "CheckingвЂ¦",
     }
   }
   if (status === "connected") {
@@ -48,22 +48,24 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
   }
 
   const { dotColor, statusLabel } = navidromeStatusUi(status, isLoading)
+  const logoutLabel = session?.username ? `Р’С‹Р№С‚Рё (${session.username})` : "Р’С‹Р№С‚Рё"
 
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
-          className="relative w-8 h-8 rounded-full flex items-center justify-center hover:bg-muted/40 transition-colors"
+          type="button"
+          className="relative flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-muted/40"
           title="Profile"
         >
           <User size={16} />
-          <span className={cn("absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-background", dotColor)} />
+          <span className={cn("absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-background", dotColor)} />
         </button>
       </PopoverTrigger>
       <PopoverContent align={mobile ? "center" : "end"} className="w-56 p-3">
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <span className={cn("w-2 h-2 rounded-full shrink-0", dotColor)} />
+            <span className={cn("h-2 w-2 shrink-0 rounded-full", dotColor)} />
             <span className="text-sm">{statusLabel}</span>
           </div>
           <Button
@@ -82,7 +84,7 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
             onClick={handleLogout}
           >
             <LogOut size={14} className="mr-2" />
-            {session?.username ? `Выйти (${session.username})` : "Выйти"}
+            {logoutLabel}
           </Button>
         </div>
       </PopoverContent>

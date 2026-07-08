@@ -9,7 +9,7 @@ import type { PlaybackEnvelope } from "@/api/types"
 
 function cardArtwork(icon: React.ReactNode) {
   return (
-    <div className="w-full aspect-square flex items-center justify-center">
+    <div className="flex aspect-square w-full items-center justify-center">
       {icon}
     </div>
   )
@@ -25,6 +25,24 @@ function flowSubtitle(flowAvailable: boolean, flowProfile: { available?: boolean
   return "Loading…"
 }
 
+function buildFlowEnvelope(resp: Awaited<ReturnType<typeof startFlow>>): PlaybackEnvelope {
+  const items = resp.queue.items
+
+  return {
+    session: resp.session,
+    queue: {
+      items,
+      current_index: 0,
+      current_item: items[0] ?? null,
+      upcoming: items.slice(1),
+      played: [],
+      source_items: items,
+      generated_items: [],
+      autoplay_pool: [],
+    },
+  }
+}
+
 export default function ForYouShelf() {
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
   const { data: flowProfile } = useFlowProfile()
@@ -32,22 +50,14 @@ export default function ForYouShelf() {
 
   async function handleStartFlow() {
     const resp = await startFlow()
-    const items = resp.queue.items
-    const envelope: PlaybackEnvelope = {
-      session: resp.session,
-      queue: {
-        items,
-        current_index: 0,
-        current_item: items[0] ?? null,
-        upcoming: items.slice(1),
-        played: [],
-        source_items: items,
-        generated_items: [],
-        autoplay_pool: [],
-      },
-    }
-    await playFromEnvelope(envelope)
+    await playFromEnvelope(buildFlowEnvelope(resp))
   }
+
+  const flowPlayHandler = flowAvailable
+    ? () => {
+        handleStartFlow().catch(() => {})
+      }
+    : undefined
 
   const cards: MediaCardProps[] = [
     {
@@ -58,7 +68,7 @@ export default function ForYouShelf() {
       artworkNode: cardArtwork(<Radio size={72} />),
       variant: "shelf",
       disabled: !flowAvailable,
-      onPlay: flowAvailable ? () => { handleStartFlow().catch(() => {}) } : undefined,
+      onPlay: flowPlayHandler,
     },
     {
       id: "likes",
