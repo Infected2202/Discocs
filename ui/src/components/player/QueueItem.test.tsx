@@ -87,4 +87,11 @@ describe("QueueItem", () => {
     fireEvent.click(screen.getByText("Track 1"))
     expect(jumpToQueueItem).not.toHaveBeenCalled()
   })
+
+  it("строка без itemId не вызывает jump", () => {
+    renderRow({ itemId: undefined, variant: "queue", isCurrent: false })
+    fireEvent.click(screen.getByText("Track 1"))
+    expect(jumpToQueueItem).not.toHaveBeenCalled()
+    expect(jumpToAutoplayItem).not.toHaveBeenCalled()
+  })
 })

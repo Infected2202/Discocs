@@ -25,7 +25,6 @@ export interface QueueItemProps {
 }
 
 function QueueItem({ track, trackId, itemId, variant = "queue", isCurrent, dimmed }: QueueItemProps) {
-
   const navigate = useNavigate()
   const id = track?.id ?? trackId
   const sessionId      = usePlayerStore((s) => s.session?.id)
@@ -38,9 +37,13 @@ function QueueItem({ track, trackId, itemId, variant = "queue", isCurrent, dimme
   const liked          = useNavidromeStore((s) => track ? s.likedIds.has(track.id) : false)
 
   // Stable-per-render handler; store actions are stable references so memo holds.
-  const onClick = isCurrent || !itemId
-    ? undefined
-    : () => (variant === "autoplay" ? jumpToAutoplayItem(itemId) : jumpToQueueItem(itemId))
+  const jumpToItem = variant === "autoplay" ? jumpToAutoplayItem : jumpToQueueItem
+  const onClick = isCurrent || !itemId ? undefined : () => jumpToItem(itemId)
+
+  let durationLabel = ""
+  if (track?.duration) {
+    durationLabel = formatTime(track.duration)
+  }
 
   async function handleInstantMix() {
     if (!track) return
@@ -104,9 +107,7 @@ function QueueItem({ track, trackId, itemId, variant = "queue", isCurrent, dimme
       <div className="flex items-center gap-1.5 shrink-0">
         {isCurrent && <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />}
         <span className="text-xs text-muted-foreground tabular-nums">
-          {isCurrent
-            ? <QueueItemLiveTime />
-            : (track?.duration ? formatTime(track.duration) : "")}
+          {isCurrent ? <QueueItemLiveTime /> : durationLabel}
         </span>
       </div>
 
