@@ -8,6 +8,8 @@ import { usePlayerStore } from "@/store/playerStore"
 import { useNavidromeStore } from "@/store/navidromeStore"
 import type { TrackSummary, ReleaseTrackItem, ArtistTopTrack } from "@/api/types"
 
+type TrackRowTrack = TrackSummary | ReleaseTrackItem | ArtistTopTrack
+
 function formatDuration(seconds: number | null | undefined): string {
   if (!seconds || !Number.isFinite(seconds)) return ""
   const total = Math.round(seconds)
@@ -22,13 +24,66 @@ function formatPlayCount(count: number): string {
   return playCountFormatter.format(count)
 }
 
+function renderIndex(index: number | undefined, isActive: boolean): React.ReactNode {
+  const indexLabel = index == null ? "" : index + 1
+
+  return (
+    <span className={cn("text-xs tabular-nums", isActive ? "text-primary" : "text-muted-foreground")}>
+      {indexLabel}
+    </span>
+  )
+}
+
+function renderPlayIcon(isPlaying: boolean): React.ReactNode {
+  if (isPlaying) {
+    return <Pause size={14} fill="currentColor" strokeWidth={0} />
+  }
+
+  return <Play size={14} fill="currentColor" strokeWidth={0} />
+}
+
+function renderTrackTitle(
+  track: TrackRowTrack,
+  isActive: boolean,
+): React.ReactNode {
+  if (!track.release) {
+    return <p className={cn("truncate text-sm font-medium", isActive && "text-primary")}>{track.title}</p>
+  }
+
+  return (
+    <Link
+      to={`/releases/${track.release.id}`}
+      className={cn("truncate text-sm font-medium hover:underline", isActive ? "text-primary" : "")}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {track.title}
+    </Link>
+  )
+}
+
+function renderMetric(track: TrackRowTrack): React.ReactNode {
+  if ("play_count" in track) {
+    if (track.play_count <= 0) {
+      return null
+    }
+
+    return (
+      <>
+        {formatPlayCount(track.play_count)}
+        <span className="hidden sm:inline"> прослушиваний</span>
+      </>
+    )
+  }
+
+  return formatDuration(track.duration)
+}
+
 interface TrackRowProps {
-  readonly track: TrackSummary | ReleaseTrackItem | ArtistTopTrack
+  readonly track: TrackRowTrack
   readonly index?: number
   readonly showArtwork?: boolean
   readonly showRelease?: boolean
   readonly sourceLabel?: string
-  readonly releaseContextId?: number
 }
 
 export default function TrackRow({
@@ -42,22 +97,24 @@ export default function TrackRow({
 
   // Individual selectors — avoids infinite loop from object selector in React 19
   const currentTrackId = usePlayerStore((s) => s.currentTrackId)
-  const playbackState  = usePlayerStore((s) => s.playbackState)
-  const playSource     = usePlayerStore((s) => s.playSource)
-  const togglePlay     = usePlayerStore((s) => s.togglePlay)
-  const toggleLike     = useNavidromeStore((s) => s.toggleLike)
-  const liked          = useNavidromeStore((s) => s.likedIds.has(track.id))
+  const playbackState = usePlayerStore((s) => s.playbackState)
+  const playSource = usePlayerStore((s) => s.playSource)
+  const togglePlay = usePlayerStore((s) => s.togglePlay)
+  const toggleLike = useNavidromeStore((s) => s.toggleLike)
+  const liked = useNavidromeStore((s) => s.likedIds.has(track.id))
 
-  const isActive  = currentTrackId === track.id
+  const isActive = currentTrackId === track.id
   const isPlaying = isActive && playbackState === "playing"
+  const shouldShowPlayControl = hovered || isActive
 
-  function handlePlay(e: React.MouseEvent) {
-    e.stopPropagation()
+  function handlePlay(event: React.MouseEvent) {
+    event.stopPropagation()
     if (isActive) {
       togglePlay()
-    } else {
-      playSource("track", track.id, sourceLabel ?? track.title)
+      return
     }
+
+    playSource("track", track.id, sourceLabel ?? track.title)
   }
 
   return (
@@ -69,28 +126,16 @@ export default function TrackRow({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* Index / play button */}
       <td className="w-10 pl-3 pr-1 py-2 text-center">
         <button
           onClick={handlePlay}
-          className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:text-foreground mx-auto"
+          className="mx-auto flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:text-foreground"
           aria-label={isPlaying ? "Pause" : "Play"}
         >
-          {hovered || isActive ? (
-            isPlaying ? (
-              <Pause size={14} fill="currentColor" strokeWidth={0} />
-            ) : (
-              <Play size={14} fill="currentColor" strokeWidth={0} />
-            )
-          ) : (
-            <span className={cn("text-xs tabular-nums", isActive ? "text-primary" : "text-muted-foreground")}>
-              {index != null ? index + 1 : ""}
-            </span>
-          )}
+          {shouldShowPlayControl ? renderPlayIcon(isPlaying) : renderIndex(index, isActive)}
         </button>
       </td>
 
-      {/* Artwork */}
       {showArtwork && (
         <td className="w-10 py-1.5 pr-3">
           <button onClick={handlePlay} className="block" aria-label={isPlaying ? "Pause" : "Play"}>
@@ -104,33 +149,20 @@ export default function TrackRow({
         </td>
       )}
 
-      {/* Title + artists */}
-      <td className="py-2 pr-4 min-w-0">
+      <td className="min-w-0 py-2 pr-4">
         <div className="min-w-0">
-          {track.release ? (
-            <Link
-              to={`/releases/${track.release.id}`}
-              className={cn("truncate text-sm font-medium hover:underline", isActive ? "text-primary" : "")}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {track.title}
-            </Link>
-          ) : (
-            <p className={cn("truncate text-sm font-medium", isActive && "text-primary")}>
-              {track.title}
-            </p>
-          )}
+          {renderTrackTitle(track, isActive)}
           {track.artists.length > 0 && (
             <p className="truncate text-xs text-muted-foreground">
-              {track.artists.map((a, i) => (
-                <span key={a.id}>
-                  {i > 0 && ", "}
+              {track.artists.map((artist, artistIndex) => (
+                <span key={artist.id}>
+                  {artistIndex > 0 && ", "}
                   <Link
-                    to={`/artists/${a.id}`}
-                    className="hover:text-foreground hover:underline transition-colors"
-                    onClick={(e) => e.stopPropagation()}
+                    to={`/artists/${artist.id}`}
+                    className="transition-colors hover:text-foreground hover:underline"
+                    onClick={(event) => event.stopPropagation()}
                   >
-                    {a.name}
+                    {artist.name}
                   </Link>
                 </span>
               ))}
@@ -139,14 +171,13 @@ export default function TrackRow({
         </div>
       </td>
 
-      {/* Release */}
       {showRelease && (
-        <td className="py-2 pr-4 hidden md:table-cell min-w-0 max-w-[180px]">
+        <td className="hidden min-w-0 max-w-[180px] py-2 pr-4 md:table-cell">
           {track.release && (
             <Link
               to={`/releases/${track.release.id}`}
-              className="truncate block text-xs text-muted-foreground hover:text-foreground hover:underline"
-              onClick={(e) => e.stopPropagation()}
+              className="block truncate text-xs text-muted-foreground hover:text-foreground hover:underline"
+              onClick={(event) => event.stopPropagation()}
             >
               {track.release.title}
             </Link>
@@ -154,35 +185,28 @@ export default function TrackRow({
         </td>
       )}
 
-      {/* Duration / play count */}
-      <td className="py-2 pr-2 text-right text-xs text-muted-foreground tabular-nums whitespace-nowrap">
-        {"play_count" in track
-          ? track.play_count > 0 && (
-              <>
-                {formatPlayCount(track.play_count)}
-                <span className="hidden sm:inline"> прослушиваний</span>
-              </>
-            )
-          : formatDuration(track.duration)}
+      <td className="whitespace-nowrap py-2 pr-2 text-right text-xs tabular-nums text-muted-foreground">
+        {renderMetric(track)}
       </td>
 
-      {/* Like */}
-      <td className="py-2 w-8">
+      <td className="w-8 py-2">
         <button
-          onClick={(e) => { e.stopPropagation(); toggleLike(track.id) }}
+          onClick={(event) => {
+            event.stopPropagation()
+            toggleLike(track.id)
+          }}
           className={cn(
-            "flex h-7 w-7 items-center justify-center rounded transition-colors mx-auto",
+            "mx-auto flex h-7 w-7 items-center justify-center rounded transition-colors",
             liked
               ? "text-primary opacity-100"
-              : "text-muted-foreground opacity-100 md:opacity-0 md:group-hover/row:opacity-100 hover:text-foreground",
+              : "text-muted-foreground opacity-100 hover:text-foreground md:opacity-0 md:group-hover/row:opacity-100",
           )}
         >
           <ThumbsUp size={13} />
         </button>
       </td>
 
-      {/* Menu */}
-      <td className="py-2 pr-2 w-8">
+      <td className="w-8 py-2 pr-2">
         <TrackMenu track={track} sourceLabel={sourceLabel} />
       </td>
     </tr>

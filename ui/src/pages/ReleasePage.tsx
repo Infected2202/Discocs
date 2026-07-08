@@ -143,7 +143,6 @@ export default function ReleasePage() {
           tracks={tracks}
           showRelease={false}
           sourceLabel={release.title}
-          releaseContextId={releaseId}
         />
       </div>
 

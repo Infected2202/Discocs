@@ -6,7 +6,6 @@ interface TrackTableProps {
   readonly showArtwork?: boolean
   readonly showRelease?: boolean
   readonly sourceLabel?: string
-  readonly releaseContextId?: number
   readonly indexOffset?: number
 }
 
@@ -15,7 +14,6 @@ export default function TrackTable({
   showArtwork = true,
   showRelease = true,
   sourceLabel,
-  releaseContextId,
   indexOffset = 0,
 }: TrackTableProps) {
   if (tracks.length === 0) return null
@@ -42,7 +40,6 @@ export default function TrackTable({
             showArtwork={showArtwork}
             showRelease={showRelease}
             sourceLabel={sourceLabel}
-            releaseContextId={releaseContextId}
           />
         ))}
       </tbody>
