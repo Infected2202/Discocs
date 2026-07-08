@@ -105,7 +105,7 @@ def _cosine(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (na * nb))
 
 
-def _days_since(iso_timestamp: str | None, now_prefix: str) -> float | None:
+def _days_since(iso_timestamp: str | None, _now_prefix: str) -> float | None:
     """Rough days since a UTC ISO timestamp using lexicographic comparison."""
     if iso_timestamp is None:
         return None
