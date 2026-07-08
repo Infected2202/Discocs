@@ -15,7 +15,7 @@ function fetchShelfPage(key: string, limit: number, offset: number): Promise<She
 export function useShelf(key: string, pageSize = 48, refetchInterval?: number) {
   return useInfiniteQuery({
     queryKey: ["shelf", key, pageSize],
-    queryFn: ({ pageParam = 0 }) => fetchShelfPage(key, pageSize, pageParam as number),
+    queryFn: ({ pageParam }) => fetchShelfPage(key, pageSize, pageParam),
     initialPageParam: 0,
     getNextPageParam: (last) => last.next_offset ?? undefined,
     staleTime: 60_000,

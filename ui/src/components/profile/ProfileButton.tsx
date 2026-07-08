@@ -10,6 +10,25 @@ import {
 import { getSession, logout } from "@/api/auth"
 import { redirectToLogin } from "@/lib/authRedirect"
 
+function navidromeStatusUi(status: string, isLoading: boolean) {
+  if (isLoading) {
+    return {
+      dotColor: "bg-muted-foreground",
+      statusLabel: "Checking…",
+    }
+  }
+  if (status === "connected") {
+    return {
+      dotColor: "bg-green-500",
+      statusLabel: "Navidrome connected",
+    }
+  }
+  return {
+    dotColor: "bg-red-500",
+    statusLabel: "Navidrome not connected",
+  }
+}
+
 export default function ProfileButton({ mobile = false }: { readonly mobile?: boolean }) {
   const navigate = useNavigate()
   const { status, isLoading } = useNavidromeStatus()
@@ -28,17 +47,7 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
     }
   }
 
-  const dotColor = isLoading
-    ? "bg-muted-foreground"
-    : status === "connected"
-      ? "bg-green-500"
-      : "bg-red-500"
-
-  const statusLabel = isLoading
-    ? "Checking…"
-    : status === "connected"
-      ? "Navidrome connected"
-      : "Navidrome not connected"
+  const { dotColor, statusLabel } = navidromeStatusUi(status, isLoading)
 
   return (
     <Popover>
