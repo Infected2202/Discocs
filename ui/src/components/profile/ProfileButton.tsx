@@ -66,17 +66,15 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
             <Settings size={14} className="mr-2" />
             Open settings
           </Button>
-          {session?.enabled && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full text-muted-foreground"
-              onClick={handleLogout}
-            >
-              <LogOut size={14} className="mr-2" />
-              {session.username ? `Выйти (${session.username})` : "Выйти"}
-            </Button>
-          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full text-muted-foreground"
+            onClick={handleLogout}
+          >
+            <LogOut size={14} className="mr-2" />
+            {session?.username ? `Выйти (${session.username})` : "Выйти"}
+          </Button>
         </div>
       </PopoverContent>
     </Popover>
