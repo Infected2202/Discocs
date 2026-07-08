@@ -34,7 +34,7 @@ class TrackEmbedder(Protocol):
     model_name: str
 
     def extract_track_vector(self, path: Path) -> np.ndarray:
-        pass
+        ...
 
 
 def create_track_embedder(

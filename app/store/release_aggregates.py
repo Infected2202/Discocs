@@ -3,14 +3,10 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from typing import TYPE_CHECKING
 
 import numpy as np
 
-from app.models import Release, ReleaseAggregate, utc_now
-
-if TYPE_CHECKING:
-    pass
+from app.models import ReleaseAggregate, utc_now
 
 logger = logging.getLogger(__name__)
 
