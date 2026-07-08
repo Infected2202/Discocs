@@ -266,7 +266,7 @@ async def _handle_album(update: Update, context: ContextTypes.DEFAULT_TYPE, albu
         await _safe_edit_text(status, "Не удалось получить альбом.")
 
 
-async def result_move_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, slot: int) -> None:
+async def result_move_callback(_update: Update, context: ContextTypes.DEFAULT_TYPE, slot: int) -> None:
     settings = context.bot_data["settings"]
     navidrome = context.bot_data["navidrome"]
     settings.temp_dir.mkdir(parents=True, exist_ok=True)
@@ -279,7 +279,7 @@ async def result_move_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 
-async def result_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def result_back_callback(_update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings = context.bot_data["settings"]
     navidrome = context.bot_data["navidrome"]
     settings.temp_dir.mkdir(parents=True, exist_ok=True)
@@ -393,7 +393,7 @@ async def _handle_radio(update: Update, context: ContextTypes.DEFAULT_TYPE, song
     )
 
 
-async def radio_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, offset: int) -> None:
+async def radio_page_callback(_update: Update, context: ContextTypes.DEFAULT_TYPE, offset: int) -> None:
     settings = context.bot_data["settings"]
     navidrome = context.bot_data["navidrome"]
     settings.temp_dir.mkdir(parents=True, exist_ok=True)

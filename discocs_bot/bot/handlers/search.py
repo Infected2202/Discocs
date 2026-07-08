@@ -130,7 +130,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await run_search(update, context, query)
 
 
-async def search_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, offset: int) -> None:
+async def search_page_callback(_update: Update, context: ContextTypes.DEFAULT_TYPE, offset: int) -> None:
     from bot.utils.track_pages import move_results_slot
 
     settings = context.bot_data["settings"]
