@@ -4,7 +4,7 @@ function isEnabled(): boolean {
 
 export function playerLog(area: string, msg: string, data?: Record<string, unknown>): void {
   if (!isEnabled()) return
-  const args = [`[player:${area}] ${msg}`]
+  const args: unknown[] = [`[player:${area}] ${msg}`]
   if (data !== undefined) args.push(data)
   console.debug(...args)
 }

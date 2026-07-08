@@ -24,6 +24,7 @@ export default function TrackMenu({ track, sourceLabel }: TrackMenuProps) {
   const playSource     = usePlayerStore((s) => s.playSource)
   const refreshQueue   = usePlayerStore((s) => s.refreshQueue)
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
+  const release = track.release
 
   async function handlePlay() {
     await playSource("track", track.id, sourceLabel ?? track.title)
@@ -89,12 +90,12 @@ export default function TrackMenu({ track, sourceLabel }: TrackMenuProps) {
           </>
         )}
 
-        {track.release && (
+        {release && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => navigate(`/releases/${track.release.id}`)}>
+            <DropdownMenuItem onClick={() => navigate(`/releases/${release.id}`)}>
               <Disc3 size={14} className="mr-2" />
-              Go to {track.release.title}
+              Go to {release.title}
             </DropdownMenuItem>
           </>
         )}

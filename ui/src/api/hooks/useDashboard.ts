@@ -1,12 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { fetchDashboard } from "../dashboard"
 import { apiFetch, apiUrl } from "../client"
-import type { DashboardResponse, Shelf } from "../types"
+import type { DashboardResponse, Shelf, ShelfItem } from "../types"
 import { useEffect } from "react"
 
-type HistoryShelf = Shelf & { items: unknown[] }
+type HistoryShelf = Shelf & { items: ShelfItem[] }
 
-function replaceHistoryShelf(dashboard: DashboardResponse, items: unknown[]): DashboardResponse {
+function replaceHistoryShelf(dashboard: DashboardResponse, items: ShelfItem[]): DashboardResponse {
   return {
     ...dashboard,
     shelves: dashboard.shelves.map((shelf) =>
