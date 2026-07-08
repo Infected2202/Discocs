@@ -66,6 +66,156 @@ def _maybe_rebuild_stale_profile(store, app_settings, profile, request_settings)
     return store.get_flow_profile(profile.model_key) or profile
 
 
+def _request_settings(settings: dict[str, Any] | None) -> dict[str, Any]:
+    return settings or {}
+
+
+def _flow_model_key(settings: dict[str, Any]) -> str:
+    model_key = settings.get("model_key", "discogs_multi")
+    return model_key if isinstance(model_key, str) else "discogs_multi"
+
+
+def _flow_profile_or_409(store, app_settings, model_key: str, settings: dict[str, Any]):
+    profile = store.get_flow_profile(model_key)
+    profile = _maybe_rebuild_stale_profile(store, app_settings, profile, settings)
+    if profile is None or profile.status not in ("ready", "cold_start"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Flow profile not ready (status={profile.status if profile else 'not_built'}). "
+                "Run POST /api/v1/jobs/flow-profile first."
+            ),
+        )
+    return profile
+
+
+def _start_region_or_409(store, profile_id: str, settings: dict[str, Any]):
+    region = _choose_region(store, profile_id, settings.get("region_id"))
+    if region is None:
+        raise HTTPException(status_code=409, detail="Flow profile has no regions.")
+    return region
+
+
+def _flow_start_numeric_settings(settings: dict[str, Any], region) -> dict[str, float | int]:
+    from app.services.flow_candidates import adaptive_exploration_level
+
+    visible_buffer = int(settings.get("visible_buffer", 5))
+    pool_size = int(settings.get("candidate_pool_size", 1000))
+    explicit_explore = settings.get("exploration_ratio")
+    exploration_level = (
+        float(explicit_explore)
+        if explicit_explore is not None
+        else adaptive_exploration_level(region.seed_count)
+    )
+    return {
+        "visible_buffer": visible_buffer,
+        "pool_size": pool_size,
+        "exploration_level": exploration_level,
+        "exclude_played_days": int(
+            settings.get("exclude_played_days", _DEFAULT_EXCLUDE_PLAYED_DAYS)
+        ),
+        "max_per_artist": int(settings.get("max_per_artist", 2)),
+        "max_per_release": int(settings.get("max_per_release", 1)),
+        "long_term_weight": float(settings.get("long_term_weight", 0.70)),
+        "session_weight": float(settings.get("session_weight", 0.30)),
+        "skip_penalty_strength": float(settings.get("skip_penalty_strength", 0.50)),
+    }
+
+
+def _initial_flow_state(profile_id: str, region_id: str, model_key: str, ctx) -> dict[str, object]:
+    return {
+        "profile_id": profile_id,
+        "active_region_id": region_id,
+        "model_key": model_key,
+        "session_skipped": {},
+        "session_accepted": {},
+        "session_artist_plays": {},
+        "session_release_plays": {},
+        "exploration_level": ctx.exploration_level,
+        "exclude_played_days": ctx.exclude_played_days,
+    }
+
+
+def _flow_start_response(store, session, queue, region, profile_id: str, run_id: str, visible_buffer: int, include_debug: bool, selected, score_summary: dict[str, Any]) -> dict[str, object]:
+    response: dict[str, object] = {
+        "session": playback_session_dict(store, session),
+        "queue": {
+            "items": _queue_items_response(store, queue, include_debug=include_debug),
+            "visible_buffer": visible_buffer,
+        },
+        "flow": {
+            "profile_id": profile_id,
+            "active_region_id": region.id,
+            "generation_run_id": run_id,
+            "active_region": _region_summary(region),
+        },
+    }
+    if include_debug:
+        response["debug"] = {
+            "score_summary": score_summary,
+            "score_breakdowns": [
+                {"track_id": candidate.track_id, **candidate.score_breakdown}
+                for candidate in selected
+            ],
+        }
+    return response
+
+
+def _session_state(session) -> dict[str, Any]:
+    if not session.state_json:
+        return {}
+    try:
+        return json.loads(session.state_json)
+    except Exception:
+        return {}
+
+
+def _flow_session_or_error(store, session_id: str):
+    session = store.get_playback_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Playback session not found.")
+    if session.source_type != "flow":
+        raise HTTPException(status_code=400, detail="Session is not a Flow session.")
+    if session.status == "ended":
+        raise HTTPException(status_code=409, detail="Session has ended.")
+    return session
+
+
+def _refill_region_or_409(store, request, state: dict[str, Any], model_key: str):
+    region_id = request.region_id or str(state.get("active_region_id") or "")
+    region = store.get_flow_region(region_id) if region_id else None
+    if region is not None:
+        return region
+    profile = store.get_flow_profile(model_key)
+    if profile is None:
+        raise HTTPException(status_code=409, detail="Flow profile not found.")
+    region = _choose_region(store, profile.id)
+    if region is None:
+        raise HTTPException(status_code=409, detail="No regions in flow profile.")
+    return region
+
+
+def _pending_refill_need(store, session_id: str, visible_buffer: int) -> int:
+    queue = store.list_queue_items(session_id)
+    pending = [item for item in queue if item.status == "queued"]
+    return max(0, visible_buffer - len(pending))
+
+
+def _filter_already_queued(store, session_id: str, selected):
+    already_queued = {
+        item.track_id
+        for item in store.list_queue_items(session_id)
+        if item.status != "removed"
+    }
+    return [candidate for candidate in selected if candidate.track_id not in already_queued]
+
+
+def _maybe_update_flow_region_state(store, session_id: str, request_region_id: str | None, state: dict[str, Any], region_id: str) -> None:
+    if request_region_id and request_region_id != state.get("active_region_id"):
+        state["active_region_id"] = region_id
+        store.update_playback_session(session_id, state=state)
+
+
 # ---------------------------------------------------------------------------
 # GET /api/v1/flow/profile  (Slice 6)
 # ---------------------------------------------------------------------------
@@ -232,65 +382,33 @@ def api_v1_flow_start(request: FlowStartRequest) -> dict[str, object]:
     """
     from app.services.flow_candidates import (
         FlowSessionContext,
-        adaptive_exploration_level,
         fill_flow_queue,
     )
-    from app.services.flow_regions import FlowSettings
 
     store, app_settings = context()
-
-    model_key = (request.settings or {}).get("model_key", "discogs_multi")
-    if isinstance(model_key, str) is False:
-        model_key = "discogs_multi"
-
-    profile = store.get_flow_profile(str(model_key))
-    profile = _maybe_rebuild_stale_profile(store, app_settings, profile, request.settings or {})
-    if profile is None or profile.status not in ("ready", "cold_start"):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Flow profile not ready (status={profile.status if profile else 'not_built'}). "
-                "Run POST /api/v1/jobs/flow-profile first."
-            ),
-        )
-
-    hint_region_id = (request.settings or {}).get("region_id")
-    region = _choose_region(store, profile.id, hint_region_id)
-    if region is None:
-        raise HTTPException(status_code=409, detail="Flow profile has no regions.")
-
-    visible_buffer = int((request.settings or {}).get("visible_buffer", 5))
-    pool_size = int((request.settings or {}).get("candidate_pool_size", 1000))
-
-    # Explicit caller value wins; otherwise adapt to the region's signal volume
-    # (few seeds → explore more, many seeds → exploit).
-    explicit_explore = (request.settings or {}).get("exploration_ratio")
-    exploration_level = (
-        float(explicit_explore) if explicit_explore is not None
-        else adaptive_exploration_level(region.seed_count)
-    )
-
-    exclude_played_days = int(
-        (request.settings or {}).get("exclude_played_days", _DEFAULT_EXCLUDE_PLAYED_DAYS)
-    )
+    settings = _request_settings(request.settings)
+    model_key = _flow_model_key(settings)
+    profile = _flow_profile_or_409(store, app_settings, model_key, settings)
+    region = _start_region_or_409(store, profile.id, settings)
+    numeric_settings = _flow_start_numeric_settings(settings, region)
 
     ctx = FlowSessionContext(
         session_id="__placeholder__",
         region_id=region.id,
-        model_key=str(model_key),
-        exploration_level=exploration_level,
-        exclude_played_days=exclude_played_days,
+        model_key=model_key,
+        exploration_level=float(numeric_settings["exploration_level"]),
+        exclude_played_days=int(numeric_settings["exclude_played_days"]),
     )
 
     selected, score_summary = fill_flow_queue(
         store, app_settings, region, ctx,
-        n=visible_buffer,
-        pool_size=max(pool_size, visible_buffer * 10),
-        max_per_artist=int((request.settings or {}).get("max_per_artist", 2)),
-        max_per_release=int((request.settings or {}).get("max_per_release", 1)),
-        long_term_weight=float((request.settings or {}).get("long_term_weight", 0.70)),
-        session_weight=float((request.settings or {}).get("session_weight", 0.30)),
-        skip_penalty_strength=float((request.settings or {}).get("skip_penalty_strength", 0.50)),
+        n=int(numeric_settings["visible_buffer"]),
+        pool_size=max(int(numeric_settings["pool_size"]), int(numeric_settings["visible_buffer"]) * 10),
+        max_per_artist=int(numeric_settings["max_per_artist"]),
+        max_per_release=int(numeric_settings["max_per_release"]),
+        long_term_weight=float(numeric_settings["long_term_weight"]),
+        session_weight=float(numeric_settings["session_weight"]),
+        skip_penalty_strength=float(numeric_settings["skip_penalty_strength"]),
     )
 
     if not selected:
@@ -301,25 +419,13 @@ def api_v1_flow_start(request: FlowStartRequest) -> dict[str, object]:
 
     track_ids = [c.track_id for c in selected]
 
-    flow_state = {
-        "profile_id": profile.id,
-        "active_region_id": region.id,
-        "model_key": str(model_key),
-        "session_skipped": {},
-        "session_accepted": {},
-        "session_artist_plays": {},
-        "session_release_plays": {},
-        "exploration_level": ctx.exploration_level,
-        "exclude_played_days": ctx.exclude_played_days,
-    }
-
     session, queue = store.create_playback_session(
         source_type="flow",
         source_label=f"Flow · Region {region.region_index}",
         mode="flow",
         autoplay_enabled=True,
         track_ids=track_ids,
-        state=flow_state,
+        state=_initial_flow_state(profile.id, region.id, model_key, ctx),
     )
 
     # Save generation run for diagnostics
@@ -327,34 +433,23 @@ def api_v1_flow_start(request: FlowStartRequest) -> dict[str, object]:
         session_id=session.id,
         profile_id=profile.id,
         region_id=region.id,
-        settings_json=json.dumps(request.settings or {}),
+        settings_json=json.dumps(settings),
         candidate_count=score_summary.get("pool_size"),
         selected_count=len(selected),
         score_summary_json=json.dumps(score_summary),
     )
-
-    response: dict[str, object] = {
-        "session": playback_session_dict(store, session),
-        "queue": {
-            "items": _queue_items_response(store, queue, include_debug=request.include_debug),
-            "visible_buffer": visible_buffer,
-        },
-        "flow": {
-            "profile_id": profile.id,
-            "active_region_id": region.id,
-            "generation_run_id": run.id,
-            "active_region": _region_summary(region),
-        },
-    }
-    if request.include_debug:
-        response["debug"] = {
-            "score_summary": score_summary,
-            "score_breakdowns": [
-                {"track_id": c.track_id, **c.score_breakdown}
-                for c in selected
-            ],
-        }
-    return response
+    return _flow_start_response(
+        store,
+        session,
+        queue,
+        region,
+        profile.id,
+        run.id,
+        int(numeric_settings["visible_buffer"]),
+        request.include_debug,
+        selected,
+        score_summary,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -379,50 +474,18 @@ def api_v1_flow_refill(request: FlowRefillRequest) -> dict[str, object]:
     from app.services.flow_candidates import fill_flow_queue
 
     store, app_settings = context()
-
-    session = store.get_playback_session(request.session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Playback session not found.")
-    if session.source_type != "flow":
-        raise HTTPException(status_code=400, detail="Session is not a Flow session.")
-    if session.status == "ended":
-        raise HTTPException(status_code=409, detail="Session has ended.")
-
-    state: dict[str, Any] = {}
-    if session.state_json:
-        try:
-            state = json.loads(session.state_json)
-        except Exception:
-            pass
-
+    session = _flow_session_or_error(store, request.session_id)
+    state = _session_state(session)
     model_key = str(state.get("model_key") or "discogs_multi")
     profile_id = str(state.get("profile_id") or "")
-    region_id = str(state.get("active_region_id") or "")
-
-    # Allow caller to switch region
-    if request.region_id:
-        region_id = request.region_id
-
-    region = store.get_flow_region(region_id) if region_id else None
-    if region is None:
-        # Fallback: pick highest-weight region
-        profile = store.get_flow_profile(model_key)
-        if profile is None:
-            raise HTTPException(status_code=409, detail="Flow profile not found.")
-        region = _choose_region(store, profile.id)
-        if region is None:
-            raise HTTPException(status_code=409, detail="No regions in flow profile.")
+    region = _refill_region_or_409(store, request, state, model_key)
 
     ctx = _load_session_context(store, request.session_id, region.id, model_key)
     if ctx is None:
         raise HTTPException(status_code=404, detail="Session not found.")
 
     visible_buffer = request.visible_buffer or 5
-
-    # Count how many tracks are currently queued (not yet played)
-    queue = store.list_queue_items(request.session_id)
-    pending = [i for i in queue if i.status == "queued"]
-    need = max(0, visible_buffer - len(pending))
+    need = _pending_refill_need(store, request.session_id, visible_buffer)
 
     if need == 0:
         return {
@@ -437,11 +500,7 @@ def api_v1_flow_refill(request: FlowRefillRequest) -> dict[str, object]:
         pool_size=max(need * 20, 50),
     )
 
-    # Re-check right before writing: narrows the window where a concurrent
-    # refill call (same session) already queued one of these track IDs after
-    # ctx was built above.
-    already_queued = {i.track_id for i in store.list_queue_items(request.session_id) if i.status != "removed"}
-    selected = [c for c in selected if c.track_id not in already_queued]
+    selected = _filter_already_queued(store, request.session_id, selected)
 
     added: list[dict] = []
     if selected:
@@ -469,10 +528,13 @@ def api_v1_flow_refill(request: FlowRefillRequest) -> dict[str, object]:
         score_summary_json=json.dumps(score_summary),
     )
 
-    # Update region_id in session state if it changed
-    if request.region_id and request.region_id != state.get("active_region_id"):
-        state["active_region_id"] = region.id
-        store.update_playback_session(request.session_id, state=state)
+    _maybe_update_flow_region_state(
+        store,
+        request.session_id,
+        request.region_id,
+        state,
+        region.id,
+    )
 
     return {
         "added_items": added,
