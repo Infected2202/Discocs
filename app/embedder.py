@@ -37,6 +37,19 @@ class TrackEmbedder(Protocol):
         ...
 
 
+def _ensure_int_max_str_digits_compat(sys_module) -> None:
+    if not hasattr(sys_module, "get_int_max_str_digits"):
+        def get_int_max_str_digits() -> int:
+            return 0
+
+        sys_module.get_int_max_str_digits = get_int_max_str_digits
+    if not hasattr(sys_module, "set_int_max_str_digits"):
+        def set_int_max_str_digits(_maxdigits: int) -> None:
+            return None
+
+        sys_module.set_int_max_str_digits = set_int_max_str_digits
+
+
 def create_track_embedder(
     settings: Settings,
     model_name: str,
@@ -300,16 +313,7 @@ class MuqMulanEmbedder:
         if self._model is not None:
             return self._model, self._torch, self._resolved_device
         os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
-        if not hasattr(sys, "get_int_max_str_digits"):
-            def get_int_max_str_digits() -> int:
-                return 0
-
-            sys.get_int_max_str_digits = get_int_max_str_digits  # type: ignore[attr-defined]
-        if not hasattr(sys, "set_int_max_str_digits"):
-            def set_int_max_str_digits(maxdigits: int) -> None:
-                return None
-
-            sys.set_int_max_str_digits = set_int_max_str_digits  # type: ignore[attr-defined]
+        _ensure_int_max_str_digits_compat(sys)
         try:
             import torch
         except ImportError as exc:

@@ -3,7 +3,12 @@ import pytest
 from contextlib import nullcontext
 
 from app.config import MUQ_MULAN_MODEL
-from app.embedder import MuqMulanEmbedder, create_track_embedder, pool_and_normalize
+from app.embedder import (
+    MuqMulanEmbedder,
+    _ensure_int_max_str_digits_compat,
+    create_track_embedder,
+    pool_and_normalize,
+)
 
 
 class DummySettings:
@@ -101,3 +106,12 @@ def test_muq_mulan_text_vector_uses_text_embedding_api(tmp_path):
     assert vector.dtype == np.float32
     assert np.allclose(vector, np.array([0.6, 0.8], dtype=np.float32))
     assert np.allclose(np.linalg.norm(vector), 1.0)
+
+
+def test_ensure_int_max_str_digits_compat_adds_missing_shims() -> None:
+    fake_sys = type("FakeSys", (), {})()
+
+    _ensure_int_max_str_digits_compat(fake_sys)
+
+    assert fake_sys.get_int_max_str_digits() == 0
+    assert fake_sys.set_int_max_str_digits(1234) is None
