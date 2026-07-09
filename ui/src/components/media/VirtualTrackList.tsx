@@ -10,7 +10,7 @@ import {
   closestCenter,
   useSensor,
   useSensors,
-  type DragOverEvent,
+  type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core"
 import {
@@ -20,6 +20,7 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 import { useScrollRef } from "@/contexts/ScrollContext"
 import VirtualTrackRow from "./VirtualTrackRow"
 import type { TrackSummary } from "@/api/types"
@@ -65,12 +66,8 @@ interface RowProps {
 }
 
 /** A single reorderable row: a sortable node positioned by the virtualizer. */
-function SortableTrackRow({
-  start,
-  dragActive,
-  ...rowProps
-}: RowProps & { readonly start: number; readonly dragActive: boolean }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useSortable({
+function SortableTrackRow({ start, ...rowProps }: RowProps & { readonly start: number }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: rowProps.track.id,
   })
 
@@ -90,9 +87,12 @@ function SortableTrackRow({
         top: start,
         left: 0,
         width: "100%",
-        // Only animate reflow while a drag is in progress — otherwise a
-        // transition would make ordinary scrolling feel laggy.
-        transition: dragActive ? "top 160ms ease" : undefined,
+        // Sibling reflow comes from the sorting strategy's transform. The item
+        // order (and thus `top`) stays frozen while the drag is in flight, and
+        // dnd-kit deliberately excludes transforms from rect measurement — so
+        // collision rects stay valid while rows visually make way.
+        transform: CSS.Transform.toString(transform),
+        transition,
         // The dragged row is rendered in the DragOverlay instead; hide the
         // original slot so siblings can visibly close the gap.
         opacity: isDragging ? 0 : 1,
@@ -117,10 +117,11 @@ export default function VirtualTrackList({
   const scrollRef = useScrollRef()
   const reorderable = onReorder != null
 
-  // Local order lets us reflow rows live during a drag without waiting for the
-  // server round-trip. It is re-synced whenever a *new* tracks prop arrives
-  // (server refetch) but never while a drag is in flight — otherwise clearing
-  // activeId on drop would momentarily snap the row back to the stale order.
+  // Local order holds the optimistic post-drop order until the server refetch
+  // lands. It stays frozen while a drag is in flight (the sorting strategy
+  // handles the visual reflow via transforms) and is re-synced whenever a new
+  // tracks prop arrives — otherwise the row would snap back to the stale
+  // order between drop and refetch.
   const [order, setOrder] = useState<TrackSummary[]>(tracks)
   const [activeId, setActiveId] = useState<number | null>(null)
   const orderRef = useRef(order)
@@ -170,21 +171,15 @@ export default function VirtualTrackList({
     setActiveId(Number(event.active.id))
   }
 
-  function handleDragOver(event: DragOverEvent) {
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-    setOrder((prev) => moveTrackById(prev, Number(active.id), Number(over.id)))
-  }
-
-  function handleDragEnd() {
+  function handleDragEnd(event: DragEndEvent) {
     draggingRef.current = false
     setActiveId(null)
-    const finalIds = orderRef.current.map((t) => t.id)
-    const originalIds = tracks.map((t) => t.id)
-    const changed =
-      finalIds.length === originalIds.length &&
-      finalIds.some((id, i) => id !== originalIds[i])
-    if (changed) onReorder?.(finalIds)
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const next = moveTrackById(orderRef.current, Number(active.id), Number(over.id))
+    if (next === orderRef.current) return
+    setOrder(next)
+    onReorder?.(next.map((t) => t.id))
   }
 
   function handleDragCancel() {
@@ -200,12 +195,7 @@ export default function VirtualTrackList({
         const props = rowProps(track, virtualRow.index)
         if (reorderable) {
           return (
-            <SortableTrackRow
-              key={track.id}
-              start={virtualRow.start}
-              dragActive={activeId != null}
-              {...props}
-            />
+            <SortableTrackRow key={track.id} start={virtualRow.start} {...props} />
           )
         }
         return (
@@ -239,7 +229,6 @@ export default function VirtualTrackList({
       collisionDetection={closestCenter}
       measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
       onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >

@@ -161,15 +161,19 @@ toggles selection — the rest of the row keeps its normal play behaviour.
 Rows can be reordered by drag-and-drop, built on **@dnd-kit** (`core` +
 `sortable` + `utilities`) inside `VirtualTrackList`. The picked-up row follows
 the cursor via `DragOverlay` (rendered transparent, no card background) while
-the remaining rows reflow live: `onDragOver` reorders a local copy
-(`moveTrackById` → `arrayMove`), the virtualizer keeps stable per-track keys
-(`getItemKey`), and a short `top` transition animates siblings making way.
-Reorderable rows are positioned with `top` rather than `translateY` — dnd-kit
-measures rects ignoring CSS transforms, so transform-positioned rows would all
-measure at the container top, breaking both the overlay spawn position and
-collision detection. Pointer, touch (press-and-hold) and keyboard sensors are
-wired for cross-device support; `MeasuringStrategy.Always` keeps collision
-detection correct as the absolutely-positioned rows move. On drop,
+siblings reflow via the canonical sortable pattern: the item order (and each
+row's virtualizer-driven `top`) stays **frozen during the drag**, and
+`verticalListSortingStrategy` shifts in-between rows with `transform` from
+`useSortable`. dnd-kit deliberately excludes transforms from rect measurement,
+so collision rects stay valid while rows visually make way — reordering the
+data mid-drag instead would re-measure rows mid-animation and corrupt
+collision detection. Reorderable rows are positioned with `top` rather than
+`translateY` for the same reason: transform-positioned rows would all measure
+at the container top. On drop, `onDragEnd` applies `moveTrackById`
+(`arrayMove`) to a local optimistic order (kept until the refetch lands so the
+row does not snap back). Pointer, touch (press-and-hold) and keyboard sensors
+are wired for cross-device support; `MeasuringStrategy.Always` re-measures
+droppables as virtualized rows mount/unmount during drag auto-scroll. On drop,
 `onDragEnd` calls `POST /playlists/{id}/tracks/reorder` with the full new
 track-id order and invalidates the playlist queries. The backend rejects
 non-permutations with 409 `invalid_order`.
