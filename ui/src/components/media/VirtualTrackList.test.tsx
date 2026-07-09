@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from "vitest"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { useRef } from "react"
 import { ScrollContext } from "@/contexts/ScrollContext"
-import VirtualTrackList from "./VirtualTrackList"
+import VirtualTrackList, { moveTrackById } from "./VirtualTrackList"
 import type { TrackSummary } from "@/api/types"
 
 // jsdom has no layout engine — mock useVirtualizer to render all rows directly
@@ -99,37 +99,42 @@ describe("VirtualTrackList", () => {
     expect(screen.getByText("Track 42")).toBeInTheDocument()
   })
 
-  it("без onReorder строки не draggable", () => {
-    render(<Wrapper tracks={[makeTrack(1)]} />)
-    const row = document.querySelector("[data-index='0']") as HTMLElement
-    expect(row.draggable).toBe(false)
-  })
-
-  it("drag-and-drop вызывает onReorder с новым порядком id", () => {
+  it("с onReorder строки рендерятся как sortable-узлы (dnd-kit не падает)", () => {
     const onReorder = vi.fn()
     const tracks = [makeTrack(1), makeTrack(2), makeTrack(3)]
     render(<Wrapper tracks={tracks} onReorder={onReorder} />)
 
     const rows = document.querySelectorAll("[data-index]")
-    expect((rows[0] as HTMLElement).draggable).toBe(true)
+    expect(rows).toHaveLength(3)
+    // dnd-kit useSortable проставляет aria-roledescription="sortable".
+    expect((rows[0] as HTMLElement).getAttribute("aria-roledescription")).toBe("sortable")
+    expect(screen.getByText("Track 2")).toBeInTheDocument()
+  })
+})
 
-    // Тащим первый трек на позицию третьего.
-    fireEvent.dragStart(rows[0])
-    fireEvent.dragOver(rows[2])
-    fireEvent.drop(rows[2])
+describe("moveTrackById", () => {
+  const list = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]
 
-    expect(onReorder).toHaveBeenCalledWith([2, 3, 1])
+  it("перемещает элемент вперёд (id=1 на место id=3)", () => {
+    expect(moveTrackById(list, 1, 3).map((t) => t.id)).toEqual([2, 3, 1, 4])
   })
 
-  it("drop на исходную позицию не вызывает onReorder", () => {
-    const onReorder = vi.fn()
-    const tracks = [makeTrack(1), makeTrack(2)]
-    render(<Wrapper tracks={tracks} onReorder={onReorder} />)
+  it("перемещает элемент назад (id=4 на место id=2)", () => {
+    expect(moveTrackById(list, 4, 2).map((t) => t.id)).toEqual([1, 4, 2, 3])
+  })
 
-    const rows = document.querySelectorAll("[data-index]")
-    fireEvent.dragStart(rows[1])
-    fireEvent.drop(rows[1])
+  it("возвращает исходный массив без изменений при active==over", () => {
+    expect(moveTrackById(list, 2, 2)).toBe(list)
+  })
 
-    expect(onReorder).not.toHaveBeenCalled()
+  it("возвращает исходный массив, если id не найден", () => {
+    expect(moveTrackById(list, 99, 2)).toBe(list)
+    expect(moveTrackById(list, 1, 99)).toBe(list)
+  })
+
+  it("не мутирует исходный массив при перемещении", () => {
+    const original = list.map((t) => ({ ...t }))
+    moveTrackById(list, 1, 3)
+    expect(list.map((t) => t.id)).toEqual(original.map((t) => t.id))
   })
 })

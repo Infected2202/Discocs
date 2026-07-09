@@ -150,18 +150,25 @@ Two branches on the same route:
   `CreatePlaylistDialog` in edit mode (title + description via `PATCH`);
   Delete asks for confirmation, then `DELETE` + navigate to the dashboard.
 
-Track removal uses a selection mode: hovering a row swaps the index number
-for a checkbox (`VirtualTrackRow` `selectable` prop); checking the first one
-keeps checkboxes visible on all rows and shows a "N selected · trash ·
-Cancel" bar above the list, where the trash button batches
-`POST /playlists/{id}/tracks/remove`. Only the checkbox itself toggles
-selection — the rest of the row keeps its normal play behaviour.
+Track removal uses a selection mode: a selection checkbox lives in its own
+column on the **right** of each row (`VirtualTrackRow` `selectable` prop) and
+appears on hover; the play/index button on the left is never replaced.
+Checking the first row keeps checkboxes visible on all rows and shows a
+"N selected · trash · Cancel" bar above the list, where the trash button
+batches `POST /playlists/{id}/tracks/remove`. Only the checkbox itself
+toggles selection — the rest of the row keeps its normal play behaviour.
 
-Rows can be reordered by drag-and-drop (native HTML5 DnD in
-`VirtualTrackList`, no extra dependency): dropping a row calls
-`POST /playlists/{id}/tracks/reorder` with the full new track-id order and
-invalidates the playlist queries. The backend rejects non-permutations with
-409 `invalid_order`.
+Rows can be reordered by drag-and-drop, built on **@dnd-kit** (`core` +
+`sortable` + `utilities`) inside `VirtualTrackList`. The picked-up row follows
+the cursor via `DragOverlay` while the remaining rows reflow live: `onDragOver`
+reorders a local copy (`moveTrackById` → `arrayMove`), the virtualizer keeps
+stable per-track keys (`getItemKey`), and a short `transform` transition
+animates siblings making way. Pointer, touch (press-and-hold) and keyboard
+sensors are wired for cross-device support; `MeasuringStrategy.Always` keeps
+collision detection correct as the absolutely-positioned rows move. On drop,
+`onDragEnd` calls `POST /playlists/{id}/tracks/reorder` with the full new
+track-id order and invalidates the playlist queries. The backend rejects
+non-permutations with 409 `invalid_order`.
 
 ### Playlist dialogs (`components/playlists/`)
 

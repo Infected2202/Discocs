@@ -60,42 +60,34 @@ export default function VirtualTrackRow({
     }
   }
 
+  // Grid columns: play/index · [artwork] · title · [release] · duration · like · menu · [checkbox].
+  // Built inline so the optional checkbox column is added dynamically without
+  // relying on Tailwind JIT enumerating every arbitrary grid-cols variant.
+  const gridTemplate = [
+    "40px",
+    showArtwork ? "44px" : null,
+    "1fr",
+    showArtwork && showRelease ? "minmax(0,180px)" : null,
+    "80px",
+    "32px", // like
+    "32px", // menu
+    selectable ? "32px" : null, // selection checkbox (right side)
+  ]
+    .filter(Boolean)
+    .join(" ")
+
   return (
     <div
       className={cn(
         "grid items-center border-b border-border/40 last:border-0 transition-colors hover:bg-muted/40 h-[52px]",
         isActive && "text-primary",
-        showArtwork && showRelease
-          ? "grid-cols-[40px_44px_1fr_minmax(0,180px)_80px_32px_32px]"
-          : showArtwork
-          ? "grid-cols-[40px_44px_1fr_80px_32px_32px]"
-          : "grid-cols-[40px_1fr_80px_32px_32px]",
       )}
+      style={{ gridTemplateColumns: gridTemplate }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* Index / play button / selection checkbox */}
+      {/* Index / play button (always on the left) */}
       <div className="pl-3 pr-1 text-center">
-        {selectable && (hovered || selectionActive) ? (
-          <button
-            onClick={(e) => { e.stopPropagation(); onToggleSelect?.(track.id) }}
-            role="checkbox"
-            aria-checked={selected}
-            aria-label={`Select ${track.title}`}
-            className="flex h-7 w-7 items-center justify-center mx-auto"
-          >
-            <span
-              className={cn(
-                "flex h-4 w-4 items-center justify-center rounded-sm border transition-colors",
-                selected
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-muted-foreground/60 hover:border-foreground",
-              )}
-            >
-              {selected && <Check size={12} strokeWidth={3} />}
-            </span>
-          </button>
-        ) : (
         <button
           onClick={handlePlay}
           className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:text-foreground mx-auto"
@@ -113,7 +105,6 @@ export default function VirtualTrackRow({
             </span>
           )}
         </button>
-        )}
       </div>
 
       {/* Artwork */}
@@ -204,6 +195,32 @@ export default function VirtualTrackRow({
       <div className="py-2 pr-2">
         <TrackMenu track={track} sourceLabel={sourceLabel} />
       </div>
+
+      {/* Selection checkbox (right side) */}
+      {selectable && (
+        <div className="py-2 pr-2">
+          {hovered || selectionActive ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleSelect?.(track.id) }}
+              role="checkbox"
+              aria-checked={selected}
+              aria-label={`Select ${track.title}`}
+              className="flex h-7 w-7 items-center justify-center mx-auto"
+            >
+              <span
+                className={cn(
+                  "flex h-4 w-4 items-center justify-center rounded-sm border transition-colors",
+                  selected
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-muted-foreground/60 hover:border-foreground",
+                )}
+              >
+                {selected && <Check size={12} strokeWidth={3} />}
+              </span>
+            </button>
+          ) : null}
+        </div>
+      )}
     </div>
   )
 }
