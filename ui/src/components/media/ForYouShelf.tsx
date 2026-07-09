@@ -1,4 +1,4 @@
-import { Heart, History, Shuffle, Disc3, Plus, Compass, RotateCcw, Clock, Radio } from "lucide-react"
+import { Heart, History, Shuffle, Disc3, Plus, Compass, RotateCcw, Clock, Radio, ListMusic } from "lucide-react"
 import Shelf from "./Shelf"
 import { usePlayerStore } from "@/store/playerStore"
 import { playLikes } from "@/api/playlists"
@@ -77,6 +77,14 @@ export default function ForYouShelf() {
       subtitle: "Your favourites",
       artworkNode: cardArtwork(<Heart size={72} />),
       onPlay: () => playLikes().then(playFromEnvelope).catch(() => {}),
+      variant: "shelf",
+    },
+    {
+      id: "playlists",
+      type: "shelf",
+      title: "Playlists",
+      subtitle: "Your collections",
+      artworkNode: cardArtwork(<ListMusic size={72} />),
       variant: "shelf",
     },
     {

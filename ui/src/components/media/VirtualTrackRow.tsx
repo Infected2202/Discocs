@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Link } from "react-router"
-import { Play, Pause, ThumbsUp } from "lucide-react"
+import { Play, Pause, ThumbsUp, Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 import ArtworkImage from "./ArtworkImage"
 import TrackMenu from "./TrackMenu"
@@ -22,6 +22,10 @@ interface VirtualTrackRowProps {
   readonly showArtwork?: boolean
   readonly showRelease?: boolean
   readonly sourceLabel?: string
+  readonly selectable?: boolean
+  readonly selected?: boolean
+  readonly selectionActive?: boolean
+  readonly onToggleSelect?: (trackId: number) => void
 }
 
 export default function VirtualTrackRow({
@@ -30,6 +34,10 @@ export default function VirtualTrackRow({
   showArtwork = true,
   showRelease = true,
   sourceLabel,
+  selectable = false,
+  selected = false,
+  selectionActive = false,
+  onToggleSelect,
 }: VirtualTrackRowProps) {
   const [hovered, setHovered] = useState(false)
 
@@ -66,8 +74,28 @@ export default function VirtualTrackRow({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* Index / play button */}
+      {/* Index / play button / selection checkbox */}
       <div className="pl-3 pr-1 text-center">
+        {selectable && (hovered || selectionActive) ? (
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleSelect?.(track.id) }}
+            role="checkbox"
+            aria-checked={selected}
+            aria-label={`Select ${track.title}`}
+            className="flex h-7 w-7 items-center justify-center mx-auto"
+          >
+            <span
+              className={cn(
+                "flex h-4 w-4 items-center justify-center rounded-sm border transition-colors",
+                selected
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-muted-foreground/60 hover:border-foreground",
+              )}
+            >
+              {selected && <Check size={12} strokeWidth={3} />}
+            </span>
+          </button>
+        ) : (
         <button
           onClick={handlePlay}
           className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:text-foreground mx-auto"
@@ -85,6 +113,7 @@ export default function VirtualTrackRow({
             </span>
           )}
         </button>
+        )}
       </div>
 
       {/* Artwork */}

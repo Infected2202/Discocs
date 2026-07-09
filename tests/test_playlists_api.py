@@ -242,3 +242,43 @@ def test_likes_routes_still_reachable(tmp_path: Path, monkeypatch):
     assert client.get("/api/v1/playlists/likes").status_code == 502
     assert client.post("/api/v1/playlists/likes/play").status_code == 502
     assert api_playlists_module is not None
+
+
+def test_dashboard_playlists_shelf(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    track_id = add_track(store, tmp_path, "shelf-track")
+    client = TestClient(app)
+
+    # Empty shelf still resolves (key exists), with no items.
+    empty = client.get("/api/v1/dashboard/shelves/playlists")
+    assert empty.status_code == 200
+    assert empty.json()["items"] == []
+    assert empty.json()["total"] == 0
+
+    created = client.post(
+        "/api/v1/playlists",
+        json={"title": "Shelf list", "track_ids": [track_id]},
+    )
+    assert created.status_code == 201
+    playlist_id = created.json()["id"]
+
+    shelf = client.get("/api/v1/dashboard/shelves/playlists")
+    assert shelf.status_code == 200
+    data = shelf.json()
+    assert data["title"] == "Playlists"
+    assert data["total"] == 1
+    item = data["items"][0]
+    assert item["entity_type"] == "playlist"
+    assert item["entity_id"] == playlist_id
+    assert item["title"] == "Shelf list"
+    assert item["subtitle"] == "1 tracks"
+    assert item["action"]["target"] == f"/playlists/{playlist_id}"
+    assert item["play_action"] == {
+        "type": "post",
+        "endpoint": f"/api/v1/playlists/{playlist_id}/play",
+    }
+
+    # The shelf key is part of the main dashboard payload (last shelf).
+    dashboard = client.get("/api/v1/dashboard?limit=5")
+    assert dashboard.status_code == 200
+    assert dashboard.json()["settings"]["visible_shelves"][-1] == "playlists"

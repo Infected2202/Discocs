@@ -10,6 +10,9 @@ interface VirtualTrackListProps {
   readonly showArtwork?: boolean
   readonly showRelease?: boolean
   readonly sourceLabel?: string
+  readonly selectable?: boolean
+  readonly selectedIds?: ReadonlySet<number>
+  readonly onToggleSelect?: (trackId: number) => void
 }
 
 export default function VirtualTrackList({
@@ -17,6 +20,9 @@ export default function VirtualTrackList({
   showArtwork = true,
   showRelease = true,
   sourceLabel,
+  selectable = false,
+  selectedIds,
+  onToggleSelect,
 }: VirtualTrackListProps) {
   const scrollRef = useScrollRef()
 
@@ -29,6 +35,7 @@ export default function VirtualTrackList({
 
   const totalSize = rowVirtualizer.getTotalSize()
   const virtualItems = rowVirtualizer.getVirtualItems()
+  const selectionActive = (selectedIds?.size ?? 0) > 0
 
   return (
     <div style={{ height: totalSize, position: "relative" }}>
@@ -51,6 +58,10 @@ export default function VirtualTrackList({
             showArtwork={showArtwork}
             showRelease={showRelease}
             sourceLabel={sourceLabel}
+            selectable={selectable}
+            selected={selectedIds?.has(tracks[virtualRow.index].id) ?? false}
+            selectionActive={selectionActive}
+            onToggleSelect={onToggleSelect}
           />
         </div>
       ))}

@@ -250,9 +250,9 @@ Gitea) → проверка CI в Jenkins → подтверждение Сан�
    тесты API. ✅ (билд #101)
 4. **Фаза 4 — UI, модалки:** api-слой, AddToPlaylistDialog,
    CreatePlaylistDialog, пункт в TrackMenu + vitest. ✅ (билд #103)
-5. **Фаза 5 — UI, интеграции:** кнопка в ExpandedPlayer, save-флоу MixPage. ✅
+5. **Фаза 5 — UI, интеграции:** кнопка в ExpandedPlayer, save-флоу MixPage. ✅ (билд #105)
 6. **Фаза 6 — UI, страницы:** PlaylistPage generic (Play/Edit/Delete,
-   selection-режим), шелф Playlists + карточка For You.
+   selection-режим), шелф Playlists + карточка For You. ✅
 7. **Фаза 7 — reorder** (§5.6, опционально по итогам приёмки) +
    документация `docs/`.
 

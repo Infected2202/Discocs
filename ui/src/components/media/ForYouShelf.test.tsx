@@ -62,4 +62,11 @@ describe("ForYouShelf", () => {
 
     expect(screen.getByText("Loading…")).toBeInTheDocument()
   })
+
+  it("includes the Playlists card", () => {
+    render(<ForYouShelf />)
+
+    expect(screen.getByText("Playlists")).toBeInTheDocument()
+    expect(screen.getByText("Your collections")).toBeInTheDocument()
+  })
 })

@@ -178,7 +178,7 @@ export interface SearchResponse {
 // Dashboard
 // ----------------------------------------------------------------------------
 
-export type ShelfItemType = "artist" | "release" | "generated_mix" | "track"
+export type ShelfItemType = "artist" | "release" | "generated_mix" | "track" | "playlist"
 
 export interface SubtitleLink {
   label: string

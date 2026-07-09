@@ -438,6 +438,33 @@ def _dashboard_albums_for_you(
     return page, len(shuffled)
 
 
+def _dashboard_playlists(
+    store: Store,
+    limit: int,
+    offset: int,
+    _include_debug: bool = False,
+) -> tuple[list[dict[str, object]], int]:
+    from app.serializers.playlists import playlist_summary_dict  # noqa: PLC0415
+
+    playlists = store.list_playlists(limit=limit, offset=offset)
+    counts = store.playlist_track_counts([playlist.id for playlist in playlists])
+    items: list[dict[str, object]] = []
+    for playlist in playlists:
+        summary = playlist_summary_dict(store, playlist, track_count=counts.get(playlist.id, 0))
+        items.append({
+            "id": f"playlist:{playlist.id}",
+            "entity_type": "playlist",
+            "entity_id": playlist.id,
+            "title": summary["title"],
+            "subtitle": f"{summary['track_count']} tracks",
+            "artwork": summary["artwork"],
+            "reason": None,
+            "action": summary["action"],
+            "play_action": summary["play_action"],
+        })
+    return items, store.count_playlists()
+
+
 def dashboard_shelf_response(
     store: Store,
     key: str,
@@ -457,6 +484,7 @@ def dashboard_shelf_response(
         "new_releases": ("New Releases", ""),
         "liked_artists": ("Favourite Artists", ""),
         "liked_releases": ("Favourite Albums", ""),
+        "playlists": ("Playlists", ""),
     }
     if key not in titles:
         return None
@@ -478,6 +506,8 @@ def dashboard_shelf_response(
         items, total = _dashboard_liked_artists(store, limit, offset, include_debug)
     elif key == "liked_releases":
         items, total = _dashboard_liked_releases(store, limit, offset, include_debug)
+    elif key == "playlists":
+        items, total = _dashboard_playlists(store, limit, offset, include_debug)
     else:
         items, total = _dashboard_generated_mixes(store, limit, offset, include_debug)
     title, subtitle = titles[key]

@@ -1,12 +1,22 @@
+import { useState } from "react"
 import { useParams, useNavigate } from "react-router"
-import { Play, ChevronLeft } from "lucide-react"
-import { useQuery } from "@tanstack/react-query"
-import { fetchLikesPlaylist, playLikes } from "@/api/playlists"
+import { Play, ChevronLeft, Pencil, Trash2, X } from "lucide-react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  fetchLikesPlaylist,
+  playLikes,
+  fetchPlaylist,
+  playPlaylist,
+  deletePlaylist,
+  removePlaylistTracks,
+} from "@/api/playlists"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import ArtworkImage from "@/components/media/ArtworkImage"
 import VirtualTrackList from "@/components/media/VirtualTrackList"
 import { usePlayerStore } from "@/store/playerStore"
-import type { TrackSummary } from "@/api/types"
+import { useUIStore } from "@/store/uiStore"
+import type { PlaylistDetail, TrackSummary } from "@/api/types"
 
 function PlaylistSkeleton() {
   return (
@@ -44,15 +54,36 @@ function LikesArtwork() {
 export default function PlaylistPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
+  const openCreatePlaylist = useUIStore((s) => s.openCreatePlaylist)
+
+  const isLikes = id === "likes"
+  const playlistId = isLikes ? null : Number(id)
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<number>>(new Set())
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["playlist", id],
-    queryFn: () => {
-      if (id === "likes") return fetchLikesPlaylist()
-      throw new Error("Unknown playlist")
-    },
+    queryKey: ["playlist", isLikes ? "likes" : playlistId],
+    queryFn: () => (isLikes ? fetchLikesPlaylist() : fetchPlaylist(playlistId!)),
+    enabled: isLikes || Number.isInteger(playlistId),
     staleTime: 30_000,
+  })
+
+  const { mutate: removeSelected, isPending: removing } = useMutation({
+    mutationFn: (trackIds: number[]) => removePlaylistTracks(playlistId!, trackIds),
+    onSuccess: () => {
+      setSelectedIds(new Set())
+      queryClient.invalidateQueries({ queryKey: ["playlist", playlistId] })
+      queryClient.invalidateQueries({ queryKey: ["playlists"] })
+    },
+  })
+
+  const { mutate: handleDelete, isPending: deleting } = useMutation({
+    mutationFn: () => deletePlaylist(playlistId!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["playlists"] })
+      navigate("/")
+    },
   })
 
   if (isLoading) return <PlaylistSkeleton />
@@ -64,7 +95,30 @@ export default function PlaylistPage() {
     )
   }
 
+  const detail = isLikes ? null : (data as PlaylistDetail)
   const tracks = data.tracks as TrackSummary[]
+
+  function toggleSelect(trackId: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(trackId)) next.delete(trackId)
+      else next.add(trackId)
+      return next
+    })
+  }
+
+  function handlePlay() {
+    const play = isLikes ? playLikes() : playPlaylist(playlistId!)
+    play.then(playFromEnvelope).catch(() => {})
+  }
+
+  function handleEdit() {
+    if (detail) openCreatePlaylist({ playlist: detail })
+  }
+
+  function confirmDelete() {
+    if (globalThis.confirm(`Delete playlist "${data!.title}"?`)) handleDelete()
+  }
 
   return (
     <div className="space-y-8 pb-8">
@@ -79,29 +133,86 @@ export default function PlaylistPage() {
         </button>
 
         <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
-          {id === "likes" && <LikesArtwork />}
+          {isLikes ? (
+            <LikesArtwork />
+          ) : (
+            <ArtworkImage
+              src={detail?.artwork?.url}
+              alt={data.title}
+              size={176}
+              className="rounded-lg shrink-0"
+              fallbackLetter="P"
+            />
+          )}
 
           <div className="pb-0 sm:pb-2 min-w-0">
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Playlist</p>
             <h1 className="text-3xl font-bold">{data.title}</h1>
+            {detail?.description && (
+              <p className="text-sm text-muted-foreground mt-1">{detail.description}</p>
+            )}
             <p className="text-sm text-muted-foreground mt-1">{tracks.length} tracks</p>
-            <div className="mt-4">
-              <Button
-                size="sm"
-                onClick={() => playLikes().then(playFromEnvelope)}
-                className="gap-2"
-              >
+            <div className="mt-4 flex gap-2">
+              <Button size="sm" onClick={handlePlay} className="gap-2">
                 <Play size={14} fill="currentColor" strokeWidth={0} />
                 Play
               </Button>
+              {!isLikes && (
+                <>
+                  <Button size="sm" variant="outline" onClick={handleEdit} className="gap-2">
+                    <Pencil size={14} />
+                    Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={confirmDelete}
+                    disabled={deleting}
+                    className="gap-2 text-destructive hover:text-destructive"
+                  >
+                    <Trash2 size={14} />
+                    Delete
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         </div>
       </div>
 
+      {/* Selection bar */}
+      {!isLikes && selectedIds.size > 0 && (
+        <div className="px-4 sm:px-6">
+          <div className="flex items-center gap-3 rounded-md bg-muted/60 px-4 py-2 text-sm">
+            <span>{selectedIds.size} selected</span>
+            <button
+              onClick={() => removeSelected([...selectedIds])}
+              disabled={removing}
+              className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
+              aria-label="Remove selected tracks"
+            >
+              <Trash2 size={15} />
+            </button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="ml-auto flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X size={14} />
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Tracks */}
       <div className="px-4 sm:px-6">
-        <VirtualTrackList tracks={tracks} sourceLabel={data.title} />
+        <VirtualTrackList
+          tracks={tracks}
+          sourceLabel={data.title}
+          selectable={!isLikes}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelect}
+        />
       </div>
     </div>
   )
