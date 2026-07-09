@@ -82,13 +82,17 @@ function SortableTrackRow({
       {...listeners}
       style={{
         position: "absolute",
-        top: 0,
+        // Positioned via `top`, NOT translateY: dnd-kit measures element rects
+        // ignoring CSS transforms (sortable moves items with transforms), so
+        // transform-positioned rows would all measure at top:0 — the overlay
+        // would spawn at the top of the list and collision detection would
+        // reflow rows in the wrong places.
+        top: start,
         left: 0,
         width: "100%",
-        transform: `translateY(${start}px)`,
         // Only animate reflow while a drag is in progress — otherwise a
         // transition would make ordinary scrolling feel laggy.
-        transition: dragActive ? "transform 160ms ease" : undefined,
+        transition: dragActive ? "top 160ms ease" : undefined,
         // The dragged row is rendered in the DragOverlay instead; hide the
         // original slot so siblings can visibly close the gap.
         opacity: isDragging ? 0 : 1,
@@ -244,7 +248,7 @@ export default function VirtualTrackList({
       </SortableContext>
       <DragOverlay dropAnimation={{ duration: 180, easing: "cubic-bezier(0.2, 0, 0, 1)" }}>
         {activeTrack ? (
-          <div className="rounded-md bg-card shadow-xl ring-1 ring-border">
+          <div className="cursor-grabbing">
             <VirtualTrackRow {...rowProps(activeTrack, activeIndex)} />
           </div>
         ) : null}
