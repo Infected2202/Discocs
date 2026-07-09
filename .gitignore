@@ -11,6 +11,7 @@ venv/
 .codex/bootstrap-venv/
 dist/
 build/
+node_modules/
 *.egg-info/
 plugins/navidrome-instant-mix/tools/binaryen/
 NDH6SA~M/

@@ -26,6 +26,7 @@ test("artworkBackdropUrl requests an efficient backdrop image size", () => {
     artworkBackdropUrl("/artwork/42?size=40"),
     "/artwork/42?size=320"
   )
+  assert.equal(artworkBackdropUrl("/artwork/42"), "/artwork/42?size=320")
   assert.equal(
     artworkBackdropUrl("/artwork/42?token=abc#cover"),
     "/artwork/42?token=abc&size=320#cover"
@@ -44,6 +45,13 @@ test("backdrop crossfade keeps the previous artwork under the next one", () => {
     {
       visibleUrl: "/artwork/new",
       fadingUrl: "/artwork/old",
+    }
+  )
+  assert.deepEqual(
+    resolveBackdropLayers("/artwork/current", "/artwork/current"),
+    {
+      visibleUrl: "/artwork/current",
+      fadingUrl: undefined,
     }
   )
 })
@@ -77,6 +85,23 @@ test("artwork transitions wait until the next image is loaded and decoded", asyn
 
   assert.equal(decoded, true)
   assert.equal(resolved, true)
+})
+
+test("artwork transitions handle cached complete images and decode failures", async () => {
+  const image = {
+    src: "",
+    complete: true,
+    naturalWidth: 320,
+    onload: null as (() => void) | null,
+    onerror: null as (() => void) | null,
+    decode: async () => {
+      throw new Error("decode failed")
+    },
+  }
+
+  await preloadArtworkImage("/artwork/cached", () => image)
+
+  assert.equal(image.src, "/artwork/cached")
 })
 
 test("plasma accepts the artwork theme RGB custom property", () => {

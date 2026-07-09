@@ -190,9 +190,9 @@ bind-mount воркспейса недоступен хостовому демо
 Оба Python-отчёта подхватываются `sonar.python.coverage.reportPaths=coverage.xml,bot-coverage.xml`,
 JS-отчёт — `sonar.javascript.lcov.reportPaths=ui/coverage/lcov.info`.
 UI-тесты лежат в двух местах: `ui/tests` и рядом с кодом в
-`ui/src/**/*.test.{ts,tsx}`. Co-located тесты из `ui/src` отмечены через
-`sonar.test.inclusions`, чтобы Sonar классифицировал их как тесты, но оставлял
-production-код фронта в `sonar.sources`.
+`ui/src/**/*.test.{ts,tsx}`. Поэтому `ui/src` указан и в `sonar.sources`, и в
+`sonar.tests`: co-located тесты выбираются через `sonar.test.inclusions`, а из
+production sources исключаются через `sonar.exclusions`.
 
 Раньше тесты бота и фронтенда вообще не запускались в CI (только числились
 в `sonar.tests`), хотя лежали в репозитории — это был реальный пробел, а не
