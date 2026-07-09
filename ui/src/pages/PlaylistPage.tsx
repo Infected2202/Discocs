@@ -9,6 +9,7 @@ import {
   playPlaylist,
   deletePlaylist,
   removePlaylistTracks,
+  type LikesPlaylist,
 } from "@/api/playlists"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -62,9 +63,10 @@ export default function PlaylistPage() {
   const playlistId = isLikes ? null : Number(id)
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<number>>(new Set())
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error } = useQuery<LikesPlaylist | PlaylistDetail>({
     queryKey: ["playlist", isLikes ? "likes" : playlistId],
-    queryFn: () => (isLikes ? fetchLikesPlaylist() : fetchPlaylist(playlistId!)),
+    queryFn: (): Promise<LikesPlaylist | PlaylistDetail> =>
+      isLikes ? fetchLikesPlaylist() : fetchPlaylist(playlistId!),
     enabled: isLikes || Number.isInteger(playlistId),
     staleTime: 30_000,
   })
