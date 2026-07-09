@@ -317,6 +317,6 @@ def test_reorder_playlist_tracks_api(tmp_path: Path, monkeypatch):
 
     missing = client.post(
         "/api/v1/playlists/99999/tracks/reorder",
-        json={"track_ids": []},
+        json={"track_ids": [1]},
     )
     assert missing.status_code == 404
