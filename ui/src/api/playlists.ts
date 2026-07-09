@@ -95,6 +95,16 @@ export function removePlaylistTracks(
   })
 }
 
+export function reorderPlaylistTracks(
+  playlistId: number,
+  trackIds: number[],
+): Promise<{ track_ids: number[] }> {
+  return apiFetch(`/api/v1/playlists/${playlistId}/tracks/reorder`, {
+    method: "POST",
+    body: JSON.stringify({ track_ids: trackIds }),
+  })
+}
+
 export function playPlaylist(playlistId: number): Promise<PlaybackEnvelope> {
   return apiFetch(`/api/v1/playlists/${playlistId}/play`, { method: "POST" })
 }

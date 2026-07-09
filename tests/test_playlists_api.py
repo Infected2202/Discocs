@@ -282,3 +282,41 @@ def test_dashboard_playlists_shelf(tmp_path: Path, monkeypatch):
     dashboard = client.get("/api/v1/dashboard?limit=5")
     assert dashboard.status_code == 200
     assert dashboard.json()["settings"]["visible_shelves"][-1] == "playlists"
+
+
+def test_reorder_playlist_tracks_api(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    tracks = [add_track(store, tmp_path, f"r{i}") for i in range(3)]
+    client = TestClient(app)
+
+    playlist_id = client.post(
+        "/api/v1/playlists",
+        json={"title": "Reorder me", "track_ids": tracks},
+    ).json()["id"]
+
+    new_order = [tracks[2], tracks[0], tracks[1]]
+    response = client.post(
+        f"/api/v1/playlists/{playlist_id}/tracks/reorder",
+        json={"track_ids": new_order},
+    )
+    assert response.status_code == 200
+    assert response.json()["track_ids"] == new_order
+
+    detail = client.get(f"/api/v1/playlists/{playlist_id}")
+    assert [t["id"] for t in detail.json()["tracks"]] == new_order
+
+    # Not a permutation → 409, order unchanged.
+    conflict = client.post(
+        f"/api/v1/playlists/{playlist_id}/tracks/reorder",
+        json={"track_ids": tracks[:2]},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "invalid_order"
+    detail = client.get(f"/api/v1/playlists/{playlist_id}")
+    assert [t["id"] for t in detail.json()["tracks"]] == new_order
+
+    missing = client.post(
+        "/api/v1/playlists/99999/tracks/reorder",
+        json={"track_ids": []},
+    )
+    assert missing.status_code == 404

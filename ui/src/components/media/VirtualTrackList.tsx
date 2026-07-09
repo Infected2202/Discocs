@@ -1,5 +1,7 @@
+import { useState } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { useScrollRef } from "@/contexts/ScrollContext"
+import { cn } from "@/lib/utils"
 import VirtualTrackRow from "./VirtualTrackRow"
 import type { TrackSummary } from "@/api/types"
 
@@ -13,6 +15,14 @@ interface VirtualTrackListProps {
   readonly selectable?: boolean
   readonly selectedIds?: ReadonlySet<number>
   readonly onToggleSelect?: (trackId: number) => void
+  readonly onReorder?: (trackIds: number[]) => void
+}
+
+function movedOrder(tracks: TrackSummary[], from: number, to: number): number[] {
+  const ids = tracks.map((t) => t.id)
+  const [moved] = ids.splice(from, 1)
+  ids.splice(to, 0, moved)
+  return ids
 }
 
 export default function VirtualTrackList({
@@ -23,8 +33,11 @@ export default function VirtualTrackList({
   selectable = false,
   selectedIds,
   onToggleSelect,
+  onReorder,
 }: VirtualTrackListProps) {
   const scrollRef = useScrollRef()
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [overIndex, setOverIndex] = useState<number | null>(null)
 
   const rowVirtualizer = useVirtualizer({
     count: tracks.length,
@@ -36,6 +49,15 @@ export default function VirtualTrackList({
   const totalSize = rowVirtualizer.getTotalSize()
   const virtualItems = rowVirtualizer.getVirtualItems()
   const selectionActive = (selectedIds?.size ?? 0) > 0
+  const reorderable = onReorder != null
+
+  function handleDrop(targetIndex: number) {
+    if (dragIndex !== null && dragIndex !== targetIndex) {
+      onReorder?.(movedOrder(tracks, dragIndex, targetIndex))
+    }
+    setDragIndex(null)
+    setOverIndex(null)
+  }
 
   return (
     <div style={{ height: totalSize, position: "relative" }}>
@@ -44,6 +66,16 @@ export default function VirtualTrackList({
           key={virtualRow.key}
           data-index={virtualRow.index}
           ref={rowVirtualizer.measureElement}
+          draggable={reorderable}
+          onDragStart={reorderable ? () => setDragIndex(virtualRow.index) : undefined}
+          onDragOver={reorderable ? (e) => { e.preventDefault(); setOverIndex(virtualRow.index) } : undefined}
+          onDragEnd={reorderable ? () => { setDragIndex(null); setOverIndex(null) } : undefined}
+          onDrop={reorderable ? (e) => { e.preventDefault(); handleDrop(virtualRow.index) } : undefined}
+          className={cn(
+            dragIndex === virtualRow.index && "opacity-40",
+            overIndex === virtualRow.index && dragIndex !== null && dragIndex !== virtualRow.index &&
+              "shadow-[inset_0_2px_0_0_hsl(var(--primary))]",
+          )}
           style={{
             position: "absolute",
             top: 0,

@@ -196,6 +196,22 @@ def api_v1_remove_playlist_tracks(
     return {"removed": removed, "track_count": counts.get(playlist_id, 0)}
 
 
+@router.post("/playlists/{playlist_id}/tracks/reorder", response_model=None)
+def api_v1_reorder_playlist_tracks(
+    playlist_id: int,
+    request: PlaylistTracksRequest,
+) -> dict[str, object] | JSONResponse:
+    store, settings = context()
+    try:
+        found = store.reorder_playlist_tracks(playlist_id, request.track_ids)
+    except ValueError as exc:
+        return api_error(409, "invalid_order", str(exc))
+    if not found:
+        return api_error(404, "not_found", _PLAYLIST_NOT_FOUND)
+    refresh_playlist_cover(store, settings, playlist_id)
+    return {"track_ids": store.playlist_track_ids(playlist_id)}
+
+
 @router.post("/playlists/{playlist_id}/play", response_model=PlaybackSessionEnvelopeResponse)
 def api_v1_play_playlist(playlist_id: int) -> dict[str, object] | JSONResponse:
     store, _settings = context()

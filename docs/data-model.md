@@ -232,11 +232,15 @@ positions to stay contiguous (`_repack_playlist_positions`).
 
 Full CRUD (`create_playlist`, `update_playlist`, `delete_playlist`,
 `list_playlists`, `add_playlist_tracks`, `remove_playlist_tracks`,
-`set_playlist_cover_path`, `playlist_track_ids`/`playlist_track_counts`) is
-implemented in `app/store/mixes.py`. `plans/playlist.md` describes
-additional UI work (add-to-playlist dialogs, dashboard shelf, drag reorder)
-still in progress on top of this already-implemented store/schema layer —
-reorder in particular (`reorder_playlist_tracks`) is not yet implemented.
+`reorder_playlist_tracks`, `set_playlist_cover_path`,
+`playlist_track_ids`/`playlist_track_counts`) is implemented in
+`app/store/mixes.py`. `reorder_playlist_tracks` replaces the whole order and
+requires the new list to be an exact permutation of the current tracks
+(otherwise `ValueError`, surfaced by the API as 409 `invalid_order`). Every
+track mutation bumps `playlists.updated_at`, which drives the "Recent"
+section in the add-to-playlist dialog and the shelf ordering. The UI layer
+(dialogs, playlist page, dashboard shelf, drag-and-drop reorder) is
+implemented in `ui/src` — see `docs/web-ui.md`.
 
 ## Flow Engine
 
@@ -296,6 +300,3 @@ current schema:
   or are computed live; there are no dedicated counter tables.
 - `dashboard_shelf_cache` (generic) — only `albums_for_you_cache` exists;
   other shelves query live rather than through a generic cache table.
-- Playlist reorder (`reorder_playlist_tracks`) — schema supports it
-  (`position` column), but the store method and API route are not yet
-  implemented; see `plans/playlist.md`.

@@ -9,6 +9,7 @@ import {
   playPlaylist,
   deletePlaylist,
   removePlaylistTracks,
+  reorderPlaylistTracks,
   type LikesPlaylist,
 } from "@/api/playlists"
 import { Button } from "@/components/ui/button"
@@ -75,6 +76,14 @@ export default function PlaylistPage() {
     mutationFn: (trackIds: number[]) => removePlaylistTracks(playlistId!, trackIds),
     onSuccess: () => {
       setSelectedIds(new Set())
+      queryClient.invalidateQueries({ queryKey: ["playlist", playlistId] })
+      queryClient.invalidateQueries({ queryKey: ["playlists"] })
+    },
+  })
+
+  const { mutate: reorder } = useMutation({
+    mutationFn: (trackIds: number[]) => reorderPlaylistTracks(playlistId!, trackIds),
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["playlist", playlistId] })
       queryClient.invalidateQueries({ queryKey: ["playlists"] })
     },
@@ -214,6 +223,7 @@ export default function PlaylistPage() {
           selectable={!isLikes}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
+          onReorder={isLikes ? undefined : (trackIds) => reorder(trackIds)}
         />
       </div>
     </div>

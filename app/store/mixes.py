@@ -571,6 +571,39 @@ class MixesStoreMixin:
                 (playlist_id, position, int(row["track_id"]), str(row["created_at"])),
             )
 
+    def reorder_playlist_tracks(self, playlist_id: int, track_ids: list[int]) -> bool:
+        """Replace the playlist order with track_ids.
+
+        The new order must contain exactly the same set of track ids that the
+        playlist currently holds; otherwise ValueError is raised (the caller
+        maps it to 409).
+        """
+        now = utc_now()
+        ids = [int(track_id) for track_id in track_ids]
+        with self.connect() as conn:
+            if conn.execute(_SELECT_PLAYLIST_BY_ID, (playlist_id,)).fetchone() is None:
+                return False
+            rows = conn.execute(
+                """
+                SELECT track_id, created_at FROM playlist_items
+                WHERE playlist_id = ?
+                ORDER BY position
+                """,
+                (playlist_id,),
+            ).fetchall()
+            current = [int(row["track_id"]) for row in rows]
+            if sorted(ids) != sorted(current) or len(ids) != len(set(ids)):
+                raise ValueError("track_ids must be a permutation of the playlist tracks")
+            created_by_track = {int(row["track_id"]): str(row["created_at"]) for row in rows}
+            conn.execute("DELETE FROM playlist_items WHERE playlist_id = ?", (playlist_id,))
+            for position, track_id in enumerate(ids):
+                conn.execute(
+                    _INSERT_PLAYLIST_ITEM,
+                    (playlist_id, position, track_id, created_by_track[track_id]),
+                )
+            conn.execute("UPDATE playlists SET updated_at = ? WHERE id = ?", (now, playlist_id))
+        return True
+
     def set_playlist_cover_path(self, playlist_id: int, cover_path: str | None) -> Playlist | None:
         with self.connect() as conn:
             conn.execute(

@@ -254,7 +254,8 @@ Gitea) → проверка CI в Jenkins → подтверждение Сан�
 6. **Фаза 6 — UI, страницы:** PlaylistPage generic (Play/Edit/Delete,
    selection-режим), шелф Playlists + карточка For You. ✅
 7. **Фаза 7 — reorder** (§5.6, опционально по итогам приёмки) +
-   документация `docs/`.
+   документация `docs/`. ✅ (нативный HTML5 DnD вместо dnd-kit — без
+   новой зависимости, совместим с VirtualTrackList)
 
 ## Принятые решения (обсуждено 2026-07-08)
 

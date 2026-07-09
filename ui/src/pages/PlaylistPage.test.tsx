@@ -10,22 +10,25 @@ const fetchPlaylist = vi.fn()
 const fetchLikesPlaylist = vi.fn()
 const deletePlaylist = vi.fn()
 const removePlaylistTracks = vi.fn()
+const reorderPlaylistTracks = vi.fn()
 
 vi.mock("@/api/playlists", () => ({
   fetchPlaylist: (...args: unknown[]) => fetchPlaylist(...args),
   fetchLikesPlaylist: (...args: unknown[]) => fetchLikesPlaylist(...args),
   deletePlaylist: (...args: unknown[]) => deletePlaylist(...args),
   removePlaylistTracks: (...args: unknown[]) => removePlaylistTracks(...args),
+  reorderPlaylistTracks: (...args: unknown[]) => reorderPlaylistTracks(...args),
   playPlaylist: vi.fn(),
   playLikes: vi.fn(),
 }))
 
 // The page is tested through a stub list that surfaces the selection wiring.
 vi.mock("@/components/media/VirtualTrackList", () => ({
-  default: ({ tracks, selectable, onToggleSelect }: {
+  default: ({ tracks, selectable, onToggleSelect, onReorder }: {
     tracks: TrackSummary[]
     selectable?: boolean
     onToggleSelect?: (id: number) => void
+    onReorder?: (trackIds: number[]) => void
   }) => (
     <div data-testid="track-list">
       {tracks.map((t) => (
@@ -38,6 +41,14 @@ vi.mock("@/components/media/VirtualTrackList", () => ({
           {t.title}
         </button>
       ))}
+      {onReorder && (
+        <button
+          data-testid="reorder"
+          onClick={() => onReorder([...tracks.map((t) => t.id)].reverse())}
+        >
+          reorder
+        </button>
+      )}
     </div>
   ),
 }))
@@ -89,6 +100,7 @@ beforeEach(() => {
   fetchLikesPlaylist.mockReset()
   deletePlaylist.mockReset()
   removePlaylistTracks.mockReset()
+  reorderPlaylistTracks.mockReset()
   useUIStore.setState({ addToPlaylistTrackIds: null, createPlaylistOptions: null })
 })
 
@@ -146,6 +158,17 @@ describe("PlaylistPage — пользовательский плейлист", (
     fireEvent.click(screen.getByRole("button", { name: /delete/i }))
     await waitFor(() => expect(deletePlaylist).toHaveBeenCalledWith(5))
     await screen.findByTestId("dashboard")
+  })
+
+  it("reorder уходит в API с новым порядком", async () => {
+    fetchPlaylist.mockResolvedValue(makeDetail())
+    reorderPlaylistTracks.mockResolvedValue({ track_ids: [2, 1] })
+
+    renderPage("/playlists/5")
+    await screen.findByText("Road trip")
+
+    fireEvent.click(screen.getByTestId("reorder"))
+    await waitFor(() => expect(reorderPlaylistTracks).toHaveBeenCalledWith(5, [2, 1]))
   })
 
   it("likes: без Edit/Delete и без selection", async () => {

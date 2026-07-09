@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { useRef } from "react"
 import { ScrollContext } from "@/contexts/ScrollContext"
@@ -47,13 +47,16 @@ function makeTrack(id: number): TrackSummary {
   }
 }
 
-function Wrapper({ tracks }: { readonly tracks: TrackSummary[] }) {
+function Wrapper({ tracks, onReorder }: {
+  readonly tracks: TrackSummary[]
+  readonly onReorder?: (trackIds: number[]) => void
+}) {
   const ref = useRef<HTMLElement>(null)
   return (
     <MemoryRouter>
       <ScrollContext.Provider value={ref}>
         <div ref={ref as React.RefObject<HTMLDivElement>} style={{ height: 600, overflow: "auto" }}>
-          <VirtualTrackList tracks={tracks} sourceLabel="Test" />
+          <VirtualTrackList tracks={tracks} sourceLabel="Test" onReorder={onReorder} />
         </div>
       </ScrollContext.Provider>
     </MemoryRouter>
@@ -94,5 +97,39 @@ describe("VirtualTrackList", () => {
     const tracks = [makeTrack(42)]
     render(<Wrapper tracks={tracks} />)
     expect(screen.getByText("Track 42")).toBeInTheDocument()
+  })
+
+  it("без onReorder строки не draggable", () => {
+    render(<Wrapper tracks={[makeTrack(1)]} />)
+    const row = document.querySelector("[data-index='0']") as HTMLElement
+    expect(row.draggable).toBe(false)
+  })
+
+  it("drag-and-drop вызывает onReorder с новым порядком id", () => {
+    const onReorder = vi.fn()
+    const tracks = [makeTrack(1), makeTrack(2), makeTrack(3)]
+    render(<Wrapper tracks={tracks} onReorder={onReorder} />)
+
+    const rows = document.querySelectorAll("[data-index]")
+    expect((rows[0] as HTMLElement).draggable).toBe(true)
+
+    // Тащим первый трек на позицию третьего.
+    fireEvent.dragStart(rows[0])
+    fireEvent.dragOver(rows[2])
+    fireEvent.drop(rows[2])
+
+    expect(onReorder).toHaveBeenCalledWith([2, 3, 1])
+  })
+
+  it("drop на исходную позицию не вызывает onReorder", () => {
+    const onReorder = vi.fn()
+    const tracks = [makeTrack(1), makeTrack(2)]
+    render(<Wrapper tracks={tracks} onReorder={onReorder} />)
+
+    const rows = document.querySelectorAll("[data-index]")
+    fireEvent.dragStart(rows[1])
+    fireEvent.drop(rows[1])
+
+    expect(onReorder).not.toHaveBeenCalled()
   })
 })

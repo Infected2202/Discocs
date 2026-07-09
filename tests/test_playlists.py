@@ -229,3 +229,40 @@ def test_set_playlist_cover_path_roundtrip(tmp_path: Path):
     cleared = store.set_playlist_cover_path(playlist.id, None)
     assert cleared.cover_path is None
     assert store.set_playlist_cover_path(31337, "x.jpg") is None
+
+
+# ---------------------------------------------------------------------------
+# reorder_playlist_tracks
+# ---------------------------------------------------------------------------
+
+def test_reorder_playlist_tracks_replaces_order(tmp_path: Path):
+    store = make_store(tmp_path)
+    tracks = add_tracks(store, tmp_path, 3)
+    playlist = store.create_playlist(title="Order", track_ids=tracks)
+    before = store.get_playlist(playlist.id)
+
+    new_order = [tracks[2], tracks[0], tracks[1]]
+    assert store.reorder_playlist_tracks(playlist.id, new_order) is True
+    assert store.playlist_track_ids(playlist.id) == new_order
+
+    after = store.get_playlist(playlist.id)
+    assert after is not None and before is not None
+    assert after.updated_at >= before.updated_at
+
+
+def test_reorder_playlist_tracks_rejects_non_permutation(tmp_path: Path):
+    store = make_store(tmp_path)
+    tracks = add_tracks(store, tmp_path, 3)
+    extra = add_track(store, tmp_path, "extra")
+    playlist = store.create_playlist(title="Order", track_ids=tracks)
+
+    # Missing a track, containing a foreign track, or duplicating one — all rejected.
+    for bad in (tracks[:2], [*tracks[:2], extra], [tracks[0], tracks[0], tracks[1]]):
+        with pytest.raises(ValueError):
+            store.reorder_playlist_tracks(playlist.id, bad)
+    assert store.playlist_track_ids(playlist.id) == tracks
+
+
+def test_reorder_playlist_tracks_missing_playlist(tmp_path: Path):
+    store = make_store(tmp_path)
+    assert store.reorder_playlist_tracks(999, []) is False

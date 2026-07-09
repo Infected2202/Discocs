@@ -140,10 +140,42 @@ created date, Play + Save-if-not-saved actions), track list rendered with
 
 ### Playlist page (`/playlists/:id`, `PlaylistPage.tsx`)
 
-Currently only supports the synthetic `likes` playlist id (liked tracks,
-`fetchLikesPlaylist`/`playLikes`), with a generated gradient icon in place of
-cover art and a back button. Same `VirtualTrackList` track rendering as the
-mix page. General playlist support (arbitrary ids) is not implemented yet.
+Two branches on the same route:
+
+- `id === "likes"` — the synthetic liked-tracks playlist
+  (`fetchLikesPlaylist`/`playLikes`), generated gradient icon instead of
+  cover art, Play only (no editing, no selection).
+- numeric ids — user playlists (`fetchPlaylist`): 2x2 collage artwork,
+  description, and Play / Edit / Delete actions. Edit reuses
+  `CreatePlaylistDialog` in edit mode (title + description via `PATCH`);
+  Delete asks for confirmation, then `DELETE` + navigate to the dashboard.
+
+Track removal uses a selection mode: hovering a row swaps the index number
+for a checkbox (`VirtualTrackRow` `selectable` prop); checking the first one
+keeps checkboxes visible on all rows and shows a "N selected · trash ·
+Cancel" bar above the list, where the trash button batches
+`POST /playlists/{id}/tracks/remove`. Only the checkbox itself toggles
+selection — the rest of the row keeps its normal play behaviour.
+
+Rows can be reordered by drag-and-drop (native HTML5 DnD in
+`VirtualTrackList`, no extra dependency): dropping a row calls
+`POST /playlists/{id}/tracks/reorder` with the full new track-id order and
+invalidates the playlist queries. The backend rejects non-permutations with
+409 `invalid_order`.
+
+### Playlist dialogs (`components/playlists/`)
+
+`AddToPlaylistDialog` (Recent 4 by `updated_at` + full list + "New playlist")
+and `CreatePlaylistDialog` (name/description + cosmetic visibility select,
+doubles as the edit dialog) are mounted once in `AppShell` and driven by a
+`uiStore` slice (`openAddToPlaylist(trackIds)` /
+`openCreatePlaylist(options)`). Entry points: the "Add to playlist" item in
+`TrackMenu`, the ListPlus button in the ExpandedPlayer queue header (saves
+all `queue.items`, deduped, excluding the autoplay pool), and the MixPage
+Save button (opens the create dialog prefilled with the mix title; submit
+posts the extended `/mixes/{id}/save` body). The likes playlist never
+appears in these dialogs or in the Playlists shelf — it is not stored in the
+`playlists` table.
 
 ### Shelf page (`/shelf/:key`, `ShelfPage.tsx`)
 
