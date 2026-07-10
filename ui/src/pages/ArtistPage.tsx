@@ -1,5 +1,5 @@
 import { useParams } from "react-router"
-import { Play, Heart } from "lucide-react"
+import { Play, Shuffle, Heart } from "lucide-react"
 import { useArtist, useArtistDiscography } from "@/api/hooks/useArtist"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -52,6 +52,7 @@ export default function ArtistPage() {
     return hasPlays ? items.filter((t) => t.play_count > 0) : items.slice(0, 5)
   })()
   const playSource = usePlayerStore((s) => s.playSource)
+  const toggleShuffle = usePlayerStore((s) => s.toggleShuffle)
   const toggleArtistLike = useNavidromeStore((s) => s.toggleArtistLike)
   const liked = useNavidromeStore((s) => s.likedArtistIds.has(artistId))
   const isLoading = artistLoading || discoLoading
@@ -95,6 +96,18 @@ export default function ArtistPage() {
             >
               <Play size={14} fill="currentColor" strokeWidth={0} />
               Play
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                await playSource("artist", artistId, artist.name)
+                await toggleShuffle()
+              }}
+              className="gap-2"
+            >
+              <Shuffle size={14} />
+              Shuffle
             </Button>
             <button
               onClick={() => toggleArtistLike(artistId)}
