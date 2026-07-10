@@ -144,6 +144,60 @@ describe("AudioEngine.load()", () => {
   })
 })
 
+describe("AudioEngine.resumeAtSeconds()", () => {
+  it("перематывает сразу, если метаданные уже загружены", async () => {
+    const engine = await makeEngine()
+    engine.load("http://example.com/track1.flac")
+    const el = audioInstances[audioInstances.length - 1]
+    el.duration = 200
+
+    engine.resumeAtSeconds(42)
+
+    expect(el.currentTime).toBe(42)
+  })
+
+  it("откладывает перемотку до loadedmetadata при preload='none'", async () => {
+    const engine = await makeEngine()
+    engine.load("http://example.com/track1.flac")
+    const el = audioInstances[audioInstances.length - 1]
+    // duration ещё NaN — прямой seek был бы молча проигнорирован
+
+    engine.resumeAtSeconds(42)
+    expect(el.currentTime).toBe(0)
+
+    el.duration = 200
+    el.emit("loadedmetadata")
+    expect(el.currentTime).toBe(42)
+  })
+
+  it("применяет отложенную перемотку только один раз", async () => {
+    const engine = await makeEngine()
+    engine.load("http://example.com/track1.flac")
+    const el = audioInstances[audioInstances.length - 1]
+
+    engine.resumeAtSeconds(42)
+    el.duration = 200
+    el.emit("loadedmetadata")
+    el.currentTime = 100
+
+    el.emit("loadedmetadata") // повторное событие не должно откатывать позицию
+    expect(el.currentTime).toBe(100)
+  })
+
+  it("не влияет на следующий трек после load()", async () => {
+    const engine = await makeEngine()
+    engine.load("http://example.com/track1.flac")
+
+    engine.resumeAtSeconds(42)
+    engine.load("http://example.com/track2.flac")
+    const next = audioInstances[audioInstances.length - 1]
+
+    next.duration = 200
+    next.emit("loadedmetadata")
+    expect(next.currentTime).toBe(0)
+  })
+})
+
 describe("AudioEngine — buffered reporting", () => {
   it("вычисляет buffered как долю duration из диапазона, покрывающего currentTime", async () => {
     const engine = await makeEngine()

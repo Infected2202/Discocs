@@ -196,13 +196,82 @@ def test_api_v1_search_enriches_artist_image_from_navidrome(tmp_path: Path, monk
     response = client.get("/api/v1/search?q=Solee")
     image_response = client.get(f"/api/v1/artists/{artist_id}/image")
 
+    # Clients get the backend proxy path (the stored URL is LAN-internal);
+    # the raw external URL stays in the DB for the proxy to fetch from.
+    proxied_url = f"/api/v1/artists/{artist_id}/cover"
     assert response.status_code == 200
     artist = response.json()["groups"][0]["items"][0]
-    assert artist["image"]["url"] == "https://lastfm.example/solee-large.jpg"
-    assert response.json()["top_result"]["entity"]["image"]["url"] == "https://lastfm.example/solee-large.jpg"
+    assert artist["image"]["url"] == proxied_url
+    assert response.json()["top_result"]["entity"]["image"]["url"] == proxied_url
     assert image_response.status_code == 200
-    assert image_response.json()["image"]["url"] == "https://lastfm.example/solee-large.jpg"
+    assert image_response.json()["image"]["url"] == proxied_url
     assert store.get_artist(artist_id).artist.image_url == "https://lastfm.example/solee-large.jpg"  # type: ignore[union-attr]
+
+
+def _clear_cover_caches() -> None:
+    from app.state import COVER_CACHE, COVER_CACHE_LOCK, COVER_ERROR_CACHE
+
+    with COVER_CACHE_LOCK:
+        COVER_CACHE.clear()
+        COVER_ERROR_CACHE.clear()
+
+
+def test_api_v1_artist_cover_proxies_image_bytes(tmp_path: Path, monkeypatch):
+    import app.api.artists as api_artists_module
+    from app.navidrome import CoverArt
+
+    store = init_api_store(tmp_path, monkeypatch)
+    _clear_cover_caches()
+    add_track(store, tmp_path / "album" / "one.flac", title="One", artist="Solee", album="Grind")
+    artist_id = store.search_entities("Solee")["artists"]["items"][0].artist.id
+    store.update_artist_external_info(
+        artist_id, image_url="http://192.168.1.41:4533/share/img/solee", bio=None
+    )
+
+    downloads: list[str] = []
+
+    def fake_download_image(url: str, *, timeout: float = 5.0) -> CoverArt:
+        downloads.append(url)
+        return CoverArt(payload=b"\x89PNG-bytes", content_type="image/png")
+
+    monkeypatch.setattr(api_artists_module, "download_image", fake_download_image)
+    client = TestClient(app)
+
+    first = client.get(f"/api/v1/artists/{artist_id}/cover")
+    second = client.get(f"/api/v1/artists/{artist_id}/cover")
+
+    assert first.status_code == 200
+    assert first.headers["content-type"] == "image/png"
+    assert first.content == b"\x89PNG-bytes"
+    assert second.status_code == 200
+    assert second.content == b"\x89PNG-bytes"
+    # Second hit is served from the cover cache — one upstream download total.
+    assert downloads == ["http://192.168.1.41:4533/share/img/solee"]
+
+
+def test_api_v1_artist_cover_missing_image_and_download_failure(tmp_path: Path, monkeypatch):
+    import app.api.artists as api_artists_module
+
+    store = init_api_store(tmp_path, monkeypatch)
+    _clear_cover_caches()
+    add_track(store, tmp_path / "album" / "one.flac", title="One", artist="Solee", album="Grind")
+    artist_id = store.search_entities("Solee")["artists"]["items"][0].artist.id
+    client = TestClient(app)
+
+    # No image_url and no Navidrome external id — 404, not a redirect.
+    missing = client.get(f"/api/v1/artists/{artist_id}/cover")
+    assert missing.status_code == 404
+
+    store.update_artist_external_info(
+        artist_id, image_url="http://192.168.1.41:4533/share/img/solee", bio=None
+    )
+
+    def failing_download_image(url: str, *, timeout: float = 5.0):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(api_artists_module, "download_image", failing_download_image)
+    failed = client.get(f"/api/v1/artists/{artist_id}/cover")
+    assert failed.status_code == 404
 
 
 def test_api_v1_release_and_tracks_contract(tmp_path: Path, monkeypatch):

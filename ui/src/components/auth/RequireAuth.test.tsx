@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, act } from "@testing-library/react"
 import { MemoryRouter, Routes, Route } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import RequireAuth from "./RequireAuth"
+import { ApiError } from "@/api/client"
 
 const getSession = vi.fn()
 vi.mock("@/api/auth", () => ({
@@ -10,8 +11,9 @@ vi.mock("@/api/auth", () => ({
 }))
 
 function renderGated() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
+  // retryDelay: 0 — the component retries network errors; don't wait between attempts.
+  const qc = new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } })
+  render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
@@ -23,6 +25,7 @@ function renderGated() {
       </MemoryRouter>
     </QueryClientProvider>
   )
+  return qc
 }
 
 describe("RequireAuth", () => {
@@ -34,9 +37,40 @@ describe("RequireAuth", () => {
     expect(await screen.findByText("HOME PAGE")).toBeInTheDocument()
   })
 
-  it("redirects to login when not authenticated", async () => {
+  it("redirects to login when the server says not authenticated", async () => {
     getSession.mockResolvedValue({ authenticated: false, username: null, enabled: true })
     renderGated()
     expect(await screen.findByText("LOGIN PAGE")).toBeInTheDocument()
+  })
+
+  it("redirects to login on a 401 without retrying", async () => {
+    getSession.mockRejectedValue(new ApiError(401, "unauthorized", "nope"))
+    renderGated()
+    expect(await screen.findByText("LOGIN PAGE")).toBeInTheDocument()
+    expect(getSession).toHaveBeenCalledTimes(1)
+  })
+
+  it("shows a retry screen (not login) when the initial session check fails on the network", async () => {
+    getSession.mockRejectedValue(new TypeError("Failed to fetch"))
+    renderGated()
+    expect(await screen.findByText("Нет соединения с сервером")).toBeInTheDocument()
+    expect(screen.queryByText("LOGIN PAGE")).not.toBeInTheDocument()
+    // network errors are retried before giving up
+    expect(getSession.mock.calls.length).toBeGreaterThan(1)
+  })
+
+  it("keeps the app rendered when a focus-refetch fails on the network", async () => {
+    getSession.mockResolvedValueOnce({ authenticated: true, username: "alice", enabled: true })
+    getSession.mockRejectedValue(new TypeError("Failed to fetch"))
+    const qc = renderGated()
+    expect(await screen.findByText("HOME PAGE")).toBeInTheDocument()
+
+    // Simulate the refetch that fires when the tab regains focus on mobile.
+    await act(async () => {
+      await qc.refetchQueries({ queryKey: ["auth", "session"] })
+    })
+
+    expect(screen.getByText("HOME PAGE")).toBeInTheDocument()
+    expect(screen.queryByText("LOGIN PAGE")).not.toBeInTheDocument()
   })
 })

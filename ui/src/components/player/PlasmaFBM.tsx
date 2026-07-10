@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Mesh, Program, Renderer, Triangle } from "ogl"
 import {
   easeTrackAccentTransition,
@@ -118,12 +118,22 @@ export default function PlasmaFBM({
   const containerRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef(active)
   const programRef = useRef<Program | null>(null)
+  const [pageVisible, setPageVisible] = useState(() => typeof document === "undefined" || !document.hidden)
   const currentColorRef = useRef<PlasmaRgb>(parsePlasmaColor(accent))
   const transitionRef = useRef<{
     from: PlasmaRgb; to: PlasmaRgb; startTime: number; durationMs: number
   } | null>(null)
 
   useEffect(() => { activeRef.current = active }, [active])
+
+  // A stopped animation frame does not release the canvas' GPU allocation.
+  // On mobile that allocation makes this otherwise idle tab a more likely
+  // discard candidate, so unmount the renderer while the document is hidden.
+  useEffect(() => {
+    const onVisibilityChange = () => setPageVisible(!document.hidden)
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange)
+  }, [])
 
   useEffect(() => {
     const program = programRef.current
@@ -154,6 +164,7 @@ export default function PlasmaFBM({
   }, [accent])
 
   useEffect(() => {
+    if (!pageVisible) return
     const container = containerRef.current
     if (!container) return
 
@@ -235,25 +246,21 @@ export default function PlasmaFBM({
       raf = 0
     }
 
-    // Пауза, когда вкладка скрыта — на фон никто не смотрит, отпускаем GPU.
-    const onVisibilityChange = () => {
-      if (document.hidden) stopLoop()
-      else startLoop()
-    }
-    document.addEventListener("visibilitychange", onVisibilityChange)
-
     renderer.render({ scene: mesh })
-    if (!document.hidden) startLoop()
+    startLoop()
 
     return () => {
       programRef.current = null
       transitionRef.current = null
-      document.removeEventListener("visibilitychange", onVisibilityChange)
       stopLoop()
       ro.disconnect()
+      // OGL does not automatically lose a context when its canvas leaves the
+      // DOM. Ask the browser to release GPU memory; a fresh renderer is built
+      // when the tab becomes visible again.
+      gl.getExtension("WEBGL_lose_context")?.loseContext()
       canvas.remove()
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pageVisible]) // Props are kept current by the small effects above.
 
   return <div ref={containerRef} className="absolute inset-0 overflow-hidden" />
 }

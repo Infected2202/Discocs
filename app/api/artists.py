@@ -4,12 +4,15 @@ Extracted from app/main.py — Stage 6b.
 """
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Query
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, Response
 
 from app.api.deps import api_error, context
+from app.models import ArtistSummaryRow
+from app.navidrome import download_image
 from app.schemas.responses import (
     ArtistAvailabilityStubResponse,
     ArtistDiscographyResponse,
@@ -19,16 +22,28 @@ from app.schemas.responses import (
 from app.serializers.entities import (
     artist_link_dict,
     artist_summary_with_external_image,
+    ensure_artist_external_info,
     entity_action,
     image_ref,
     release_summary_dict,
     release_track_dict,
     track_summary_dict,
 )
+from app.services.cover import (
+    cached_cover_error,
+    cached_cover_response,
+    cover_response,
+    remember_cover,
+    remember_cover_error,
+)
+from app.state import COVER_TIMEOUT_SECONDS
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1")
 
 _ARTIST_NOT_FOUND = "Artist not found"
+_ARTIST_IMAGE_NOT_AVAILABLE = "Artist image not available"
 
 
 @router.get("/artists/{artist_id}", response_model=ArtistResponse)
@@ -115,23 +130,41 @@ def api_v1_artist_image(artist_id: int) -> dict[str, object] | JSONResponse:
     summary = artist_summary_with_external_image(store, settings, artist)
     image = summary["image"] if isinstance(summary.get("image"), dict) else image_ref(None)
     if not image.get("url"):
-        return api_error(404, "not_found", "Artist image not available")
+        return api_error(404, "not_found", _ARTIST_IMAGE_NOT_AVAILABLE)
     return {"image": image}
 
 
 @router.get("/artists/{artist_id}/cover", response_model=None)
-def api_v1_artist_cover(artist_id: int) -> JSONResponse | RedirectResponse:
-    """Redirect to the artist's image URL, fetching from Navidrome if not yet cached."""
+def api_v1_artist_cover(artist_id: int) -> Response | JSONResponse:
+    """Serve the artist image bytes, proxying the stored Navidrome URL.
+
+    The URL in ``artists.image_url`` points at the LAN-internal Navidrome
+    address — unreachable from outside the LAN and blocked as mixed content
+    on an HTTPS page, so a redirect would not work for remote clients.
+    """
     store, settings = context()
     artist = store.get_artist(artist_id)
     if artist is None:
         return api_error(404, "not_found", _ARTIST_NOT_FOUND)
-    summary = artist_summary_with_external_image(store, settings, artist)
-    image = summary["image"] if isinstance(summary.get("image"), dict) else {}
-    url = image.get("url")
+    row = ensure_artist_external_info(store, settings, artist)
+    url = (row.artist if isinstance(row, ArtistSummaryRow) else row).image_url
     if not url:
-        return api_error(404, "not_found", "Artist image not available")
-    return RedirectResponse(url=str(url), status_code=302)
+        return api_error(404, "not_found", _ARTIST_IMAGE_NOT_AVAILABLE)
+
+    cache_key = ("artist", artist_id)
+    cached = cached_cover_response(cache_key)
+    if cached is not None:
+        return cover_response(*cached)
+    if cached_cover_error(cache_key) is not None:
+        return api_error(404, "not_found", _ARTIST_IMAGE_NOT_AVAILABLE)
+    try:
+        image = download_image(url, timeout=COVER_TIMEOUT_SECONDS)
+    except Exception as exc:
+        logger.warning("Artist image download failed artist_id=%s url=%s: %s", artist_id, url, exc)
+        remember_cover_error(cache_key, str(exc))
+        return api_error(404, "not_found", _ARTIST_IMAGE_NOT_AVAILABLE)
+    remember_cover(cache_key, image.payload, image.content_type)
+    return cover_response(image.payload, image.content_type)
 
 
 @router.get("/artists/{artist_id}/top-tracks", response_model=ArtistAvailabilityStubResponse)

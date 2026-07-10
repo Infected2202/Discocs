@@ -12,7 +12,15 @@ import {
 } from "@/api/playback"
 import { flowRefill, flowEvent } from "@/api/flow"
 import { planRefill } from "./flowRefillRouting"
-import { persistSessionId, loadPersistedSessionId, clearPersistedSessionId } from "./sessionPersistence"
+import {
+  persistSessionId,
+  loadPersistedSessionId,
+  clearPersistedSessionId,
+  persistPlaybackPosition,
+  loadPersistedPlaybackPosition,
+  clearPersistedPlaybackPosition,
+  playbackPositionMatches,
+} from "./sessionPersistence"
 import { ApiError } from "@/api/client"
 import { playerLog } from "@/lib/playerLogger"
 import { throttle } from "@/lib/throttle"
@@ -119,9 +127,43 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     250
   )
 
+  // Позиция пишется в localStorage раз в ~5с (trailing не теряет последнюю):
+  // мобильный браузер может молча выгрузить вкладку в фоне, после перезагрузки
+  // restoreSession вернёт и очередь, и место в треке.
+  const throttledPersistPosition = throttle(
+    (sessionId: string, queueItemId: string, trackId: number, seconds: number) => {
+      persistPlaybackPosition({ sessionId, queueItemId, trackId, seconds })
+    },
+    5000
+  )
+
+  const persistCurrentPosition = (seconds: number) => {
+    const { session, currentQueueItemId, currentTrackId } = get()
+    if (!session?.id || !currentQueueItemId || currentTrackId == null) return
+    persistPlaybackPosition({
+      sessionId: session.id,
+      queueItemId: currentQueueItemId,
+      trackId: currentTrackId,
+      seconds,
+    })
+  }
+
+  const resetCurrentPosition = () => {
+    // A trailing timeupdate from the previous playback window must not
+    // overwrite this explicit start-over value a few seconds later.
+    throttledPersistPosition.cancel()
+    persistCurrentPosition(0)
+  }
+
   // Wire AudioEngine callbacks once at store creation
   audioEngine.init({
-    onTimeUpdate: (currentTime, duration) => throttledSetTime(currentTime, duration),
+    onTimeUpdate: (currentTime, duration) => {
+      throttledSetTime(currentTime, duration)
+      const { session, currentQueueItemId, currentTrackId } = get()
+      if (session?.id && currentQueueItemId && currentTrackId != null && currentTime > 0) {
+        throttledPersistPosition(session.id, currentQueueItemId, currentTrackId, currentTime)
+      }
+    },
     onBufferUpdate: (fraction) => get()._setBuffered(fraction),
     onPlaybackStateChange: (state) => get()._setPlaybackState(state),
     onEnded: () => get().handleTrackEnded(),
@@ -130,6 +172,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
   audioEngine.setVolume(initVolume)
   audioEngine.setMuted(initMuted)
+
+  // Точка невозврата для timeupdate — сохранить позицию сразу при уходе в фон
+  // (следующий тик может уже не случиться, если вкладку выгрузят).
+  if (typeof document !== "undefined") {
+    const flushPosition = () => {
+      if (audioEngine.currentTime > 0) persistCurrentPosition(audioEngine.currentTime)
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) flushPosition()
+    })
+    globalThis.addEventListener("pagehide", flushPosition)
+  }
 
   function addCurrentToHistory() {
     const { queue, currentQueueItemId } = get()
@@ -269,6 +323,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       set({ error: null, playbackState: "loading" })
       if (queueItemId) set({ currentQueueItemId: queueItemId })
       set({ currentTrackId: trackId })
+      // A deliberate start is a new playback occurrence. Persist zero now so
+      // an older position for the same track can never leak into this queue item.
+      resetCurrentPosition()
 
       const url = trackAudioUrl(trackId)
       audioEngine.load(url)
@@ -381,6 +438,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       // If more than 3s played, restart current track
       if (audioEngine.currentTime > 3) {
         audioEngine.seekToSeconds(0)
+        resetCurrentPosition()
         return
       }
 
@@ -490,6 +548,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       const { session, queue, currentQueueItemId } = get()
 
       addCurrentToHistory()
+      // The backend intentionally keeps the completed item as current. Do not
+      // resurrect its near-duration position if the tab is discarded now.
+      throttledPersistPosition.cancel()
+      clearPersistedPlaybackPosition()
 
       await get().recordEvent("completed", {
         position_seconds: audioEngine.duration,
@@ -549,6 +611,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           audioEngine.load(trackAudioUrl(currentTrackId))
           audioEngine.setVolume(get().volume)
           audioEngine.setMuted(get().muted)
+          // Вернуть сохранённую позицию — сработает, когда пользователь
+          // нажмёт play (метаданные при preload="none" грузятся только тогда).
+          const persisted = loadPersistedPlaybackPosition()
+          const sessionId = get().session?.id
+          const queueItemId = get().currentQueueItemId
+          if (
+            persisted
+            && sessionId
+            && queueItemId
+            && playbackPositionMatches(persisted, { sessionId, queueItemId, trackId: currentTrackId })
+            && persisted.seconds > 0
+          ) {
+            audioEngine.resumeAtSeconds(persisted.seconds)
+            set({ currentTime: persisted.seconds })
+          }
           if (currentTrack) {
             audioEngine.setMediaSession(currentTrack, currentTrack.artwork?.url ?? undefined)
           }

@@ -41,6 +41,34 @@ uses 30% opacity (70% transparency).
 The backdrop is non-interactive and hidden from assistive technology. If artwork
 is unavailable, the compact player keeps its normal card background.
 
+## Session restore after a page reload
+
+Mobile browsers silently discard background tabs under memory pressure and
+reload the page on return, which used to reset the player. Restore is
+two-layered (`ui/src/store/sessionPersistence.ts`):
+
+- the playback **session id** persists in `localStorage`
+  (`discocs.sessionId.v1`); `restoreSession` (called once from `AppShell`)
+  refetches the queue and reloads the current track. The id is only cleared
+  when the server answers 404 — network errors keep it;
+- the playback **position** persists as
+  `{sessionId, queueItemId, trackId, seconds}`
+  (`discocs.playbackPosition.v1`), written throttled (~5s, trailing) from
+  `timeupdate` and flushed immediately on `visibilitychange`→hidden /
+  `pagehide`. On restore, if the persisted track matches the session's current
+  queue item, `AudioEngine.resumeAtSeconds` seeks there — deferred until
+  `loadedmetadata`, because with `preload="none"` an immediate `currentTime`
+  write would be dropped; in practice the seek applies when the user presses
+  play.
+
+`PlasmaFBM` destroys its WebGL context while the document is hidden and builds
+a fresh canvas when it becomes visible. This cannot prohibit mobile browsers
+from discarding a tab, but releases GPU memory that otherwise makes the tab a
+more likely discard candidate.
+
+Autoplay is intentionally not resumed — browsers block `play()` without a
+user gesture after a reload.
+
 ## Flow vs autoplay refill routing
 
 Two refill engines exist: **Flow** (`/api/v1/flow/refill` + `/api/v1/flow/event`)

@@ -59,6 +59,24 @@ class AudioEngine {
     this.el.currentTime = seconds
   }
 
+  /**
+   * Seek as soon as the track's metadata is available. Usable right after
+   * load(): with preload="none" duration is unknown until playback starts,
+   * so an immediate currentTime write would be silently dropped.
+   */
+  resumeAtSeconds(seconds: number) {
+    if (Number.isFinite(this.el.duration) && this.el.duration > 0) {
+      this.el.currentTime = seconds
+      return
+    }
+    const el = this.el
+    const apply = () => {
+      el.removeEventListener("loadedmetadata", apply)
+      el.currentTime = seconds
+    }
+    el.addEventListener("loadedmetadata", apply)
+  }
+
   setVolume(v: number) {
     this.el.volume = Math.max(0, Math.min(1, v))
   }

@@ -1,19 +1,35 @@
-import { useState } from "react"
-import { useNavigate } from "react-router"
-import { useQueryClient } from "@tanstack/react-query"
+import { useEffect, useState } from "react"
+import { useLocation, useNavigate } from "react-router"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { User, Lock, ArrowRight, Loader2 } from "lucide-react"
 import PlasmaFBM from "@/components/player/PlasmaFBM"
 import { Button } from "@/components/ui/button"
-import { login } from "@/api/auth"
+import { getSession, login } from "@/api/auth"
 import { ApiError } from "@/api/client"
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const queryClient = useQueryClient()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+
+  // Where to return after login — RequireAuth passes the page it bounced from.
+  const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? "/"
+
+  // The session may still be perfectly valid (e.g. we got here because of a
+  // transient network error) — check once and skip the form entirely.
+  const { data: session } = useQuery({
+    queryKey: ["auth", "session"],
+    queryFn: getSession,
+    staleTime: 0,
+    retry: false,
+  })
+  useEffect(() => {
+    if (session?.authenticated) navigate(from, { replace: true })
+  }, [session?.authenticated, from, navigate])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -29,7 +45,7 @@ export default function LoginPage() {
         username: result.username,
         enabled: true,
       })
-      navigate("/", { replace: true })
+      navigate(from, { replace: true })
     } catch (err) {
       if (err instanceof ApiError && err.status === 429) {
         setError("Слишком много попыток. Попробуйте позже.")

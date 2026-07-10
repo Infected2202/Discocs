@@ -60,10 +60,14 @@ def artist_summary_dict(row: ArtistSummaryRow | Artist) -> dict[str, object]:
     artist = row.artist if isinstance(row, ArtistSummaryRow) else row
     track_count = row.track_count if isinstance(row, ArtistSummaryRow) else 0
     release_count = row.release_count if isinstance(row, ArtistSummaryRow) else 0
+    # The stored image_url points at Navidrome's own (LAN-internal, plain-http)
+    # address — unreachable from outside and blocked as mixed content on HTTPS.
+    # Clients get the backend proxy path instead; it serves the actual bytes.
+    proxied = f"/api/v1/artists/{artist.id}/cover" if artist.image_url else None
     return {
         "id": artist.id,
         "name": artist.name,
-        "image": image_ref(artist.image_url, "external" if artist.image_url else "none"),
+        "image": image_ref(proxied, "external" if proxied else "none"),
         "library_stats": {
             "tracks": track_count,
             "releases": release_count,
@@ -73,12 +77,12 @@ def artist_summary_dict(row: ArtistSummaryRow | Artist) -> dict[str, object]:
     }
 
 
-def artist_summary_with_external_image(
+def ensure_artist_external_info(
     store: Store,
     settings: object,
     row: ArtistSummaryRow | Artist,
-) -> dict[str, object]:
-    """Like artist_summary_dict but falls back to Navidrome for missing images."""
+) -> ArtistSummaryRow | Artist:
+    """Fill in a missing artist image/bio from Navidrome; return the fresh row."""
     artist = row.artist if isinstance(row, ArtistSummaryRow) else row
     if not artist.image_url:
         external_id = store.external_id_for_entity("navidrome", "artist", artist.id)
@@ -97,7 +101,16 @@ def artist_summary_with_external_image(
                     "Navidrome artist info lookup failed artist_id=%s external_id=%s: %s",
                     artist.id, external_id, exc,
                 )
-    return artist_summary_dict(row)
+    return row
+
+
+def artist_summary_with_external_image(
+    store: Store,
+    settings: object,
+    row: ArtistSummaryRow | Artist,
+) -> dict[str, object]:
+    """Like artist_summary_dict but falls back to Navidrome for missing images."""
+    return artist_summary_dict(ensure_artist_external_info(store, settings, row))
 
 
 # ---------------------------------------------------------------------------

@@ -114,9 +114,13 @@ Implementation notes vs. the original spec:
   by local playback data (`basis: "local_playback"`), not an empty stub.
 - `/api/v1/artists/{id}/similar` still returns `available: false` /
   `basis: "not_available"` — not implemented.
-- Artist and release cover art (`/api/v1/artists/{id}/cover`,
-  `/api/v1/artists/{id}/image`) redirect to or proxy Navidrome-cached
-  artwork rather than serving purely local files.
+- Artist and release cover art is always **proxied through the backend**,
+  never linked directly. `artists.image_url` stores the raw URL that
+  Navidrome's `getArtistInfo2` returned — it points at the LAN-internal
+  Navidrome address, unreachable from outside the LAN and blocked as mixed
+  content on an HTTPS page. Serializers therefore expose
+  `/api/v1/artists/{id}/cover` as the image URL; that endpoint downloads the
+  bytes (in-process cover cache, `app/services/cover.py`) and serves them.
 
 Implementation files: `app/api/search.py`, `app/api/artists.py`,
 `app/api/releases.py`, `app/serializers/entities.py`,

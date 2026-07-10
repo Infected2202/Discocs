@@ -403,6 +403,23 @@ def artist_info_bio(info: dict[str, Any]) -> str | None:
     return _optional_str(info.get("biography"))
 
 
+def download_image(url: str, *, timeout: float = 5.0) -> CoverArt:
+    """Download an image by absolute URL (e.g. a Navidrome /share/img link)."""
+    request = Request(url, headers={"Accept": "image/*"})
+    with urlopen(request, timeout=timeout) as response:  # noqa: S310 — URL comes from Navidrome, not user input
+        payload = response.read()
+        content_type = response.headers.get("Content-Type", "")
+    if not payload:
+        raise RuntimeError(f"Downloaded empty image payload url={url}")
+    stripped = payload[:512].lstrip()
+    if stripped.startswith((b"{", b"[", b"<")):
+        snippet = stripped[:240].decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Downloaded non-image payload url={url} content_type={content_type!r}: {snippet}"
+        )
+    return CoverArt(payload=payload, content_type=content_type or "image/jpeg")
+
+
 def _as_list(value: object) -> list[dict[str, Any]]:
     if value is None:
         return []
