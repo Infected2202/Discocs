@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router"
 import {
   Play, Pause, SkipBack, SkipForward,
@@ -36,6 +36,51 @@ function buildTrackSnapshot(
     track,
     trackId,
   }
+}
+
+function SkipPreview({
+  track,
+  children,
+}: {
+  readonly track: TrackSummary | null
+  readonly children: ReactNode
+}) {
+  const [hovered, setHovered] = useState(false)
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function handleEnter() {
+    if (hideTimer.current) clearTimeout(hideTimer.current)
+    setHovered(true)
+  }
+
+  function handleLeave() {
+    hideTimer.current = setTimeout(() => setHovered(false), 150)
+  }
+
+  return (
+    <div className="relative flex items-center" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
+      {children}
+      {track && hovered && (
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20 flex items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2 shadow-lg">
+          <div className="w-9 h-9 rounded shrink-0 overflow-hidden">
+            <ArtworkImage
+              src={track.artwork?.url}
+              alt={track.title}
+              size={36}
+              className="w-9 h-9"
+              fallbackLetter={track.title?.[0]}
+            />
+          </div>
+          <div className="min-w-0 text-left">
+            <p className="text-xs font-medium truncate max-w-[160px]">{track.title}</p>
+            <p className="text-[11px] text-muted-foreground truncate max-w-[160px]">
+              {track.artists?.map((a) => a.name).join(", ")}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function VolumeControl({
@@ -110,6 +155,8 @@ export default function PlayerBar() {
   const volume          = usePlayerStore((s) => s.volume)
   const muted           = usePlayerStore((s) => s.muted)
   const session         = usePlayerStore((s) => s.session)
+  const queue           = usePlayerStore((s) => s.queue)
+  const currentQueueItemId = usePlayerStore((s) => s.currentQueueItemId)
   const togglePlay      = usePlayerStore((s) => s.togglePlay)
   const skipNext        = usePlayerStore((s) => s.skipNext)
   const skipPrevious    = usePlayerStore((s) => s.skipPrevious)
@@ -131,6 +178,11 @@ export default function PlayerBar() {
   const shuffle    = session?.shuffle_enabled ?? false
   const repeatOne  = session?.repeat_mode === "one"
   const autoplay   = session?.autoplay_enabled ?? false
+
+  const queueItems  = queue?.items ?? []
+  const queueIdx    = queueItems.findIndex((i) => i.id === currentQueueItemId)
+  const prevTrack   = queueIdx > 0 ? queueItems[queueIdx - 1]?.track ?? null : null
+  const nextTrack   = queueIdx >= 0 ? queueItems[queueIdx + 1]?.track ?? null : null
 
   const [dragProgress, setDragProgress] = useState<number | null>(null)
   const [visibleSnapshot, setVisibleSnapshot] = useState<PlayerBarTrackSnapshot>(
@@ -192,6 +244,7 @@ export default function PlayerBar() {
   })
 
 const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:text-foreground disabled:opacity-30"
+  const skipBtn = "p-1.5 rounded-full transition-colors text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-30 disabled:hover:bg-transparent"
   const activeBtn = "text-primary hover:text-primary"
 
   return (
@@ -233,9 +286,11 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
 
         {/* ── LEFT: transport + time ── */}
         <div className="flex items-center gap-1 shrink-0">
-          <button onClick={() => skipPrevious()} disabled={!currentTrack} className={iconBtn}>
-            <SkipBack size={18} />
-          </button>
+          <SkipPreview track={prevTrack}>
+            <button onClick={() => skipPrevious()} disabled={!currentTrack} className={skipBtn} title="Previous track">
+              <SkipBack size={18} />
+            </button>
+          </SkipPreview>
 
           <button
             onClick={togglePlay}
@@ -251,9 +306,11 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
             )}
           </button>
 
-          <button onClick={() => skipNext()} disabled={!currentTrack} className={iconBtn}>
-            <SkipForward size={18} />
-          </button>
+          <SkipPreview track={nextTrack}>
+            <button onClick={() => skipNext()} disabled={!currentTrack} className={skipBtn} title="Next track">
+              <SkipForward size={18} />
+            </button>
+          </SkipPreview>
 
           <TimeReadout
             variant="inline"
