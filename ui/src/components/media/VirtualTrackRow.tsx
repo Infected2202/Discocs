@@ -28,6 +28,32 @@ interface VirtualTrackRowProps {
   readonly onToggleSelect?: (trackId: number) => void
 }
 
+export function trackGridTemplates({
+  showArtwork,
+  showRelease,
+  selectable,
+}: Pick<VirtualTrackRowProps, "showArtwork" | "showRelease" | "selectable">): {
+  mobile: string
+  desktop: string
+} {
+  const common = [
+    "40px",
+    showArtwork ? "44px" : null,
+    "minmax(0,1fr)",
+  ]
+  const trailing = [
+    "80px", // duration
+    "32px", // like
+    "32px", // menu
+    selectable ? "32px" : null, // selection checkbox
+  ]
+  const mobile = [...common, ...trailing].filter(Boolean).join(" ")
+  const desktop = showRelease
+    ? [...common, "minmax(0,180px)", ...trailing].filter(Boolean).join(" ")
+    : mobile
+  return { mobile, desktop }
+}
+
 export default function VirtualTrackRow({
   track,
   index,
@@ -60,29 +86,21 @@ export default function VirtualTrackRow({
     }
   }
 
-  // Grid columns: play/index · [artwork] · title · [release] · duration · like · menu · [checkbox].
-  // Built inline so the optional checkbox column is added dynamically without
-  // relying on Tailwind JIT enumerating every arbitrary grid-cols variant.
-  const gridTemplate = [
-    "40px",
-    showArtwork ? "44px" : null,
-    "1fr",
-    showArtwork && showRelease ? "minmax(0,180px)" : null,
-    "80px",
-    "32px", // like
-    "32px", // menu
-    selectable ? "32px" : null, // selection checkbox (right side)
-  ]
-    .filter(Boolean)
-    .join(" ")
+  // The release cell is hidden below md. Its desktop-width grid column must
+  // disappear too — otherwise the title's 1fr column collapses on phones.
+  const gridTemplates = trackGridTemplates({ showArtwork, showRelease, selectable })
 
   return (
     <div
+      data-track-row
       className={cn(
-        "grid items-center border-b border-border/40 last:border-0 transition-colors hover:bg-muted/40 h-[52px]",
+        "grid items-center border-b border-border/40 last:border-0 transition-colors hover:bg-muted/40 h-[52px] [grid-template-columns:var(--track-grid-mobile)] md:[grid-template-columns:var(--track-grid-desktop)]",
         isActive && "text-primary",
       )}
-      style={{ gridTemplateColumns: gridTemplate }}
+      style={{
+        "--track-grid-mobile": gridTemplates.mobile,
+        "--track-grid-desktop": gridTemplates.desktop,
+      } as React.CSSProperties}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >

@@ -99,6 +99,13 @@ describe("VirtualTrackList", () => {
     expect(screen.getByText("Track 42")).toBeInTheDocument()
   })
 
+  it("не резервирует desktop-колонку release на мобильном", () => {
+    render(<Wrapper tracks={[makeTrack(42)]} />)
+    const row = document.querySelector("[data-track-row]") as HTMLElement
+    expect(row.style.getPropertyValue("--track-grid-mobile")).not.toContain("180px")
+    expect(row.style.getPropertyValue("--track-grid-desktop")).toContain("180px")
+  })
+
   it("с onReorder строки рендерятся как sortable-узлы (dnd-kit не падает)", () => {
     const onReorder = vi.fn()
     const tracks = [makeTrack(1), makeTrack(2), makeTrack(3)]
