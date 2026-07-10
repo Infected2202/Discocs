@@ -10,6 +10,15 @@ vi.mock("@/api/auth", () => ({
   getSession: () => getSession(),
 }))
 
+// RequireAuth intentionally redirects/unmounts immediately on a 401. Keep a
+// rejection observer attached in the test too, so Vitest does not report the
+// expected request failure as an unhandled rejection after that unmount.
+function rejectedSession(error: Error): Promise<never> {
+  const promise = Promise.reject(error)
+  void promise.catch(() => undefined)
+  return promise
+}
+
 function renderGated() {
   // retryDelay: 0 — the component retries network errors; don't wait between attempts.
   const qc = new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } })
@@ -44,14 +53,14 @@ describe("RequireAuth", () => {
   })
 
   it("redirects to login on a 401 without retrying", async () => {
-    getSession.mockRejectedValue(new ApiError(401, "unauthorized", "nope"))
+    getSession.mockImplementation(() => rejectedSession(new ApiError(401, "unauthorized", "nope")))
     renderGated()
     expect(await screen.findByText("LOGIN PAGE")).toBeInTheDocument()
     expect(getSession).toHaveBeenCalledTimes(1)
   })
 
   it("shows a retry screen (not login) when the initial session check fails on the network", async () => {
-    getSession.mockRejectedValue(new TypeError("Failed to fetch"))
+    getSession.mockImplementation(() => rejectedSession(new TypeError("Failed to fetch")))
     renderGated()
     expect(await screen.findByText("Нет соединения с сервером")).toBeInTheDocument()
     expect(screen.queryByText("LOGIN PAGE")).not.toBeInTheDocument()
@@ -61,7 +70,7 @@ describe("RequireAuth", () => {
 
   it("keeps the app rendered when a focus-refetch fails on the network", async () => {
     getSession.mockResolvedValueOnce({ authenticated: true, username: "alice", enabled: true })
-    getSession.mockRejectedValue(new TypeError("Failed to fetch"))
+    getSession.mockImplementation(() => rejectedSession(new TypeError("Failed to fetch")))
     const qc = renderGated()
     expect(await screen.findByText("HOME PAGE")).toBeInTheDocument()
 

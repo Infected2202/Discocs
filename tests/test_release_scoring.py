@@ -53,7 +53,7 @@ def _release_pref(
 
 
 def test_days_since_returns_recent_age_for_valid_utc_timestamp() -> None:
-    days = _days_since("2026-07-08T00:00:00+00:00", "unused")
+    days = _days_since(utc_now(), "unused")
 
     assert days is not None
     assert 0.0 <= days < 2.0
