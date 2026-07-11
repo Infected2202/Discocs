@@ -20,6 +20,9 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuTrigger, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
+import {
+  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 interface PlayerBarTrackSnapshot {
   key: string | undefined
@@ -45,41 +48,40 @@ function SkipPreview({
   readonly track: TrackSummary | null
   readonly children: ReactNode
 }) {
-  const [hovered, setHovered] = useState(false)
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  function handleEnter() {
-    if (hideTimer.current) clearTimeout(hideTimer.current)
-    setHovered(true)
-  }
-
-  function handleLeave() {
-    hideTimer.current = setTimeout(() => setHovered(false), 150)
-  }
-
+  // Portaled (not absolute-in-flow) so the preview escapes the player bar's
+  // own `overflow-hidden` instead of being clipped by it.
   return (
-    <div className="relative flex items-center" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
-      {children}
-      {track && hovered && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20 flex items-center gap-2 rounded-lg border border-border/40 bg-background/70 backdrop-blur-md px-2.5 py-2 shadow-lg">
-          <div className="w-9 h-9 rounded shrink-0 overflow-hidden">
-            <ArtworkImage
-              src={track.artwork?.url}
-              alt={track.title}
-              size={36}
-              className="w-9 h-9"
-              fallbackLetter={track.title?.[0]}
-            />
-          </div>
-          <div className="min-w-0 text-left">
-            <p className="text-xs font-medium truncate max-w-[160px]">{track.title}</p>
-            <p className="text-[11px] text-muted-foreground truncate max-w-[160px]">
-              {track.artists?.map((a) => a.name).join(", ")}
-            </p>
-          </div>
-        </div>
-      )}
-    </div>
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        {track && (
+          <TooltipContent
+            side="top"
+            sideOffset={10}
+            showArrow={false}
+            className="rounded-lg border border-border/40 bg-background/70 backdrop-blur-md px-2.5 py-2 text-foreground shadow-lg"
+          >
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 rounded shrink-0 overflow-hidden">
+                <ArtworkImage
+                  src={track.artwork?.url}
+                  alt={track.title}
+                  size={36}
+                  className="w-9 h-9"
+                  fallbackLetter={track.title?.[0]}
+                />
+              </div>
+              <div className="min-w-0 text-left">
+                <p className="text-xs font-medium truncate max-w-[160px]">{track.title}</p>
+                <p className="text-[11px] text-muted-foreground truncate max-w-[160px]">
+                  {track.artists?.map((a) => a.name).join(", ")}
+                </p>
+              </div>
+            </div>
+          </TooltipContent>
+        )}
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 

@@ -81,23 +81,26 @@ describe("PlayerBar — превью трека при наведении на �
     expect(screen.queryByText("Previous Song")).toBeNull()
   })
 
-  it("наведение на Next track показывает обложку/тайтл/артиста следующего трека", () => {
+  it("фокус на Next track показывает обложку/тайтл/артиста следующего трека", () => {
     renderBar()
     const nextBtn = screen.getByRole("button", { name: "Next track" })
 
-    fireEvent.mouseEnter(nextBtn.parentElement!)
-    expect(screen.getByText("Next Song")).toBeInTheDocument()
-    expect(screen.getByText("Artist 3")).toBeInTheDocument()
+    fireEvent.focus(nextBtn)
+    // Radix Tooltip renders content twice — a visible popper-positioned copy
+    // plus a visually-hidden one for screen readers — hence getAllByText.
+    expect(screen.getAllByText("Next Song").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("Artist 3").length).toBeGreaterThan(0)
 
-    fireEvent.mouseLeave(nextBtn.parentElement!)
+    fireEvent.blur(nextBtn)
+    expect(screen.queryByText("Next Song")).toBeNull()
   })
 
-  it("наведение на Previous track показывает превью предыдущего трека", () => {
+  it("фокус на Previous track показывает превью предыдущего трека", () => {
     renderBar()
     const prevBtn = screen.getByRole("button", { name: "Previous track" })
 
-    fireEvent.mouseEnter(prevBtn.parentElement!)
-    expect(screen.getByText("Previous Song")).toBeInTheDocument()
+    fireEvent.focus(prevBtn)
+    expect(screen.getAllByText("Previous Song").length).toBeGreaterThan(0)
   })
 
   it("нет превью, если следующего трека в очереди нет", () => {
@@ -108,7 +111,7 @@ describe("PlayerBar — превью трека при наведении на �
     renderBar()
     const nextBtn = screen.getByRole("button", { name: "Next track" })
 
-    fireEvent.mouseEnter(nextBtn.parentElement!)
+    fireEvent.focus(nextBtn)
     expect(screen.queryByText("Next Song")).toBeNull()
   })
 
@@ -117,7 +120,7 @@ describe("PlayerBar — превью трека при наведении на �
     renderBar()
     const prevBtn = screen.getByRole("button", { name: "Previous track" })
 
-    fireEvent.mouseEnter(prevBtn.parentElement!)
+    fireEvent.focus(prevBtn)
     expect(screen.queryByText("Previous Song")).toBeNull()
   })
 })
