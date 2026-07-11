@@ -17,14 +17,7 @@ import QueueItem from "@/components/player/QueueItem"
 import { SeekIndicators, TimeReadout } from "@/components/player/PlaybackProgress"
 import { useDragSlider } from "@/components/player/useDragSlider"
 import type { TrackSummary } from "@/api/types"
-
-// Upgrade artwork URL to max backend resolution (le=600)
-function hiresUrl(url: string | null | undefined): string | undefined {
-  if (!url) return undefined
-  if (/size=\d+/.test(url)) return url.replace(/size=\d+/, "size=600")
-  const sep = url.includes("?") ? "&" : "?"
-  return `${url}${sep}size=600`
-}
+import { hiresArtworkUrl as hiresUrl } from "@/lib/artworkUrl"
 
 export default function ExpandedPlayer() {
   const [mobileTab, setMobileTab] = useState<"player" | "queue">("player")

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
+import type { TrackSummary } from "@/api/types"
 
 // Minimal TimeRanges mock — enough for AudioEngine's buffered-range scan
 class MockTimeRanges {
@@ -264,5 +265,64 @@ describe("AudioEngine — buffered reporting", () => {
     el.emit("progress")
 
     expect(onBufferUpdate).not.toHaveBeenCalled()
+  })
+})
+
+describe("AudioEngine.setMediaSession()", () => {
+  let metadataArgs: MediaMetadataInit | undefined
+  const setActionHandler = vi.fn()
+
+  const track: TrackSummary = {
+    id: 1,
+    title: "Pattern 4 (LJ Kruzer mix)",
+    artists: [{ id: 1, name: "Cyan341" }],
+    duration: 300,
+    release: { id: 1, title: "Some EP" },
+    artwork: { url: "/api/v1/tracks/1/cover", source: "local", placeholder: false },
+    explicit: false,
+    liked: false,
+    actions: [],
+  }
+
+  beforeEach(() => {
+    metadataArgs = undefined
+    setActionHandler.mockClear()
+    vi.stubGlobal(
+      "MediaMetadata",
+      class {
+        constructor(init: MediaMetadataInit) {
+          metadataArgs = init
+        }
+      }
+    )
+    Object.defineProperty(navigator, "mediaSession", {
+      value: { setActionHandler },
+      configurable: true,
+    })
+  })
+
+  it("не указывает type у artwork — content-type исходника из Navidrome заранее неизвестен, и браузер молча роняет artwork при несовпадении", async () => {
+    const engine = await makeEngine()
+    engine.setMediaSession(track, "/api/v1/tracks/1/cover?size=512")
+
+    expect(metadataArgs?.artwork).toEqual([
+      { src: "/api/v1/tracks/1/cover?size=512", sizes: "512x512" },
+    ])
+  })
+
+  it("artwork — пустой массив, если url не передан", async () => {
+    const engine = await makeEngine()
+    engine.setMediaSession(track, undefined)
+
+    expect(metadataArgs?.artwork).toEqual([])
+  })
+
+  it("title/artist/album берутся из трека", async () => {
+    const engine = await makeEngine()
+    engine.setMediaSession(track, undefined)
+
+    expect(metadataArgs?.title).toBe("Pattern 4 (LJ Kruzer mix)")
+    expect(metadataArgs?.artist).toBe("Cyan341")
+    expect(metadataArgs?.album).toBe("Some EP")
   })
 })

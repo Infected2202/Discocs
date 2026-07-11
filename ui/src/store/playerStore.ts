@@ -23,6 +23,7 @@ import {
 } from "./sessionPersistence"
 import { ApiError } from "@/api/client"
 import { playerLog } from "@/lib/playerLogger"
+import { hiresArtworkUrl } from "@/lib/artworkUrl"
 import { throttle } from "@/lib/throttle"
 import type { PlaybackEnvelope, PlaybackSession, PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
 
@@ -344,7 +345,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       // Update Media Session metadata if we have track info
       const track = get().currentTrack
       if (track) {
-        const artwork = track.artwork?.url ?? undefined
+        const artwork = hiresArtworkUrl(track.artwork?.url, 512)
         audioEngine.setMediaSession(track, artwork)
       }
       audioEngine.registerMediaSessionHandlers({
@@ -627,7 +628,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
             set({ currentTime: persisted.seconds })
           }
           if (currentTrack) {
-            audioEngine.setMediaSession(currentTrack, currentTrack.artwork?.url ?? undefined)
+            audioEngine.setMediaSession(currentTrack, hiresArtworkUrl(currentTrack.artwork?.url, 512))
           }
           audioEngine.registerMediaSessionHandlers({
             play: () => get().togglePlay(),

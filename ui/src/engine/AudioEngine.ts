@@ -103,7 +103,11 @@ class AudioEngine {
       title: track.title,
       artist: track.artists.map((a) => a.name).join(", "),
       album: track.release?.title ?? "",
-      artwork: artworkUrl ? [{ src: artworkUrl, sizes: "512x512", type: "image/jpeg" }] : [],
+      // No `type` here — Chrome validates the fetched resource's actual
+      // Content-Type against a declared one and silently drops the artwork
+      // on mismatch, and the backend cover endpoint proxies Navidrome's
+      // content-type as-is (jpeg or png depending on the source file).
+      artwork: artworkUrl ? [{ src: artworkUrl, sizes: "512x512" }] : [],
     })
   }
 
