@@ -59,6 +59,8 @@ function renderBar() {
 
 describe("PlayerBar — превью трека при наведении на кнопки скипа", () => {
   beforeEach(() => {
+    // queue.items на бэкенде содержит только текущий + предстоящие треки —
+    // прошедший трек живёт только в playedHistory (клиентский стек).
     const prev = makeItem("a", makeTrack(1, "Previous Song"))
     const current = makeItem("b", makeTrack(2, "Current Song"))
     const next = makeItem("c", makeTrack(3, "Next Song"))
@@ -68,7 +70,8 @@ describe("PlayerBar — превью трека при наведении на �
       currentTrackId: 2,
       currentQueueItemId: "b",
       playbackState: "playing",
-      queue: makeQueue([prev, current, next]),
+      queue: makeQueue([current, next]),
+      playedHistory: [prev],
     })
   })
 
@@ -107,5 +110,14 @@ describe("PlayerBar — превью трека при наведении на �
 
     fireEvent.mouseEnter(nextBtn.parentElement!)
     expect(screen.queryByText("Next Song")).toBeNull()
+  })
+
+  it("нет превью Previous, если история ещё пуста (самый первый трек сессии)", () => {
+    usePlayerStore.setState({ playedHistory: [] })
+    renderBar()
+    const prevBtn = screen.getByRole("button", { name: "Previous track" })
+
+    fireEvent.mouseEnter(prevBtn.parentElement!)
+    expect(screen.queryByText("Previous Song")).toBeNull()
   })
 })

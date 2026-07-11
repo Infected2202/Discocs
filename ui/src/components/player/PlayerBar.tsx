@@ -61,7 +61,7 @@ function SkipPreview({
     <div className="relative flex items-center" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
       {children}
       {track && hovered && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20 flex items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2 shadow-lg">
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20 flex items-center gap-2 rounded-lg border border-border/40 bg-background/70 backdrop-blur-md px-2.5 py-2 shadow-lg">
           <div className="w-9 h-9 rounded shrink-0 overflow-hidden">
             <ArtworkImage
               src={track.artwork?.url}
@@ -156,6 +156,7 @@ export default function PlayerBar() {
   const muted           = usePlayerStore((s) => s.muted)
   const session         = usePlayerStore((s) => s.session)
   const queue           = usePlayerStore((s) => s.queue)
+  const playedHistory   = usePlayerStore((s) => s.playedHistory)
   const currentQueueItemId = usePlayerStore((s) => s.currentQueueItemId)
   const togglePlay      = usePlayerStore((s) => s.togglePlay)
   const skipNext        = usePlayerStore((s) => s.skipNext)
@@ -181,8 +182,10 @@ export default function PlayerBar() {
 
   const queueItems  = queue?.items ?? []
   const queueIdx    = queueItems.findIndex((i) => i.id === currentQueueItemId)
-  const prevTrack   = queueIdx > 0 ? queueItems[queueIdx - 1]?.track ?? null : null
   const nextTrack   = queueIdx >= 0 ? queueItems[queueIdx + 1]?.track ?? null : null
+  // queue.items only holds current + upcoming, so the previous track has to
+  // come from playedHistory (the client-side trail) instead of items[idx-1].
+  const prevTrack   = playedHistory.at(-1)?.track ?? null
 
   const [dragProgress, setDragProgress] = useState<number | null>(null)
   const [visibleSnapshot, setVisibleSnapshot] = useState<PlayerBarTrackSnapshot>(
