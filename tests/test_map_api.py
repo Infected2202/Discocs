@@ -141,6 +141,30 @@ def test_points_unknown_projection_returns_404(tmp_path: Path, monkeypatch):
     assert response.status_code == 404
 
 
+def test_projection_detail_returns_metadata(tmp_path: Path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    projection_id, _ids = _seed_projection(store, tmp_path)
+    client = TestClient(app)
+
+    response = client.get(f"/api/map/projections/{projection_id}")
+
+    assert response.status_code == 200
+    proj = response.json()["projection"]
+    assert proj["id"] == projection_id
+    assert proj["method"] == "umap"
+    assert proj["embedding_dim"] == 4
+    assert proj["diagnostics"] is not None
+
+
+def test_projection_detail_unknown_returns_404(tmp_path: Path, monkeypatch):
+    _init_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.get("/api/map/projections/nope")
+
+    assert response.status_code == 404
+
+
 def test_build_endpoint_enqueues_job(tmp_path: Path, monkeypatch):
     _init_store(tmp_path, monkeypatch)
     client = TestClient(app)
@@ -220,6 +244,33 @@ def test_color_artist_values_aligned_to_points(tmp_path: Path, monkeypatch):
     assert data["values"] == ["Alpha", "Beta", "Alpha"]
 
 
+def test_color_region_and_mix_values_aligned(tmp_path: Path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    projection_id, ids = _seed_projection(store, tmp_path)
+    # ids[0] and ids[2] land in a region; ids[1] belongs to a mix.
+    profile = store.upsert_flow_profile("discogs_multi", "ready")
+    region = store.upsert_flow_region(profile.id, 3, medoid_track_id=ids[0])
+    store.replace_flow_region_tracks(
+        region.id,
+        [
+            FlowRegionTrack(region.id, ids[0], "seed", 1.0, 0.0),
+            FlowRegionTrack(region.id, ids[2], "candidate", 0.4, 0.2),
+        ],
+    )
+    store.save_generated_mix(
+        mix_id="mix-1", title="Mix", mix_type="taste_region",
+        items=[{"track_id": ids[1]}],
+    )
+    client = TestClient(app)
+
+    region_values = client.get(f"/api/map/projections/{projection_id}/color/region").json()["values"]
+    mix_values = client.get(f"/api/map/projections/{projection_id}/color/mix").json()["values"]
+
+    # Points come back in sorted track_id order: ids[0], ids[1], ids[2].
+    assert region_values == [3, None, 3]
+    assert mix_values == [None, "mix-1", None]
+
+
 def test_color_unknown_dimension_returns_400(tmp_path: Path, monkeypatch):
     store = _init_store(tmp_path, monkeypatch)
     projection_id, _ids = _seed_projection(store, tmp_path)
@@ -250,6 +301,30 @@ def test_track_inspection_includes_coords_and_membership(tmp_path: Path, monkeyp
     assert data["map_coords"] is not None
     assert data["mix_ids"] == ["mix-1"]
     assert data["track"]["id"] == ids[0]
+
+
+def test_track_inspection_without_projection_omits_coords(tmp_path: Path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    _projection_id, ids = _seed_projection(store, tmp_path)
+    client = TestClient(app)
+
+    response = client.get(f"/api/map/tracks/{ids[0]}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["projection_id"] is None
+    assert data["map_coords"] is None
+    assert data["region_index"] is None
+    assert data["track"]["id"] == ids[0]
+
+
+def test_track_inspection_unknown_track_returns_404(tmp_path: Path, monkeypatch):
+    _init_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.get("/api/map/tracks/424242")
+
+    assert response.status_code == 404
 
 
 def test_neighbors_delegates_to_recommender_not_coordinates(tmp_path: Path, monkeypatch):
