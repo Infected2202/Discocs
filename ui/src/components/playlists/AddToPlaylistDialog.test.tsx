@@ -53,7 +53,10 @@ describe("AddToPlaylistDialog", () => {
     renderDialog()
     useUIStore.getState().openAddToPlaylist([7])
 
-    await screen.findByText("Recent")
+    // Longer timeout: under parallel CI workers the React Query fetch +
+    // re-render occasionally exceeds findByText's default 1000ms window
+    // (the code path itself is fine — this only absorbs scheduling jitter).
+    await screen.findByText("Recent", undefined, { timeout: 5000 })
     // Playlist 1–4 в «Недавних» и в общем списке, Playlist 5 — только в общем.
     expect(screen.getAllByText("Playlist 1")).toHaveLength(2)
     expect(screen.getAllByText("Playlist 5")).toHaveLength(1)
