@@ -1774,17 +1774,6 @@
       [247,182,210],[219,219,141],[158,218,229],[57,59,121],[140,162,82],
     ];
     const ATLAS_GRAY = [110,116,128];
-    // Fixed hues for the 15 Discogs top-level genres, so the genre-gradient
-    // color dimension is stable and meaningful (genre families read as color
-    // regions). Unknown/extra top genres fall back to ATLAS_PALETTE by order.
-    const ATLAS_GENRE_COLORS = {
-      "Electronic": [0,200,220], "Rock": [220,50,47], "Hip Hop": [255,140,0],
-      "Jazz": [148,103,189], "Funk / Soul": [227,90,180], "Pop": [255,105,180],
-      "Folk, World, & Country": [44,160,44], "Classical": [214,178,60],
-      "Reggae": [120,200,50], "Blues": [40,90,200], "Latin": [230,110,60],
-      "Non-Music": [150,130,115], "Stage & Screen": [60,190,165],
-      "Brass & Military": [150,150,40], "Children's": [240,175,200],
-    };
     const atlasState = {
       deck: null, projection: null, projections: [],
       ids: [], xs: [], ys: [], index: new Map(),
@@ -1928,20 +1917,6 @@
       const numeric = values.every(v => v === null || typeof v === "number") && dim === "year";
       atlasState.colors = numeric ? atlasNumericColors(values) : atlasCategoricalColors(values);
     }
-    function atlasRgbToHsl(r, g, b) {
-      r/=255; g/=255; b/=255;
-      const max = Math.max(r,g,b), min = Math.min(r,g,b);
-      let h = 0, s = 0; const l = (max+min)/2;
-      const d = max-min;
-      if (d) {
-        s = l > 0.5 ? d/(2-max-min) : d/(max+min);
-        if (max === r) h = ((g-b)/d + (g < b ? 6 : 0));
-        else if (max === g) h = (b-r)/d + 2;
-        else h = (r-g)/d + 4;
-        h /= 6;
-      }
-      return [h, s, l];
-    }
     function atlasHslToRgb(h, s, l) {
       const hue = (p, q, t) => {
         if (t < 0) t += 1; if (t > 1) t -= 1;
@@ -1960,58 +1935,37 @@
       return [Math.round(r*255), Math.round(g*255), Math.round(b*255)];
     }
     function atlasGenreColors(values) {
-      // Each value is {genre, style, score} or null. Color by the full Discogs
-      // *style* (e.g. Electronic---House vs Electronic---Techno), but keep each
-      // style in its genre's color family: hue/lightness are spread around the
-      // genre base color so Electronic stays blue-ish, Rock red-ish, while
-      // sub-styles differ. Brightness also encodes classifier confidence.
-      // Unclassified tracks (null) stay gray.
-      const genreStyles = new Map();   // genre -> Map(style -> count)
+      // One distinct color per Discogs *style* (e.g. House ≠ Techno ≠ Ambient),
+      // ignoring the genre family — grouping by family collapsed the many
+      // electronic styles into a single hue. Styles are ranked by frequency:
+      // the top ones take the hand-picked palette, the rest get evenly-spaced
+      // HSL hues (golden-angle) so even dozens of styles stay distinguishable.
+      // Brightness encodes classifier confidence; unclassified tracks stay gray.
+      const counts = new Map();
       values.forEach(v => {
-        if (!v || !v.genre) return;
-        const style = v.style || v.genre;
-        if (!genreStyles.has(v.genre)) genreStyles.set(v.genre, new Map());
-        const m = genreStyles.get(v.genre);
-        m.set(style, (m.get(style)||0)+1);
+        if (!v) return;
+        const st = v.style || v.genre;
+        if (st) counts.set(st, (counts.get(st)||0)+1);
       });
-      // Genre base colors, ordered by overall frequency.
-      const genreOrder = [...genreStyles.entries()]
-        .map(([g, m]) => [g, [...m.values()].reduce((a,b)=>a+b,0)])
-        .sort((a,b) => b[1]-a[1]).map(([g]) => g);
-      const genreBase = new Map();
-      let palIdx = 0;
-      genreOrder.forEach(g => {
-        genreBase.set(g, ATLAS_GENRE_COLORS[g] || ATLAS_PALETTE[palIdx++ % ATLAS_PALETTE.length]);
-      });
-      // Per-style variant color within its genre family.
+      const order = [...counts.entries()].sort((a,b) => b[1]-a[1]).map(([st]) => st);
       const styleColor = new Map();
-      const styleCount = new Map();
-      genreStyles.forEach((m, g) => {
-        const base = genreBase.get(g);
-        const [h, s, l] = atlasRgbToHsl(base[0], base[1], base[2]);
-        const styles = [...m.entries()].sort((a,b) => b[1]-a[1]).map(([st]) => st);
-        const n = styles.length;
-        styles.forEach((st, i) => {
-          styleCount.set(st, m.get(st));
-          const off = n > 1 ? (i/(n-1)) - 0.5 : 0;   // -0.5..0.5 across the family
-          const nh = (h + off*0.12 + 1) % 1;          // spread hue ~±22°
-          const nl = Math.min(0.72, Math.max(0.34, l + off*0.30));  // and lightness
-          styleColor.set(st, atlasHslToRgb(nh, Math.min(1, s*1.05), nl));
-        });
+      order.forEach((st, i) => {
+        styleColor.set(st, i < ATLAS_PALETTE.length
+          ? ATLAS_PALETTE[i]
+          : atlasHslToRgb((i * 0.618034) % 1, 0.62, 0.55));
       });
       const scores = values.filter(v => v && typeof v.score === "number").map(v => v.score);
       const min = scores.length ? Math.min(...scores) : 0;
       const max = scores.length ? Math.max(...scores) : 1;
       const span = (max - min) || 1;
-      // Legend: top styles by frequency, labeled by their style part.
-      const legend = [...styleCount.entries()].sort((a,b) => b[1]-a[1]).slice(0, 15)
-        .map(([st]) => ({label: st.includes("---") ? st.split("---")[1] : st, color: styleColor.get(st)}));
-      atlasRenderLegend(legend, "genre", "hue family = genre · brightness = confidence");
+      const legend = order.slice(0, 15)
+        .map(st => ({label: st.includes("---") ? st.split("---")[1] : st, color: styleColor.get(st)}));
+      atlasRenderLegend(legend, "genre", "brightness = classifier confidence");
       return values.map(v => {
         if (!v || (!v.style && !v.genre)) return ATLAS_GRAY;
         const base = styleColor.get(v.style || v.genre) || ATLAS_GRAY;
         const t = typeof v.score === "number" ? (v.score - min) / span : 0.5;
-        const k = 0.45 + 0.55 * t;  // fade low-confidence toward the dark map bg
+        const k = 0.5 + 0.5 * t;  // fade low-confidence toward the dark map bg
         return [Math.round(base[0]*k), Math.round(base[1]*k), Math.round(base[2]*k)];
       });
     }
