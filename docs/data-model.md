@@ -131,6 +131,26 @@ Related analysis tables (not embeddings, but adjacent): `track_predictions`
 classification heads), `track_features` (audio feature extractor output).
 See `docs/analysis-pipeline.md` for the analysis pipeline these feed.
 
+## Collection Map / Atlas Projections
+
+Two tables back the diagnostic 2D embedding map (see
+`docs/collection-map.md`). They store *projected coordinates only* — real
+similarity keeps using `embeddings` + HNSW, never these x/y.
+
+`map_projections` — one row per projection build: `id` (uuid PK),
+`model_name`, `name` (profile key), `method` (`umap` | `pca`), `metric`,
+`params_json`, `source_embedding_count`, `projected_count`, `skipped_count`,
+`embedding_dim`, `version`, `status` (`pending` | `running` | `ready` |
+`failed`), `diagnostics_json`, `created_at`, `completed_at`. Multiple
+projections per model are allowed.
+
+`map_projection_points` — coordinates per track: `projection_id` (FK →
+`map_projections`, cascade), `track_id` (FK → `tracks`, cascade), `x`, `y`
+(`float32`), PK `(projection_id, track_id)`. Only non-missing tracks are
+projected, so lost files never appear on the map. Staleness is derived (not
+stored) by comparing `source_embedding_count` with the live
+`count_embeddings(model_name)`.
+
 ## Release Aggregates
 
 `release_aggregates` holds one precomputed row per release for

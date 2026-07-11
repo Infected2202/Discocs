@@ -18,6 +18,12 @@ Every `APIRouter` in `app/api/*.py` is declared with `prefix="/api/v1"`
 (`app/api/auth.py` uses `prefix="/api/v1/auth"`). Route decorators use paths
 relative to that prefix.
 
+One deliberate exception: `app/api/map.py` (the collection-map / embedding
+atlas, see `docs/collection-map.md`) uses `prefix="/api/map"`. It is still
+under the nginx `^/(api|admin|health)` backend prefix, so there is no SPA
+collision; it is kept in its own namespace as a self-contained diagnostic
+surface rather than versioned alongside the core `/api/v1` REST API.
+
 The reason is routing collision avoidance, not versioning ceremony: the new
 UI (`ui/src/router.tsx`) is a client-side SPA router with routes like
 `artists/:id`, `releases/:id`, `settings`. Nginx and the Vite dev proxy
@@ -382,3 +388,35 @@ background job — see `app/api/jobs.py`.)
 Implementation files: `app/api/flow.py`, `app/store/flow.py`,
 `app/services/flow_regions.py`, `app/services/flow_candidates.py`,
 `app/services/flow_feedback.py`.
+
+## Collection Map / Embedding Atlas
+
+A diagnostic 2D map of the embedding space, rendered in the old admin
+(`app/ui.html`, `#atlas`) with a deck.gl WebGL point cloud. It is a **viewing
+surface only** — it never feeds ranking, the HNSW index, or the original
+similarity math. "Near on the map" is 2D-projection proximity; the inspection
+panel's neighbors are **real** HNSW/cosine similarity from the recommender.
+
+A projection reduces each model's embeddings to 2D (UMAP, `metric=cosine`; PCA
+baseline) and persists `(track_id, x, y)` rows plus metadata/diagnostics. Lost
+tracks (`missing_at`) are excluded. Multiple projections per model are allowed;
+a `stale` flag is derived from embedding-count drift (mirrors the HNSW
+staleness check). Builds run as a **backend `BackgroundTask`**
+(`_build_map_projection_job`), not the per-track analysis worker queue, and
+report through the progress-job mechanism. The heavy reducer is lazy-imported
+and injectable, so unit tests run without UMAP.
+
+Key endpoints (router prefix `/api/map`, see the API Routing exception above):
+
+```text
+GET  /api/map/projections            # list (+ stale)
+POST /api/map/projections            # enqueue a build job
+GET  /api/map/projections/{id}/points        # parallel typed arrays
+GET  /api/map/projections/{id}/color/{dim}   # per-point color values
+GET  /api/map/tracks/{id}/neighbors  # REAL HNSW neighbors (not x/y)
+GET  /api/map/mixes | /api/map/regions       # overlay membership
+```
+
+Implementation files: `app/api/map.py`, `app/projection.py`,
+`app/store/map_atlas.py`, `_build_map_projection_job` in
+`app/analysis_jobs.py`. Full detail: `docs/collection-map.md`.

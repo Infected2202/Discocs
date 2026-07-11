@@ -77,6 +77,9 @@ Each stage is self-contained, tested, and builds on the previous. Strict order:
    pan/zoom/hover/click, color-by, filters, region/mix overlays, inspection,
    2D-vs-embedding-space UX distinction.
 5. **Docs** — `docs/collection-map.md` + `data-model.md`/`architecture.md`.
+   **← done** (new `docs/collection-map.md`; map tables added to
+   `data-model.md`; atlas section + `/api/map` routing-exception note added to
+   `architecture.md`).
 
 ## Dependencies (what this builds on — already in the codebase)
 
