@@ -70,11 +70,11 @@ class MapAtlasStoreMixin:
                     source_embedding_count, projected_count, skipped_count,
                     embedding_dim, version, status, diagnostics_json,
                     created_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, NULL, ?, NULL)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, NULL, ?, NULL)
                 """,
                 (
                     pid, model_name, name, method, metric, params_json,
-                    embedding_dim, version, status, now,
+                    source_embedding_count, embedding_dim, version, status, now,
                 ),
             )
         return self.get_map_projection(pid)  # type: ignore[return-value]

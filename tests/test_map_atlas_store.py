@@ -44,7 +44,9 @@ def test_create_get_and_list_projections(tmp_path: Path):
     assert p1.metric == "cosine"
     assert p1.version == 1
     assert p1.embedding_dim == 400
+    assert p1.source_embedding_count == 1234
     assert p1.projected_count == 0
+    assert p1.skipped_count == 0
     assert p1.completed_at is None
 
     fetched = store.get_map_projection(p1.id)
