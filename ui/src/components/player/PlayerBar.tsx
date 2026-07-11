@@ -503,7 +503,7 @@ function TrackDetails({
             className={cn(iconBtn, liked && activeBtn)}
             title="Like"
           >
-            <ThumbsUp size={15} />
+            <ThumbsUp size={15} fill={liked ? "currentColor" : "none"} />
           </button>
           <button
             onClick={() => toggleLike(trackId)}

@@ -3,6 +3,7 @@ import { MemoryRouter } from "react-router"
 import { beforeEach, describe, expect, it } from "vitest"
 import PlayerBar from "./PlayerBar"
 import { usePlayerStore } from "@/store/playerStore"
+import { useNavidromeStore } from "@/store/navidromeStore"
 import type { PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
 
 function makeTrack(id: number, title: string): TrackSummary {
@@ -122,5 +123,31 @@ describe("PlayerBar — превью трека при наведении на �
 
     fireEvent.focus(prevBtn)
     expect(screen.queryByText("Previous Song")).toBeNull()
+  })
+})
+
+describe("PlayerBar — заливка иконки Like для лайкнутого трека", () => {
+  beforeEach(() => {
+    const current = makeItem("b", makeTrack(2, "Current Song"))
+    usePlayerStore.setState({
+      currentTrack: current.track,
+      currentTrackId: 2,
+      currentQueueItemId: "b",
+      queue: makeQueue([current]),
+    })
+    useNavidromeStore.setState({ likedIds: new Set() })
+  })
+
+  it("иконка не залита, пока трек не лайкнут", () => {
+    renderBar()
+    const likeBtn = screen.getByTitle("Like")
+    expect(likeBtn.querySelector("svg")).toHaveAttribute("fill", "none")
+  })
+
+  it("иконка заливается цветом после лайка", () => {
+    useNavidromeStore.setState({ likedIds: new Set([2]) })
+    renderBar()
+    const likeBtn = screen.getByTitle("Like")
+    expect(likeBtn.querySelector("svg")).toHaveAttribute("fill", "currentColor")
   })
 })

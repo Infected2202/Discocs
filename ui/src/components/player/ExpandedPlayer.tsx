@@ -216,7 +216,7 @@ export default function ExpandedPlayer() {
                       className={cn("p-1.5 rounded transition-colors",
                         liked ? "text-primary" : "text-muted-foreground hover:text-foreground")}
                     >
-                      <ThumbsUp size={18} />
+                      <ThumbsUp size={18} fill={liked ? "currentColor" : "none"} />
                     </button>
                   )}
                   <DropdownMenu>
