@@ -3,7 +3,7 @@ import { Link } from "react-router"
 import {
   Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat1, Infinity, ChevronDown,
-  Volume2, VolumeX, Volume1, ThumbsUp, MoreHorizontal, ListPlus,
+  Volume2, VolumeX, Volume1, ThumbsUp, ThumbsDown, MoreHorizontal, ListPlus,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { usePlayerStore } from "@/store/playerStore"
@@ -11,8 +11,7 @@ import { useNavidromeStore } from "@/store/navidromeStore"
 import { useUIStore } from "@/store/uiStore"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
-  DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import QueueItem from "@/components/player/QueueItem"
 import { SeekIndicators, TimeReadout } from "@/components/player/PlaybackProgress"
@@ -211,13 +210,23 @@ export default function ExpandedPlayer() {
                 </div>
                 <div className="flex items-center gap-1 shrink-0 mt-0.5">
                   {currentTrackId && (
-                    <button
-                      onClick={() => toggleLike(currentTrackId)}
-                      className={cn("p-1.5 rounded transition-colors",
-                        liked ? "text-primary" : "text-muted-foreground hover:text-foreground")}
-                    >
-                      <ThumbsUp size={18} fill={liked ? "currentColor" : "none"} />
-                    </button>
+                    <>
+                      <button
+                        onClick={() => toggleLike(currentTrackId)}
+                        className={cn("p-1.5 rounded transition-colors",
+                          liked ? "text-primary" : "text-muted-foreground hover:text-foreground")}
+                        title="Like"
+                      >
+                        <ThumbsUp size={18} fill={liked ? "currentColor" : "none"} />
+                      </button>
+                      <button
+                        onClick={() => recordEvent("disliked")}
+                        className={cn(iconBtn, "p-1.5")}
+                        title="Dislike"
+                      >
+                        <ThumbsDown size={18} />
+                      </button>
+                    </>
                   )}
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -225,8 +234,6 @@ export default function ExpandedPlayer() {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-44">
                       <DropdownMenuItem onClick={handleInstantMix}>Instant mix</DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={() => recordEvent("disliked")}>Don't play this</DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>

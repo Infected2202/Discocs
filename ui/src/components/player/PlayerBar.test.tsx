@@ -1,10 +1,17 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import PlayerBar from "./PlayerBar"
 import { usePlayerStore } from "@/store/playerStore"
 import { useNavidromeStore } from "@/store/navidromeStore"
 import type { PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
+
+const postEvent = vi.fn().mockResolvedValue({ accepted: true, duplicate: false, event_id: "e1", preference_delta: {} })
+
+vi.mock("@/api/playback", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/playback")>()
+  return { ...actual, postEvent: (...args: unknown[]) => postEvent(...args) }
+})
 
 function makeTrack(id: number, title: string): TrackSummary {
   return {
@@ -149,5 +156,32 @@ describe("PlayerBar — заливка иконки Like для лайкнуто
     renderBar()
     const likeBtn = screen.getByTitle("Like")
     expect(likeBtn.querySelector("svg")).toHaveAttribute("fill", "currentColor")
+  })
+})
+
+describe("PlayerBar — кнопка Dislike", () => {
+  beforeEach(() => {
+    postEvent.mockClear()
+    const current = makeItem("b", makeTrack(2, "Current Song"))
+    usePlayerStore.setState({
+      currentTrack: current.track,
+      currentTrackId: 2,
+      currentQueueItemId: "b",
+      session: null,
+      queue: makeQueue([current]),
+    })
+    useNavidromeStore.setState({ likedIds: new Set() })
+  })
+
+  it("отправляет событие 'disliked' для трека, а не переключает лайк", () => {
+    renderBar()
+    const dislikeBtn = screen.getByTitle("Dislike")
+
+    fireEvent.click(dislikeBtn)
+
+    expect(postEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ track_id: 2, event_type: "disliked" }),
+    )
+    expect(useNavidromeStore.getState().likedIds.has(2)).toBe(false)
   })
 })

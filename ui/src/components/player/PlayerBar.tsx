@@ -17,8 +17,7 @@ import { preloadArtworkImage } from "./playerBarTransitionUtils.ts"
 import { SeekIndicators, TimeReadout } from "@/components/player/PlaybackProgress"
 import { useDragSlider } from "@/components/player/useDragSlider"
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
-  DropdownMenuTrigger, DropdownMenuSeparator,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
@@ -390,8 +389,6 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
 }
 
 function TrackMoreMenu({ trackId }: { readonly trackId: number }) {
-  const recordEvent = usePlayerStore((s) => s.recordEvent)
-
   async function handleInstantMix() {
     const { apiFetch } = await import("@/api/client")
     const { usePlayerStore: store } = await import("@/store/playerStore")
@@ -417,10 +414,6 @@ function TrackMoreMenu({ trackId }: { readonly trackId: number }) {
         <DropdownMenuItem onClick={handleInstantMix}>
           Instant mix
         </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => recordEvent("disliked")}>
-          Don't play this
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -439,6 +432,7 @@ function TrackDetails({
   readonly toggleLike: (trackId: number) => void
   readonly liked: boolean
 }) {
+  const recordEvent = usePlayerStore((s) => s.recordEvent)
   const { track, trackId } = snapshot
 
   return (
@@ -506,8 +500,8 @@ function TrackDetails({
             <ThumbsUp size={15} fill={liked ? "currentColor" : "none"} />
           </button>
           <button
-            onClick={() => toggleLike(trackId)}
-            className={cn(iconBtn, "hidden md:flex")}
+            onClick={() => recordEvent("disliked")}
+            className={iconBtn}
             title="Dislike"
           >
             <ThumbsDown size={15} />
