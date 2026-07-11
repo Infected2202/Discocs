@@ -129,8 +129,11 @@ classifier dimension each value is `{genre, style, score}` (the rank-1
 prediction, e.g. `{"genre":"Electronic","style":"Electronic---House",
 "score":0.81}`) or `null` for tracks the head never saw — the store's
 `top_prediction_by_track(model, track_ids)` pulls all rank-1 rows in one query.
-The client colors by the **top-level genre** (before `---`) and dims each point
-by classifier confidence, leaving unclassified points gray.
+The client colors by the full **style**, but keeps each style in its genre's
+color family (hue/lightness are spread around a fixed per-genre base color), so
+Electronic stays blue-ish and Rock red-ish while sub-styles differ; brightness
+also encodes classifier confidence, and unclassified points stay gray. This is
+the **default** color dimension when the classifier has run.
 
 The `/neighbors` endpoint delegates to `Recommender(...).similar(seed)` — real
 HNSW/cosine similarity over the original embeddings, never the map's x/y.
@@ -140,13 +143,14 @@ HNSW/cosine similarity over the original embeddings, never the map's x/y.
 - deck.gl `ScatterplotLayer` on an `OrthographicView`, loaded from CDN; one
   WebGL layer fed from the `/points` typed arrays (no per-point DOM nodes).
 - Hovering a point shows **`artist — title`** (from `/labels`, fetched once per
-  projection and keyed by track id), falling back to `#id` if a label is
-  missing.
+  projection and keyed by track id), with the Discogs400 **style** on a second
+  line (e.g. `Electronic · House`) so the genre reads without checking the
+  legend. Falls back to `#id` when a label is missing.
 - Controls: projection selector (with stale flag), a Build panel (POST + job
   polling), color-by (`artist` / `release` / `genre` / `year` / `region` /
-  `mix`, plus **Genre (Discogs400)** when classified — hue = top-level genre,
-  brightness = classifier confidence) with a legend, and an overlay highlighter
-  for taste regions / mixes.
+  `mix`, plus **Genre (Discogs400)** when classified — the default: style hue
+  within a per-genre color family, brightness = classifier confidence) with a
+  legend, and an overlay highlighter for taste regions / mixes.
 - Click a point to inspect: metadata, map coords, region/mix membership, top
   Discogs tags, and the track's **real HNSW neighbors** — highlighted on the
   map and labeled as coming from the original embedding space, not map
