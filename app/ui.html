@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>discocs</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+  <!-- Collection-map / embedding-atlas WebGL point cloud (loaded lazily; the
+       atlas section guards against this being unavailable). -->
+  <script src="https://cdn.jsdelivr.net/npm/deck.gl@9.0.35/dist.min.js" defer></script>
   <style>
     :root {
       color-scheme: light dark;
@@ -585,7 +588,21 @@
       .surface-art { width:160px; }
       .mix-page { grid-template-columns:1fr; gap:26px; }
       .mix-hero { position:static; }
+      .atlas-layout { grid-template-columns:1fr; }
     }
+    .atlas-layout { display:grid; grid-template-columns:320px 1fr; gap:16px; height:100%; min-height:0; }
+    .atlas-sidebar { display:flex; flex-direction:column; gap:14px; overflow:auto; min-height:0; }
+    .atlas-map-panel { position:relative; padding:0; overflow:hidden; min-height:480px; }
+    #atlasCanvas { position:absolute; inset:0; width:100%; height:100%; background:#0b0f17; border-radius:12px; }
+    .atlas-map-note { position:absolute; left:12px; bottom:10px; right:12px; z-index:3; font-size:11px; line-height:1.4;
+      color:var(--muted, #9aa4b2); background:rgba(11,15,23,.72); padding:6px 10px; border-radius:8px; pointer-events:none; }
+    .atlas-legend { position:absolute; right:12px; top:12px; z-index:3; max-height:45%; overflow:auto; font-size:11px;
+      background:rgba(11,15,23,.72); padding:8px 10px; border-radius:8px; display:none; }
+    .atlas-legend .row { align-items:center; gap:6px; margin:2px 0; }
+    .atlas-swatch { width:12px; height:12px; border-radius:3px; display:inline-block; flex:none; }
+    .atlas-status { font-size:12px; color:var(--muted, #9aa4b2); }
+    .atlas-pred { display:flex; justify-content:space-between; gap:8px; font-size:12px; margin:1px 0; }
+    .atlas-stale { color:#e0b341; }
   </style>
 </head>
 <body>
@@ -602,6 +619,7 @@
         <button data-nav="erroredFiles" onclick="showSection('erroredFiles')">Errored files</button>
         <button data-nav="textSearch" onclick="showSection('textSearch')">Text search</button>
         <button data-nav="instantMix" onclick="showSection('instantMix')">Instant mix</button>
+        <button data-nav="atlas" onclick="showSection('atlas')">Atlas</button>
         <button data-nav="jobs" onclick="showSection('jobsPage')">Jobs</button>
         <button data-nav="workers" onclick="showSection('workersPage')">Workers</button>
         <button data-nav="settings" onclick="showSection('settings')">Settings</button>
@@ -826,6 +844,66 @@
             <div class="list-region"><div id="instantMixDetail" class="list">
               <div class="meta">Select a request to inspect returned tracks and parameters.</div>
             </div></div>
+          </div>
+        </div>
+      </section>
+      <section id="atlas" class="section section-fill">
+        <div class="atlas-layout">
+          <div class="atlas-sidebar">
+            <div class="panel">
+              <div class="row" style="justify-content:space-between; margin-bottom:8px">
+                <h2 style="margin:0">Collection map</h2>
+                <button onclick="atlasRefresh()">Refresh</button>
+              </div>
+              <div class="meta">A 2D projection of the embedding space for diagnostics. Positions are approximate — real similarity comes from the recommender (HNSW), not from map distance.</div>
+              <label style="margin-top:10px">Projection
+                <select id="atlasProjection" onchange="atlasSelectProjection(this.value)"></select>
+              </label>
+              <div id="atlasStatus" class="atlas-status"></div>
+              <label>Color by
+                <select id="atlasColorBy" onchange="atlasSetColorBy(this.value)"></select>
+              </label>
+              <label>Highlight overlay
+                <select id="atlasOverlay" onchange="atlasSetOverlay(this.value)">
+                  <option value="">None</option>
+                </select>
+              </label>
+            </div>
+            <details class="panel">
+              <summary>Build projection</summary>
+              <div class="row" style="margin-top:10px">
+                <label style="margin:0">Model
+                  <select id="atlasBuildModel">
+                    <option value="discogs_multi">discogs_multi</option>
+                    <option value="muq_mulan">muq_mulan</option>
+                  </select>
+                </label>
+                <label style="margin:0">Profile
+                  <select id="atlasBuildProfile">
+                    <option value="umap_local">umap_local</option>
+                    <option value="umap_global">umap_global</option>
+                    <option value="pca">pca</option>
+                  </select>
+                </label>
+              </div>
+              <label class="row" style="margin-top:8px">
+                <input id="atlasBuildForce" type="checkbox" style="min-height:auto">
+                <span>Force rebuild</span>
+              </label>
+              <div class="actions">
+                <button class="primary" onclick="atlasBuild()">Build</button>
+              </div>
+              <div id="atlasBuildStatus" class="meta"></div>
+            </details>
+            <div class="panel atlas-inspector">
+              <h2 style="margin-top:0">Inspection</h2>
+              <div id="atlasInspector"><div class="meta">Click a point to inspect the track, its region/mix membership, and its real (HNSW) neighbors.</div></div>
+            </div>
+          </div>
+          <div class="panel panel-fill atlas-map-panel">
+            <div id="atlasCanvas"></div>
+            <div class="atlas-legend" id="atlasLegend"></div>
+            <div class="atlas-map-note" id="atlasMapNote">Near on the map = near in the 2D projection. “Similar” in inspection = near in the original embedding space (HNSW).</div>
           </div>
         </div>
       </section>
@@ -1619,6 +1697,8 @@
           if (params.job) await loadJobDetail(params.job, {updateUrl: false});
         } else if (sectionId === "workersPage") {
           await refreshWorkers();
+        } else if (sectionId === "atlas") {
+          await atlasInit(params);
         } else if (sectionId === "settings") {
           setSettingsTab(params.settings_tab || "embeddings");
           await loadAudioFeaturesSettings();
@@ -1659,6 +1739,353 @@
     function showSection(id) {
       const view = viewForSection(id);
       routeTo({view, model: model()}, {reset: true});
+    }
+    // ---------------------------------------------------------------------
+    // Collection map / embedding atlas
+    // ---------------------------------------------------------------------
+    const ATLAS_PALETTE = [
+      [31,119,180],[255,127,14],[44,160,44],[214,39,40],[148,103,189],
+      [140,86,75],[227,119,194],[188,189,34],[23,190,207],[174,199,232],
+      [255,187,120],[152,223,138],[255,152,150],[197,176,213],[196,156,148],
+      [247,182,210],[219,219,141],[158,218,229],[57,59,121],[140,162,82],
+    ];
+    const ATLAS_GRAY = [110,116,128];
+    const atlasState = {
+      deck: null, projection: null, projections: [],
+      ids: [], xs: [], ys: [], index: new Map(),
+      colorBy: "", colors: null, selectedId: null,
+      neighborIds: [], overlay: "", overlayIds: new Set(),
+      mixes: [], regions: [],
+    };
+    function atlasEl(id) { return document.getElementById(id); }
+    async function atlasInit(params) {
+      await atlasLoadProjections();
+      const wanted = params && params.projection;
+      const ready = atlasState.projections.filter(p => p.status === "ready");
+      const pick = (wanted && atlasState.projections.find(p => p.id === wanted))
+        || ready[0] || atlasState.projections[0] || null;
+      if (pick) {
+        atlasEl("atlasProjection").value = pick.id;
+        await atlasSelectProjection(pick.id, {updateUrl: false});
+      } else {
+        atlasEl("atlasStatus").textContent = "No projections yet — build one below.";
+        atlasClearMap("No projection. Build one to see the map.");
+      }
+    }
+    async function atlasLoadProjections() {
+      const select = atlasEl("atlasProjection");
+      try {
+        const data = await json("/api/map/projections");
+        atlasState.projections = data.projections || [];
+      } catch (err) {
+        atlasState.projections = [];
+        atlasEl("atlasStatus").textContent = `Failed to load projections: ${err.message}`;
+      }
+      select.innerHTML = atlasState.projections.map(p =>
+        `<option value="${esc(p.id)}">${esc(p.model)} · ${esc(p.name)} · ${p.status}${p.stale ? " (stale)" : ""}</option>`
+      ).join("") || `<option value="">— none —</option>`;
+    }
+    function atlasProjectionStatusHtml(p) {
+      if (!p) return "";
+      const stale = p.stale ? ` <span class="atlas-stale">stale (embeddings changed: ${p.current_embedding_count} vs ${p.source_embedding_count})</span>` : "";
+      const rt = p.diagnostics && p.diagnostics.runtime_seconds != null ? ` · ${p.diagnostics.runtime_seconds}s` : "";
+      return `${p.projected_count} points · ${p.skipped_count} skipped · dim ${p.embedding_dim}${rt}${stale}`;
+    }
+    async function atlasSelectProjection(id, {updateUrl = true} = {}) {
+      const p = atlasState.projections.find(x => x.id === id);
+      atlasState.projection = p || null;
+      atlasState.selectedId = null;
+      atlasState.neighborIds = [];
+      atlasState.overlay = "";
+      atlasState.overlayIds = new Set();
+      atlasEl("atlasStatus").innerHTML = atlasProjectionStatusHtml(p);
+      atlasEl("atlasInspector").innerHTML = `<div class="meta">Click a point to inspect the track and its real (HNSW) neighbors.</div>`;
+      if (!p) { atlasClearMap("No projection selected."); return; }
+      if (updateUrl && !applyingRoute) writeRoutePatch({view: "atlas", projection: id}, {replace: true});
+      await atlasLoadPoints(id);
+      await atlasLoadDimensions(id);
+      await atlasLoadOverlays(id);
+      await atlasApplyColor();
+      atlasRender({fit: true});
+    }
+    async function atlasLoadPoints(id) {
+      const data = await json(`/api/map/projections/${encodeURIComponent(id)}/points`);
+      atlasState.ids = data.track_ids || [];
+      atlasState.xs = data.x || [];
+      atlasState.ys = data.y || [];
+      atlasState.index = new Map(atlasState.ids.map((tid, i) => [tid, i]));
+    }
+    async function atlasLoadDimensions(id) {
+      const select = atlasEl("atlasColorBy");
+      let dims = [];
+      try { dims = (await json(`/api/map/dimensions?projection=${encodeURIComponent(id)}`)).dimensions || []; }
+      catch (err) { dims = []; }
+      select.innerHTML = dims.map(d => `<option value="${esc(d.key)}">${esc(d.label)}</option>`).join("");
+      if (!dims.find(d => d.key === atlasState.colorBy)) atlasState.colorBy = dims[0] ? dims[0].key : "";
+      select.value = atlasState.colorBy;
+    }
+    async function atlasLoadOverlays(id) {
+      const select = atlasEl("atlasOverlay");
+      atlasState.mixes = [];
+      atlasState.regions = [];
+      try { atlasState.mixes = (await json(`/api/map/mixes?projection=${encodeURIComponent(id)}`)).mixes || []; } catch (e) {}
+      try { atlasState.regions = (await json(`/api/map/regions?projection=${encodeURIComponent(id)}`)).regions || []; } catch (e) {}
+      const opts = ['<option value="">None</option>'];
+      atlasState.regions.filter(r => r.track_count).forEach(r =>
+        opts.push(`<option value="region:${esc(r.id)}">Region #${r.region_index} (${r.track_count})</option>`));
+      atlasState.mixes.filter(m => m.track_count).forEach(m =>
+        opts.push(`<option value="mix:${esc(m.id)}">Mix: ${esc(m.title)} (${m.track_count})</option>`));
+      select.innerHTML = opts.join("");
+      select.value = "";
+    }
+    async function atlasSetColorBy(dim) {
+      atlasState.colorBy = dim;
+      await atlasApplyColor();
+      atlasRender();
+    }
+    async function atlasApplyColor() {
+      const dim = atlasState.colorBy;
+      atlasEl("atlasLegend").style.display = "none";
+      if (!dim || !atlasState.projection) { atlasState.colors = null; return; }
+      let payload;
+      try { payload = await json(`/api/map/projections/${encodeURIComponent(atlasState.projection.id)}/color/${encodeURIComponent(dim)}`); }
+      catch (err) { atlasState.colors = null; return; }
+      const byId = new Map((payload.track_ids || []).map((tid, i) => [tid, payload.values[i]]));
+      const values = atlasState.ids.map(tid => byId.has(tid) ? byId.get(tid) : null);
+      const numeric = values.every(v => v === null || typeof v === "number") && dim === "year";
+      atlasState.colors = numeric ? atlasNumericColors(values) : atlasCategoricalColors(values);
+    }
+    function atlasNumericColors(values) {
+      const nums = values.filter(v => typeof v === "number");
+      const min = Math.min(...nums), max = Math.max(...nums);
+      const span = (max - min) || 1;
+      const lo = [40,80,180], hi = [220,90,40];
+      const legend = [];
+      if (nums.length) {
+        legend.push({label: String(min), color: lo});
+        legend.push({label: String(max), color: hi});
+      }
+      atlasRenderLegend(legend, "gradient");
+      return values.map(v => {
+        if (typeof v !== "number") return ATLAS_GRAY;
+        const t = (v - min) / span;
+        return [Math.round(lo[0] + (hi[0]-lo[0])*t), Math.round(lo[1] + (hi[1]-lo[1])*t), Math.round(lo[2] + (hi[2]-lo[2])*t)];
+      });
+    }
+    function atlasCategoricalColors(values) {
+      const order = new Map();
+      const counts = new Map();
+      values.forEach(v => { if (v !== null && v !== undefined && v !== "") counts.set(v, (counts.get(v)||0)+1); });
+      [...counts.entries()].sort((a,b) => b[1]-a[1]).forEach(([v], i) => order.set(v, i));
+      const legend = [];
+      [...order.entries()].slice(0, 15).forEach(([v, i]) => {
+        legend.push({label: String(v), color: i < ATLAS_PALETTE.length ? ATLAS_PALETTE[i] : ATLAS_GRAY});
+      });
+      atlasRenderLegend(legend, "categorical");
+      return values.map(v => {
+        if (v === null || v === undefined || v === "") return ATLAS_GRAY;
+        const i = order.get(v);
+        return i < ATLAS_PALETTE.length ? ATLAS_PALETTE[i] : ATLAS_GRAY;
+      });
+    }
+    function atlasRenderLegend(entries, kind) {
+      const el = atlasEl("atlasLegend");
+      if (!entries || !entries.length) { el.style.display = "none"; return; }
+      el.innerHTML = entries.map(e =>
+        `<div class="row"><span class="atlas-swatch" style="background:rgb(${e.color[0]},${e.color[1]},${e.color[2]})"></span><span>${esc(e.label)}</span></div>`
+      ).join("");
+      el.style.display = "block";
+    }
+    async function atlasSetOverlay(value) {
+      atlasState.overlay = value || "";
+      atlasState.overlayIds = new Set();
+      if (value) {
+        const [kind, id] = value.split(/:(.+)/);
+        const group = kind === "region"
+          ? atlasState.regions.find(r => r.id === id)
+          : atlasState.mixes.find(m => m.id === id);
+        if (group) atlasState.overlayIds = new Set(group.track_ids || []);
+      }
+      atlasRender();
+    }
+    function atlasClearMap(message) {
+      const host = atlasEl("atlasCanvas");
+      if (atlasState.deck) { atlasState.deck.setProps({layers: []}); }
+      host.setAttribute("data-empty", message || "");
+      if (!atlasState.deck) host.innerHTML = `<div class="meta" style="padding:16px">${esc(message || "")}</div>`;
+    }
+    function atlasFitViewState() {
+      const xs = atlasState.xs, ys = atlasState.ys;
+      if (!xs.length) return {target: [0,0,0], zoom: 0};
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      const host = atlasEl("atlasCanvas");
+      const w = host.clientWidth || 800, h = host.clientHeight || 500;
+      const spanX = (maxX - minX) || 1, spanY = (maxY - minY) || 1;
+      const zoom = Math.log2(Math.min(w / spanX, h / spanY)) - 0.35;
+      return {target: [(minX+maxX)/2, (minY+maxY)/2, 0], zoom};
+    }
+    function atlasBuildLayers() {
+      const L = deck.ScatterplotLayer;
+      const colors = atlasState.colors;
+      const layers = [];
+      layers.push(new L({
+        id: "atlas-points",
+        data: {length: atlasState.ids.length},
+        getPosition: (_, {index}) => [atlasState.xs[index], atlasState.ys[index]],
+        getFillColor: (_, {index}) => colors ? colors[index] : [120,140,200],
+        getRadius: 3, radiusUnits: "pixels", radiusMinPixels: 1.5,
+        pickable: true,
+        onClick: info => { if (info.index != null && info.index >= 0) atlasOnPick(info.index); },
+        updateTriggers: {getFillColor: [atlasState.colorBy, colors]},
+      }));
+      if (atlasState.overlayIds.size) {
+        const pts = [];
+        atlasState.overlayIds.forEach(tid => { const i = atlasState.index.get(tid); if (i != null) pts.push([atlasState.xs[i], atlasState.ys[i]]); });
+        layers.push(new L({
+          id: "atlas-overlay", data: pts, getPosition: d => d,
+          getLineColor: [255,214,64], getFillColor: [0,0,0,0],
+          stroked: true, filled: false, lineWidthUnits: "pixels", getLineWidth: 2,
+          radiusUnits: "pixels", getRadius: 6, radiusMinPixels: 5,
+        }));
+      }
+      if (atlasState.neighborIds.length) {
+        const pts = [];
+        atlasState.neighborIds.forEach(tid => { const i = atlasState.index.get(tid); if (i != null) pts.push([atlasState.xs[i], atlasState.ys[i]]); });
+        layers.push(new L({
+          id: "atlas-neighbors", data: pts, getPosition: d => d,
+          getLineColor: [80,220,180], getFillColor: [0,0,0,0],
+          stroked: true, filled: false, lineWidthUnits: "pixels", getLineWidth: 2,
+          radiusUnits: "pixels", getRadius: 7, radiusMinPixels: 6,
+        }));
+      }
+      if (atlasState.selectedId != null) {
+        const i = atlasState.index.get(atlasState.selectedId);
+        if (i != null) {
+          layers.push(new L({
+            id: "atlas-selected", data: [[atlasState.xs[i], atlasState.ys[i]]], getPosition: d => d,
+            getLineColor: [255,255,255], getFillColor: [255,255,255,40],
+            stroked: true, filled: true, lineWidthUnits: "pixels", getLineWidth: 2.5,
+            radiusUnits: "pixels", getRadius: 9, radiusMinPixels: 8,
+          }));
+        }
+      }
+      return layers;
+    }
+    function atlasRender({fit = false} = {}) {
+      if (!window.deck || !deck.ScatterplotLayer) {
+        atlasClearMap("Loading WebGL point cloud…");
+        // deck.gl loads via a deferred CDN script; re-render once it's ready.
+        if (!atlasState._deckWait) {
+          atlasState._deckWait = setInterval(() => {
+            if (window.deck && deck.ScatterplotLayer) {
+              clearInterval(atlasState._deckWait); atlasState._deckWait = null;
+              atlasRender({fit: true});
+            }
+          }, 200);
+        }
+        return;
+      }
+      if (!atlasState.ids.length) { atlasClearMap("Projection has no points."); return; }
+      const layers = atlasBuildLayers();
+      // On an explicit fit (projection load), recreate the instance so the
+      // WebGL canvas picks up the current container size — deck.gl created
+      // while the container had zero width keeps a stale drawing buffer.
+      if (fit && atlasState.deck) {
+        try { atlasState.deck.finalize(); } catch (e) {}
+        atlasState.deck = null;
+        atlasEl("atlasCanvas").innerHTML = "";
+      }
+      if (!atlasState.deck) {
+        atlasState.deck = new deck.DeckGL({
+          container: "atlasCanvas",
+          views: new deck.OrthographicView({flipY: false}),
+          initialViewState: atlasFitViewState(),
+          controller: true,
+          getTooltip: ({index}) => index != null && index >= 0
+            ? {text: `#${atlasState.ids[index]}`} : null,
+          layers,
+        });
+      } else {
+        atlasState.deck.setProps({layers});
+      }
+    }
+    async function atlasOnPick(index) {
+      const trackId = atlasState.ids[index];
+      atlasState.selectedId = trackId;
+      const inspector = atlasEl("atlasInspector");
+      inspector.innerHTML = `<div class="meta">Loading track #${trackId}…</div>`;
+      atlasRender();
+      let detail = null, neighbors = null;
+      try { detail = await json(`/api/map/tracks/${trackId}?projection=${encodeURIComponent(atlasState.projection.id)}`); }
+      catch (err) { inspector.innerHTML = `<div class="meta">Failed to load track: ${esc(err.message)}</div>`; return; }
+      const model = atlasState.projection.model;
+      try { neighbors = await json(`/api/map/tracks/${trackId}/neighbors?model=${encodeURIComponent(model)}&k=15`); }
+      catch (err) { neighbors = {error: err.message, results: []}; }
+      atlasState.neighborIds = (neighbors.results || []).map(r => r.id);
+      inspector.innerHTML = atlasInspectorHtml(detail, neighbors);
+      atlasRender();
+    }
+    function atlasInspectorHtml(detail, neighbors) {
+      const t = detail.track || {};
+      const title = t.title || `#${detail.track && detail.track.id}`;
+      const artist = t.artist || "Unknown artist";
+      const parts = [];
+      parts.push(`<div class="track"><div class="title">${esc(title)}</div><div class="meta">${esc(artist)}${t.album ? " · " + esc(t.album) : ""}${t.year ? " · " + t.year : ""}</div></div>`);
+      const coords = detail.map_coords ? `x ${detail.map_coords.x.toFixed(2)}, y ${detail.map_coords.y.toFixed(2)}` : "—";
+      const membership = [];
+      if (detail.region_index != null) membership.push(`region #${detail.region_index}`);
+      if (detail.mix_ids && detail.mix_ids.length) membership.push(`${detail.mix_ids.length} mix(es)`);
+      parts.push(`<div class="meta" style="margin-top:6px">Map: ${coords}${membership.length ? " · " + esc(membership.join(", ")) : ""}</div>`);
+      const preds = (detail.predictions && detail.predictions.discogs_multi) || [];
+      if (preds.length) {
+        parts.push(`<div style="margin-top:8px"><strong>Top tags</strong></div>`);
+        preds.slice(0, 5).forEach(p => parts.push(`<div class="atlas-pred"><span>${esc(p.label)}</span><span>${(p.score*100).toFixed(0)}%</span></div>`));
+      }
+      parts.push(`<div style="margin-top:10px"><strong>Real neighbors (HNSW)</strong> <span class="meta">— original embedding space, not map distance</span></div>`);
+      if (neighbors.error) parts.push(`<div class="meta">${esc(neighbors.error)}</div>`);
+      const results = neighbors.results || [];
+      if (!results.length && !neighbors.error) parts.push(`<div class="meta">No neighbors returned.</div>`);
+      results.slice(0, 15).forEach(r => {
+        const onMap = atlasState.index.has(r.id) ? "" : ` <span class="meta">(off-map)</span>`;
+        parts.push(`<div class="atlas-pred"><span>${esc(r.title || ("#"+r.id))} — ${esc(r.artist || "")}</span><span>${r.similarity != null ? r.similarity.toFixed(3) : ""}${onMap}</span></div>`);
+      });
+      return parts.join("");
+    }
+    async function atlasRefresh() {
+      await atlasLoadProjections();
+      const current = atlasState.projection && atlasState.projection.id;
+      const select = atlasEl("atlasProjection");
+      if (current && atlasState.projections.find(p => p.id === current)) select.value = current;
+      const target = select.value;
+      if (target) await atlasSelectProjection(target, {updateUrl: false});
+    }
+    async function atlasBuild() {
+      const body = {
+        model: atlasEl("atlasBuildModel").value,
+        profile: atlasEl("atlasBuildProfile").value,
+        force: atlasEl("atlasBuildForce").checked,
+      };
+      const status = atlasEl("atlasBuildStatus");
+      status.textContent = "Submitting build…";
+      let res;
+      try {
+        res = await json("/api/map/projections", {
+          method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+        });
+      } catch (err) { status.textContent = `Build failed: ${err.message}`; return; }
+      status.textContent = `Build queued (job ${res.job_id.slice(0, 8)}). Waiting…`;
+      atlasPollBuild(res.job_id, status);
+    }
+    async function atlasPollBuild(jobId, status, attempt = 0) {
+      if (attempt > 90) { status.textContent = "Build still running — press Refresh later."; return; }
+      let job;
+      try { job = (await json(`/api/v1/jobs/${jobId}`)).job; } catch (err) { status.textContent = `Build status error: ${err.message}`; return; }
+      const state = job.status;
+      status.textContent = `Build ${state}: ${job.message || ""}`;
+      if (state === "completed") { await atlasRefresh(); return; }
+      if (state === "failed" || state === "cancelled") return;
+      setTimeout(() => atlasPollBuild(jobId, status, attempt + 1), 2000);
     }
     function entityArtistsHtml(artists) {
       const items = artists || [];
