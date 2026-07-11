@@ -16,6 +16,7 @@ const RECENT_COUNT = 4
 
 export default function AddToPlaylistDialog() {
   const trackIds = useUIStore((s) => s.addToPlaylistTrackIds)
+  const defaultTitle = useUIStore((s) => s.addToPlaylistDefaultTitle)
   const close = useUIStore((s) => s.closeAddToPlaylist)
   const openCreatePlaylist = useUIStore((s) => s.openCreatePlaylist)
   const queryClient = useQueryClient()
@@ -41,7 +42,7 @@ export default function AddToPlaylistDialog() {
   const recent = playlists.slice(0, RECENT_COUNT)
 
   function handleNewPlaylist() {
-    openCreatePlaylist({ trackIds: trackIds ?? [] })
+    openCreatePlaylist({ trackIds: trackIds ?? [], defaultTitle: defaultTitle ?? undefined })
   }
 
   return (

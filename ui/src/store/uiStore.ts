@@ -45,7 +45,9 @@ interface UIState {
   toggleSidebar(): void
   /** Tracks pending "add to playlist"; null = dialog closed. */
   addToPlaylistTrackIds: number[] | null
-  openAddToPlaylist(trackIds: number[]): void
+  /** Prefill for the "New playlist" title if the user creates one from here (e.g. current playback source). */
+  addToPlaylistDefaultTitle: string | null
+  openAddToPlaylist(trackIds: number[], defaultTitle?: string): void
   closeAddToPlaylist(): void
   /** Options for the create/edit playlist dialog; null = dialog closed. */
   createPlaylistOptions: CreatePlaylistDialogOptions | null
@@ -61,11 +63,12 @@ export const useUIStore = create<UIState>((set, get) => ({
     persist(next)
   },
   addToPlaylistTrackIds: null,
-  openAddToPlaylist(trackIds) {
-    set({ addToPlaylistTrackIds: trackIds, createPlaylistOptions: null })
+  addToPlaylistDefaultTitle: null,
+  openAddToPlaylist(trackIds, defaultTitle) {
+    set({ addToPlaylistTrackIds: trackIds, addToPlaylistDefaultTitle: defaultTitle ?? null, createPlaylistOptions: null })
   },
   closeAddToPlaylist() {
-    set({ addToPlaylistTrackIds: null })
+    set({ addToPlaylistTrackIds: null, addToPlaylistDefaultTitle: null })
   },
   createPlaylistOptions: null,
   openCreatePlaylist(options) {

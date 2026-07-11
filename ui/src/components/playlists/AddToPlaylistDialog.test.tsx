@@ -76,6 +76,20 @@ describe("AddToPlaylistDialog", () => {
     expect(useUIStore.getState().createPlaylistOptions).toEqual({ trackIds: [11, 12] })
   })
 
+  it("«New playlist» переносит предложенное имя (например источник воспроизведения) в форму создания", async () => {
+    fetchPlaylists.mockResolvedValue({ items: [], total: 0, limit: 200, offset: 0, next_offset: null })
+
+    renderDialog()
+    useUIStore.getState().openAddToPlaylist([11, 12], "Instant Mix: Noisia - Exodus")
+
+    fireEvent.click(await screen.findByRole("button", { name: /new playlist/i }))
+
+    expect(useUIStore.getState().createPlaylistOptions).toEqual({
+      trackIds: [11, 12],
+      defaultTitle: "Instant Mix: Noisia - Exodus",
+    })
+  })
+
   it("не запрашивает плейлисты, пока модалка закрыта", () => {
     renderDialog()
     expect(fetchPlaylists).not.toHaveBeenCalled()

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import ExpandedPlayer from "./ExpandedPlayer"
 import { usePlayerStore } from "@/store/playerStore"
 import { useUIStore } from "@/store/uiStore"
-import type { PlaybackQueue, QueueItem } from "@/api/types"
+import type { PlaybackQueue, PlaybackSession, QueueItem } from "@/api/types"
 
 vi.mock("@/components/player/QueueItem", () => ({
   default: ({ trackId }: { trackId: number }) => <div data-testid="queue-item">{trackId}</div>,
@@ -49,8 +49,8 @@ function renderPlayer() {
 }
 
 beforeEach(() => {
-  usePlayerStore.setState({ queue: null, expanded: true })
-  useUIStore.setState({ addToPlaylistTrackIds: null, createPlaylistOptions: null })
+  usePlayerStore.setState({ queue: null, expanded: true, session: null })
+  useUIStore.setState({ addToPlaylistTrackIds: null, addToPlaylistDefaultTitle: null, createPlaylistOptions: null })
 })
 
 describe("ExpandedPlayer — сохранение очереди в плейлист", () => {
@@ -68,6 +68,28 @@ describe("ExpandedPlayer — сохранение очереди в плейли
     fireEvent.click(screen.getByRole("button", { name: "Save queue to playlist" }))
 
     expect(useUIStore.getState().addToPlaylistTrackIds).toEqual([10, 20, 30])
+  })
+
+  it("подсказывает имя плейлиста как source_label текущей сессии", () => {
+    usePlayerStore.setState({
+      queue: makeQueue([makeItem("a", 10)]),
+      session: { source_label: "Instant Mix: Noisia - Exodus" } as PlaybackSession,
+    })
+
+    renderPlayer()
+    expect(screen.getByRole("button", { name: "Save queue to playlist" })).toHaveTextContent("Save")
+    fireEvent.click(screen.getByRole("button", { name: "Save queue to playlist" }))
+
+    expect(useUIStore.getState().addToPlaylistDefaultTitle).toBe("Instant Mix: Noisia - Exodus")
+  })
+
+  it("без source_label подсказка пустая", () => {
+    usePlayerStore.setState({ queue: makeQueue([makeItem("a", 10)]), session: null })
+
+    renderPlayer()
+    fireEvent.click(screen.getByRole("button", { name: "Save queue to playlist" }))
+
+    expect(useUIStore.getState().addToPlaylistDefaultTitle).toBeNull()
   })
 
   it("кнопки нет, когда очередь пуста", () => {

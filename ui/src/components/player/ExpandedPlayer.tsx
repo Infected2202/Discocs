@@ -322,12 +322,13 @@ export default function ExpandedPlayer() {
             <div className="flex justify-end gap-1 mb-2">
               {queueTrackIds.length > 0 && (
                 <button
-                  onClick={() => openAddToPlaylist(queueTrackIds)}
-                  className={iconBtn}
+                  onClick={() => openAddToPlaylist(queueTrackIds, session?.source_label ?? undefined)}
+                  className={cn(iconBtn, "flex items-center gap-1.5 px-2.5 text-sm font-medium")}
                   title="Save queue to playlist"
                   aria-label="Save queue to playlist"
                 >
-                  <ListPlus size={20} />
+                  <ListPlus size={18} />
+                  Save
                 </button>
               )}
               <button onClick={toggleExpanded} className={iconBtn}>
