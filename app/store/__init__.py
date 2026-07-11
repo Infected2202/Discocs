@@ -16,6 +16,7 @@ from app.store.jobs import JobsStoreMixin
 from app.store.embeddings import EmbeddingsStoreMixin
 from app.store.release_aggregates import ReleaseAggregatesStoreMixin
 from app.store.flow import FlowStoreMixin
+from app.store.map_atlas import MapAtlasStoreMixin
 from app.store.sessions import SessionsStoreMixin
 from app.store._helpers import (
     playback_event_is_completion,
@@ -72,6 +73,7 @@ from app.models import (  # noqa: F401
     FlowProfile,
     FlowRegion,
     FlowRegionTrack,
+    MapProjection,
     ReleaseAggregate,
     ReleaseSummaryRow,
     ReleaseTrackRow,
@@ -98,6 +100,7 @@ class Store(
     EmbeddingsStoreMixin,
     ReleaseAggregatesStoreMixin,
     FlowStoreMixin,
+    MapAtlasStoreMixin,
     SessionsStoreMixin,
 ):
     """Assembled Store — all domain mixins composed into one class."""

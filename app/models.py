@@ -143,6 +143,32 @@ class FlowGenerationRun:
     created_at: str
 
 
+@dataclass(frozen=True)
+class MapProjection:
+    """A persisted 2D projection of one embedding model (collection map).
+
+    Diagnostic snapshot only — real similarity keeps using HNSW/cosine.
+    """
+    id: str
+    model_name: str
+    name: str
+    # 'umap' | 'pca' (later: 'tsne')
+    method: str
+    # embedding-space distance metric used for the projection
+    metric: str
+    params_json: str | None
+    source_embedding_count: int
+    projected_count: int
+    skipped_count: int
+    embedding_dim: int
+    version: int
+    # 'pending' | 'running' | 'ready' | 'failed'
+    status: str
+    diagnostics_json: str | None
+    created_at: str
+    completed_at: str | None
+
+
 # ---------------------------------------------------------------------------
 # Row / projection types
 # ---------------------------------------------------------------------------

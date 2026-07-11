@@ -727,6 +727,41 @@ class StoreBase:
 
                 CREATE INDEX IF NOT EXISTS idx_sessions_expires
                     ON sessions(expires_at);
+
+                -- Collection map / embedding atlas. A projection is a persisted
+                -- snapshot of 2D coordinates for one embedding model; multiple
+                -- projections per model are allowed. This is a diagnostic view
+                -- only — real similarity/neighbors keep using HNSW/cosine.
+                CREATE TABLE IF NOT EXISTS map_projections (
+                    id TEXT PRIMARY KEY,
+                    model_name TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    method TEXT NOT NULL,
+                    metric TEXT NOT NULL DEFAULT 'cosine',
+                    params_json TEXT,
+                    source_embedding_count INTEGER NOT NULL DEFAULT 0,
+                    projected_count INTEGER NOT NULL DEFAULT 0,
+                    skipped_count INTEGER NOT NULL DEFAULT 0,
+                    embedding_dim INTEGER NOT NULL DEFAULT 0,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    diagnostics_json TEXT,
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_map_projections_model
+                    ON map_projections(model_name, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS map_projection_points (
+                    projection_id TEXT NOT NULL,
+                    track_id INTEGER NOT NULL,
+                    x REAL NOT NULL,
+                    y REAL NOT NULL,
+                    PRIMARY KEY (projection_id, track_id),
+                    FOREIGN KEY (projection_id) REFERENCES map_projections(id) ON DELETE CASCADE,
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                );
                 """
             )
             self._ensure_column(conn, "tracks", "genre", "TEXT")
