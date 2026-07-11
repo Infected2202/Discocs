@@ -1,18 +1,13 @@
 import { memo } from "react"
-import { useNavigate } from "react-router"
-import { ThumbsUp, MoreHorizontal, ListEnd, Radio, User, Disc3 } from "lucide-react"
+import { ThumbsUp } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { usePlayerStore } from "@/store/playerStore"
 import { useNavidromeStore } from "@/store/navidromeStore"
 import ArtworkImage from "@/components/media/ArtworkImage"
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
-  DropdownMenuSeparator, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { apiFetch } from "@/api/client"
+import TrackMenu from "@/components/media/TrackMenu"
 import { patchQueue } from "@/api/playback"
 import { QueueItemLiveTime, formatTime } from "@/components/player/PlaybackProgress"
-import type { TrackSummary, PlaybackEnvelope } from "@/api/types"
+import type { TrackSummary } from "@/api/types"
 
 export interface QueueItemProps {
   readonly track: TrackSummary | null
@@ -25,12 +20,9 @@ export interface QueueItemProps {
 }
 
 function QueueItem({ track, trackId, itemId, variant = "queue", isCurrent, dimmed }: QueueItemProps) {
-  const navigate = useNavigate()
   const id = track?.id ?? trackId
   const sessionId      = usePlayerStore((s) => s.session?.id)
-  const playSource     = usePlayerStore((s) => s.playSource)
   const refreshQueue   = usePlayerStore((s) => s.refreshQueue)
-  const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
   const jumpToQueueItem    = usePlayerStore((s) => s.jumpToQueueItem)
   const jumpToAutoplayItem = usePlayerStore((s) => s.jumpToAutoplayItem)
   const toggleLike     = useNavidromeStore((s) => s.toggleLike)
@@ -45,25 +37,20 @@ function QueueItem({ track, trackId, itemId, variant = "queue", isCurrent, dimme
     durationLabel = formatTime(track.duration)
   }
 
-  async function handleInstantMix() {
-    if (!track) return
-    try {
-      const envelope = await apiFetch<PlaybackEnvelope>(`/api/v1/tracks/${track.id}/instant-mix`, { method: "POST" })
-      await playFromEnvelope(envelope)
-    } catch { /* ignore */ }
-  }
-
-  async function handlePlayNext() {
-    if (!track) return
-    if (!sessionId) { await playSource("track", track.id, track.title); return }
-    await patchQueue(sessionId, { operation: "add", track_id: track.id })
+  // Only real (non-current) queue rows can be removed — autoplay-pool rows
+  // aren't in the queue yet, and the currently-playing item can't be pulled
+  // out from under itself.
+  const canRemove = variant === "queue" && !!itemId && !isCurrent
+  async function handleRemove() {
+    if (!sessionId || !itemId) return
+    await patchQueue(sessionId, { operation: "remove", queue_item_id: itemId })
     await refreshQueue()
   }
 
   return (
     <div
       className={cn(
-        "group/qrow flex items-center gap-3 px-4 py-2 border-b border-border/30 last:border-0 transition-colors",
+        "group/row flex items-center gap-3 px-4 py-2 border-b border-border/30 last:border-0 transition-colors",
         isCurrent ? "bg-muted/50" : "hover:bg-muted/40",
         dimmed && "opacity-60",
       )}
@@ -97,7 +84,7 @@ function QueueItem({ track, trackId, itemId, variant = "queue", isCurrent, dimme
           onClick={() => toggleLike(track.id)}
           className={cn(
             "shrink-0 p-1 rounded transition-colors",
-            liked ? "text-primary" : "text-muted-foreground opacity-0 group-hover/qrow:opacity-100 hover:text-foreground",
+            liked ? "text-primary" : "text-muted-foreground opacity-0 group-hover/row:opacity-100 hover:text-foreground",
           )}
         >
           <ThumbsUp size={13} />
@@ -112,39 +99,7 @@ function QueueItem({ track, trackId, itemId, variant = "queue", isCurrent, dimme
       </div>
 
       {track && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button className="shrink-0 p-1 rounded text-muted-foreground opacity-0 group-hover/qrow:opacity-100 hover:text-foreground transition-colors">
-              <MoreHorizontal size={15} />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
-            <DropdownMenuItem onClick={handlePlayNext}>
-              <ListEnd size={13} className="mr-2" /> Play next
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={handleInstantMix}>
-              <Radio size={13} className="mr-2" /> Instant mix
-            </DropdownMenuItem>
-            {track.artists.length > 0 && (
-              <>
-                <DropdownMenuSeparator />
-                {track.artists.map((a) => (
-                  <DropdownMenuItem key={a.id} onClick={() => navigate(`/artists/${a.id}`)}>
-                    <User size={13} className="mr-2" /> Go to {a.name}
-                  </DropdownMenuItem>
-                ))}
-              </>
-            )}
-            {track.release && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => navigate(`/releases/${track.release!.id}`)}>
-                  <Disc3 size={13} className="mr-2" /> Go to {track.release.title}
-                </DropdownMenuItem>
-              </>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <TrackMenu track={track} onRemoveFromQueue={canRemove ? handleRemove : undefined} />
       )}
     </div>
   )

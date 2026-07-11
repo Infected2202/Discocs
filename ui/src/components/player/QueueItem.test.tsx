@@ -1,18 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import QueueItem from "./QueueItem"
 import type { TrackSummary } from "@/api/types"
 
 const jumpToQueueItem = vi.fn()
 const jumpToAutoplayItem = vi.fn()
+const refreshQueue = vi.fn()
+const patchQueue = vi.fn().mockResolvedValue({})
 
 const playerState = {
   session: { id: "sess-1" },
   currentTime: 30,
   duration: 200,
   playSource: vi.fn(),
-  refreshQueue: vi.fn(),
+  refreshQueue,
   playFromEnvelope: vi.fn(),
   jumpToQueueItem,
   jumpToAutoplayItem,
@@ -25,6 +27,22 @@ vi.mock("@/store/playerStore", () => ({
 vi.mock("@/store/navidromeStore", () => ({
   useNavidromeStore: (sel: (s: object) => unknown) =>
     sel({ likedIds: new Set(), toggleLike: vi.fn() }),
+}))
+
+vi.mock("@/api/playback", () => ({
+  patchQueue: (...args: unknown[]) => patchQueue(...args),
+}))
+
+// TrackMenu itself owns a Radix DropdownMenu (Play/Add to playlist/etc.) — that's
+// covered by consolidating onto it, not re-tested here. This stub only surfaces
+// the one prop QueueItem is actually responsible for: onRemoveFromQueue.
+vi.mock("@/components/media/TrackMenu", () => ({
+  default: ({ onRemoveFromQueue }: { onRemoveFromQueue?: () => void }) =>
+    onRemoveFromQueue ? (
+      <button onClick={onRemoveFromQueue}>Remove from queue</button>
+    ) : (
+      <div data-testid="track-menu-no-remove" />
+    ),
 }))
 
 function makeTrack(id: number): TrackSummary {
@@ -52,6 +70,8 @@ function renderRow(props: Partial<React.ComponentProps<typeof QueueItem>>) {
 beforeEach(() => {
   jumpToQueueItem.mockClear()
   jumpToAutoplayItem.mockClear()
+  refreshQueue.mockClear()
+  patchQueue.mockClear()
 })
 
 describe("QueueItem", () => {
@@ -93,5 +113,30 @@ describe("QueueItem", () => {
     fireEvent.click(screen.getByText("Track 1"))
     expect(jumpToQueueItem).not.toHaveBeenCalled()
     expect(jumpToAutoplayItem).not.toHaveBeenCalled()
+  })
+
+  it("обычная строка очереди даёт TrackMenu возможность удалить из очереди", () => {
+    renderRow({ itemId: "q1", variant: "queue", isCurrent: false })
+    expect(screen.getByText("Remove from queue")).toBeInTheDocument()
+  })
+
+  it("текущий трек нельзя удалить из очереди", () => {
+    renderRow({ itemId: "q1", variant: "queue", isCurrent: true })
+    expect(screen.queryByText("Remove from queue")).not.toBeInTheDocument()
+    expect(screen.getByTestId("track-menu-no-remove")).toBeInTheDocument()
+  })
+
+  it("автоплей-превью нельзя удалить из очереди (там ещё нет)", () => {
+    renderRow({ itemId: "p1", variant: "autoplay" })
+    expect(screen.queryByText("Remove from queue")).not.toBeInTheDocument()
+  })
+
+  it("удаление шлёт patchQueue(remove, itemId) и обновляет очередь", async () => {
+    renderRow({ itemId: "q1", variant: "queue", isCurrent: false })
+
+    fireEvent.click(screen.getByText("Remove from queue"))
+
+    await waitFor(() => expect(refreshQueue).toHaveBeenCalledTimes(1))
+    expect(patchQueue).toHaveBeenCalledWith("sess-1", { operation: "remove", queue_item_id: "q1" })
   })
 })

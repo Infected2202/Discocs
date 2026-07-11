@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router"
-import { MoreHorizontal, Play, ListEnd, ListPlus, User, Disc3, Radio } from "lucide-react"
+import { MoreHorizontal, Play, ListEnd, ListPlus, ListX, User, Disc3, Radio } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,9 +19,11 @@ interface TrackMenuProps {
   readonly sourceLabel?: string
   /** When set, "Play" queues the whole release (starting at this track) instead of just this track. */
   readonly releaseId?: number
+  /** When set, adds a "Remove from queue" item — for rows that live in the current playback queue. */
+  readonly onRemoveFromQueue?: () => void
 }
 
-export default function TrackMenu({ track, sourceLabel, releaseId }: TrackMenuProps) {
+export default function TrackMenu({ track, sourceLabel, releaseId, onRemoveFromQueue }: TrackMenuProps) {
   const navigate = useNavigate()
   const sessionId      = usePlayerStore((s) => s.session?.id)
   const playSource     = usePlayerStore((s) => s.playSource)
@@ -109,6 +111,16 @@ export default function TrackMenu({ track, sourceLabel, releaseId }: TrackMenuPr
             <DropdownMenuItem onClick={() => navigate(`/releases/${release.id}`)}>
               <Disc3 size={14} className="mr-2" />
               Go to {release.title}
+            </DropdownMenuItem>
+          </>
+        )}
+
+        {onRemoveFromQueue && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={onRemoveFromQueue}>
+              <ListX size={14} className="mr-2" />
+              Remove from queue
             </DropdownMenuItem>
           </>
         )}
