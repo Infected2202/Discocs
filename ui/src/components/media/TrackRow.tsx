@@ -84,6 +84,8 @@ interface TrackRowProps {
   readonly showArtwork?: boolean
   readonly showRelease?: boolean
   readonly sourceLabel?: string
+  /** When set, playing this row queues the whole release (starting at this track) instead of just this track. */
+  readonly releaseId?: number
 }
 
 export default function TrackRow({
@@ -92,6 +94,7 @@ export default function TrackRow({
   showArtwork = true,
   showRelease = true,
   sourceLabel,
+  releaseId,
 }: TrackRowProps) {
   const [hovered, setHovered] = useState(false)
 
@@ -114,7 +117,11 @@ export default function TrackRow({
       return
     }
 
-    playSource("track", track.id, sourceLabel ?? track.title)
+    if (releaseId) {
+      playSource("release", releaseId, sourceLabel ?? track.release?.title ?? track.title, track.id)
+    } else {
+      playSource("track", track.id, sourceLabel ?? track.title)
+    }
   }
 
   return (
@@ -207,7 +214,7 @@ export default function TrackRow({
       </td>
 
       <td className="w-8 py-2 pr-2">
-        <TrackMenu track={track} sourceLabel={sourceLabel} />
+        <TrackMenu track={track} sourceLabel={sourceLabel} releaseId={releaseId} />
       </td>
     </tr>
   )

@@ -17,9 +17,11 @@ import type { PlaybackEnvelope, TrackSummary, ReleaseTrackItem } from "@/api/typ
 interface TrackMenuProps {
   readonly track: TrackSummary | ReleaseTrackItem
   readonly sourceLabel?: string
+  /** When set, "Play" queues the whole release (starting at this track) instead of just this track. */
+  readonly releaseId?: number
 }
 
-export default function TrackMenu({ track, sourceLabel }: TrackMenuProps) {
+export default function TrackMenu({ track, sourceLabel, releaseId }: TrackMenuProps) {
   const navigate = useNavigate()
   const sessionId      = usePlayerStore((s) => s.session?.id)
   const playSource     = usePlayerStore((s) => s.playSource)
@@ -29,7 +31,11 @@ export default function TrackMenu({ track, sourceLabel }: TrackMenuProps) {
   const release = track.release
 
   async function handlePlay() {
-    await playSource("track", track.id, sourceLabel ?? track.title)
+    if (releaseId) {
+      await playSource("release", releaseId, sourceLabel ?? release?.title ?? track.title, track.id)
+    } else {
+      await playSource("track", track.id, sourceLabel ?? track.title)
+    }
   }
 
   async function handleInstantMix() {

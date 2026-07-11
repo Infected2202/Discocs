@@ -7,6 +7,8 @@ interface TrackTableProps {
   readonly showRelease?: boolean
   readonly sourceLabel?: string
   readonly indexOffset?: number
+  /** When set, playing any row queues the whole release (starting at that track) instead of just the one track. */
+  readonly releaseId?: number
 }
 
 export default function TrackTable({
@@ -15,6 +17,7 @@ export default function TrackTable({
   showRelease = true,
   sourceLabel,
   indexOffset = 0,
+  releaseId,
 }: TrackTableProps) {
   if (tracks.length === 0) return null
 
@@ -40,6 +43,7 @@ export default function TrackTable({
             showArtwork={showArtwork}
             showRelease={showRelease}
             sourceLabel={sourceLabel}
+            releaseId={releaseId}
           />
         ))}
       </tbody>
