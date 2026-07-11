@@ -65,14 +65,15 @@ Each stage is self-contained, tested, and builds on the previous. Strict order:
      only builds backend/frontend/bot (the worker image isn't built in CI),
      and the job runs in the backend process anyway.
    - Runtime dep: the real UMAP reduction needs `umap-learn` in the **backend**
-     image. Tests use an injected fake projector, so CI (test/sonar/trivy) does
+     image. Tests use an injected fake projector, so CI (test/sonar) does
      **not** need it. `scikit-learn` is already pinned transitively in
-     `uv.lock`; `umap-learn` is not. `deploy/backend/Dockerfile` uses
-     `uv sync --frozen`, so `--extra map` can't be selected until `uv.lock` is
-     regenerated (`uv lock`, run wherever uv is available — CI agent, not a dev
-     box). **Deferred to deployment finalization** (before the feature is
-     called done); until then a prod projection build raises `ModuleNotFound`
-     for umap, but nothing else is affected.
+     `uv.lock`; `umap-learn` is not, and `deploy/backend/Dockerfile` syncs
+     `--frozen`, so `--extra map` can't be selected without regenerating the
+     lock. **Resolved:** the Dockerfile installs it as a separate layer on top
+     of the frozen venv — `uv pip install --python /app/.venv/bin/python
+     "umap-learn>=0.5" "numpy<2"` (numpy pin so umap's transitive deps don't
+     drag in numpy 2.x and break essentia-tensorflow). The CI Build&Push + Trivy
+     scan of the backend image exercise this install. **← done**
 4. **Admin UI** — `<section id="atlas">` in `app/ui.html`, WebGL via CDN,
    pan/zoom/hover/click, color-by, filters, region/mix overlays, inspection,
    2D-vs-embedding-space UX distinction.

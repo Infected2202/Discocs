@@ -72,11 +72,22 @@ progress-job mechanism (`create_progress_job` / `update_progress_job`).
 
 The real reduction needs `umap-learn` in the **backend** image (the `[map]`
 optional extra: `umap-learn`, `scikit-learn`). Tests use the fake projector, so
-CI (test/sonar/trivy) does not need it. `scikit-learn` is already pinned
-transitively in `uv.lock`; `umap-learn` is not, and the backend image installs
-with `uv sync --frozen`, so selecting `--extra map` requires regenerating the
-lock (`uv lock`) first. Until that lands, a prod projection build raises a
-`ModuleNotFound` for umap — nothing else is affected.
+CI (test/sonar) does not need it. `scikit-learn` is already pinned transitively
+in `uv.lock`; `umap-learn` is not, and the backend image installs with `uv sync
+--frozen`, so it cannot be selected via `--extra map` without regenerating the
+lock. Instead, `deploy/backend/Dockerfile` installs it as a **separate layer on
+top of the frozen venv**:
+
+```dockerfile
+uv pip install --python /app/.venv/bin/python "umap-learn>=0.5" "numpy<2"
+```
+
+The `numpy<2` constraint keeps umap's transitive deps from dragging in numpy
+2.x, which would break `essentia-tensorflow`. The backend image build (CI
+Build&Push, plus the Trivy scan of that image) exercises this install, so a
+broken dependency layer fails the pipeline rather than silently shipping. The
+worker image does **not** need umap — the projection build runs in the backend
+process, never the per-track worker queue.
 
 ## Entry points
 

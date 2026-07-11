@@ -20,6 +20,14 @@ COPY app ./app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --extra essentia
 
+# umap-learn питает построение 2D-проекции коллекции (embedding-atlas / карта,
+# см. docs/collection-map.md). Его нет в uv.lock (backend синкается --frozen),
+# а импортируется он лениво — поэтому доставляем extra `map` отдельным слоем
+# поверх frozen-venv. numpy держим <2, чтобы транзитивные зависимости umap не
+# затащили numpy 2.x и не сломали essentia-tensorflow.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /app/.venv/bin/python "umap-learn>=0.5" "numpy<2"
+
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 7752
 

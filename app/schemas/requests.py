@@ -163,7 +163,7 @@ class IndexRequest(BaseModel):
 
 
 class MapProjectionBuildRequest(BaseModel):
-    """Enqueue a collection-map 2D projection build (runs in the worker)."""
+    """Enqueue a collection-map 2D projection build (runs as a backend background task)."""
 
     model: str = "discogs_multi"
     profile: str = "umap_local"
