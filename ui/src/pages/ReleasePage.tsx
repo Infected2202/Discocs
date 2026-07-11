@@ -167,7 +167,6 @@ export default function ReleasePage() {
       {recsData?.available && recsData.items.length > 0 && (
         <Shelf
           title="Recommended Albums"
-          shelfKey="release_recommendations"
           items={recsData.items.map((item) => ({
             id: item.entity_id,
             type: "release" as const,
