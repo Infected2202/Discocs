@@ -616,3 +616,63 @@ def _index_job(job_id: str, model: str) -> None:
     except Exception as exc:
         logger.exception("Index job failed job_id=%s model=%s", job_id, model)
         finish_job(job_id, "failed", str(exc))
+
+
+def _build_map_projection_job(
+    job_id: str,
+    model_name: str,
+    profile: str,
+    force: bool,
+) -> None:
+    """Build a collection-map 2D projection in the background.
+
+    Uses the durable progress-job mechanism (this is a progress job created by
+    the API before dispatch). The heavy UMAP/PCA reduction lives in
+    app.projection.build_projection with a lazily imported reducer, so the
+    worker image needs the ``[map]`` extra installed.
+    """
+    from app.api.deps import context
+    from app.projection import build_projection
+    store = None
+    try:
+        store, _settings = context()
+        logger.info(
+            "Starting map projection build job job_id=%s model=%s profile=%s force=%s",
+            job_id, model_name, profile, force,
+        )
+        store.update_progress_job(
+            job_id, status="running",
+            message=f"Building {profile} map projection for {model_name}",
+        )
+
+        def progress(message: str) -> None:
+            store.update_progress_job(job_id, message=message)
+
+        projection = build_projection(
+            store, model_name=model_name, profile=profile,
+            force=force, progress=progress,
+        )
+        store.update_progress_job(
+            job_id,
+            done=projection.projected_count,
+            total=projection.projected_count,
+            status="completed",
+            message=(
+                f"Map projection ready: {projection.projected_count} points"
+                f" ({projection.skipped_count} skipped)"
+            ),
+            finished=True,
+        )
+        logger.info(
+            "Finished map projection build job job_id=%s model=%s profile=%s points=%s skipped=%s",
+            job_id, model_name, profile, projection.projected_count, projection.skipped_count,
+        )
+    except Exception as exc:
+        logger.exception(
+            "Map projection build job failed job_id=%s model=%s profile=%s",
+            job_id, model_name, profile,
+        )
+        if store is not None:
+            store.update_progress_job(job_id, status="failed", message=str(exc), finished=True)
+        else:
+            finish_job(job_id, "failed", str(exc))

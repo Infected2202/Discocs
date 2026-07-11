@@ -222,6 +222,24 @@ class MapAtlasStoreMixin:
         xy = np.array([(row["x"], row["y"]) for row in rows], dtype=np.float32)
         return ids, xy
 
+    def get_map_projection_point(
+        self,
+        projection_id: str,
+        track_id: int,
+    ) -> tuple[float, float] | None:
+        """Return the (x, y) map coordinate for one track, or None if absent."""
+        with self.connect() as conn:  # type: ignore[attr-defined]
+            row = conn.execute(
+                """
+                SELECT x, y FROM map_projection_points
+                WHERE projection_id = ? AND track_id = ?
+                """,
+                (projection_id, int(track_id)),
+            ).fetchone()
+        if row is None:
+            return None
+        return (float(row["x"]), float(row["y"]))
+
     def load_projection_source(
         self,
         model_name: str,

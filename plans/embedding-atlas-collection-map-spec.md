@@ -56,9 +56,23 @@ Each stage is self-contained, tested, and builds on the previous. Strict order:
    move to stage 3 (wired where they are reachable/testable via TestClient),
    to avoid landing untested plumbing here. **← done**
 3. **Map API** — `app/api/map.py` router + background projection build job:
-   `POST` build / list / points (typed arrays) / dimensions / track /
-   neighbors (HNSW) / mixes / regions. Happy + error paths. Worker image gets
-   the `[map]` extra installed here (where the job actually runs).
+   `POST` build / list / points (typed arrays) / dimensions / color / track /
+   neighbors (HNSW) / mixes / regions. Happy + error paths. **← done**
+   - Execution: the build runs as a **backend `BackgroundTask`** (same pattern
+     as `flow-profile` / `release-aggregates`), not in the per-track analysis
+     worker queue — a whole-model projection doesn't fit a per-track task.
+     The plan's earlier "worker container" wording was wrong: the CI Build&Push
+     only builds backend/frontend/bot (the worker image isn't built in CI),
+     and the job runs in the backend process anyway.
+   - Runtime dep: the real UMAP reduction needs `umap-learn` in the **backend**
+     image. Tests use an injected fake projector, so CI (test/sonar/trivy) does
+     **not** need it. `scikit-learn` is already pinned transitively in
+     `uv.lock`; `umap-learn` is not. `deploy/backend/Dockerfile` uses
+     `uv sync --frozen`, so `--extra map` can't be selected until `uv.lock` is
+     regenerated (`uv lock`, run wherever uv is available — CI agent, not a dev
+     box). **Deferred to deployment finalization** (before the feature is
+     called done); until then a prod projection build raises `ModuleNotFound`
+     for umap, but nothing else is affected.
 4. **Admin UI** — `<section id="atlas">` in `app/ui.html`, WebGL via CDN,
    pan/zoom/hover/click, color-by, filters, region/mix overlays, inspection,
    2D-vs-embedding-space UX distinction.

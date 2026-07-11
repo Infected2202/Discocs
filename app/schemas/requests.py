@@ -162,6 +162,14 @@ class IndexRequest(BaseModel):
     model: str = "discogs_multi"
 
 
+class MapProjectionBuildRequest(BaseModel):
+    """Enqueue a collection-map 2D projection build (runs in the worker)."""
+
+    model: str = "discogs_multi"
+    profile: str = "umap_local"
+    force: bool = False
+
+
 # ---------------------------------------------------------------------------
 # Navidrome
 # ---------------------------------------------------------------------------
