@@ -1135,6 +1135,27 @@
           <label><span class="label-title">Prepared pool</span>
             <input id="autoplayCandidateCount" type="number" min="1" max="500" value="50">
           </label>
+          <label><span class="label-title">Max per artist <span class="info" data-tooltip="Limits repeated artists among autoplay-added tracks currently in the queue. Lower values increase variety.">(i)</span></span>
+            <input id="autoplayMaxPerArtist" type="number" min="1" max="20" value="2">
+          </label>
+          <label><span class="label-title">Max per release <span class="info" data-tooltip="Limits repeated albums/releases among autoplay-added tracks currently in the queue.">(i)</span></span>
+            <input id="autoplayMaxPerRelease" type="number" min="1" max="20" value="1">
+          </label>
+          <label><span class="label-title">Source weight <span class="info" data-tooltip="How strongly candidate scoring favors similarity to the active source (track/release/artist/mix).">(i)</span></span>
+            <input id="autoplaySourceWeight" type="number" min="0" max="2" step="0.05" value="0.8">
+          </label>
+          <label><span class="label-title">Accepted weight <span class="info" data-tooltip="How strongly candidate scoring favors similarity to tracks accepted (liked/completed/replayed) in this session.">(i)</span></span>
+            <input id="autoplayAcceptedWeight" type="number" min="0" max="2" step="0.05" value="0.35">
+          </label>
+          <label><span class="label-title">Personal weight <span class="info" data-tooltip="How strongly candidate scoring favors your overall listening-history preference for a track.">(i)</span></span>
+            <input id="autoplayPersonalWeight" type="number" min="0" max="2" step="0.05" value="0.2">
+          </label>
+          <label><span class="label-title">Exploration ratio <span class="info" data-tooltip="How much scoring rewards fresh/unplayed candidates. 0 sticks to familiar tracks, 1 favors novelty.">(i)</span></span>
+            <input id="autoplayExplorationRatio" type="number" min="0" max="1" step="0.01" value="0.08">
+          </label>
+          <label><span class="label-title">Recent skip penalty <span class="info" data-tooltip="How strongly scoring penalizes candidates similar to tracks skipped/disliked in this session.">(i)</span></span>
+            <input id="autoplayRecentSkipPenalty" type="number" min="0" max="2" step="0.05" value="0.45">
+          </label>
           <div class="meta">Autoplay continues the active source first; chips lightly adjust reranking.</div>
         </div>
         <div class="settings-pane" data-settings-pane="albums">
@@ -1218,7 +1239,10 @@
       "workerDownloadConcurrency", "workerSubmitBatchSize", "workerLeaseSeconds",
       "workerMaxTasksBeforeExit",
       "k", "maxPerArtist", "excludeSameAlbum",
-      "textSearchCount", "textSearchMinSimilarity", "textSearchMaxPerArtist", "textSearchExcludeSameAlbum"
+      "textSearchCount", "textSearchMinSimilarity", "textSearchMaxPerArtist", "textSearchExcludeSameAlbum",
+      "autoplayVisibleBuffer", "autoplayCandidateCount", "autoplayMaxPerArtist", "autoplayMaxPerRelease",
+      "autoplaySourceWeight", "autoplayAcceptedWeight", "autoplayPersonalWeight", "autoplayExplorationRatio",
+      "autoplayRecentSkipPenalty"
     ];
     const NAVIDROME_SETTINGS_FIELDS = [
       "navidromeUrl", "navidromeUser", "navidromeAuthMode", "navidromeTimeoutSeconds",
@@ -2368,6 +2392,13 @@
       return {
         autoplay_visible_buffer: Number(document.getElementById("autoplayVisibleBuffer")?.value || 5),
         autoplay_candidate_count: Number(document.getElementById("autoplayCandidateCount")?.value || 200),
+        autoplay_max_per_artist: Number(document.getElementById("autoplayMaxPerArtist")?.value || 2),
+        autoplay_max_per_release: Number(document.getElementById("autoplayMaxPerRelease")?.value || 1),
+        autoplay_source_weight: Number(document.getElementById("autoplaySourceWeight")?.value || 0.8),
+        autoplay_accepted_weight: Number(document.getElementById("autoplayAcceptedWeight")?.value || 0.35),
+        autoplay_personal_weight: Number(document.getElementById("autoplayPersonalWeight")?.value || 0.2),
+        autoplay_exploration_ratio: Number(document.getElementById("autoplayExplorationRatio")?.value || 0.08),
+        autoplay_recent_skip_penalty: Number(document.getElementById("autoplayRecentSkipPenalty")?.value || 0.45),
         autoplay_preference_chip: activePlaybackSession?.settings?.autoplay_preference_chip || "All",
       };
     }

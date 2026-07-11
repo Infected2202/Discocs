@@ -232,6 +232,12 @@ Also relevant: `PATCH /api/v1/playback/sessions/{id}` accepts
 shared track action menu — a related but distinct one-shot flow, not
 continuous autoplay.
 
+All `AutoplaySettings` fields (`visible_buffer`, `candidate_count`,
+`max_per_artist`, `max_per_release`, `source_weight`, `accepted_weight`,
+`personal_weight`, `exploration_ratio`, `recent_skip_penalty`) are editable in
+the legacy admin UI's Settings > Autoplay tab (`app/ui.html`) and sent as
+`autoplay_*` keys in the `settings` body of `POST /api/v1/autoplay/refill`.
+
 Implementation files: `app/autoplay.py`, `app/api/playback.py`.
 
 ## Generated Mixes
