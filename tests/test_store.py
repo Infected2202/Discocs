@@ -654,6 +654,56 @@ def test_store_prediction_round_trip_and_missing_counts(tmp_path: Path):
     ]
 
 
+def test_top_prediction_by_track_returns_rank1_and_skips_missing(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    ids = []
+    for name in ("first", "second", "third"):
+        track_id, _changed = store.upsert_track(
+            ScannedTrack(
+                path=(tmp_path / f"{name}.flac").resolve(),
+                artist="Artist",
+                title=name,
+                album="Album",
+                genre=None,
+                year=None,
+                duration=123.0,
+                file_size=100 + len(name),
+                mtime=1,
+            )
+        )
+        ids.append(track_id)
+
+    store.save_predictions(
+        ids[0],
+        "genre_discogs400",
+        [
+            TrackPrediction(label="Electronic---Techno", score=0.8, rank=1),
+            TrackPrediction(label="Electronic---House", score=0.5, rank=2),
+        ],
+    )
+    store.save_predictions(
+        ids[1],
+        "genre_discogs400",
+        [TrackPrediction(label="Rock---Punk", score=0.6, rank=1)],
+    )
+    # A different head for ids[0] must not leak into the genre lookup.
+    store.save_predictions(
+        ids[0],
+        "mtg_jamendo_genre",
+        [TrackPrediction(label="ambient", score=0.9, rank=1)],
+    )
+
+    tops = store.top_prediction_by_track("genre_discogs400", ids)
+
+    # Only rank-1 rows, only the requested head; ids[2] (no prediction) absent.
+    assert tops == {
+        ids[0]: ("Electronic---Techno", 0.8),
+        ids[1]: ("Rock---Punk", 0.6),
+    }
+    assert store.top_prediction_by_track("genre_discogs400", []) == {}
+
+
 def test_store_model_output_round_trip_and_missing_pack_counts(tmp_path: Path):
     store = Store(tmp_path / "app.db")
     store.init()

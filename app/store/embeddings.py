@@ -288,6 +288,38 @@ class EmbeddingsStoreMixin:
             )
         return predictions
 
+    def top_prediction_by_track(
+        self,
+        model_name: str,
+        track_ids: list[int],
+        *,
+        rank: int = 1,
+    ) -> dict[int, tuple[str, float]]:
+        """Return ``{track_id: (label, score)}`` for one rank of a head model.
+
+        Bulk lookup backing the map's genre-gradient coloring: the rank-1
+        prediction of, e.g., ``genre_discogs400`` for every projected track in
+        a single query (mirrors ``get_tracks``' single-``IN`` shape, which
+        already handles the full projection at 49k tracks). Tracks with no
+        prediction for the model are simply absent from the result.
+        """
+        ids = list(dict.fromkeys(int(t) for t in track_ids))
+        if not ids:
+            return {}
+        placeholders = ", ".join("?" for _ in ids)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT track_id, label, score FROM track_predictions
+                WHERE model_name = ? AND rank = ? AND track_id IN ({placeholders})
+                """,
+                (model_name, int(rank), *ids),
+            ).fetchall()
+        return {
+            int(row["track_id"]): (str(row["label"]), float(row["score"]))
+            for row in rows
+        }
+
     def count_predictions(self, model_name: str) -> int:
         with self.connect() as conn:
             return int(

@@ -30,6 +30,11 @@ router = APIRouter(prefix="/api/map")
 _TRACK_NOT_FOUND = "Track not found"
 _PROJECTION_NOT_FOUND = "Projection not found"
 
+# Discogs-EffNet 400-genre classifier head. Its predictions (rank-1 label like
+# "Electronic---House" + score) drive the genre-gradient color dimension. The
+# dimension is only offered when at least one track has been classified.
+GENRE_HEAD_MODEL = "genre_discogs400"
+
 # Color/filter dimensions derived from track metadata (always available).
 _METADATA_DIMENSIONS = [
     {"key": "artist", "label": "Artist", "kind": "categorical"},
@@ -173,6 +178,31 @@ def get_projection_points(projection_id: str) -> dict[str, object]:
     }
 
 
+@router.get(
+    "/projections/{projection_id}/labels",
+    responses={404: {"description": _PROJECTION_NOT_FOUND}},
+)
+def get_projection_labels(projection_id: str) -> dict[str, object]:
+    """Bulk artist/title per point (parallel arrays), for hover tooltips.
+
+    Kept separate from `/points` so the coordinate payload stays compact; the
+    client fetches labels once and shows "artist — title" on hover.
+    """
+    store, _settings = context()
+    _require_projection(store, projection_id)
+    ids, _xy = store.load_map_projection_points(projection_id)
+    track_ids = ids.tolist()
+    tracks = store.get_tracks(track_ids)
+    artists = [getattr(tracks.get(tid), "artist", None) if tracks.get(tid) else None for tid in track_ids]
+    titles = [getattr(tracks.get(tid), "title", None) if tracks.get(tid) else None for tid in track_ids]
+    return {
+        "projection_id": projection_id,
+        "track_ids": track_ids,
+        "artist": artists,
+        "title": titles,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Color / filter dimensions
 # ---------------------------------------------------------------------------
@@ -185,6 +215,10 @@ def get_dimensions(projection: str = Query(..., description="Projection id")) ->
     store, _settings = context()
     proj = _require_projection(store, projection)
     dimensions = list(_METADATA_DIMENSIONS)
+    if store.count_predictions(GENRE_HEAD_MODEL) > 0:
+        dimensions.append(
+            {"key": "genre_discogs400", "label": "Genre (Discogs400)", "kind": "genre-gradient"}
+        )
     flow_profile = store.get_flow_profile(proj.model_name)
     if flow_profile is not None and store.count_flow_regions(flow_profile.id) > 0:
         dimensions.append({"key": "region", "label": "Taste region", "kind": "categorical"})
@@ -223,6 +257,23 @@ def get_projection_color(projection_id: str, dimension: str) -> dict[str, object
     elif dimension == "mix":
         membership = _mix_membership(store)
         values = [(membership.get(tid) or [None])[0] for tid in track_ids]
+    elif dimension == "genre_discogs400":
+        # Rank-1 Discogs400 classification per track. The client colors by the
+        # top-level genre (before "---") and modulates intensity by score;
+        # tracks the classifier never saw come back as null (rendered gray).
+        tops = store.top_prediction_by_track(GENRE_HEAD_MODEL, track_ids)
+        values = []
+        for tid in track_ids:
+            entry = tops.get(tid)
+            if entry is None:
+                values.append(None)
+            else:
+                label, score = entry
+                values.append({
+                    "genre": label.split("---", 1)[0],
+                    "style": label,
+                    "score": score,
+                })
     else:
         raise HTTPException(status_code=400, detail=f"Unknown color dimension: {dimension}")
 

@@ -14,7 +14,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.models import FlowRegionTrack, SimilarTrack
+from app.models import FlowRegionTrack, SimilarTrack, TrackPrediction
 from app.projection import build_projection
 from app.scanner import ScannedTrack
 from app.store import INITIALIZED_DB_PATHS, Store
@@ -279,6 +279,63 @@ def test_color_unknown_dimension_returns_400(tmp_path: Path, monkeypatch):
     response = client.get(f"/api/map/projections/{projection_id}/color/loudness")
 
     assert response.status_code == 400
+
+
+def test_labels_endpoint_returns_artist_and_title(tmp_path: Path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    projection_id, ids = _seed_projection(store, tmp_path)
+    client = TestClient(app)
+
+    data = client.get(f"/api/map/projections/{projection_id}/labels").json()
+
+    # Aligned to sorted track_id order: a(Alpha), b(Beta), c(Alpha).
+    assert data["track_ids"] == sorted(ids)
+    assert data["artist"] == ["Alpha", "Beta", "Alpha"]
+    assert data["title"] == ["Title a", "Title b", "Title c"]
+
+
+def test_dimensions_include_genre_discogs400_only_when_classified(tmp_path: Path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    projection_id, ids = _seed_projection(store, tmp_path)
+    client = TestClient(app)
+
+    # No genre predictions yet → dimension absent.
+    keys = {d["key"] for d in client.get(f"/api/map/dimensions?projection={projection_id}").json()["dimensions"]}
+    assert "genre_discogs400" not in keys
+
+    store.save_predictions(
+        ids[0], "genre_discogs400",
+        [TrackPrediction(label="Electronic---Techno", score=0.8, rank=1)],
+    )
+    keys = {d["key"] for d in client.get(f"/api/map/dimensions?projection={projection_id}").json()["dimensions"]}
+    assert "genre_discogs400" in keys
+
+
+def test_color_genre_discogs400_returns_top_genre_score_and_null(tmp_path: Path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    projection_id, ids = _seed_projection(store, tmp_path)
+    # ids[0] and ids[2] classified; ids[1] left unclassified → null.
+    store.save_predictions(
+        ids[0], "genre_discogs400",
+        [
+            TrackPrediction(label="Electronic---Techno", score=0.8, rank=1),
+            TrackPrediction(label="Electronic---House", score=0.5, rank=2),
+        ],
+    )
+    store.save_predictions(
+        ids[2], "genre_discogs400",
+        [TrackPrediction(label="Rock---Punk", score=0.6, rank=1)],
+    )
+    client = TestClient(app)
+
+    values = client.get(
+        f"/api/map/projections/{projection_id}/color/genre_discogs400"
+    ).json()["values"]
+
+    # Sorted track_id order: ids[0], ids[1], ids[2]. Top-level genre before "---".
+    assert values[0] == {"genre": "Electronic", "style": "Electronic---Techno", "score": 0.8}
+    assert values[1] is None
+    assert values[2] == {"genre": "Rock", "style": "Rock---Punk", "score": 0.6}
 
 
 # ---------------------------------------------------------------------------

@@ -109,6 +109,7 @@ GET  /api/map/projections?model=            # list (+ stale flag)
 POST /api/map/projections                   # enqueue a build (model, profile, force)
 GET  /api/map/projections/{id}              # one projection
 GET  /api/map/projections/{id}/points       # bulk points as parallel typed arrays
+GET  /api/map/projections/{id}/labels       # bulk artist/title per point (hover tooltips)
 GET  /api/map/dimensions?projection=        # available color/filter dimensions
 GET  /api/map/projections/{id}/color/{dim}  # per-point values, aligned to points order
 GET  /api/map/tracks/{id}?projection=       # inspection (coords, region/mix, predictions)
@@ -121,6 +122,16 @@ Points ship as `{track_ids: [...], x: [...], y: [...]}` — compact parallel
 arrays, not one JSON object per point. Color values come back aligned to the
 same track-id order so the client can recolor without re-fetching coordinates.
 
+Color dimensions are the metadata fields (`artist` / `release` / `genre` /
+`year`) plus `region` / `mix` when present, and **`genre_discogs400`** when the
+Discogs-EffNet 400-genre classifier head has been run on any track. For the
+classifier dimension each value is `{genre, style, score}` (the rank-1
+prediction, e.g. `{"genre":"Electronic","style":"Electronic---House",
+"score":0.81}`) or `null` for tracks the head never saw — the store's
+`top_prediction_by_track(model, track_ids)` pulls all rank-1 rows in one query.
+The client colors by the **top-level genre** (before `---`) and dims each point
+by classifier confidence, leaving unclassified points gray.
+
 The `/neighbors` endpoint delegates to `Recommender(...).similar(seed)` — real
 HNSW/cosine similarity over the original embeddings, never the map's x/y.
 
@@ -128,9 +139,14 @@ HNSW/cosine similarity over the original embeddings, never the map's x/y.
 
 - deck.gl `ScatterplotLayer` on an `OrthographicView`, loaded from CDN; one
   WebGL layer fed from the `/points` typed arrays (no per-point DOM nodes).
+- Hovering a point shows **`artist — title`** (from `/labels`, fetched once per
+  projection and keyed by track id), falling back to `#id` if a label is
+  missing.
 - Controls: projection selector (with stale flag), a Build panel (POST + job
   polling), color-by (`artist` / `release` / `genre` / `year` / `region` /
-  `mix`) with a legend, and an overlay highlighter for taste regions / mixes.
+  `mix`, plus **Genre (Discogs400)** when classified — hue = top-level genre,
+  brightness = classifier confidence) with a legend, and an overlay highlighter
+  for taste regions / mixes.
 - Click a point to inspect: metadata, map coords, region/mix membership, top
   Discogs tags, and the track's **real HNSW neighbors** — highlighted on the
   map and labeled as coming from the original embedding space, not map

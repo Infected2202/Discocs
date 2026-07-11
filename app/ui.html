@@ -1774,12 +1774,23 @@
       [247,182,210],[219,219,141],[158,218,229],[57,59,121],[140,162,82],
     ];
     const ATLAS_GRAY = [110,116,128];
+    // Fixed hues for the 15 Discogs top-level genres, so the genre-gradient
+    // color dimension is stable and meaningful (genre families read as color
+    // regions). Unknown/extra top genres fall back to ATLAS_PALETTE by order.
+    const ATLAS_GENRE_COLORS = {
+      "Electronic": [0,200,220], "Rock": [220,50,47], "Hip Hop": [255,140,0],
+      "Jazz": [148,103,189], "Funk / Soul": [227,90,180], "Pop": [255,105,180],
+      "Folk, World, & Country": [44,160,44], "Classical": [214,178,60],
+      "Reggae": [120,200,50], "Blues": [40,90,200], "Latin": [230,110,60],
+      "Non-Music": [150,130,115], "Stage & Screen": [60,190,165],
+      "Brass & Military": [150,150,40], "Children's": [240,175,200],
+    };
     const atlasState = {
       deck: null, projection: null, projections: [],
       ids: [], xs: [], ys: [], index: new Map(),
       colorBy: "", colors: null, selectedId: null,
       neighborIds: [], overlay: "", overlayIds: new Set(),
-      mixes: [], regions: [],
+      mixes: [], regions: [], labelById: new Map(),
     };
     function atlasEl(id) { return document.getElementById(id); }
     async function atlasInit(params) {
@@ -1827,6 +1838,7 @@
       if (!p) { atlasClearMap("No projection selected."); return; }
       if (updateUrl && !applyingRoute) writeRoutePatch({view: "atlas", projection: id}, {replace: true});
       await atlasLoadPoints(id);
+      await atlasLoadLabels(id);
       await atlasLoadDimensions(id);
       await atlasLoadOverlays(id);
       await atlasApplyColor();
@@ -1838,6 +1850,21 @@
       atlasState.xs = data.x || [];
       atlasState.ys = data.y || [];
       atlasState.index = new Map(atlasState.ids.map((tid, i) => [tid, i]));
+    }
+    async function atlasLoadLabels(id) {
+      // "artist — title" per track for hover tooltips. Keyed by track_id so it
+      // stays correct regardless of point ordering. Degrades to #id on failure.
+      atlasState.labelById = new Map();
+      let data;
+      try { data = await json(`/api/map/projections/${encodeURIComponent(id)}/labels`); }
+      catch (err) { return; }
+      const ids = data.track_ids || [], artists = data.artist || [], titles = data.title || [];
+      ids.forEach((tid, i) => {
+        const artist = (artists[i] || "").trim();
+        const title = (titles[i] || "").trim();
+        const label = artist && title ? `${artist} — ${title}` : (title || artist || `#${tid}`);
+        atlasState.labelById.set(tid, label);
+      });
     }
     async function atlasLoadDimensions(id) {
       const select = atlasEl("atlasColorBy");
@@ -1876,8 +1903,39 @@
       catch (err) { atlasState.colors = null; return; }
       const byId = new Map((payload.track_ids || []).map((tid, i) => [tid, payload.values[i]]));
       const values = atlasState.ids.map(tid => byId.has(tid) ? byId.get(tid) : null);
+      if (dim === "genre_discogs400") {
+        atlasState.colors = atlasGenreColors(values);
+        return;
+      }
       const numeric = values.every(v => v === null || typeof v === "number") && dim === "year";
       atlasState.colors = numeric ? atlasNumericColors(values) : atlasCategoricalColors(values);
+    }
+    function atlasGenreColors(values) {
+      // Each value is {genre, style, score} or null. Hue = top-level Discogs
+      // genre; brightness = classifier confidence (min-max normalized across
+      // classified points). Unclassified tracks (null) stay gray.
+      const counts = new Map();
+      values.forEach(v => { if (v && v.genre) counts.set(v.genre, (counts.get(v.genre)||0)+1); });
+      const order = [...counts.entries()].sort((a,b) => b[1]-a[1]).map(([g]) => g);
+      const colorFor = new Map();
+      let palIdx = 0;
+      order.forEach(g => {
+        const base = ATLAS_GENRE_COLORS[g] || ATLAS_PALETTE[palIdx++ % ATLAS_PALETTE.length];
+        colorFor.set(g, base);
+      });
+      const scores = values.filter(v => v && typeof v.score === "number").map(v => v.score);
+      const min = scores.length ? Math.min(...scores) : 0;
+      const max = scores.length ? Math.max(...scores) : 1;
+      const span = (max - min) || 1;
+      const legend = order.slice(0, 15).map(g => ({label: g, color: colorFor.get(g)}));
+      atlasRenderLegend(legend, "genre", "brightness = classifier confidence");
+      return values.map(v => {
+        if (!v || !v.genre) return ATLAS_GRAY;
+        const base = colorFor.get(v.genre) || ATLAS_GRAY;
+        const t = typeof v.score === "number" ? (v.score - min) / span : 0.5;
+        const k = 0.4 + 0.6 * t;  // fade low-confidence toward the dark map bg
+        return [Math.round(base[0]*k), Math.round(base[1]*k), Math.round(base[2]*k)];
+      });
     }
     function atlasNumericColors(values) {
       const nums = values.filter(v => typeof v === "number");
@@ -1912,12 +1970,14 @@
         return i < ATLAS_PALETTE.length ? ATLAS_PALETTE[i] : ATLAS_GRAY;
       });
     }
-    function atlasRenderLegend(entries, kind) {
+    function atlasRenderLegend(entries, kind, note) {
       const el = atlasEl("atlasLegend");
       if (!entries || !entries.length) { el.style.display = "none"; return; }
-      el.innerHTML = entries.map(e =>
+      const rows = entries.map(e =>
         `<div class="row"><span class="atlas-swatch" style="background:rgb(${e.color[0]},${e.color[1]},${e.color[2]})"></span><span>${esc(e.label)}</span></div>`
-      ).join("");
+      );
+      if (note) rows.push(`<div class="meta" style="margin-top:6px">${esc(note)}</div>`);
+      el.innerHTML = rows.join("");
       el.style.display = "block";
     }
     async function atlasSetOverlay(value) {
@@ -2026,8 +2086,11 @@
           views: new deck.OrthographicView({flipY: false}),
           initialViewState: atlasFitViewState(),
           controller: true,
-          getTooltip: ({index}) => index != null && index >= 0
-            ? {text: `#${atlasState.ids[index]}`} : null,
+          getTooltip: ({index}) => {
+            if (index == null || index < 0) return null;
+            const tid = atlasState.ids[index];
+            return {text: atlasState.labelById.get(tid) || `#${tid}`};
+          },
           layers,
         });
       } else {
