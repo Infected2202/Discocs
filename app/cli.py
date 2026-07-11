@@ -48,6 +48,7 @@ from app.navidrome_migration import (
     repair_navidrome_empty_releases,
 )
 from app.navidrome_sync import sync_navidrome_catalog
+from app.projection import DEFAULT_PROFILE, PROJECTION_PROFILES, build_projection
 from app.recommender import Recommender, build_index
 from app.scanner import AUDIO_EXTENSIONS, iter_audio_files, scan_music_folder
 from app.store import Store, similar_track_dict
@@ -2067,6 +2068,62 @@ def build_index_command(model: Annotated[str, typer.Option("--model")] = "discog
     path = build_index(store, settings, model)
     logger.info("Finished CLI build-index model=%s path=%s", model, path)
     typer.echo(f"index={path}")
+
+
+@cli.command("build-map")
+def build_map_command(
+    model: Annotated[str, typer.Option("--model")] = "discogs_multi",
+    profile: Annotated[str, typer.Option("--profile")] = DEFAULT_PROFILE,
+    force: Annotated[bool, typer.Option("--force/--no-force")] = False,
+) -> None:
+    """Build (or rebuild) a 2D collection-map projection for a model.
+
+    Diagnostic view only — real similarity keeps using the HNSW index.
+    """
+    if profile not in PROJECTION_PROFILES:
+        known = ", ".join(sorted(PROJECTION_PROFILES))
+        raise typer.BadParameter(f"Unknown profile '{profile}'. Known: {known}")
+    store, _settings = get_store_and_settings()
+    logger.info("Starting CLI build-map model=%s profile=%s force=%s", model, profile, force)
+    projection = build_projection(
+        store,
+        model_name=model,
+        profile=profile,
+        force=force,
+        progress=typer.echo,
+    )
+    logger.info(
+        "Finished CLI build-map model=%s profile=%s id=%s status=%s points=%s",
+        model, profile, projection.id, projection.status, projection.projected_count,
+    )
+    typer.echo(
+        f"projection={projection.id} status={projection.status} "
+        f"points={projection.projected_count} skipped={projection.skipped_count}"
+    )
+
+
+@cli.command("list-maps")
+def list_maps_command(
+    model: Annotated[str | None, typer.Option("--model")] = None,
+) -> None:
+    """List persisted collection-map projections."""
+    store, _settings = get_store_and_settings()
+    projections = store.list_map_projections(model)
+    if not projections:
+        typer.echo("No projections.")
+        return
+    for projection in projections:
+        stale = ""
+        if projection.status == "ready":
+            source_now = store.count_embeddings(projection.model_name)
+            if source_now != projection.source_embedding_count:
+                stale = f" STALE(src={source_now})"
+        typer.echo(
+            f"{projection.id}  {projection.model_name}/{projection.name}  "
+            f"{projection.method}  status={projection.status}  "
+            f"points={projection.projected_count}  "
+            f"src={projection.source_embedding_count}{stale}"
+        )
 
 
 @cli.command("similar-mix")

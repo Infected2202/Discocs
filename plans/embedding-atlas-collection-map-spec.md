@@ -47,12 +47,18 @@ Each stage is self-contained, tested, and builds on the previous. Strict order:
    delete, points round-trip, count), registered in `Store`. No heavy deps.
    Tests: create/get/list, update, points round-trip + ordering, replace,
    cascade delete, bad-shape rejection. **← done**
-2. **Projection + worker + CLI** — `app/projection.py` with a mockable
-   projector (lazy UMAP/PCA), `[map]` extra deps, worker job with progress,
-   `recs build-map` / `recs list-maps`. Missing/lost-track handling. Tests use
-   a fake projector (no UMAP import).
-3. **Map API** — `app/api/map.py` router: list / points (typed arrays) /
-   dimensions / track / neighbors (HNSW) / mixes / regions. Happy + error paths.
+2. **Projection service + CLI** — `app/projection.py` with a mockable
+   projector (lazy UMAP/PCA), profile registry, `[map]` extra deps, store
+   helpers (`find_map_projection`, `load_projection_source` which excludes
+   lost tracks), `recs build-map` / `recs list-maps` (with stale flag).
+   Missing/lost-track + empty-source + force-rebuild handling. Tests use a fake
+   projector (no UMAP import). The background **build job + `POST` endpoint**
+   move to stage 3 (wired where they are reachable/testable via TestClient),
+   to avoid landing untested plumbing here. **← done**
+3. **Map API** — `app/api/map.py` router + background projection build job:
+   `POST` build / list / points (typed arrays) / dimensions / track /
+   neighbors (HNSW) / mixes / regions. Happy + error paths. Worker image gets
+   the `[map]` extra installed here (where the job actually runs).
 4. **Admin UI** — `<section id="atlas">` in `app/ui.html`, WebGL via CDN,
    pan/zoom/hover/click, color-by, filters, region/mix overlays, inspection,
    2D-vs-embedding-space UX distinction.

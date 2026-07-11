@@ -171,6 +171,43 @@ def test_delete_projection_cascades_points(tmp_path: Path):
     assert store.count_map_projection_points(proj.id) == 0
 
 
+def test_find_map_projection(tmp_path: Path):
+    store = _store(tmp_path)
+    created = store.create_map_projection(
+        model_name="discogs_multi", name="umap_local", method="umap"
+    )
+
+    found = store.find_map_projection("discogs_multi", "umap_local")
+    assert found is not None
+    assert found.id == created.id
+
+    assert store.find_map_projection("discogs_multi", "pca") is None
+    assert store.find_map_projection("muq_mulan", "umap_local") is None
+
+
+def test_load_projection_source_excludes_missing(tmp_path: Path):
+    store = _store(tmp_path)
+    t1 = _make_track(store, tmp_path, "a")
+    t2 = _make_track(store, tmp_path, "b")
+    t3 = _make_track(store, tmp_path, "c")
+    for tid in (t1, t2, t3):
+        store.save_embedding(tid, "discogs_multi", np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float32))
+
+    # Mark one track as lost — it must be excluded from the projection source.
+    with store.connect() as conn:
+        conn.execute("UPDATE tracks SET missing_at = '2026-07-11T00:00:00Z' WHERE id = ?", (t2,))
+
+    ids, vectors = store.load_projection_source("discogs_multi")
+    assert ids.tolist() == sorted([t1, t3])
+    assert vectors.shape == (2, 4)
+    assert vectors.dtype == np.float32
+
+    # A model with no embeddings yields empty arrays.
+    empty_ids, empty_vecs = store.load_projection_source("muq_mulan")
+    assert empty_ids.shape == (0,)
+    assert empty_vecs.shape == (0, 0)
+
+
 def test_replace_points_rejects_bad_shape(tmp_path: Path):
     store = _store(tmp_path)
     proj = store.create_map_projection(

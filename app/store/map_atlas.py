@@ -101,6 +101,24 @@ class MapAtlasStoreMixin:
             rows = conn.execute(sql, params).fetchall()
         return [_row_to_map_projection(row) for row in rows]
 
+    def find_map_projection(
+        self,
+        model_name: str,
+        name: str,
+    ) -> MapProjection | None:
+        """Return the most recent projection for a (model, name) pair, if any."""
+        with self.connect() as conn:  # type: ignore[attr-defined]
+            row = conn.execute(
+                """
+                SELECT * FROM map_projections
+                WHERE model_name = ? AND name = ?
+                ORDER BY created_at DESC, id
+                LIMIT 1
+                """,
+                (model_name, name),
+            ).fetchone()
+        return _row_to_map_projection(row) if row is not None else None
+
     def update_map_projection(
         self,
         projection_id: str,
@@ -203,6 +221,35 @@ class MapAtlasStoreMixin:
         ids = np.array([int(row["track_id"]) for row in rows], dtype=np.int64)
         xy = np.array([(row["x"], row["y"]) for row in rows], dtype=np.float32)
         return ids, xy
+
+    def load_projection_source(
+        self,
+        model_name: str,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return (track_ids, vectors) to project for a model.
+
+        Only embeddings of non-missing tracks are returned, so lost files never
+        land on the map. Ordered by track_id. Empty catalog yields empty arrays.
+        """
+        with self.connect() as conn:  # type: ignore[attr-defined]
+            rows = conn.execute(
+                """
+                SELECT e.track_id, e.dim, e.vector
+                FROM embeddings e
+                JOIN tracks t ON t.id = e.track_id
+                WHERE e.model_name = ? AND t.missing_at IS NULL
+                ORDER BY e.track_id
+                """,
+                (model_name,),
+            ).fetchall()
+        if not rows:
+            return np.array([], dtype=np.int64), np.empty((0, 0), dtype=np.float32)
+        dim = int(rows[0]["dim"])
+        ids = np.array([int(row["track_id"]) for row in rows], dtype=np.int64)
+        vectors = np.vstack(
+            [np.frombuffer(row["vector"], dtype=np.float32, count=dim) for row in rows]
+        ).astype(np.float32)
+        return ids, vectors
 
     def count_map_projection_points(self, projection_id: str) -> int:
         with self.connect() as conn:  # type: ignore[attr-defined]

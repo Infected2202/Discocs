@@ -28,6 +28,12 @@ muq = [
   "torch>=2.1",
   "torchaudio>=2.1",
 ]
+map = [
+  # Collection-map / embedding-atlas 2D projections. Imported lazily; unit
+  # tests use an injected fake projector and do not require these.
+  "umap-learn>=0.5",
+  "scikit-learn>=1.3",
+]
 dev = [
   "httpx2>=2.4",
   "pytest>=8.2",
