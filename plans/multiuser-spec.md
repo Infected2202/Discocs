@@ -440,6 +440,18 @@ localhost/не-проксируемый префикс.
   потолок масштабирования.
 - **❓ Метрики** (`api/metrics.py`) — проверить при реализации, не отдаёт ли
   per-user данные без скоупа (вероятно каталожные/prom — низкий риск).
+- **✅ Схема не может уезжать вперёд кода (найдено при реализации).** Смена PK
+  preference-таблиц ломает существующие `ON CONFLICT(track_id)` upsert'ы, пока
+  в код не прокинут `user_id` — т.е. «горизонтальный» ЧП2 (вся схема разом)
+  завалил бы CI до ЧП3. Решение по реализации: катим **инкрементально**, чтобы
+  каждый пуш был зелёным. **ЧП2a (сделано):** аддитивные nullable `user_id` на
+  `playback_sessions`/`playback_events`/`flow_profiles`/`generated_mixes`/
+  `playlists` + индексы + owner-backfill инфраструктура (`DISCOCS_OWNER_USER`,
+  loud-fail без owner'а, идемпотентность, `VACUUM INTO`-бэкап, эвакуационная
+  проверка счётчиков) — `StoreBase._migrate_owner_backfill`,
+  `tests/test_multiuser_migration.py`. **Отложено:** PK-смена preference-таблиц
+  и `albums_for_you_cache` едет вместе со скоупом их store-методов (вертикальный
+  срез), чтобы upsert'ы не ломались в промежутке.
 
 ---
 

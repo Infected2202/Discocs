@@ -306,7 +306,31 @@ schema:
   other dashboard shelves are computed live.
 - `sessions` — web auth sessions; stores only the SHA-256 of the opaque
   session token, never the token itself, and no password (Navidrome
-  verifies credentials at login; see `docs/auth.md`).
+  verifies credentials at login; see `docs/auth.md`). Carries a nullable
+  `user_id` (Phase 2) binding the session to its `users` row.
+- `users` — application user identity (Phase 2 multiuser): internal `id`,
+  unique `navidrome_username`, `created_at`, `last_login_at`. Auto-created on
+  first successful login; the `id` is the FK used to scope personal tables.
+
+## Multiuser scoping (Phase 2, in progress)
+
+`plans/multiuser-spec.md` moves the schema from single-user to per-user. Rolled
+out incrementally so a schema change never lands ahead of the code that reads
+it:
+
+- **Additive `user_id` (done):** nullable `user_id` columns on
+  `playback_sessions`, `playback_events`, `flow_profiles`, `generated_mixes`,
+  `playlists`, plus supporting indexes. Pre-existing rows are back-filled to an
+  **owner** user on first upgrade (`StoreBase._migrate_owner_backfill`): the
+  owner is named by `DISCOCS_OWNER_USER` (a Navidrome username); if unscoped
+  rows exist and it is unset/unresolvable the migration raises rather than
+  leave `user_id` NULL. The step is idempotent (only NULL rows are touched) and
+  takes a `VACUUM INTO` backup (`app.db.premigrate-owner-<ts>.bak`) before
+  writing.
+- **Pending PK changes:** `user_track_preferences`, `user_release_preferences`,
+  `user_artist_preferences` (PK → `(user_id, entity_id)`) and
+  `albums_for_you_cache` (PK → `(user_id, model_name)`) migrate later, together
+  with the store methods that read them, so upserts never break mid-flight.
 
 ## Known Gaps vs. the Original Design
 

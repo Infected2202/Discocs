@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import json
+import os
 import sqlite3
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -90,6 +91,23 @@ logger = logging.getLogger(__name__)
 INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
 _INT_NOT_NULL_DEFAULT_0 = "INTEGER NOT NULL DEFAULT 0"
+
+# Phase 2 multiuser (plans/multiuser-spec.md §2). Personal tables that gain a
+# nullable ``user_id`` column and whose pre-existing rows are back-filled to the
+# owner user on first upgrade. PK-change tables (user_*_preferences,
+# albums_for_you_cache) migrate later, together with their store scoping, so a
+# schema change never lands ahead of the code that reads it.
+OWNER_BACKFILL_TABLES: tuple[str, ...] = (
+    "playback_sessions",
+    "playback_events",
+    "flow_profiles",
+    "generated_mixes",
+    "playlists",
+)
+# Env naming the owner (a Navidrome username) who inherits all pre-existing
+# personal data. Required only when unscoped rows actually exist — see
+# _migrate_owner_backfill.
+OWNER_USER_ENV = "DISCOCS_OWNER_USER"
 
 class StoreBase:
     def __init__(self, db_path: Path):
@@ -811,7 +829,35 @@ class StoreBase:
             # Phase 2: link a session to its user. Legacy (pre-users) sessions
             # keep user_id NULL and resolve it lazily via the users table.
             self._ensure_column(conn, "sessions", "user_id", "INTEGER")
+            # Phase 2: personal ownership on the additive tables (nullable so
+            # existing INSERTs keep working; back-filled to the owner below).
+            self._ensure_column(conn, "playback_sessions", "user_id", "INTEGER")
+            self._ensure_column(conn, "playback_events", "user_id", "INTEGER")
+            self._ensure_column(conn, "flow_profiles", "user_id", "INTEGER")
+            self._ensure_column(conn, "generated_mixes", "user_id", "INTEGER")
+            self._ensure_column(conn, "playlists", "user_id", "INTEGER")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_playback_sessions_user "
+                "ON playback_sessions(user_id, updated_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_playback_events_user_created "
+                "ON playback_events(user_id, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_flow_profiles_user "
+                "ON flow_profiles(user_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_generated_mixes_user_updated "
+                "ON generated_mixes(user_id, updated_at DESC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_playlists_user "
+                "ON playlists(user_id)"
+            )
             self._backfill_added_timestamps(conn)
+        self._migrate_owner_backfill()
 
     def _ensure_column(
         self,
@@ -841,5 +887,104 @@ class StoreBase:
             )
             WHERE added_at IS NULL
             """
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 2 multiuser: owner back-fill (plans/multiuser-spec.md §2)
+    # ------------------------------------------------------------------
+    def _count_unscoped_personal_rows(self, conn: sqlite3.Connection) -> int:
+        """Count rows across OWNER_BACKFILL_TABLES that still have user_id NULL.
+
+        Zero means either a fresh/empty DB or an already-migrated one — in both
+        cases the back-fill is a no-op and the owner env is not required.
+        """
+        total = 0
+        for table in OWNER_BACKFILL_TABLES:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS n FROM {table} WHERE user_id IS NULL"
+            ).fetchone()
+            total += int(row["n"])
+        return total
+
+    def _upsert_owner_user_id(
+        self, conn: sqlite3.Connection, navidrome_username: str, now: str
+    ) -> int:
+        """Ensure a users row for the owner exists; return its id.
+
+        Migration is not a login, so ``last_login_at`` is left NULL for a
+        freshly created owner and an existing owner row is not touched.
+        """
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO users (navidrome_username, created_at, last_login_at)
+            VALUES (?, ?, NULL)
+            """,
+            (navidrome_username, now),
+        )
+        row = conn.execute(
+            "SELECT id FROM users WHERE navidrome_username = ?",
+            (navidrome_username,),
+        ).fetchone()
+        return int(row["id"])
+
+    def _backup_db(self, tag: str) -> Path | None:
+        """Snapshot the live DB before a data migration (spec §2 safeguard #1).
+
+        Uses ``VACUUM INTO`` for a consistent single-file copy (WAL-safe). No-op
+        for in-memory or not-yet-created databases (tests / fresh installs).
+        """
+        if str(self.db_path) == ":memory:" or not self.db_path.exists():
+            return None
+        ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        dest = self.db_path.with_name(f"{self.db_path.name}.{tag}-{ts}.bak")
+        backup_conn = sqlite3.connect(self.db_path, isolation_level=None)
+        try:
+            backup_conn.execute("VACUUM INTO ?", (str(dest),))
+        finally:
+            backup_conn.close()
+        logger.info("Backed up %s -> %s before %s migration", self.db_path, dest, tag)
+        return dest
+
+    def _migrate_owner_backfill(self) -> None:
+        """Assign every pre-existing personal row to the owner user.
+
+        Idempotent: only rows with user_id NULL are touched, so re-running (a
+        second process, a restart) is a no-op. If unscoped rows exist but
+        ``DISCOCS_OWNER_USER`` is unset/unresolvable the migration raises rather
+        than silently orphaning history to NULL (spec §2 owner contract).
+        """
+        with self.connect() as conn:
+            pending = self._count_unscoped_personal_rows(conn)
+        if pending == 0:
+            return
+
+        owner = os.getenv(OWNER_USER_ENV, "").strip()
+        if not owner:
+            raise RuntimeError(
+                f"{OWNER_USER_ENV} is required to migrate {pending} pre-existing "
+                "personal row(s) to an owner; refusing to leave user_id NULL. "
+                "Set it to the owner's Navidrome username and restart."
+            )
+
+        self._backup_db("premigrate-owner")
+        now = utc_now()
+        # Single transaction: partial ownership is never observable.
+        with self.connect() as conn:
+            owner_id = self._upsert_owner_user_id(conn, owner, now)
+            for table in OWNER_BACKFILL_TABLES:
+                conn.execute(
+                    f"UPDATE {table} SET user_id = ? WHERE user_id IS NULL",
+                    (owner_id,),
+                )
+            remaining = self._count_unscoped_personal_rows(conn)
+            if remaining != 0:  # pragma: no cover - defensive
+                raise RuntimeError(
+                    f"owner back-fill left {remaining} personal row(s) unscoped"
+                )
+        logger.info(
+            "Owner back-fill: assigned %d personal row(s) to user_id=%d (%s)",
+            pending,
+            owner_id,
+            owner,
         )
 
