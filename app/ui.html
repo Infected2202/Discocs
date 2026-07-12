@@ -2100,14 +2100,19 @@
         getPosition: (_, {index}) => [atlasState.xs[index], atlasState.ys[index]],
         getFillColor: (_, {index}) => {
           const c = colors ? colors[index] : [120,140,200];
-          // Filtered-out points stay on the map as faint context, not removed.
-          if (filtering && !fset.has(fkeys[index])) return [c[0], c[1], c[2], 16];
+          // Filtered-out points are removed from the map (radius 0 below); zero
+          // their alpha too so no stray pixel/picking artifact remains.
+          if (filtering && !fset.has(fkeys[index])) return [c[0], c[1], c[2], 0];
           return [c[0], c[1], c[2], 255];
         },
-        getRadius: 3, radiusUnits: "pixels", radiusMinPixels: 1.5,
+        getRadius: (_, {index}) => (filtering && !fset.has(fkeys[index])) ? 0 : 3,
+        radiusUnits: "pixels", radiusMinPixels: 0,
         pickable: true,
         onClick: info => { if (info.index != null && info.index >= 0) atlasOnPick(info.index); },
-        updateTriggers: {getFillColor: [atlasState.colorBy, colors, atlasState.filterTick]},
+        updateTriggers: {
+          getFillColor: [atlasState.colorBy, colors, atlasState.filterTick],
+          getRadius: [atlasState.filterTick],
+        },
       }));
       if (atlasState.overlayIds.size) {
         const pts = [];
