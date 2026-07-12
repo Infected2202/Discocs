@@ -151,10 +151,19 @@ HNSW/cosine similarity over the original embeddings, never the map's x/y.
   `mix`, plus **Genre (Discogs400)** when classified — the default: one distinct
   color per style, brightness = classifier confidence) with a legend, and an
   overlay highlighter for taste regions / mixes.
-- Click a point to inspect: metadata, map coords, region/mix membership, top
-  Discogs tags, and the track's **real HNSW neighbors** — highlighted on the
-  map and labeled as coming from the original embedding space, not map
-  distance. Missing-index / neighbor errors degrade to a message.
+- **Legend filter**: legend rows for the discrete dimensions (style, artist,
+  release, genre, region, mix) are clickable — click one to isolate that value
+  on the map (others fade to faint context, not removed), **shift-click** to
+  toggle several at once. A "clear filter" affordance and count show while a
+  filter is active. Continuous scales (`year`) have no discrete keys and stay
+  non-clickable. The filter is client-side (dims points via fill alpha, no
+  refetch) and resets when the projection or color dimension changes.
+- Click a point to **load it into the persistent player** (same `playTrack`
+  path as the "Play" buttons elsewhere) and inspect it: metadata, map coords,
+  region/mix membership, top Discogs tags, and the track's **real HNSW
+  neighbors** — highlighted on the map and labeled as coming from the original
+  embedding space, not map distance. Missing-index / neighbor errors degrade to
+  a message.
 
 ## Tests
 

@@ -598,7 +598,13 @@
       color:var(--muted, #9aa4b2); background:rgba(11,15,23,.72); padding:6px 10px; border-radius:8px; pointer-events:none; }
     .atlas-legend { position:absolute; right:12px; top:12px; z-index:3; max-height:45%; overflow:auto; font-size:11px;
       background:rgba(11,15,23,.72); padding:8px 10px; border-radius:8px; display:none; }
-    .atlas-legend .row { align-items:center; gap:6px; margin:2px 0; }
+    .atlas-legend .row { display:flex; align-items:center; gap:6px; margin:2px 0; }
+    .atlas-legend .row.clickable { cursor:pointer; padding:1px 4px; margin:1px -4px; border-radius:4px; }
+    .atlas-legend .row.clickable:hover { background:rgba(255,255,255,.08); }
+    .atlas-legend .row.active { background:rgba(255,255,255,.14); font-weight:800; }
+    .atlas-legend .row.muted { opacity:.4; }
+    .atlas-legend .legend-clear { cursor:pointer; margin-top:6px; color:#8fb6ff; }
+    .atlas-legend .legend-clear:hover { text-decoration:underline; }
     .atlas-swatch { width:12px; height:12px; border-radius:3px; display:inline-block; flex:none; }
     .atlas-status { font-size:12px; color:var(--muted, #9aa4b2); }
     .atlas-pred { display:flex; justify-content:space-between; gap:8px; font-size:12px; margin:1px 0; }
@@ -1780,6 +1786,7 @@
       colorBy: "", colors: null, selectedId: null,
       neighborIds: [], overlay: "", overlayIds: new Set(),
       mixes: [], regions: [], labelById: new Map(), styleById: new Map(),
+      filterKeys: [], filterSet: new Set(), filterTick: 0, legend: null,
     };
     function atlasEl(id) { return document.getElementById(id); }
     async function atlasInit(params) {
@@ -1822,6 +1829,7 @@
       atlasState.neighborIds = [];
       atlasState.overlay = "";
       atlasState.overlayIds = new Set();
+      atlasState.filterSet.clear();
       atlasEl("atlasStatus").innerHTML = atlasProjectionStatusHtml(p);
       atlasEl("atlasInspector").innerHTML = `<div class="meta">Click a point to inspect the track and its real (HNSW) neighbors.</div>`;
       if (!p) { atlasClearMap("No projection selected."); return; }
@@ -1898,6 +1906,7 @@
     }
     async function atlasSetColorBy(dim) {
       atlasState.colorBy = dim;
+      atlasState.filterSet.clear();  // filter keys belong to the previous dimension
       await atlasApplyColor();
       atlasRender();
     }
@@ -1958,8 +1967,9 @@
       const min = scores.length ? Math.min(...scores) : 0;
       const max = scores.length ? Math.max(...scores) : 1;
       const span = (max - min) || 1;
+      atlasState.filterKeys = values.map(v => (v && (v.style || v.genre)) || null);
       const legend = order.slice(0, 15)
-        .map(st => ({label: st.includes("---") ? st.split("---")[1] : st, color: styleColor.get(st)}));
+        .map(st => ({label: st.includes("---") ? st.split("---")[1] : st, color: styleColor.get(st), key: st}));
       atlasRenderLegend(legend, "genre", "brightness = classifier confidence");
       return values.map(v => {
         if (!v || (!v.style && !v.genre)) return ATLAS_GRAY;
@@ -1979,6 +1989,7 @@
         legend.push({label: String(min), color: lo});
         legend.push({label: String(max), color: hi});
       }
+      atlasState.filterKeys = [];  // a continuous scale has no discrete keys to filter by
       atlasRenderLegend(legend, "gradient");
       return values.map(v => {
         if (typeof v !== "number") return ATLAS_GRAY;
@@ -1991,9 +2002,10 @@
       const counts = new Map();
       values.forEach(v => { if (v !== null && v !== undefined && v !== "") counts.set(v, (counts.get(v)||0)+1); });
       [...counts.entries()].sort((a,b) => b[1]-a[1]).forEach(([v], i) => order.set(v, i));
+      atlasState.filterKeys = values.map(v => (v === null || v === undefined || v === "") ? null : v);
       const legend = [];
       [...order.entries()].slice(0, 15).forEach(([v, i]) => {
-        legend.push({label: String(v), color: i < ATLAS_PALETTE.length ? ATLAS_PALETTE[i] : ATLAS_GRAY});
+        legend.push({label: String(v), color: i < ATLAS_PALETTE.length ? ATLAS_PALETTE[i] : ATLAS_GRAY, key: v});
       });
       atlasRenderLegend(legend, "categorical");
       return values.map(v => {
@@ -2004,13 +2016,47 @@
     }
     function atlasRenderLegend(entries, kind, note) {
       const el = atlasEl("atlasLegend");
+      atlasState.legend = entries && entries.length ? {entries, kind, note} : null;
       if (!entries || !entries.length) { el.style.display = "none"; return; }
-      const rows = entries.map(e =>
-        `<div class="row"><span class="atlas-swatch" style="background:rgb(${e.color[0]},${e.color[1]},${e.color[2]})"></span><span>${esc(e.label)}</span></div>`
-      );
+      const sel = atlasState.filterSet;
+      const filtering = sel.size > 0;
+      const rows = entries.map(e => {
+        const swatch = `<span class="atlas-swatch" style="background:rgb(${e.color[0]},${e.color[1]},${e.color[2]})"></span><span>${esc(e.label)}</span>`;
+        if (e.key === undefined || e.key === null) return `<div class="row">${swatch}</div>`;
+        const active = sel.has(e.key);
+        const cls = `row clickable${active ? " active" : (filtering ? " muted" : "")}`;
+        return `<div class="${cls}" onclick="atlasToggleStyleFilter(event, '${encodedArg(e.key)}')">${swatch}</div>`;
+      });
+      const clickable = entries.some(e => e.key !== undefined && e.key !== null);
+      if (clickable) rows.push(`<div class="meta" style="margin-top:6px">click to filter · shift-click for several</div>`);
+      if (filtering) rows.push(`<div class="legend-clear" onclick="atlasClearStyleFilter()">✕ clear filter (${sel.size})</div>`);
       if (note) rows.push(`<div class="meta" style="margin-top:6px">${esc(note)}</div>`);
       el.innerHTML = rows.join("");
       el.style.display = "block";
+    }
+    function atlasToggleStyleFilter(event, encodedKey) {
+      if (event) event.stopPropagation();
+      const key = decodeURIComponent(encodedKey);
+      const sel = atlasState.filterSet;
+      if (event && event.shiftKey) {
+        if (sel.has(key)) sel.delete(key); else sel.add(key);
+      } else if (sel.size === 1 && sel.has(key)) {
+        sel.clear();  // clicking the sole active style again clears the filter
+      } else {
+        sel.clear(); sel.add(key);
+      }
+      atlasApplyStyleFilter();
+    }
+    function atlasClearStyleFilter() {
+      if (!atlasState.filterSet.size) return;
+      atlasState.filterSet.clear();
+      atlasApplyStyleFilter();
+    }
+    function atlasApplyStyleFilter() {
+      atlasState.filterTick++;
+      const lg = atlasState.legend;
+      if (lg) atlasRenderLegend(lg.entries, lg.kind, lg.note);
+      atlasRender();
     }
     async function atlasSetOverlay(value) {
       atlasState.overlay = value || "";
@@ -2044,16 +2090,24 @@
     function atlasBuildLayers() {
       const L = deck.ScatterplotLayer;
       const colors = atlasState.colors;
+      const fkeys = atlasState.filterKeys;
+      const fset = atlasState.filterSet;
+      const filtering = fset.size > 0 && fkeys.length === atlasState.ids.length;
       const layers = [];
       layers.push(new L({
         id: "atlas-points",
         data: {length: atlasState.ids.length},
         getPosition: (_, {index}) => [atlasState.xs[index], atlasState.ys[index]],
-        getFillColor: (_, {index}) => colors ? colors[index] : [120,140,200],
+        getFillColor: (_, {index}) => {
+          const c = colors ? colors[index] : [120,140,200];
+          // Filtered-out points stay on the map as faint context, not removed.
+          if (filtering && !fset.has(fkeys[index])) return [c[0], c[1], c[2], 16];
+          return [c[0], c[1], c[2], 255];
+        },
         getRadius: 3, radiusUnits: "pixels", radiusMinPixels: 1.5,
         pickable: true,
         onClick: info => { if (info.index != null && info.index >= 0) atlasOnPick(info.index); },
-        updateTriggers: {getFillColor: [atlasState.colorBy, colors]},
+        updateTriggers: {getFillColor: [atlasState.colorBy, colors, atlasState.filterTick]},
       }));
       if (atlasState.overlayIds.size) {
         const pts = [];
@@ -2141,6 +2195,9 @@
     async function atlasOnPick(index) {
       const trackId = atlasState.ids[index];
       atlasState.selectedId = trackId;
+      // Clicking a point loads it straight into the persistent player.
+      const label = atlasState.labelById.get(trackId) || `#${trackId}`;
+      playTrack(trackId, encodedArg(label));
       const inspector = atlasEl("atlasInspector");
       inspector.innerHTML = `<div class="meta">Loading track #${trackId}…</div>`;
       atlasRender();
