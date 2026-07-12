@@ -160,7 +160,8 @@ frontend поднимаются без него. Образ бота при эт
 полезным, можно добавить `waitForQualityGate` (потребует настроить вебхук
 SonarQube → Jenkins).
 
-Jenkins задаёт `SONAR_SCANNER_OPTS=-Xmx2g`: полный анализ Python, TypeScript и
+Jenkins задаёт `SONAR_SCANNER_JAVA_OPTS=-Xmx2g` (для SonarScanner CLI 6+):
+полный анализ Python, TypeScript и
 Docker/IaC превысил стандартный heap scanner JRE и завершался
 `OutOfMemoryError` до публикации отчёта. Это лимит только процесса scanner,
 не SonarQube-сервера.

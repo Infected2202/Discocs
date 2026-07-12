@@ -32,7 +32,7 @@ pipeline {
     TARGET_PORT   = '2252'
     TARGET_DIR    = '/home/infected2202/docker/discocs'
     // Python + TS + Docker analysis can exceed the scanner JRE default heap.
-    SONAR_SCANNER_OPTS = '-Xmx2g'
+    SONAR_SCANNER_JAVA_OPTS = '-Xmx2g'
   }
 
   stages {
