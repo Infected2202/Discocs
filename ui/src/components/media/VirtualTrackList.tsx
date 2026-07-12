@@ -137,7 +137,7 @@ export default function VirtualTrackList({
   // handles the visual reflow via transforms) and is re-synced whenever a new
   // tracks prop arrives — otherwise the row would snap back to the stale
   // order between drop and refetch.
-  const [order, setOrder] = useState<TrackSummary[]>(tracks)
+  const [order, setOrder] = useState<TrackRowTrack[]>(tracks)
   const [activeId, setActiveId] = useState<number | null>(null)
   const orderRef = useRef(order)
   orderRef.current = order
