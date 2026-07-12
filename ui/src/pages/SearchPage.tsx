@@ -4,7 +4,7 @@ import { useSearch } from "@/api/hooks/useSearch"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import MediaCard from "@/components/media/MediaCard"
-import TrackTable from "@/components/media/TrackTable"
+import VirtualTrackList from "@/components/media/VirtualTrackList"
 import { usePlayerStore } from "@/store/playerStore"
 import type { ArtistSummary, ReleaseSummary, TrackSummary } from "@/api/types"
 type TabKey = "all" | "artists" | "releases" | "tracks"
@@ -128,7 +128,7 @@ export default function SearchPage() {
             {tracks.length > 0 && (
               <section className="space-y-3 mt-6">
                 <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Tracks</h2>
-                <TrackTable tracks={tracks.slice(0, 8)} sourceLabel={`Search: ${urlQuery}`} />
+                <VirtualTrackList tracks={tracks.slice(0, 8)} virtualized={false} sourceLabel={`Search: ${urlQuery}`} />
               </section>
             )}
           </TabsContent>
@@ -155,7 +155,7 @@ export default function SearchPage() {
 
           <TabsContent value="tracks">
             <div className="mt-2">
-              <TrackTable tracks={tracks} sourceLabel={`Search: ${urlQuery}`} />
+              <VirtualTrackList tracks={tracks} virtualized={false} sourceLabel={`Search: ${urlQuery}`} />
             </div>
           </TabsContent>
         </Tabs>

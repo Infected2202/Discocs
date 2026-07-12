@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react"
-import TrackTable from "./TrackTable"
+import VirtualTrackList from "./VirtualTrackList"
 import { animateScroll } from "@/lib/animateScroll"
 import type { ArtistTopTrack } from "@/api/types"
 
@@ -88,7 +88,7 @@ export default function PopularTracks({ tracks, sourceLabel }: PopularTracksProp
         className="px-4 sm:px-6"
       >
         <div ref={innerRef}>
-          <TrackTable tracks={tracks} showRelease sourceLabel={sourceLabel} />
+          <VirtualTrackList tracks={tracks} virtualized={false} showRelease sourceLabel={sourceLabel} />
         </div>
       </div>
     </section>

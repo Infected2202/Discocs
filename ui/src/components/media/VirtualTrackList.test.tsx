@@ -47,17 +47,24 @@ function makeTrack(id: number): TrackSummary {
   }
 }
 
-function Wrapper({ tracks, onReorder, onPlayTrack }: {
+function Wrapper({ tracks, onReorder, onPlayTrack, virtualized }: {
   readonly tracks: TrackSummary[]
   readonly onReorder?: (trackIds: number[]) => void
   readonly onPlayTrack?: (trackId: number) => void
+  readonly virtualized?: boolean
 }) {
   const ref = useRef<HTMLElement>(null)
   return (
     <MemoryRouter>
       <ScrollContext.Provider value={ref}>
         <div ref={ref as React.RefObject<HTMLDivElement>} style={{ height: 600, overflow: "auto" }}>
-          <VirtualTrackList tracks={tracks} sourceLabel="Test" onReorder={onReorder} onPlayTrack={onPlayTrack} />
+          <VirtualTrackList
+            tracks={tracks}
+            sourceLabel="Test"
+            onReorder={onReorder}
+            onPlayTrack={onPlayTrack}
+            virtualized={virtualized}
+          />
         </div>
       </ScrollContext.Provider>
     </MemoryRouter>
@@ -103,6 +110,27 @@ describe("VirtualTrackList", () => {
   it("клик по строке зовёт onPlayTrack с id трека (весь плейлист/микс с позиции)", () => {
     const onPlayTrack = vi.fn()
     render(<Wrapper tracks={[makeTrack(42)]} onPlayTrack={onPlayTrack} />)
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Play" })[0])
+
+    expect(onPlayTrack).toHaveBeenCalledWith(42)
+  })
+
+  it("non-virtualized: рендерит все строки в обычном потоке без relative-контейнера фикс. высоты", () => {
+    const tracks = Array.from({ length: 4 }, (_, i) => makeTrack(i + 1))
+    const { container } = render(<Wrapper tracks={tracks} virtualized={false} />)
+
+    // Every row is present…
+    expect(screen.getByText("Track 1")).toBeInTheDocument()
+    expect(screen.getByText("Track 4")).toBeInTheDocument()
+    // …and there's no absolutely-positioned virtual spacer container.
+    expect(container.querySelector("[style*='position: relative']")).toBeNull()
+    expect(container.querySelectorAll("[data-track-row]")).toHaveLength(4)
+  })
+
+  it("non-virtualized: клик по строке зовёт onPlayTrack", () => {
+    const onPlayTrack = vi.fn()
+    render(<Wrapper tracks={[makeTrack(42)]} onPlayTrack={onPlayTrack} virtualized={false} />)
 
     fireEvent.click(screen.getAllByRole("button", { name: "Play" })[0])
 

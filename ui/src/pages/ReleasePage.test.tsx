@@ -29,8 +29,8 @@ vi.mock("@/store/navidromeStore", () => ({
     selector({ toggleAlbumLike: vi.fn(), likedAlbumIds: new Set() }),
 }))
 
-vi.mock("@/components/media/TrackTable", () => ({
-  default: () => <div data-testid="track-table" />,
+vi.mock("@/components/media/VirtualTrackList", () => ({
+  default: () => <div data-testid="track-list" />,
 }))
 
 vi.mock("@/components/media/ArtworkImage", () => ({

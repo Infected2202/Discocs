@@ -6,7 +6,11 @@ import ArtworkImage from "./ArtworkImage"
 import LikeButton from "./LikeButton"
 import TrackMenu from "./TrackMenu"
 import { usePlayerStore } from "@/store/playerStore"
-import type { TrackSummary } from "@/api/types"
+import type { TrackSummary, ReleaseTrackItem, ArtistTopTrack } from "@/api/types"
+
+/** Every track shape the row can render: search/queue summaries, release
+ *  tracklist items, and artist top tracks (which carry a play count). */
+export type TrackRowTrack = TrackSummary | ReleaseTrackItem | ArtistTopTrack
 
 function formatDuration(seconds: number | null | undefined): string {
   if (!seconds || !Number.isFinite(seconds)) return ""
@@ -16,11 +20,29 @@ function formatDuration(seconds: number | null | undefined): string {
   return `${m}:${String(s).padStart(2, "0")}`
 }
 
+const playCountFormatter = new Intl.NumberFormat("ru", { notation: "compact", compactDisplay: "short" })
+
+/** Trailing metric: play count for artist top tracks, else track duration. */
+function renderMetric(track: TrackRowTrack): React.ReactNode {
+  if ("play_count" in track) {
+    if (track.play_count <= 0) return null
+    return (
+      <>
+        {playCountFormatter.format(track.play_count)}
+        <span className="hidden sm:inline"> прослушиваний</span>
+      </>
+    )
+  }
+  return formatDuration(track.duration)
+}
+
 interface VirtualTrackRowProps {
-  readonly track: TrackSummary
+  readonly track: TrackRowTrack
   readonly index: number
   readonly showArtwork?: boolean
   readonly showRelease?: boolean
+  /** Widen the metric column so "N прослушиваний" fits (artist top tracks). */
+  readonly metricWide?: boolean
   readonly sourceLabel?: string
   readonly selectable?: boolean
   readonly selected?: boolean
@@ -37,25 +59,26 @@ export function trackGridTemplates({
   showArtwork,
   showRelease,
   selectable,
-}: Pick<VirtualTrackRowProps, "showArtwork" | "showRelease" | "selectable">): {
+  metricWide,
+}: Pick<VirtualTrackRowProps, "showArtwork" | "showRelease" | "selectable" | "metricWide">): {
   mobile: string
   desktop: string
 } {
-  const common = [
+  const lead = [
     "40px",
     showArtwork ? "44px" : null,
     "minmax(0,1fr)",
   ]
-  const trailing = [
-    "80px", // duration
+  const controls = [
     "32px", // like
     "32px", // menu
     selectable ? "32px" : null, // selection checkbox
   ]
-  const mobile = [...common, ...trailing].filter(Boolean).join(" ")
-  const desktop = showRelease
-    ? [...common, "minmax(0,180px)", ...trailing].filter(Boolean).join(" ")
-    : mobile
+  // Mobile keeps a compact metric column ("1,5K"); desktop widens it when the
+  // metric spells out "прослушиваний".
+  const mobile = [...lead, "80px", ...controls].filter(Boolean).join(" ")
+  const desktopLead = showRelease ? [...lead, "minmax(0,180px)"] : lead
+  const desktop = [...desktopLead, metricWide ? "176px" : "80px", ...controls].filter(Boolean).join(" ")
   return { mobile, desktop }
 }
 
@@ -64,6 +87,7 @@ export default function VirtualTrackRow({
   index,
   showArtwork = true,
   showRelease = true,
+  metricWide = false,
   sourceLabel,
   selectable = false,
   selected = false,
@@ -94,7 +118,7 @@ export default function VirtualTrackRow({
 
   // The release cell is hidden below md. Its desktop-width grid column must
   // disappear too — otherwise the title's 1fr column collapses on phones.
-  const gridTemplates = trackGridTemplates({ showArtwork, showRelease, selectable })
+  const gridTemplates = trackGridTemplates({ showArtwork, showRelease, selectable, metricWide })
 
   return (
     <div
@@ -195,9 +219,9 @@ export default function VirtualTrackRow({
         </div>
       )}
 
-      {/* Duration */}
+      {/* Metric: play count (artist top tracks) or duration */}
       <div className="py-2 pr-2 text-right text-xs text-muted-foreground tabular-nums whitespace-nowrap">
-        {formatDuration(track.duration)}
+        {renderMetric(track)}
       </div>
 
       {/* Like */}

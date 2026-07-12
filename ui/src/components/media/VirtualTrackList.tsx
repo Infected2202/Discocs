@@ -22,13 +22,12 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { useScrollRef } from "@/contexts/ScrollContext"
-import VirtualTrackRow from "./VirtualTrackRow"
-import type { TrackSummary } from "@/api/types"
+import VirtualTrackRow, { type TrackRowTrack } from "./VirtualTrackRow"
 
 const ROW_HEIGHT = 52
 
 interface VirtualTrackListProps {
-  readonly tracks: TrackSummary[]
+  readonly tracks: TrackRowTrack[]
   readonly showArtwork?: boolean
   readonly showRelease?: boolean
   readonly sourceLabel?: string
@@ -38,6 +37,14 @@ interface VirtualTrackListProps {
   readonly onReorder?: (trackIds: number[]) => void
   /** When set, playing any row plays the whole collection starting at that track. */
   readonly onPlayTrack?: (trackId: number) => void
+  /**
+   * Virtualize rows against the ancestor scroll container (ScrollContext).
+   * On by default for long, page-owning lists (playlists, mixes). Pass false
+   * for short lists rendered inline among other content (release tracklist,
+   * search results, an artist's popular tracks) so every row lives in normal
+   * document flow — no absolute positioning, no scroll-window dependency.
+   */
+  readonly virtualized?: boolean
 }
 
 /**
@@ -56,10 +63,11 @@ export function moveTrackById<T extends { id: number }>(
 }
 
 interface RowProps {
-  readonly track: TrackSummary
+  readonly track: TrackRowTrack
   readonly index: number
   readonly showArtwork: boolean
   readonly showRelease: boolean
+  readonly metricWide: boolean
   readonly sourceLabel?: string
   readonly selectable: boolean
   readonly selected: boolean
@@ -117,9 +125,12 @@ export default function VirtualTrackList({
   onToggleSelect,
   onReorder,
   onPlayTrack,
+  virtualized = true,
 }: VirtualTrackListProps) {
   const scrollRef = useScrollRef()
   const reorderable = onReorder != null
+  // Widen the metric column for artist top tracks so "N прослушиваний" fits.
+  const metricWide = tracks.length > 0 && "play_count" in tracks[0]
 
   // Local order holds the optimistic post-drop order until the server refetch
   // lands. It stays frozen while a drag is in flight (the sorting strategy
@@ -156,12 +167,13 @@ export default function VirtualTrackList({
   const virtualItems = rowVirtualizer.getVirtualItems()
   const selectionActive = (selectedIds?.size ?? 0) > 0
 
-  function rowProps(track: TrackSummary, index: number): RowProps {
+  function rowProps(track: TrackRowTrack, index: number): RowProps {
     return {
       track,
       index,
       showArtwork,
       showRelease,
+      metricWide,
       sourceLabel,
       selectable,
       selected: selectedIds?.has(track.id) ?? false,
@@ -169,6 +181,19 @@ export default function VirtualTrackList({
       onToggleSelect,
       onPlayTrack,
     }
+  }
+
+  // Non-virtualized: short list rendered inline. Every row lives in normal
+  // document flow, so parents can measure/clip it (e.g. PopularTracks paging)
+  // and it needs no ancestor scroll container. No drag-reorder here.
+  if (!virtualized) {
+    return (
+      <div>
+        {tracks.map((track, index) => (
+          <VirtualTrackRow key={track.id} {...rowProps(track, index)} />
+        ))}
+      </div>
+    )
   }
 
   function handleDragStart(event: DragStartEvent) {

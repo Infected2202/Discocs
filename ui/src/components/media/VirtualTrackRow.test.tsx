@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import TrackRow from "./TrackRow"
+import VirtualTrackRow from "./VirtualTrackRow"
 import type { ArtistTopTrack, TrackSummary } from "@/api/types"
 
 const playSource = vi.fn()
@@ -52,26 +52,18 @@ function makeTrack(overrides: Partial<TrackSummary> = {}): TrackSummary {
 }
 
 function makeTopTrack(overrides: Partial<ArtistTopTrack> = {}): ArtistTopTrack {
-  return {
-    ...makeTrack(),
-    play_count: 1532,
-    ...overrides,
-  }
+  return { ...makeTrack(), play_count: 1532, ...overrides }
 }
 
-function renderRow(track: TrackSummary | ArtistTopTrack, props: Partial<React.ComponentProps<typeof TrackRow>> = {}) {
+function renderRow(props: Partial<React.ComponentProps<typeof VirtualTrackRow>> = {}) {
   return render(
     <MemoryRouter>
-      <table>
-        <tbody>
-          <TrackRow track={track} {...props} />
-        </tbody>
-      </table>
+      <VirtualTrackRow track={makeTrack()} index={0} {...props} />
     </MemoryRouter>,
   )
 }
 
-describe("TrackRow", () => {
+describe("VirtualTrackRow", () => {
   beforeEach(() => {
     playerState.currentTrackId = null
     playerState.playbackState = "paused"
@@ -81,8 +73,8 @@ describe("TrackRow", () => {
     toggleLike.mockReset()
   })
 
-  it("starts playback from the track when the row is inactive", () => {
-    renderRow(makeTrack(), { sourceLabel: "Search results" })
+  it("starts playback from the track when the row is inactive and has no onPlayTrack", () => {
+    renderRow({ sourceLabel: "Search results" })
 
     fireEvent.click(screen.getAllByRole("button", { name: "Play" })[0])
 
@@ -92,7 +84,7 @@ describe("TrackRow", () => {
 
   it("plays the whole collection via onPlayTrack, positioned at this track", () => {
     const onPlayTrack = vi.fn()
-    renderRow(makeTrack(), { onPlayTrack })
+    renderRow({ onPlayTrack })
 
     fireEvent.click(screen.getAllByRole("button", { name: "Play" })[0])
 
@@ -104,7 +96,7 @@ describe("TrackRow", () => {
     playerState.currentTrackId = 7
     playerState.playbackState = "playing"
 
-    renderRow(makeTrack())
+    renderRow({ onPlayTrack: vi.fn() })
 
     fireEvent.click(screen.getAllByRole("button", { name: "Pause" })[0])
 
@@ -112,22 +104,26 @@ describe("TrackRow", () => {
     expect(playSource).not.toHaveBeenCalled()
   })
 
-  it("renders release links for regular tracks and formatted duration", () => {
-    renderRow(makeTrack(), { index: 2 })
+  it("renders release + artist links and formatted duration", () => {
+    renderRow()
 
     expect(screen.getByRole("link", { name: "Night Drive" })).toHaveAttribute("href", "/releases/11")
-    expect(screen.getByRole("link", { name: "Neon Lights" })).toHaveAttribute("href", "/releases/11")
     expect(screen.getByRole("link", { name: "Synth Unit" })).toHaveAttribute("href", "/artists/4")
     expect(screen.getByText("4:05")).toBeInTheDocument()
-    expect(screen.getByText("3")).toBeInTheDocument()
   })
 
-  it("renders play count text for artist top tracks without a release link", () => {
-    renderRow(makeTopTrack({ release: null }))
+  it("renders play count for artist top tracks without a release link", () => {
+    renderRow({ track: makeTopTrack({ release: null }) })
 
     expect(screen.queryByRole("link", { name: "Night Drive" })).not.toBeInTheDocument()
     expect(screen.getByText("Night Drive")).toBeInTheDocument()
-    expect(screen.getByText(/1,5/i)).toBeInTheDocument()
+    expect(screen.getByText(/1,5/)).toBeInTheDocument()
     expect(screen.getByText("прослушиваний")).toBeInTheDocument()
+  })
+
+  it("hides the metric for artist top tracks with zero plays", () => {
+    renderRow({ track: makeTopTrack({ play_count: 0, release: null }) })
+
+    expect(screen.queryByText("прослушиваний")).not.toBeInTheDocument()
   })
 })

@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import CollectionHeader from "@/components/media/CollectionHeader"
 import LikeButton from "@/components/media/LikeButton"
-import TrackTable from "@/components/media/TrackTable"
+import VirtualTrackList from "@/components/media/VirtualTrackList"
 import Shelf from "@/components/media/Shelf"
 import { usePlayerStore } from "@/store/playerStore"
 import type { ReleaseSummary } from "@/api/types"
@@ -127,8 +127,9 @@ export default function ReleasePage() {
 
       {/* Tracks */}
       <div className="px-4 sm:px-6">
-        <TrackTable
+        <VirtualTrackList
           tracks={tracks}
+          virtualized={false}
           showRelease={false}
           sourceLabel={release.title}
           onPlayTrack={(trackId) => playSource("release", releaseId, release.title, trackId)}
