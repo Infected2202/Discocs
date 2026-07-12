@@ -188,7 +188,7 @@ class StoreBase:
             self.user_id = (
                 int(owner["id"])
                 if owner is not None
-                else self.upsert_user(owner_username)
+                else self.upsert_user(owner_username, now=utc_now())
             )
 
     def _init_schema(self) -> None:

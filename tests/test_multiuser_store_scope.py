@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.models import PlaybackEventCreate
+from app.models import utc_now
 from app.scanner import ScannedTrack
 from app.store import Store
 from app.services.dashboard import _dashboard_history
@@ -12,8 +13,9 @@ from app.services.dashboard import _dashboard_history
 def _stores(tmp_path: Path) -> tuple[Store, Store, int]:
     root = Store(tmp_path / "app.db")
     root.init()
-    alice_id = root.upsert_user("alice")
-    bob_id = root.upsert_user("bob")
+    now = utc_now()
+    alice_id = root.upsert_user("alice", now=now)
+    bob_id = root.upsert_user("bob", now=now)
     track_id, _ = root.upsert_track(
         ScannedTrack(
             path=(tmp_path / "track.flac").resolve(),
