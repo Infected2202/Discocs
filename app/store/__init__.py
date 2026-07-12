@@ -18,6 +18,7 @@ from app.store.release_aggregates import ReleaseAggregatesStoreMixin
 from app.store.flow import FlowStoreMixin
 from app.store.map_atlas import MapAtlasStoreMixin
 from app.store.sessions import SessionsStoreMixin
+from app.store.users import UsersStoreMixin
 from app.store._helpers import (
     playback_event_is_completion,
     playback_event_is_early_skip,
@@ -102,5 +103,6 @@ class Store(
     FlowStoreMixin,
     MapAtlasStoreMixin,
     SessionsStoreMixin,
+    UsersStoreMixin,
 ):
     """Assembled Store — all domain mixins composed into one class."""

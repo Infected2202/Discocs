@@ -21,16 +21,20 @@ class SessionsStoreMixin:
         expires_at: str,
         ip: str | None,
         user_agent: str | None,
+        user_id: int | None = None,
     ) -> None:
         with self.connect() as conn:
             conn.execute(
                 """
                 INSERT INTO sessions (
-                    token_hash, username, created_at, expires_at, last_seen_at,
-                    ip, user_agent
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    token_hash, username, user_id, created_at, expires_at,
+                    last_seen_at, ip, user_agent
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (token_hash, username, created_at, expires_at, created_at, ip, user_agent),
+                (
+                    token_hash, username, user_id, created_at, expires_at,
+                    created_at, ip, user_agent,
+                ),
             )
 
     def get_session(self, token_hash: str) -> sqlite3.Row | None:

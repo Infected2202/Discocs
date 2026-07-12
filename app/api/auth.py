@@ -122,9 +122,9 @@ async def session(request: Request) -> dict[str, object]:
         # Gate off — treat everyone as authenticated so the SPA never blocks.
         return {"authenticated": True, "username": None, "enabled": False}
     token = request.cookies.get(settings.auth.session_cookie_name)
-    username = await run_in_threadpool(auth.resolve_session, store, token)
+    resolved = await run_in_threadpool(auth.resolve_session, store, token)
     return {
-        "authenticated": username is not None,
-        "username": username,
+        "authenticated": resolved is not None,
+        "username": resolved.username if resolved is not None else None,
         "enabled": True,
     }

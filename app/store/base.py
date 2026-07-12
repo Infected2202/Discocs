@@ -728,6 +728,19 @@ class StoreBase:
                 CREATE INDEX IF NOT EXISTS idx_sessions_expires
                     ON sessions(expires_at);
 
+                -- Application users (Phase 2 multiuser). Identity is the
+                -- Navidrome login; a row is auto-created on first successful
+                -- login (upsert by navidrome_username). The internal integer
+                -- ``id`` is the FK used to scope every personal table, so it
+                -- survives a rename in Navidrome. No role/admin flag — global
+                -- operations live behind the localhost admin, see docs/auth.md.
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY,
+                    navidrome_username TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    last_login_at TEXT
+                );
+
                 -- Collection map / embedding atlas. A projection is a persisted
                 -- snapshot of 2D coordinates for one embedding model; multiple
                 -- projections per model are allowed. This is a diagnostic view
@@ -795,6 +808,9 @@ class StoreBase:
             self._ensure_column(conn, "generated_mixes", "cover_path", "TEXT")
             self._ensure_column(conn, "playlists", "description", "TEXT")
             self._ensure_column(conn, "playlists", "cover_path", "TEXT")
+            # Phase 2: link a session to its user. Legacy (pre-users) sessions
+            # keep user_id NULL and resolve it lazily via the users table.
+            self._ensure_column(conn, "sessions", "user_id", "INTEGER")
             self._backfill_added_timestamps(conn)
 
     def _ensure_column(

@@ -175,6 +175,14 @@ server {
 1. **Схема:** `user_id` в PK всех preference/session/mix/playlist/flow/playback-таблиц
    + миграция.
 2. **Личность:** таблица `users`, маппинг `сессия → Navidrome username → user_id`.
+   ✅ **Реализовано (чекпоинт 1, `plans/multiuser-spec.md`):** таблица `users`
+   (`id`, `navidrome_username` unique, `created_at`, `last_login_at`) —
+   `app/store/users.py`; апсёрт при успешном логине (`auth.create_session`),
+   `user_id` пишется в новую колонку `sessions.user_id`. `resolve_session`
+   отдаёт `ResolvedSession(user_id, username)`, middleware кладёт
+   `request.state.user_id` (у `service`-принципала — `None`). Легаси-сессии
+   (без `user_id`) резолвят id через `users` по username. Регистрации нет —
+   аккаунты заводит владелец в Navidrome (§9 спеки).
 3. **Per-user креды Navidrome:** чтобы ставить звёзды/скроблить от имени каждого —
    воскресает отложенный в Фазе 1 вопрос хранения пароля (в сессии зашифрованным /
    per-user at-rest).

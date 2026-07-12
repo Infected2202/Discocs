@@ -117,7 +117,11 @@ def test_resolve_session_valid_and_expired(tmp_path, monkeypatch):
         ip=None,
         user_agent=None,
     )
-    assert auth.resolve_session(store, valid_token) == "bob"
+    resolved = auth.resolve_session(store, valid_token)
+    assert resolved is not None
+    assert resolved.username == "bob"
+    # Legacy session (created without a users row) → user_id unresolved.
+    assert resolved.user_id is None
 
     expired_token = "expired-token"
     store.create_session(
@@ -133,6 +137,67 @@ def test_resolve_session_valid_and_expired(tmp_path, monkeypatch):
     assert store.get_session(auth.hash_token(expired_token)) is None
     assert auth.resolve_session(store, None) is None
     assert auth.resolve_session(store, "never-existed") is None
+
+
+# ---------------------------------------------------------------------------
+# Users: upsert + session binding (Phase 2 identity)
+# ---------------------------------------------------------------------------
+
+def test_upsert_user_is_idempotent_and_bumps_last_login(tmp_path, monkeypatch):
+    store = init_store(tmp_path, monkeypatch)
+    first = store.upsert_user("alice", now="2026-01-01T00:00:00")
+    again = store.upsert_user("alice", now="2026-02-02T00:00:00")
+    # Same username → same internal id, no duplicate row.
+    assert first == again
+    row = store.get_user_by_username("alice")
+    assert row["id"] == first
+    assert row["created_at"] == "2026-01-01T00:00:00"
+    assert row["last_login_at"] == "2026-02-02T00:00:00"
+    # A different username gets a distinct id.
+    bob = store.upsert_user("bob", now="2026-01-01T00:00:00")
+    assert bob != first
+    assert store.get_user_by_id(bob)["navidrome_username"] == "bob"
+
+
+def test_upsert_user_rejects_empty(tmp_path, monkeypatch):
+    store = init_store(tmp_path, monkeypatch)
+    with pytest.raises(ValueError):
+        store.upsert_user("", now=utc_now())
+
+
+def test_create_session_binds_user_id(tmp_path, monkeypatch):
+    store = init_store(tmp_path, monkeypatch)
+    settings = settings_with_navidrome()
+    token = auth.create_session(store, settings, "carol")
+
+    resolved = auth.resolve_session(store, token)
+    assert resolved is not None
+    assert resolved.username == "carol"
+    # Login upserted the user and bound its id to the session.
+    expected = store.get_user_by_username("carol")["id"]
+    assert resolved.user_id == expected
+    # The id is persisted on the session row, not only re-derived.
+    assert store.get_session(auth.hash_token(token))["user_id"] == expected
+
+
+def test_resolve_session_recovers_user_id_for_legacy_row(tmp_path, monkeypatch):
+    store = init_store(tmp_path, monkeypatch)
+    now = datetime.fromisoformat(utc_now())
+    user_id = store.upsert_user("dave", now=now.isoformat())
+    # Legacy session written without user_id (NULL).
+    token = "legacy-token"
+    store.create_session(
+        token_hash=auth.hash_token(token),
+        username="dave",
+        created_at=now.isoformat(),
+        expires_at=(now + timedelta(hours=1)).isoformat(),
+        ip=None,
+        user_agent=None,
+    )
+    assert store.get_session(auth.hash_token(token))["user_id"] is None
+    resolved = auth.resolve_session(store, token)
+    # Falls back to the users table so the id is still recovered.
+    assert resolved.user_id == user_id
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +321,20 @@ def test_login_bad_then_good_creds(tmp_path, monkeypatch):
     assert client.cookies.get("discocs_session")
     assert client.get("/api/v1/settings/navidrome").status_code == 200
     assert client.get("/api/v1/auth/session").json()["username"] == "alice"
+
+
+def test_login_creates_user_and_binds_session(tmp_path, monkeypatch):
+    store = init_store(tmp_path, monkeypatch)
+    _enable_gate(monkeypatch)
+    client = TestClient(app)
+
+    assert store.get_user_by_username("alice") is None
+    client.post("/api/v1/auth/login", json={"username": "alice", "password": "correct"})
+
+    user = store.get_user_by_username("alice")
+    assert user is not None
+    token = client.cookies.get("discocs_session")
+    assert store.get_session(auth.hash_token(token))["user_id"] == user["id"]
 
 
 def test_service_token_grants_access(tmp_path, monkeypatch):

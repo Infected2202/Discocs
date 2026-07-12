@@ -54,7 +54,7 @@ def _service_token_ok(request: Request, service_token: str) -> bool:
     return bool(presented) and auth.constant_time_eq(presented, service_token)
 
 
-def _resolve_username(settings: Settings, token: str | None) -> str | None:
+def _resolve_session(settings: Settings, token: str | None) -> auth.ResolvedSession | None:
     store = Store(settings.db_path)
     store.init()
     return auth.resolve_session(store, token)
@@ -69,6 +69,9 @@ async def auth_gate(request: Request, call_next):
         return await call_next(request)
 
     settings = Settings.from_env()
+    # Default: no identity. A service principal has no user_id, so personal
+    # endpoints (Phase 2) must refuse it rather than write to owner/NULL.
+    request.state.user_id = None
     # Machine principal (workers/bot/plugin) bypasses the session requirement.
 
     if _service_token_ok(request, settings.auth.service_token):
@@ -76,9 +79,10 @@ async def auth_gate(request: Request, call_next):
         return await call_next(request)
 
     token = request.cookies.get(settings.auth.session_cookie_name)
-    username = await run_in_threadpool(_resolve_username, settings, token)
-    if username is not None:
-        request.state.principal = username
+    resolved = await run_in_threadpool(_resolve_session, settings, token)
+    if resolved is not None:
+        request.state.principal = resolved.username
+        request.state.user_id = resolved.user_id
         return await call_next(request)
 
     return JSONResponse(
