@@ -3,13 +3,13 @@ import { Link } from "react-router"
 import {
   Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat1, Infinity, ChevronDown,
-  Volume2, VolumeX, Volume1, ThumbsUp, ThumbsDown, MoreHorizontal, ListPlus,
+  Volume2, VolumeX, Volume1, ThumbsDown, MoreHorizontal, ListPlus,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { usePlayerStore } from "@/store/playerStore"
-import { useNavidromeStore } from "@/store/navidromeStore"
 import { useUIStore } from "@/store/uiStore"
 import ArtworkImage from "@/components/media/ArtworkImage"
+import LikeButton from "@/components/media/LikeButton"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -54,8 +54,6 @@ export default function ExpandedPlayer() {
     if (!expanded) setMobileTab("player")
   }, [expanded])
 
-  const toggleLike = useNavidromeStore((s) => s.toggleLike)
-  const liked      = useNavidromeStore((s) => currentTrackId ? s.likedIds.has(currentTrackId) : false)
 
   const isPlaying  = playbackState === "playing"
   const isLoading  = playbackState === "loading"
@@ -204,14 +202,7 @@ export default function ExpandedPlayer() {
                 <div className="flex items-center gap-1 shrink-0 mt-0.5">
                   {currentTrackId && (
                     <>
-                      <button
-                        onClick={() => toggleLike(currentTrackId)}
-                        className={cn("p-1.5 rounded transition-colors",
-                          liked ? "text-primary" : "text-muted-foreground hover:text-foreground")}
-                        title="Like"
-                      >
-                        <ThumbsUp size={18} fill={liked ? "currentColor" : "none"} />
-                      </button>
+                      <LikeButton entity="track" id={currentTrackId} variant="control" size={18} />
                       <button
                         onClick={() => recordEvent("disliked")}
                         className={cn(iconBtn, "p-1.5")}

@@ -1,14 +1,13 @@
 import { Link, useParams } from "react-router"
-import { Play, Shuffle, Heart } from "lucide-react"
+import { Play, Shuffle } from "lucide-react"
 import { useRelease, useReleaseTracks, useReleaseRelated, useReleaseRecommendations } from "@/api/hooks/useRelease"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
+import LikeButton from "@/components/media/LikeButton"
 import TrackTable from "@/components/media/TrackTable"
 import Shelf from "@/components/media/Shelf"
 import { usePlayerStore } from "@/store/playerStore"
-import { useNavidromeStore } from "@/store/navidromeStore"
-import { cn } from "@/lib/utils"
 import type { ReleaseSummary } from "@/api/types"
 
 function formatDuration(seconds: number | null | undefined): string {
@@ -52,8 +51,6 @@ export default function ReleasePage() {
   const { data: recsData } = useReleaseRecommendations(releaseId)
   const playSource = usePlayerStore((s) => s.playSource)
   const patchSession = usePlayerStore((s) => s.toggleShuffle)
-  const toggleAlbumLike = useNavidromeStore((s) => s.toggleAlbumLike)
-  const liked = useNavidromeStore((s) => s.likedAlbumIds.has(releaseId))
   const isLoading = relLoading || tracksLoading
 
   if (isLoading) return <ReleasePageSkeleton />
@@ -123,16 +120,7 @@ export default function ReleasePage() {
               <Shuffle size={14} />
               Shuffle
             </Button>
-            <button
-              onClick={() => toggleAlbumLike(releaseId)}
-              title={liked ? "Unlike album" : "Like album"}
-              className={cn(
-                "p-1.5 rounded transition-colors",
-                liked ? "text-primary" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Heart size={18} fill={liked ? "currentColor" : "none"} />
-            </button>
+            <LikeButton entity="album" id={releaseId} variant="control" size={18} />
           </div>
         </div>
       </div>

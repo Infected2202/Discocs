@@ -1,9 +1,8 @@
 import { memo } from "react"
-import { ThumbsUp } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { usePlayerStore } from "@/store/playerStore"
-import { useNavidromeStore } from "@/store/navidromeStore"
 import ArtworkImage from "@/components/media/ArtworkImage"
+import LikeButton from "@/components/media/LikeButton"
 import TrackMenu from "@/components/media/TrackMenu"
 import { patchQueue } from "@/api/playback"
 import { QueueItemLiveTime, formatTime } from "@/components/player/PlaybackProgress"
@@ -25,8 +24,6 @@ function QueueItem({ track, trackId, itemId, variant = "queue", isCurrent, dimme
   const refreshQueue   = usePlayerStore((s) => s.refreshQueue)
   const jumpToQueueItem    = usePlayerStore((s) => s.jumpToQueueItem)
   const jumpToAutoplayItem = usePlayerStore((s) => s.jumpToAutoplayItem)
-  const toggleLike     = useNavidromeStore((s) => s.toggleLike)
-  const liked          = useNavidromeStore((s) => track ? s.likedIds.has(track.id) : false)
 
   // Stable-per-render handler; store actions are stable references so memo holds.
   const jumpToItem = variant === "autoplay" ? jumpToAutoplayItem : jumpToQueueItem
@@ -80,15 +77,7 @@ function QueueItem({ track, trackId, itemId, variant = "queue", isCurrent, dimme
       </button>
 
       {track && (
-        <button
-          onClick={() => toggleLike(track.id)}
-          className={cn(
-            "shrink-0 p-1 rounded transition-colors",
-            liked ? "text-primary" : "text-muted-foreground opacity-0 group-hover/row:opacity-100 hover:text-foreground",
-          )}
-        >
-          <ThumbsUp size={13} />
-        </button>
+        <LikeButton entity="track" id={track.id} variant="row" size={13} className="shrink-0" />
       )}
 
       <div className="flex items-center gap-1.5 shrink-0">

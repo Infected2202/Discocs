@@ -3,13 +3,13 @@ import { Link } from "react-router"
 import {
   Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat1, Infinity, Volume2, VolumeX, Volume1,
-  ChevronUp, ThumbsUp, ThumbsDown, MoreHorizontal,
+  ChevronUp, ThumbsDown, MoreHorizontal,
 } from "lucide-react"
 import type { TrackSummary } from "@/api/types"
 import { cn } from "@/lib/utils"
 import { usePlayerStore } from "@/store/playerStore"
-import { useNavidromeStore } from "@/store/navidromeStore"
 import ArtworkImage from "@/components/media/ArtworkImage"
+import LikeButton from "@/components/media/LikeButton"
 import PlayerBackdrop from "@/components/player/PlayerBackdrop.tsx"
 import styles from "./PlayerBar.module.css"
 import { readTrackAccentTransitionDurationMs } from "./plasmaUtils.ts"
@@ -171,8 +171,6 @@ export default function PlayerBar() {
   const toggleExpanded  = usePlayerStore((s) => s.toggleExpanded)
 
   const currentTrackId  = usePlayerStore((s) => s.currentTrackId)
-  const toggleLike      = useNavidromeStore((s) => s.toggleLike)
-  const liked           = useNavidromeStore((s) => currentTrackId ? s.likedIds.has(currentTrackId) : false)
 
   const isPlaying  = playbackState === "playing"
   const isLoading  = playbackState === "loading"
@@ -333,9 +331,6 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
             <TrackDetails
               snapshot={visibleSnapshot}
               iconBtn={iconBtn}
-              activeBtn={activeBtn}
-              toggleLike={toggleLike}
-              liked={liked}
             />
           </div>
         </div>
@@ -422,15 +417,9 @@ function TrackMoreMenu({ trackId }: { readonly trackId: number }) {
 function TrackDetails({
   snapshot,
   iconBtn,
-  activeBtn,
-  toggleLike,
-  liked,
 }: {
   readonly snapshot: PlayerBarTrackSnapshot
   readonly iconBtn: string
-  readonly activeBtn: string
-  readonly toggleLike: (trackId: number) => void
-  readonly liked: boolean
 }) {
   const recordEvent = usePlayerStore((s) => s.recordEvent)
   const { track, trackId } = snapshot
@@ -492,13 +481,7 @@ function TrackDetails({
 
       {trackId && (
         <div className="flex items-center gap-0.5 shrink-0">
-          <button
-            onClick={() => toggleLike(trackId)}
-            className={cn(iconBtn, liked && activeBtn)}
-            title="Like"
-          >
-            <ThumbsUp size={15} fill={liked ? "currentColor" : "none"} />
-          </button>
+          <LikeButton entity="track" id={trackId} variant="control" size={15} />
           <button
             onClick={() => recordEvent("disliked")}
             className={iconBtn}

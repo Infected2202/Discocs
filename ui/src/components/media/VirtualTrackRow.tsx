@@ -1,11 +1,11 @@
 import { useState } from "react"
 import { Link } from "react-router"
-import { Play, Pause, ThumbsUp, Check } from "lucide-react"
+import { Play, Pause, Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 import ArtworkImage from "./ArtworkImage"
+import LikeButton from "./LikeButton"
 import TrackMenu from "./TrackMenu"
 import { usePlayerStore } from "@/store/playerStore"
-import { useNavidromeStore } from "@/store/navidromeStore"
 import type { TrackSummary } from "@/api/types"
 
 function formatDuration(seconds: number | null | undefined): string {
@@ -71,8 +71,6 @@ export default function VirtualTrackRow({
   const playbackState  = usePlayerStore((s) => s.playbackState)
   const playSource     = usePlayerStore((s) => s.playSource)
   const togglePlay     = usePlayerStore((s) => s.togglePlay)
-  const toggleLike     = useNavidromeStore((s) => s.toggleLike)
-  const liked          = useNavidromeStore((s) => s.likedIds.has(track.id))
 
   const isActive  = currentTrackId === track.id
   const isPlaying = isActive && playbackState === "playing"
@@ -94,7 +92,7 @@ export default function VirtualTrackRow({
     <div
       data-track-row
       className={cn(
-        "grid items-center border-b border-border/40 last:border-0 transition-colors hover:bg-muted/40 h-[52px] [grid-template-columns:var(--track-grid-mobile)] md:[grid-template-columns:var(--track-grid-desktop)]",
+        "group/row grid items-center border-b border-border/40 last:border-0 transition-colors hover:bg-muted/40 h-[52px] [grid-template-columns:var(--track-grid-mobile)] md:[grid-template-columns:var(--track-grid-desktop)]",
         isActive && "text-primary",
       )}
       style={{
@@ -196,17 +194,7 @@ export default function VirtualTrackRow({
 
       {/* Like */}
       <div className="py-2">
-        <button
-          onClick={(e) => { e.stopPropagation(); toggleLike(track.id) }}
-          className={cn(
-            "flex h-7 w-7 items-center justify-center rounded transition-colors mx-auto",
-            liked
-              ? "text-primary opacity-100"
-              : "text-muted-foreground opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-foreground",
-          )}
-        >
-          <ThumbsUp size={13} />
-        </button>
+        <LikeButton entity="track" id={track.id} variant="row" size={13} />
       </div>
 
       {/* Menu */}

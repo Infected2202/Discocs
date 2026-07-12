@@ -1,11 +1,11 @@
 import { useState } from "react"
 import { Link } from "react-router"
-import { Play, Pause, ThumbsUp } from "lucide-react"
+import { Play, Pause } from "lucide-react"
 import { cn } from "@/lib/utils"
 import ArtworkImage from "./ArtworkImage"
+import LikeButton from "./LikeButton"
 import TrackMenu from "./TrackMenu"
 import { usePlayerStore } from "@/store/playerStore"
-import { useNavidromeStore } from "@/store/navidromeStore"
 import type { TrackSummary, ReleaseTrackItem, ArtistTopTrack } from "@/api/types"
 
 type TrackRowTrack = TrackSummary | ReleaseTrackItem | ArtistTopTrack
@@ -103,8 +103,6 @@ export default function TrackRow({
   const playbackState = usePlayerStore((s) => s.playbackState)
   const playSource = usePlayerStore((s) => s.playSource)
   const togglePlay = usePlayerStore((s) => s.togglePlay)
-  const toggleLike = useNavidromeStore((s) => s.toggleLike)
-  const liked = useNavidromeStore((s) => s.likedIds.has(track.id))
 
   const isActive = currentTrackId === track.id
   const isPlaying = isActive && playbackState === "playing"
@@ -197,20 +195,7 @@ export default function TrackRow({
       </td>
 
       <td className="w-8 py-2">
-        <button
-          onClick={(event) => {
-            event.stopPropagation()
-            toggleLike(track.id)
-          }}
-          className={cn(
-            "mx-auto flex h-7 w-7 items-center justify-center rounded transition-colors",
-            liked
-              ? "text-primary opacity-100"
-              : "text-muted-foreground opacity-100 hover:text-foreground md:opacity-0 md:group-hover/row:opacity-100",
-          )}
-        >
-          <ThumbsUp size={13} />
-        </button>
+        <LikeButton entity="track" id={track.id} variant="row" size={13} />
       </td>
 
       <td className="w-8 py-2 pr-2">

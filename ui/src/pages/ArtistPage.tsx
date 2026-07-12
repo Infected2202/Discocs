@@ -1,14 +1,13 @@
 import { useParams } from "react-router"
-import { Play, Shuffle, Heart } from "lucide-react"
+import { Play, Shuffle } from "lucide-react"
 import { useArtist, useArtistDiscography } from "@/api/hooks/useArtist"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
+import LikeButton from "@/components/media/LikeButton"
 import Shelf from "@/components/media/Shelf"
 import PopularTracks from "@/components/media/PopularTracks"
 import { usePlayerStore } from "@/store/playerStore"
-import { useNavidromeStore } from "@/store/navidromeStore"
-import { cn } from "@/lib/utils"
 import type { ReleaseSummary } from "@/api/types"
 
 function releaseSummaryToCard(r: ReleaseSummary, onPlay: () => void) {
@@ -53,8 +52,6 @@ export default function ArtistPage() {
   })()
   const playSource = usePlayerStore((s) => s.playSource)
   const toggleShuffle = usePlayerStore((s) => s.toggleShuffle)
-  const toggleArtistLike = useNavidromeStore((s) => s.toggleArtistLike)
-  const liked = useNavidromeStore((s) => s.likedArtistIds.has(artistId))
   const isLoading = artistLoading || discoLoading
 
   if (isLoading) return <ArtistPageSkeleton />
@@ -109,16 +106,7 @@ export default function ArtistPage() {
               <Shuffle size={14} />
               Shuffle
             </Button>
-            <button
-              onClick={() => toggleArtistLike(artistId)}
-              title={liked ? "Unlike artist" : "Like artist"}
-              className={cn(
-                "p-1.5 rounded transition-colors",
-                liked ? "text-primary" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Heart size={18} fill={liked ? "currentColor" : "none"} />
-            </button>
+            <LikeButton entity="artist" id={artistId} variant="control" size={18} />
           </div>
         </div>
       </div>
