@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { useRef } from "react"
 import { ScrollContext } from "@/contexts/ScrollContext"
@@ -47,16 +47,17 @@ function makeTrack(id: number): TrackSummary {
   }
 }
 
-function Wrapper({ tracks, onReorder }: {
+function Wrapper({ tracks, onReorder, onPlayTrack }: {
   readonly tracks: TrackSummary[]
   readonly onReorder?: (trackIds: number[]) => void
+  readonly onPlayTrack?: (trackId: number) => void
 }) {
   const ref = useRef<HTMLElement>(null)
   return (
     <MemoryRouter>
       <ScrollContext.Provider value={ref}>
         <div ref={ref as React.RefObject<HTMLDivElement>} style={{ height: 600, overflow: "auto" }}>
-          <VirtualTrackList tracks={tracks} sourceLabel="Test" onReorder={onReorder} />
+          <VirtualTrackList tracks={tracks} sourceLabel="Test" onReorder={onReorder} onPlayTrack={onPlayTrack} />
         </div>
       </ScrollContext.Provider>
     </MemoryRouter>
@@ -97,6 +98,15 @@ describe("VirtualTrackList", () => {
     const tracks = [makeTrack(42)]
     render(<Wrapper tracks={tracks} />)
     expect(screen.getByText("Track 42")).toBeInTheDocument()
+  })
+
+  it("клик по строке зовёт onPlayTrack с id трека (весь плейлист/микс с позиции)", () => {
+    const onPlayTrack = vi.fn()
+    render(<Wrapper tracks={[makeTrack(42)]} onPlayTrack={onPlayTrack} />)
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Play" })[0])
+
+    expect(onPlayTrack).toHaveBeenCalledWith(42)
   })
 
   it("не резервирует desktop-колонку release на мобильном", () => {

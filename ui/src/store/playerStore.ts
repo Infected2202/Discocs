@@ -99,7 +99,7 @@ interface PlayerState {
   refreshQueue(): Promise<void>
   recordEvent(eventType: string, extra?: Record<string, unknown>): Promise<void>
   handleTrackEnded(): Promise<void>
-  playFromEnvelope(envelope: PlaybackEnvelope): Promise<void>
+  playFromEnvelope(envelope: PlaybackEnvelope, preferredTrackId?: number): Promise<void>
   toggleExpanded(): void
 
   restoreSession(): Promise<void>
@@ -210,6 +210,31 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     return { session, queue, currentItem }
   }
 
+  // Shared start-playback step for both session-create (playSource) and
+  // pre-built-envelope (playFromEnvelope) flows: begin at the preferred track
+  // if it's in the queue, else the session's current item, else the first item.
+  async function playFirstOrPreferred(
+    applied: ReturnType<typeof applyEnvelope>,
+    preferredTrackId?: number,
+  ) {
+    const { queue, currentItem } = applied
+    const preferred = preferredTrackId
+      ? queue.items.find((item) => item.track_id === preferredTrackId)
+      : null
+    const first = preferred ?? currentItem ?? queue.items[0] ?? null
+    if (first) {
+      // applyEnvelope set currentTrack from the session's current_item. When we
+      // start at a different (preferred) item, sync currentTrack too, or the
+      // title / player bar / MediaSession stay on the old track (playTrack reads
+      // get().currentTrack for metadata but never updates it itself).
+      set({ currentTrack: first.track ?? null })
+      await get().playTrack(first.track_id, {
+        queueItemId: first.id,
+        recordStarted: true,
+      })
+    }
+  }
+
   async function scheduleAutoplayRefill(eventType?: string) {
     if (eventType && !REFILL_TRIGGER_EVENTS.has(eventType)) return
     const { session, currentTrackId, currentTrack } = get()
@@ -299,20 +324,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           autoplay_enabled: true,
         } satisfies CreateSessionParams)
 
-        const { queue, currentItem } = applyEnvelope(envelope, true)
+        const applied = applyEnvelope(envelope, true)
         persistSessionId(envelope.session.id)
-
-        const preferred = preferredTrackId
-          ? queue.items.find((item) => item.track_id === preferredTrackId)
-          : null
-        const first = preferred ?? currentItem ?? queue.items[0] ?? null
-
-        if (first) {
-          await get().playTrack(first.track_id, {
-            queueItemId: first.id,
-            recordStarted: true,
-          })
-        }
+        await playFirstOrPreferred(applied, preferredTrackId)
 
         scheduleAutoplayRefill()
       } catch (err) {
@@ -583,18 +597,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       scheduleAutoplayRefill("completed")
     },
 
-    async playFromEnvelope(envelope) {
+    async playFromEnvelope(envelope, preferredTrackId) {
       set({ error: null })
       try {
-        const { queue, currentItem } = applyEnvelope(envelope, true)
+        const applied = applyEnvelope(envelope, true)
         persistSessionId(envelope.session.id)
-        const first = currentItem ?? queue.items[0] ?? null
-        if (first) {
-          await get().playTrack(first.track_id, {
-            queueItemId: first.id,
-            recordStarted: true,
-          })
-        }
+        await playFirstOrPreferred(applied, preferredTrackId)
         scheduleAutoplayRefill()
       } catch (err) {
         set({ error: (err as Error).message })

@@ -131,7 +131,7 @@ export default function ReleasePage() {
           tracks={tracks}
           showRelease={false}
           sourceLabel={release.title}
-          releaseId={releaseId}
+          onPlayTrack={(trackId) => playSource("release", releaseId, release.title, trackId)}
         />
       </div>
 

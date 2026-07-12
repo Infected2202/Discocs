@@ -118,9 +118,11 @@ export default function PlaylistPage() {
     })
   }
 
-  function handlePlay() {
+  // Starts the whole playlist. With a trackId, playback begins at that track
+  // (row click); without one, at the top (the header Play button).
+  function playPlaylistFrom(trackId?: number) {
     const play = isLikes ? playLikes() : playPlaylist(playlistId!)
-    play.then(playFromEnvelope).catch(() => {})
+    play.then((envelope) => playFromEnvelope(envelope, trackId)).catch(() => {})
   }
 
   function handleEdit() {
@@ -164,7 +166,7 @@ export default function PlaylistPage() {
             )}
             <p className="text-sm text-muted-foreground mt-1">{tracks.length} tracks</p>
             <div className="mt-4 flex gap-2">
-              <Button size="sm" onClick={handlePlay} className="gap-2">
+              <Button size="sm" onClick={() => playPlaylistFrom()} className="gap-2">
                 <Play size={14} fill="currentColor" strokeWidth={0} />
                 Play
               </Button>
@@ -224,6 +226,7 @@ export default function PlaylistPage() {
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onReorder={isLikes ? undefined : (trackIds) => reorder(trackIds)}
+          onPlayTrack={(trackId) => playPlaylistFrom(trackId)}
         />
       </div>
     </div>

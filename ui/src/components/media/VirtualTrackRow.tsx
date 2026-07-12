@@ -26,6 +26,11 @@ interface VirtualTrackRowProps {
   readonly selected?: boolean
   readonly selectionActive?: boolean
   readonly onToggleSelect?: (trackId: number) => void
+  /**
+   * Play the whole collection starting at this track (playlist, mix…).
+   * When omitted, the row plays just this track as its own source.
+   */
+  readonly onPlayTrack?: (trackId: number) => void
 }
 
 export function trackGridTemplates({
@@ -64,6 +69,7 @@ export default function VirtualTrackRow({
   selected = false,
   selectionActive = false,
   onToggleSelect,
+  onPlayTrack,
 }: VirtualTrackRowProps) {
   const [hovered, setHovered] = useState(false)
 
@@ -79,6 +85,8 @@ export default function VirtualTrackRow({
     e.stopPropagation()
     if (isActive) {
       togglePlay()
+    } else if (onPlayTrack) {
+      onPlayTrack(track.id)
     } else {
       playSource("track", track.id, sourceLabel ?? track.title)
     }
@@ -199,7 +207,7 @@ export default function VirtualTrackRow({
 
       {/* Menu */}
       <div className="py-2 pr-2">
-        <TrackMenu track={track} sourceLabel={sourceLabel} />
+        <TrackMenu track={track} sourceLabel={sourceLabel} onPlayTrack={onPlayTrack} />
       </div>
 
       {/* Selection checkbox (right side) */}

@@ -17,13 +17,13 @@ import type { PlaybackEnvelope, TrackSummary, ReleaseTrackItem } from "@/api/typ
 interface TrackMenuProps {
   readonly track: TrackSummary | ReleaseTrackItem
   readonly sourceLabel?: string
-  /** When set, "Play" queues the whole release (starting at this track) instead of just this track. */
-  readonly releaseId?: number
+  /** When set, "Play" plays the whole collection starting at this track instead of just this track. */
+  readonly onPlayTrack?: (trackId: number) => void
   /** When set, adds a "Remove from queue" item — for rows that live in the current playback queue. */
   readonly onRemoveFromQueue?: () => void
 }
 
-export default function TrackMenu({ track, sourceLabel, releaseId, onRemoveFromQueue }: TrackMenuProps) {
+export default function TrackMenu({ track, sourceLabel, onPlayTrack, onRemoveFromQueue }: TrackMenuProps) {
   const navigate = useNavigate()
   const sessionId      = usePlayerStore((s) => s.session?.id)
   const playSource     = usePlayerStore((s) => s.playSource)
@@ -33,8 +33,8 @@ export default function TrackMenu({ track, sourceLabel, releaseId, onRemoveFromQ
   const release = track.release
 
   async function handlePlay() {
-    if (releaseId) {
-      await playSource("release", releaseId, sourceLabel ?? release?.title ?? track.title, track.id)
+    if (onPlayTrack) {
+      onPlayTrack(track.id)
     } else {
       await playSource("track", track.id, sourceLabel ?? track.title)
     }

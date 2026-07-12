@@ -90,12 +90,14 @@ describe("TrackRow", () => {
     expect(togglePlay).not.toHaveBeenCalled()
   })
 
-  it("queues the whole release starting at this track when releaseId is set", () => {
-    renderRow(makeTrack(), { sourceLabel: "Neon Lights", releaseId: 11 })
+  it("plays the whole collection via onPlayTrack, positioned at this track", () => {
+    const onPlayTrack = vi.fn()
+    renderRow(makeTrack(), { onPlayTrack })
 
     fireEvent.click(screen.getAllByRole("button", { name: "Play" })[0])
 
-    expect(playSource).toHaveBeenCalledWith("release", 11, "Neon Lights", 7)
+    expect(onPlayTrack).toHaveBeenCalledWith(7)
+    expect(playSource).not.toHaveBeenCalled()
   })
 
   it("toggles playback instead of restarting the source for the active track", () => {

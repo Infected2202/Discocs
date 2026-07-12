@@ -36,6 +36,8 @@ interface VirtualTrackListProps {
   readonly selectedIds?: ReadonlySet<number>
   readonly onToggleSelect?: (trackId: number) => void
   readonly onReorder?: (trackIds: number[]) => void
+  /** When set, playing any row plays the whole collection starting at that track. */
+  readonly onPlayTrack?: (trackId: number) => void
 }
 
 /**
@@ -63,6 +65,7 @@ interface RowProps {
   readonly selected: boolean
   readonly selectionActive: boolean
   readonly onToggleSelect?: (trackId: number) => void
+  readonly onPlayTrack?: (trackId: number) => void
 }
 
 /** A single reorderable row: a sortable node positioned by the virtualizer. */
@@ -113,6 +116,7 @@ export default function VirtualTrackList({
   selectedIds,
   onToggleSelect,
   onReorder,
+  onPlayTrack,
 }: VirtualTrackListProps) {
   const scrollRef = useScrollRef()
   const reorderable = onReorder != null
@@ -163,6 +167,7 @@ export default function VirtualTrackList({
       selected: selectedIds?.has(track.id) ?? false,
       selectionActive,
       onToggleSelect,
+      onPlayTrack,
     }
   }
 

@@ -42,6 +42,12 @@ export default function MixPage() {
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
   const openCreatePlaylist = useUIStore((s) => s.openCreatePlaylist)
 
+  // Starts the whole mix. With a trackId, playback begins at that track (row
+  // click); without one, at the top (the header Play button).
+  function playMixFrom(trackId?: number) {
+    playMix(mixId).then((envelope) => playFromEnvelope(envelope, trackId)).catch(() => {})
+  }
+
   function handleSave() {
     if (!mix) return
     openCreatePlaylist({
@@ -96,7 +102,7 @@ export default function MixPage() {
           <div className="flex gap-2 mt-4">
             <Button
               size="sm"
-              onClick={() => playMix(mixId).then(playFromEnvelope)}
+              onClick={() => playMixFrom()}
               className="gap-2"
             >
               <Play size={14} fill="currentColor" strokeWidth={0} />
@@ -119,7 +125,11 @@ export default function MixPage() {
 
       {/* Tracks */}
       <div className="px-4 sm:px-6">
-        <VirtualTrackList tracks={tracks} sourceLabel={mix.title} />
+        <VirtualTrackList
+          tracks={tracks}
+          sourceLabel={mix.title}
+          onPlayTrack={(trackId) => playMixFrom(trackId)}
+        />
       </div>
     </div>
   )
