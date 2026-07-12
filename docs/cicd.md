@@ -160,6 +160,11 @@ frontend поднимаются без него. Образ бота при эт
 полезным, можно добавить `waitForQualityGate` (потребует настроить вебхук
 SonarQube → Jenkins).
 
+Jenkins задаёт `SONAR_SCANNER_OPTS=-Xmx2g`: полный анализ Python, TypeScript и
+Docker/IaC превысил стандартный heap scanner JRE и завершался
+`OutOfMemoryError` до публикации отчёта. Это лимит только процесса scanner,
+не SonarQube-сервера.
+
 Покрыты все части кодовой базы: `sonar.sources=app,discocs_bot/bot,ui/src,deploy`
 (бэкенд, бот, фронтенд, CI/Dockerfile'ы), `sonar.tests` — соответствующие каталоги
 тестов. `deploy` добавлен ради встроенных в Community Build анализаторов **Secrets**
