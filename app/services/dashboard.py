@@ -74,7 +74,7 @@ def _dashboard_recently_added(
             FROM releases r
             JOIN release_tracks rt ON rt.release_id = r.id
             JOIN tracks t ON t.id = rt.track_id
-            WHERE p.user_id = discocs_user_id() AND t.missing_at IS NULL
+            WHERE t.missing_at IS NULL
             GROUP BY r.id
             ORDER BY added_at DESC, r.id DESC
             LIMIT ? OFFSET ?
