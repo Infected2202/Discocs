@@ -4,6 +4,7 @@ import { useRelease, useReleaseTracks, useReleaseRelated, useReleaseRecommendati
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
+import CollectionHeader from "@/components/media/CollectionHeader"
 import LikeButton from "@/components/media/LikeButton"
 import TrackTable from "@/components/media/TrackTable"
 import Shelf from "@/components/media/Shelf"
@@ -70,22 +71,20 @@ export default function ReleasePage() {
     <div className="relative pb-8">
       {/* Header */}
       <div className="relative space-y-8">
-      <div className="px-4 sm:px-6 pt-8 pb-4 flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
-        <ArtworkImage
-          src={release.artwork?.url}
-          alt={release.title}
-          size={176}
-          className="rounded-lg shrink-0"
-          fallbackLetter={release.title[0]}
-        />
-        <div className="pb-0 sm:pb-2 min-w-0">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
-            {release.release_type_label}
-          </p>
-          <h1 className="text-3xl font-bold truncate">{release.title}</h1>
-
-          {/* Artists */}
-          <div className="flex flex-wrap gap-1 mt-1.5 text-sm text-muted-foreground">
+      <CollectionHeader
+        artwork={
+          <ArtworkImage
+            src={release.artwork?.url}
+            alt={release.title}
+            size={176}
+            className="rounded-lg shrink-0"
+            fallbackLetter={release.title[0]}
+          />
+        }
+        kicker={release.release_type_label}
+        title={release.title}
+        meta={
+          <div className="flex flex-wrap gap-1">
             {release.artists.map((a, i) => (
               <span key={a.id}>
                 <Link to={`/artists/${a.id}`} className="hover:text-foreground hover:underline">
@@ -98,8 +97,9 @@ export default function ReleasePage() {
             {release.track_count > 0 && <span>· {release.track_count} tracks</span>}
             {release.duration && <span>· {formatDuration(release.duration)}</span>}
           </div>
-
-          <div className="flex gap-2 mt-4 items-center">
+        }
+        actions={
+          <>
             <Button
               size="sm"
               onClick={() => playSource("release", releaseId, release.title)}
@@ -121,9 +121,9 @@ export default function ReleasePage() {
               Shuffle
             </Button>
             <LikeButton entity="album" id={releaseId} variant="control" size={18} />
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Tracks */}
       <div className="px-4 sm:px-6">

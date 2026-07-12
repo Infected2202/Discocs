@@ -7,6 +7,7 @@ import { useUIStore } from "@/store/uiStore"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
+import CollectionHeader from "@/components/media/CollectionHeader"
 import VirtualTrackList from "@/components/media/VirtualTrackList"
 import { usePlayerStore } from "@/store/playerStore"
 import type { TrackSummary } from "@/api/types"
@@ -81,47 +82,39 @@ export default function MixPage() {
   return (
     <div className="space-y-8 pb-8">
       {/* Header */}
-      <div className="px-4 sm:px-6 pt-8 flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
-        <ArtworkImage
-          src={mix.artwork?.url}
-          alt={mix.title}
-          size={176}
-          className="rounded-lg shrink-0"
-          fallbackLetter="M"
-        />
-        <div className="pb-0 sm:pb-2 min-w-0">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
-            Generated mix
-          </p>
-          <h1 className="text-3xl font-bold truncate">{mix.title}</h1>
-          <p className="text-sm text-muted-foreground mt-1">
+      <CollectionHeader
+        artwork={
+          <ArtworkImage
+            src={mix.artwork?.url}
+            alt={mix.title}
+            size={176}
+            className="rounded-lg shrink-0"
+            fallbackLetter="M"
+          />
+        }
+        kicker="Generated mix"
+        title={mix.title}
+        meta={
+          <>
             {tracks.length} tracks
             {mix.created_at && ` · ${new Date(mix.created_at).toLocaleDateString()}`}
-          </p>
-
-          <div className="flex gap-2 mt-4">
-            <Button
-              size="sm"
-              onClick={() => playMixFrom()}
-              className="gap-2"
-            >
+          </>
+        }
+        actions={
+          <>
+            <Button size="sm" onClick={() => playMixFrom()} className="gap-2">
               <Play size={14} fill="currentColor" strokeWidth={0} />
               Play
             </Button>
             {!isSaved && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleSave}
-                className="gap-2"
-              >
+              <Button size="sm" variant="outline" onClick={handleSave} className="gap-2">
                 <Bookmark size={14} />
                 Save
               </Button>
             )}
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Tracks */}
       <div className="px-4 sm:px-6">

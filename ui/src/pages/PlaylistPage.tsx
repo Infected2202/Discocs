@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
+import CollectionHeader from "@/components/media/CollectionHeader"
 import VirtualTrackList from "@/components/media/VirtualTrackList"
 import { usePlayerStore } from "@/store/playerStore"
 import { useUIStore } from "@/store/uiStore"
@@ -136,17 +137,18 @@ export default function PlaylistPage() {
   return (
     <div className="space-y-8 pb-8">
       {/* Header */}
-      <div className="px-4 sm:px-6 pt-6 space-y-6">
-        <button
-          onClick={() => navigate(-1)}
-          className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ChevronLeft size={16} />
-          Back
-        </button>
-
-        <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
-          {isLikes ? (
+      <CollectionHeader
+        above={
+          <button
+            onClick={() => navigate(-1)}
+            className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ChevronLeft size={16} />
+            Back
+          </button>
+        }
+        artwork={
+          isLikes ? (
             <LikesArtwork />
           ) : (
             <ArtworkImage
@@ -156,42 +158,44 @@ export default function PlaylistPage() {
               className="rounded-lg shrink-0"
               fallbackLetter="P"
             />
-          )}
-
-          <div className="pb-0 sm:pb-2 min-w-0">
-            <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Playlist</p>
-            <h1 className="text-3xl font-bold">{data.title}</h1>
-            {detail?.description && (
-              <p className="text-sm text-muted-foreground mt-1">{detail.description}</p>
+          )
+        }
+        kicker="Playlist"
+        title={data.title}
+        truncateTitle={false}
+        meta={
+          <>
+            {detail?.description && <p>{detail.description}</p>}
+            <p className={detail?.description ? "mt-1" : undefined}>{tracks.length} tracks</p>
+          </>
+        }
+        actions={
+          <>
+            <Button size="sm" onClick={() => playPlaylistFrom()} className="gap-2">
+              <Play size={14} fill="currentColor" strokeWidth={0} />
+              Play
+            </Button>
+            {!isLikes && (
+              <>
+                <Button size="sm" variant="outline" onClick={handleEdit} className="gap-2">
+                  <Pencil size={14} />
+                  Edit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={confirmDelete}
+                  disabled={deleting}
+                  className="gap-2 text-destructive hover:text-destructive"
+                >
+                  <Trash2 size={14} />
+                  Delete
+                </Button>
+              </>
             )}
-            <p className="text-sm text-muted-foreground mt-1">{tracks.length} tracks</p>
-            <div className="mt-4 flex gap-2">
-              <Button size="sm" onClick={() => playPlaylistFrom()} className="gap-2">
-                <Play size={14} fill="currentColor" strokeWidth={0} />
-                Play
-              </Button>
-              {!isLikes && (
-                <>
-                  <Button size="sm" variant="outline" onClick={handleEdit} className="gap-2">
-                    <Pencil size={14} />
-                    Edit
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={confirmDelete}
-                    disabled={deleting}
-                    className="gap-2 text-destructive hover:text-destructive"
-                  >
-                    <Trash2 size={14} />
-                    Delete
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Selection bar */}
       {!isLikes && selectedIds.size > 0 && (

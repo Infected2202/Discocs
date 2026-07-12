@@ -4,6 +4,7 @@ import { useArtist, useArtistDiscography } from "@/api/hooks/useArtist"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
+import CollectionHeader from "@/components/media/CollectionHeader"
 import LikeButton from "@/components/media/LikeButton"
 import Shelf from "@/components/media/Shelf"
 import PopularTracks from "@/components/media/PopularTracks"
@@ -70,22 +71,26 @@ export default function ArtistPage() {
     <div className="relative pb-8">
       {/* Header */}
       <div className="relative z-10 space-y-2">
-      <div className="px-4 sm:px-6 pt-8 pb-4 flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
-        <ArtworkImage
-          src={artist.image?.url}
-          alt={artist.name}
-          size={144}
-          className="rounded-full shrink-0"
-          fallbackLetter={artist.name[0]}
-        />
-        <div className="pb-0 sm:pb-2 min-w-0">
-          <h1 className="text-3xl font-bold truncate">{artist.name}</h1>
-          <p className="text-sm text-muted-foreground mt-1">
+      <CollectionHeader
+        artwork={
+          <ArtworkImage
+            src={artist.image?.url}
+            alt={artist.name}
+            size={144}
+            className="rounded-full shrink-0"
+            fallbackLetter={artist.name[0]}
+          />
+        }
+        title={artist.name}
+        meta={
+          <>
             {stats.tracks.toLocaleString()} tracks
             {stats.releases > 0 && ` · ${stats.releases.toLocaleString()} releases`}
             {stats.plays > 0 && ` · ${stats.plays.toLocaleString()} plays`}
-          </p>
-          <div className="flex gap-2 mt-4 items-center">
+          </>
+        }
+        actions={
+          <>
             <Button
               size="sm"
               onClick={() => playSource("artist", artistId, artist.name)}
@@ -107,9 +112,9 @@ export default function ArtistPage() {
               Shuffle
             </Button>
             <LikeButton entity="artist" id={artistId} variant="control" size={18} />
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Popular tracks */}
       {popularTracks.length > 0 && (
