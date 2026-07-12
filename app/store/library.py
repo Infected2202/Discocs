@@ -990,7 +990,11 @@ class LibraryStoreMixin:
                 SELECT t.*, COALESCE(utp.play_count, 0) AS play_count
                 FROM tracks t
                 JOIN track_artists ta ON ta.track_id = t.id
-                LEFT JOIN user_track_preferences utp ON utp.track_id = t.id
+                LEFT JOIN (
+                    SELECT track_id, SUM(play_count) AS play_count
+                    FROM user_track_preferences
+                    GROUP BY track_id
+                ) utp ON utp.track_id = t.id
                 WHERE ta.artist_id = ?
                 GROUP BY t.id
                 ORDER BY play_count DESC, t.id ASC

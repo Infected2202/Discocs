@@ -102,8 +102,12 @@ from app.scanner import ScannedTrack
 logger = logging.getLogger(__name__)
 INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
-_SELECT_GENERATED_MIX_BY_ID = "SELECT * FROM generated_mixes WHERE id = ?"
-_SELECT_PLAYLIST_BY_ID = "SELECT * FROM playlists WHERE id = ?"
+_SELECT_GENERATED_MIX_BY_ID = (
+    "SELECT * FROM generated_mixes WHERE id = ? AND user_id = discocs_user_id()"
+)
+_SELECT_PLAYLIST_BY_ID = (
+    "SELECT * FROM playlists WHERE id = ? AND user_id = discocs_user_id()"
+)
 _INSERT_PLAYLIST_ITEM = (
     "INSERT INTO playlist_items (playlist_id, position, track_id, created_at) VALUES (?, ?, ?, ?)"
 )
@@ -125,6 +129,7 @@ class MixesStoreMixin:
         expires_at: str | None = None,
         saved_playlist_id: int | None = None,
     ) -> GeneratedMix:
+        self.require_user_id()
         _require_choice(mix_type, GENERATED_MIX_TYPES, "mix_type")
         _require_choice(status, GENERATED_MIX_STATUSES, "status")
         now = utc_now()
@@ -132,18 +137,20 @@ class MixesStoreMixin:
         with self.connect() as conn:
             _validate_track_ids(conn, [int(item["track_id"]) for item in mix_items])
             existing = conn.execute(
-                "SELECT created_at FROM generated_mixes WHERE id = ?",
+                "SELECT user_id, created_at FROM generated_mixes WHERE id = ?",
                 (mix_id,),
             ).fetchone()
+            if existing is not None and int(existing["user_id"]) != self.require_user_id():
+                raise ValueError("Generated mix id belongs to another user")
             created_at = str(existing["created_at"]) if existing else now
             conn.execute(
                 """
                 INSERT INTO generated_mixes (
-                    id, title, mix_type, status, cover_path, anchor_json, settings_json,
+                    id, user_id, title, mix_type, status, cover_path, anchor_json, settings_json,
                     score_summary_json, created_at, updated_at, expires_at,
                     saved_playlist_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, discocs_user_id(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
                     mix_type = excluded.mix_type,
@@ -206,7 +213,7 @@ class MixesStoreMixin:
     def set_generated_mix_cover_path(self, mix_id: str, cover_path: str | None) -> GeneratedMix | None:
         with self.connect() as conn:
             conn.execute(
-                "UPDATE generated_mixes SET cover_path = ?, updated_at = ? WHERE id = ?",
+                "UPDATE generated_mixes SET cover_path = ?, updated_at = ? WHERE id = ? AND user_id = discocs_user_id()",
                 (cover_path, utc_now(), mix_id),
             )
             row = conn.execute(
@@ -230,7 +237,7 @@ class MixesStoreMixin:
             rows = conn.execute(
                 f"""
                 SELECT * FROM generated_mixes
-                WHERE status IN ({placeholders})
+                WHERE user_id = discocs_user_id() AND status IN ({placeholders})
                 ORDER BY
                     CASE
                         WHEN id LIKE 'mix-%' THEN substr(id, 5, 20)
@@ -257,7 +264,7 @@ class MixesStoreMixin:
         with self.connect() as conn:
             return int(
                 conn.execute(
-                    f"SELECT COUNT(*) FROM generated_mixes WHERE status IN ({placeholders})",
+                    f"SELECT COUNT(*) FROM generated_mixes WHERE user_id = discocs_user_id() AND status IN ({placeholders})",
                     status_values,
                 ).fetchone()[0]
             )
@@ -275,7 +282,11 @@ class MixesStoreMixin:
             rows = conn.execute(
                 """
                 SELECT * FROM generated_mix_items
-                WHERE mix_id = ?
+                WHERE mix_id = ? AND EXISTS (
+                    SELECT 1 FROM generated_mixes m
+                    WHERE m.id = generated_mix_items.mix_id
+                      AND m.user_id = discocs_user_id()
+                )
                 ORDER BY position
                 """,
                 (mix_id,),
@@ -293,7 +304,7 @@ class MixesStoreMixin:
         playlist_title = (title or "").strip()
         with self.connect() as conn:
             mix = conn.execute(
-                "SELECT * FROM generated_mixes WHERE id = ? AND status != 'archived'",
+                "SELECT * FROM generated_mixes WHERE id = ? AND user_id = discocs_user_id() AND status != 'archived'",
                 (mix_id,),
             ).fetchone()
             if mix is None:
@@ -309,8 +320,8 @@ class MixesStoreMixin:
             if existing_playlist_id is None:
                 cursor = conn.execute(
                     """
-                    INSERT INTO playlists (title, kind, description, source_json, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO playlists (user_id, title, kind, description, source_json, created_at, updated_at)
+                    VALUES (discocs_user_id(), ?, ?, ?, ?, ?, ?)
                     """,
                     (playlist_title, "saved_mix", description, _json_dumps(source), now, now),
                 )
@@ -321,7 +332,7 @@ class MixesStoreMixin:
                     """
                     UPDATE playlists
                     SET title = ?, kind = ?, description = ?, source_json = ?, updated_at = ?
-                    WHERE id = ?
+                    WHERE id = ? AND user_id = discocs_user_id()
                     """,
                     (playlist_title, "saved_mix", description, _json_dumps(source), now, playlist_id),
                 )
@@ -347,7 +358,7 @@ class MixesStoreMixin:
                 """
                 UPDATE generated_mixes
                 SET status = 'saved', saved_playlist_id = ?, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND user_id = discocs_user_id()
                 """,
                 (playlist_id, now, mix_id),
             )
@@ -359,7 +370,7 @@ class MixesStoreMixin:
 
     def get_playlist(self, playlist_id: int) -> Playlist | None:
         with self.connect() as conn:
-            row = conn.execute("SELECT * FROM playlists WHERE id = ?", (playlist_id,)).fetchone()
+            row = conn.execute(_SELECT_PLAYLIST_BY_ID, (playlist_id,)).fetchone()
         return row_to_playlist(row) if row else None
 
     def list_playlist_items(self, playlist_id: int) -> list[PlaylistItem]:
@@ -367,7 +378,11 @@ class MixesStoreMixin:
             rows = conn.execute(
                 """
                 SELECT * FROM playlist_items
-                WHERE playlist_id = ?
+                WHERE playlist_id = ? AND EXISTS (
+                    SELECT 1 FROM playlists p
+                    WHERE p.id = playlist_items.playlist_id
+                      AND p.user_id = discocs_user_id()
+                )
                 ORDER BY position
                 """,
                 (playlist_id,),
@@ -393,8 +408,8 @@ class MixesStoreMixin:
             _validate_track_ids(conn, ids)
             cursor = conn.execute(
                 """
-                INSERT INTO playlists (title, kind, description, source_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO playlists (user_id, title, kind, description, source_json, created_at, updated_at)
+                VALUES (discocs_user_id(), ?, ?, ?, ?, ?, ?)
                 """,
                 (clean_title, kind, description, _json_dumps(source), now, now),
             )
@@ -433,7 +448,7 @@ class MixesStoreMixin:
                 sets.append("updated_at = ?")
                 params.append(utc_now())
                 cursor = conn.execute(
-                    f"UPDATE playlists SET {', '.join(sets)} WHERE id = ?",
+                    f"UPDATE playlists SET {', '.join(sets)} WHERE id = ? AND user_id = discocs_user_id()",
                     [*params, playlist_id],
                 )
                 if cursor.rowcount == 0:
@@ -452,11 +467,14 @@ class MixesStoreMixin:
                 SET status = CASE WHEN status = 'saved' THEN 'active' ELSE status END,
                     saved_playlist_id = NULL,
                     updated_at = ?
-                WHERE saved_playlist_id = ?
+                WHERE user_id = discocs_user_id() AND saved_playlist_id = ?
                 """,
                 (now, playlist_id),
             )
-            cursor = conn.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,))
+            cursor = conn.execute(
+                "DELETE FROM playlists WHERE id = ? AND user_id = discocs_user_id()",
+                (playlist_id,),
+            )
             return cursor.rowcount > 0
 
     def list_playlists(self, *, limit: int = 50, offset: int = 0) -> list[Playlist]:
@@ -464,6 +482,7 @@ class MixesStoreMixin:
             rows = conn.execute(
                 """
                 SELECT * FROM playlists
+                WHERE user_id = discocs_user_id()
                 ORDER BY updated_at DESC, id DESC
                 LIMIT ? OFFSET ?
                 """,
@@ -473,7 +492,9 @@ class MixesStoreMixin:
 
     def count_playlists(self) -> int:
         with self.connect() as conn:
-            return int(conn.execute("SELECT COUNT(*) FROM playlists").fetchone()[0])
+            return int(conn.execute(
+                "SELECT COUNT(*) FROM playlists WHERE user_id = discocs_user_id()"
+            ).fetchone()[0])
 
     def playlist_track_counts(self, playlist_ids: list[int]) -> dict[int, int]:
         if not playlist_ids:
@@ -483,16 +504,20 @@ class MixesStoreMixin:
         with self.connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT playlist_id, COUNT(*) AS track_count
-                FROM playlist_items
-                WHERE playlist_id IN ({placeholders})
-                GROUP BY playlist_id
+                SELECT pi.playlist_id, COUNT(*) AS track_count
+                FROM playlist_items pi
+                JOIN playlists p ON p.id = pi.playlist_id
+                WHERE p.user_id = discocs_user_id()
+                  AND pi.playlist_id IN ({placeholders})
+                GROUP BY pi.playlist_id
                 """,
                 unique_ids,
             ).fetchall()
         return {int(row["playlist_id"]): int(row["track_count"]) for row in rows}
 
     def playlist_track_ids(self, playlist_id: int) -> list[int]:
+        if self.get_playlist(playlist_id) is None:
+            return []
         with self.connect() as conn:
             rows = conn.execute(
                 """
@@ -505,11 +530,11 @@ class MixesStoreMixin:
         return [int(row["track_id"]) for row in rows]
 
     def add_playlist_tracks(self, playlist_id: int, track_ids: list[int]) -> int:
+        if self.get_playlist(playlist_id) is None:
+            raise ValueError(f"Playlist not found: {playlist_id}")
         now = utc_now()
         ids = [int(track_id) for track_id in track_ids]
         with self.connect() as conn:
-            if conn.execute(_SELECT_PLAYLIST_BY_ID, (playlist_id,)).fetchone() is None:
-                raise ValueError(f"Playlist not found: {playlist_id}")
             _validate_track_ids(conn, ids)
             existing = {
                 int(row["track_id"])
@@ -533,10 +558,15 @@ class MixesStoreMixin:
                 position += 1
                 added += 1
             if added:
-                conn.execute("UPDATE playlists SET updated_at = ? WHERE id = ?", (now, playlist_id))
+                conn.execute(
+                    "UPDATE playlists SET updated_at = ? WHERE id = ? AND user_id = discocs_user_id()",
+                    (now, playlist_id),
+                )
         return added
 
     def remove_playlist_tracks(self, playlist_id: int, track_ids: list[int]) -> int:
+        if self.get_playlist(playlist_id) is None:
+            return 0
         now = utc_now()
         ids = sorted({int(track_id) for track_id in track_ids})
         if not ids:
@@ -550,7 +580,10 @@ class MixesStoreMixin:
             removed = int(cursor.rowcount)
             if removed:
                 self._repack_playlist_positions(conn, playlist_id)
-                conn.execute("UPDATE playlists SET updated_at = ? WHERE id = ?", (now, playlist_id))
+                conn.execute(
+                    "UPDATE playlists SET updated_at = ? WHERE id = ? AND user_id = discocs_user_id()",
+                    (now, playlist_id),
+                )
         return removed
 
     def _repack_playlist_positions(self, conn: sqlite3.Connection, playlist_id: int) -> None:
@@ -578,11 +611,11 @@ class MixesStoreMixin:
         playlist currently holds; otherwise ValueError is raised (the caller
         maps it to 409).
         """
+        if self.get_playlist(playlist_id) is None:
+            return False
         now = utc_now()
         ids = [int(track_id) for track_id in track_ids]
         with self.connect() as conn:
-            if conn.execute(_SELECT_PLAYLIST_BY_ID, (playlist_id,)).fetchone() is None:
-                return False
             rows = conn.execute(
                 """
                 SELECT track_id, created_at FROM playlist_items
@@ -601,13 +634,16 @@ class MixesStoreMixin:
                     _INSERT_PLAYLIST_ITEM,
                     (playlist_id, position, track_id, created_by_track[track_id]),
                 )
-            conn.execute("UPDATE playlists SET updated_at = ? WHERE id = ?", (now, playlist_id))
+            conn.execute(
+                "UPDATE playlists SET updated_at = ? WHERE id = ? AND user_id = discocs_user_id()",
+                (now, playlist_id),
+            )
         return True
 
     def set_playlist_cover_path(self, playlist_id: int, cover_path: str | None) -> Playlist | None:
         with self.connect() as conn:
             conn.execute(
-                "UPDATE playlists SET cover_path = ? WHERE id = ?",
+                "UPDATE playlists SET cover_path = ? WHERE id = ? AND user_id = discocs_user_id()",
                 (cover_path, playlist_id),
             )
             row = conn.execute(_SELECT_PLAYLIST_BY_ID, (playlist_id,)).fetchone()
@@ -615,7 +651,7 @@ class MixesStoreMixin:
 
     def mark_generated_mixes_stale(self, *, mix_type: str | None = None) -> int:
         params: list[object] = [utc_now()]
-        where = "status = 'active'"
+        where = "user_id = discocs_user_id() AND status = 'active'"
         if mix_type is not None:
             _require_choice(mix_type, GENERATED_MIX_TYPES, "mix_type")
             where += " AND mix_type = ?"
@@ -629,12 +665,13 @@ class MixesStoreMixin:
 
     def recompute_user_preferences(self) -> None:
         with self.connect() as conn:
-            conn.execute("DELETE FROM user_track_preferences")
-            conn.execute("DELETE FROM user_release_preferences")
-            conn.execute("DELETE FROM user_artist_preferences")
+            conn.execute("DELETE FROM user_track_preferences WHERE user_id = discocs_user_id()")
+            conn.execute("DELETE FROM user_release_preferences WHERE user_id = discocs_user_id()")
+            conn.execute("DELETE FROM user_artist_preferences WHERE user_id = discocs_user_id()")
             rows = conn.execute(
                 """
                 SELECT * FROM playback_events
+                WHERE user_id = discocs_user_id()
                 ORDER BY created_at, id
                 """
             ).fetchall()

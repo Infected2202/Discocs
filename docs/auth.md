@@ -169,8 +169,8 @@ server {
 
 ### Фаза 2 — Мультиюзер (крупный эпик, ради персональных рекомендаций)
 
-Перепахивание модели данных, не окно. Схема сейчас одно-пользовательская
-(`user_track_preferences` и пр. — PK по entity_id без `user_id`).
+Перепахивание модели данных, не окно. Схема и Store-слой переводятся на
+обязательный пользовательский скоуп.
 
 1. **Схема:** `user_id` в PK всех preference/session/mix/playlist/flow/playback-таблиц
    + миграция.
@@ -188,6 +188,11 @@ server {
    per-user at-rest).
 4. **Фильтрация по юзеру** во всех запросах store-миксинов, рекомендере, автоплее,
    дашборде, flow.
+   ✅ **Реализовано (чекпоинт 3):** `Store.for_user(user_id)`, default-deny для
+   явно unscoped Store, составные PK preference/cache, owner-фильтрация playback,
+   flow, generated mixes, playlists, dashboard и recommendation seeds. HTTP-
+   контекст связывает Store с `user_id` активной сессии; service-принципал без
+   пользователя не получает доступ к персональным операциям.
 5. **Per-user фон:** flow-профили, генерируемые миксы, play-state sync — по каждому
    пользователю.
 

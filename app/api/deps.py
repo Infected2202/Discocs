@@ -28,6 +28,7 @@ from app.models import (
 from app.navidrome import NavidromeClient
 from app.state import TEXT_SEARCH_EMBEDDER, TEXT_SEARCH_EMBEDDER_LOCK
 from app.store import Store
+from app.user_context import current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +39,13 @@ logger = logging.getLogger(__name__)
 
 def context() -> tuple[Store, Settings]:
     settings = Settings.from_env()
-    store = Store(settings.db_path)
+    identity_set, user_id = current_user_id()
+    store = Store(settings.db_path, user_id=user_id)
     store.init()
+    if not identity_set:
+        # Calls outside HTTP retain the historical single-user behaviour.
+        store = Store(settings.db_path)
+        store.init()
     return store, settings
 
 

@@ -29,6 +29,9 @@ services:
       DISCOCS_DATA_DIR: /app/data
       DISCOCS_MODEL_DIR: /app/models
       DISCOCS_INDEX_DIR: /app/data
+      # Owner for the one-time Phase 2 migration of existing personal rows.
+      # Override in the host .env if the Navidrome username differs.
+      DISCOCS_OWNER_USER: ${DISCOCS_OWNER_USER:-infected2202}
       # Access gate (Phase 1). Off by default; turn on only after the service
       # token is set on every internal caller (bot/worker/plugin). See docs/auth.md.
       DISCOCS_AUTH_ENABLED: ${DISCOCS_AUTH_ENABLED:-false}

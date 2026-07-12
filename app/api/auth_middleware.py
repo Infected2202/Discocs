@@ -23,6 +23,7 @@ from starlette.requests import Request
 from app import auth
 from app.config import Settings
 from app.store import Store
+from app.user_context import reset_current_user_id, set_current_user_id
 
 
 def _gate_enabled() -> bool:
@@ -76,14 +77,22 @@ async def auth_gate(request: Request, call_next):
 
     if _service_token_ok(request, settings.auth.service_token):
         request.state.principal = "service"
-        return await call_next(request)
+        token_context = set_current_user_id(None)
+        try:
+            return await call_next(request)
+        finally:
+            reset_current_user_id(token_context)
 
     token = request.cookies.get(settings.auth.session_cookie_name)
     resolved = await run_in_threadpool(_resolve_session, settings, token)
     if resolved is not None:
         request.state.principal = resolved.username
         request.state.user_id = resolved.user_id
-        return await call_next(request)
+        token_context = set_current_user_id(resolved.user_id)
+        try:
+            return await call_next(request)
+        finally:
+            reset_current_user_id(token_context)
 
     return JSONResponse(
         status_code=401,

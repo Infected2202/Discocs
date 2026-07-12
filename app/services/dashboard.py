@@ -74,7 +74,7 @@ def _dashboard_recently_added(
             FROM releases r
             JOIN release_tracks rt ON rt.release_id = r.id
             JOIN tracks t ON t.id = rt.track_id
-            WHERE t.missing_at IS NULL
+            WHERE p.user_id = discocs_user_id() AND t.missing_at IS NULL
             GROUP BY r.id
             ORDER BY added_at DESC, r.id DESC
             LIMIT ? OFFSET ?
@@ -117,7 +117,7 @@ def _dashboard_history(
             SELECT t.*, p.last_played_at
             FROM user_track_preferences p
             JOIN tracks t ON t.id = p.track_id
-            WHERE t.missing_at IS NULL
+            WHERE p.user_id = discocs_user_id() AND t.missing_at IS NULL
               AND p.last_played_at IS NOT NULL
             ORDER BY p.last_played_at DESC
             LIMIT ? OFFSET ?
@@ -129,7 +129,7 @@ def _dashboard_history(
             SELECT COUNT(*) AS total
             FROM user_track_preferences p
             JOIN tracks t ON t.id = p.track_id
-            WHERE t.missing_at IS NULL AND p.last_played_at IS NOT NULL
+            WHERE p.user_id = discocs_user_id() AND t.missing_at IS NULL AND p.last_played_at IS NOT NULL
             """
         ).fetchone()
     tracks = [row_to_track(row) for row in rows]
@@ -154,7 +154,7 @@ def _dashboard_listen_again(
                    p.last_played_at, p.last_completed_at, p.last_skipped_at
             FROM user_track_preferences p
             JOIN tracks t ON t.id = p.track_id
-            WHERE t.missing_at IS NULL
+            WHERE p.user_id = discocs_user_id() AND t.missing_at IS NULL
               AND p.disliked = 0
               AND (p.liked = 1 OR p.completion_count > 0 OR p.replay_count > 0 OR p.score > 0)
               AND (
@@ -172,7 +172,7 @@ def _dashboard_listen_again(
             SELECT COUNT(*) AS total
             FROM user_track_preferences p
             JOIN tracks t ON t.id = p.track_id
-            WHERE t.missing_at IS NULL
+            WHERE p.user_id = discocs_user_id() AND t.missing_at IS NULL
               AND p.disliked = 0
               AND (p.liked = 1 OR p.completion_count > 0 OR p.replay_count > 0 OR p.score > 0)
               AND (
@@ -222,7 +222,7 @@ def _dashboard_long_time_no_listen(
                    p.last_played_at, p.last_completed_at, p.last_skipped_at
             FROM user_track_preferences p
             JOIN tracks t ON t.id = p.track_id
-            WHERE t.missing_at IS NULL
+            WHERE p.user_id = discocs_user_id() AND t.missing_at IS NULL
               AND p.disliked = 0
               AND (p.liked = 1 OR p.completion_count > 0 OR p.replay_count > 0 OR p.score > 0)
               AND p.last_played_at IS NOT NULL
@@ -238,7 +238,7 @@ def _dashboard_long_time_no_listen(
             SELECT COUNT(*) AS total
             FROM user_track_preferences p
             JOIN tracks t ON t.id = p.track_id
-            WHERE t.missing_at IS NULL
+            WHERE p.user_id = discocs_user_id() AND t.missing_at IS NULL
               AND p.disliked = 0
               AND (p.liked = 1 OR p.completion_count > 0 OR p.replay_count > 0 OR p.score > 0)
               AND p.last_played_at IS NOT NULL
@@ -269,7 +269,8 @@ def _dashboard_discover_random(
             """
             SELECT t.*
             FROM tracks t
-            LEFT JOIN user_track_preferences p ON p.track_id = t.id
+            LEFT JOIN user_track_preferences p
+              ON p.track_id = t.id AND p.user_id = discocs_user_id()
             WHERE t.missing_at IS NULL
               AND (p.track_id IS NULL OR (p.disliked = 0 AND p.play_count = 0 AND p.last_played_at IS NULL))
             ORDER BY RANDOM()
@@ -281,7 +282,8 @@ def _dashboard_discover_random(
             """
             SELECT COUNT(*) AS total
             FROM tracks t
-            LEFT JOIN user_track_preferences p ON p.track_id = t.id
+            LEFT JOIN user_track_preferences p
+              ON p.track_id = t.id AND p.user_id = discocs_user_id()
             WHERE t.missing_at IS NULL
               AND (p.track_id IS NULL OR (p.disliked = 0 AND p.play_count = 0 AND p.last_played_at IS NULL))
             """
@@ -310,14 +312,14 @@ def _dashboard_liked_artists(
             SELECT a.id, a.name
             FROM user_artist_preferences p
             JOIN artists a ON a.id = p.artist_id
-            WHERE p.liked = 1
+            WHERE p.user_id = discocs_user_id() AND p.liked = 1
             ORDER BY p.updated_at DESC
             LIMIT ? OFFSET ?
             """,
             (limit, offset),
         ).fetchall()
         total_row = conn.execute(
-            "SELECT COUNT(*) FROM user_artist_preferences WHERE liked = 1"
+            "SELECT COUNT(*) FROM user_artist_preferences WHERE user_id = discocs_user_id() AND liked = 1"
         ).fetchone()
     items: list[dict[str, object]] = []
     for row in rows:
@@ -348,14 +350,14 @@ def _dashboard_liked_releases(
             SELECT r.id
             FROM user_release_preferences p
             JOIN releases r ON r.id = p.release_id
-            WHERE p.liked = 1
+            WHERE p.user_id = discocs_user_id() AND p.liked = 1
             ORDER BY p.updated_at DESC
             LIMIT ? OFFSET ?
             """,
             (limit, offset),
         ).fetchall()
         total_row = conn.execute(
-            "SELECT COUNT(*) FROM user_release_preferences WHERE liked = 1"
+            "SELECT COUNT(*) FROM user_release_preferences WHERE user_id = discocs_user_id() AND liked = 1"
         ).fetchone()
     items: list[dict[str, object]] = []
     for row in rows:

@@ -256,51 +256,44 @@ def _merge_release_preference(
     old_release_id: int,
     target_release_id: int,
 ) -> None:
-    old = conn.execute(
+    old_rows = conn.execute(
         "SELECT * FROM user_release_preferences WHERE release_id = ?",
         (old_release_id,),
-    ).fetchone()
-    if old is None:
-        return
-    target = conn.execute(
-        "SELECT * FROM user_release_preferences WHERE release_id = ?",
-        (target_release_id,),
-    ).fetchone()
-    if target is None:
+    ).fetchall()
+    for old in old_rows:
+        user_id = int(old["user_id"])
+        target = conn.execute(
+            "SELECT * FROM user_release_preferences WHERE user_id = ? AND release_id = ?",
+            (user_id, target_release_id),
+        ).fetchone()
+        if target is None:
+            conn.execute(
+                "UPDATE user_release_preferences SET release_id = ? WHERE user_id = ? AND release_id = ?",
+                (target_release_id, user_id, old_release_id),
+            )
+            continue
         conn.execute(
-            "UPDATE user_release_preferences SET release_id = ? WHERE release_id = ?",
-            (target_release_id, old_release_id),
+            """UPDATE user_release_preferences
+               SET liked = ?, play_count = ?, completion_count = ?, skip_count = ?,
+                   last_played_at = ?, last_completed_at = ?, score = ?, updated_at = ?
+               WHERE user_id = ? AND release_id = ?""",
+            (
+                max(int(old["liked"]), int(target["liked"])),
+                int(old["play_count"]) + int(target["play_count"]),
+                int(old["completion_count"]) + int(target["completion_count"]),
+                int(old["skip_count"]) + int(target["skip_count"]),
+                _latest_text(old["last_played_at"], target["last_played_at"]),
+                _latest_text(old["last_completed_at"], target["last_completed_at"]),
+                float(old["score"]) + float(target["score"]),
+                _latest_text(old["updated_at"], target["updated_at"]),
+                user_id,
+                target_release_id,
+            ),
         )
-        return
-    conn.execute(
-        """
-        UPDATE user_release_preferences
-        SET liked = ?,
-            play_count = ?,
-            completion_count = ?,
-            skip_count = ?,
-            last_played_at = ?,
-            last_completed_at = ?,
-            score = ?,
-            updated_at = ?
-        WHERE release_id = ?
-        """,
-        (
-            max(int(old["liked"]), int(target["liked"])),
-            int(old["play_count"]) + int(target["play_count"]),
-            int(old["completion_count"]) + int(target["completion_count"]),
-            int(old["skip_count"]) + int(target["skip_count"]),
-            _latest_text(old["last_played_at"], target["last_played_at"]),
-            _latest_text(old["last_completed_at"], target["last_completed_at"]),
-            float(old["score"]) + float(target["score"]),
-            _latest_text(old["updated_at"], target["updated_at"]),
-            target_release_id,
-        ),
-    )
-    conn.execute(
-        "DELETE FROM user_release_preferences WHERE release_id = ?",
-        (old_release_id,),
-    )
+        conn.execute(
+            "DELETE FROM user_release_preferences WHERE user_id = ? AND release_id = ?",
+            (user_id, old_release_id),
+        )
 
 
 def _rewrite_session_release_states(

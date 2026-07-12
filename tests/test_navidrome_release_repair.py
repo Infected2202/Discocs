@@ -93,30 +93,31 @@ def test_release_repair_merges_state_and_keeps_old_provider_alias(tmp_path):
         conn.execute(
             """
             INSERT INTO user_release_preferences (
-                release_id, liked, play_count, completion_count, skip_count,
+                user_id, release_id, liked, play_count, completion_count, skip_count,
                 score, updated_at
             )
-            VALUES (?, 1, 3, 2, 1, 1.5, ?), (?, 0, 4, 1, 2, 2.0, ?)
+            VALUES (discocs_user_id(), ?, 1, 3, 2, 1, 1.5, ?),
+                   (discocs_user_id(), ?, 0, 4, 1, 2, 2.0, ?)
             """,
             (old_release_id, now, target_release_id, now),
         )
         conn.execute(
             """
             INSERT INTO playback_events (
-                id, release_id, event_type, created_at, source
+                id, user_id, release_id, event_type, created_at, source
             )
-            VALUES ('event-1', ?, 'played', ?, 'web')
+            VALUES ('event-1', discocs_user_id(), ?, 'played', ?, 'web')
             """,
             (old_release_id, now),
         )
         conn.execute(
             """
             INSERT INTO playback_sessions (
-                id, source_type, source_id, source_label, mode, status,
+                id, user_id, source_type, source_id, source_label, mode, status,
                 autoplay_enabled, shuffle_enabled, repeat_mode, started_at,
                 updated_at, state_json
             )
-            VALUES ('session-1', 'release', ?, 'Old Album', 'ordered', 'active',
+            VALUES ('session-1', discocs_user_id(), 'release', ?, 'Old Album', 'ordered', 'active',
                     0, 0, 'off', ?, ?, ?)
             """,
             (

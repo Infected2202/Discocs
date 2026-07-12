@@ -206,7 +206,7 @@ def set_track_navidrome_star(track_id: int, request: NavidromeStarRequest) -> di
     else:
         with store.connect() as conn:
             conn.execute(
-                "UPDATE user_track_preferences SET liked = 0 WHERE track_id = ?",
+                "UPDATE user_track_preferences SET liked = 0 WHERE user_id = discocs_user_id() AND track_id = ?",
                 (track_id,),
             )
     return {

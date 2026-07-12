@@ -175,7 +175,7 @@ def _collect_seeds(store: Store, settings: FlowSettings) -> list[_Seed]:
             FROM user_track_preferences utp
             JOIN embeddings e ON e.track_id = utp.track_id AND e.model_name = ?
             JOIN tracks t ON t.id = utp.track_id
-            WHERE t.missing_at IS NULL
+            WHERE utp.user_id = discocs_user_id() AND t.missing_at IS NULL
               AND utp.disliked = 0
               AND (
                   utp.liked = 1

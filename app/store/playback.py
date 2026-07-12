@@ -133,6 +133,7 @@ class PlaybackStoreMixin:
         state: dict[str, object] | None = None,
         session_id: str | None = None,
     ) -> tuple[PlaybackSession, list[QueueItem]]:
+        user_id = self.require_user_id()
         _require_choice(source_type, PLAYBACK_SOURCE_TYPES, "source_type")
         _require_choice(mode, PLAYBACK_MODES, "mode")
         _require_choice(status, PLAYBACK_SESSION_STATUSES, "status")
@@ -148,14 +149,15 @@ class PlaybackStoreMixin:
             conn.execute(
                 """
                 INSERT INTO playback_sessions (
-                    id, source_type, source_id, source_label, mode, status,
+                    id, user_id, source_type, source_id, source_label, mode, status,
                     autoplay_enabled, shuffle_enabled, repeat_mode, started_at,
                     updated_at, ended_at, settings_json, state_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
+                    user_id,
                     source_type,
                     source_id,
                     source_label,
@@ -189,10 +191,11 @@ class PlaybackStoreMixin:
         return session, queue
 
     def get_playback_session(self, session_id: str) -> PlaybackSession | None:
+        user_id = self.require_user_id()
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM playback_sessions WHERE id = ?",
-                (session_id,),
+                "SELECT * FROM playback_sessions WHERE id = ? AND user_id = ?",
+                (session_id, user_id),
             ).fetchone()
         return row_to_playback_session(row) if row else None
 
@@ -211,6 +214,7 @@ class PlaybackStoreMixin:
         settings: dict[str, object] | None = None,
         state: dict[str, object] | None = None,
     ) -> PlaybackSession | None:
+        user_id = self.require_user_id()
         updates: list[str] = []
         params: list[object] = []
         if status is not None:
@@ -251,19 +255,21 @@ class PlaybackStoreMixin:
             return self.get_playback_session(session_id)
         updates.append("updated_at = ?")
         params.append(utc_now())
-        params.append(session_id)
+        params.extend((session_id, user_id))
         with self.connect() as conn:
             conn.execute(
-                f"UPDATE playback_sessions SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE playback_sessions SET {', '.join(updates)} WHERE id = ? AND user_id = ?",
                 params,
             )
             row = conn.execute(
-                "SELECT * FROM playback_sessions WHERE id = ?",
-                (session_id,),
+                "SELECT * FROM playback_sessions WHERE id = ? AND user_id = ?",
+                (session_id, user_id),
             ).fetchone()
         return row_to_playback_session(row) if row else None
 
     def list_queue_items(self, session_id: str, include_removed: bool = False) -> list[QueueItem]:
+        if self.get_playback_session(session_id) is None:
+            return []
         where = "session_id = ?"
         params: list[object] = [session_id]
         if not include_removed:
@@ -280,10 +286,13 @@ class PlaybackStoreMixin:
         return [row_to_queue_item(row) for row in rows]
 
     def get_queue_item(self, queue_item_id: str) -> QueueItem | None:
+        user_id = self.require_user_id()
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM queue_items WHERE id = ?",
-                (queue_item_id,),
+                """SELECT q.* FROM queue_items q
+                   JOIN playback_sessions s ON s.id = q.session_id
+                   WHERE q.id = ? AND s.user_id = ?""",
+                (queue_item_id, user_id),
             ).fetchone()
         return row_to_queue_item(row) if row else None
 
@@ -292,6 +301,8 @@ class PlaybackStoreMixin:
         session_id: str,
         items: list[dict[str, object]],
     ) -> list[QueueItem]:
+        if self.get_playback_session(session_id) is None:
+            raise ValueError(f"Playback session not found: {session_id}")
         now = utc_now()
         with self.connect() as conn:
             if not _playback_session_exists(conn, session_id):
@@ -360,6 +371,8 @@ class PlaybackStoreMixin:
         session_id: str,
         items: list[dict[str, object]],
     ) -> list[QueueItem]:
+        if self.get_playback_session(session_id) is None:
+            raise ValueError(f"Playback session not found: {session_id}")
         if not items:
             return self.list_queue_items(session_id)
         now = utc_now()
@@ -420,6 +433,8 @@ class PlaybackStoreMixin:
         return [row_to_queue_item(row) for row in rows]
 
     def remove_queue_item(self, session_id: str, queue_item_id: str) -> QueueItem | None:
+        if self.get_playback_session(session_id) is None:
+            return None
         now = utc_now()
         with self.connect() as conn:
             conn.execute(
@@ -441,6 +456,8 @@ class PlaybackStoreMixin:
         return row_to_queue_item(row) if row else None
 
     def move_queue_item(self, session_id: str, queue_item_id: str, position: int) -> list[QueueItem]:
+        if self.get_playback_session(session_id) is None:
+            raise ValueError(f"Playback session not found: {session_id}")
         if position < 0:
             raise ValueError("position must be non-negative")
         now = utc_now()
@@ -485,6 +502,8 @@ class PlaybackStoreMixin:
         return [row_to_queue_item(row) for row in rows]
 
     def jump_to_queue_item(self, session_id: str, queue_item_id: str) -> QueueItem | None:
+        if self.get_playback_session(session_id) is None:
+            return None
         now = utc_now()
         with self.connect() as conn:
             row = conn.execute(
@@ -518,6 +537,7 @@ class PlaybackStoreMixin:
         return row_to_queue_item(refreshed) if refreshed else None
 
     def record_playback_event(self, event: PlaybackEventCreate) -> PlaybackEventResult:
+        user_id = self.require_user_id()
         _require_choice(event.event_type, PLAYBACK_EVENT_TYPES, "event_type")
         created_at = event.created_at or utc_now()
         event_id = event.event_id or str(uuid4())
@@ -535,8 +555,8 @@ class PlaybackStoreMixin:
         with self.connect() as conn:
             if event.client_event_id:
                 duplicate = conn.execute(
-                    "SELECT * FROM playback_events WHERE client_event_id = ?",
-                    (event.client_event_id,),
+                    "SELECT * FROM playback_events WHERE client_event_id = ? AND user_id = ?",
+                    (event.client_event_id, user_id),
                 ).fetchone()
                 if duplicate is not None:
                     return PlaybackEventResult(
@@ -552,20 +572,28 @@ class PlaybackStoreMixin:
                 if queue_row is not None:
                     track_id = int(queue_row["track_id"])
                     session_id = session_id or str(queue_row["session_id"])
+            if session_id is not None:
+                owned = conn.execute(
+                    "SELECT 1 FROM playback_sessions WHERE id = ? AND user_id = ?",
+                    (session_id, user_id),
+                ).fetchone()
+                if owned is None:
+                    raise ValueError(f"Playback session not found: {session_id}")
             if track_id is not None:
                 release_id = release_id or _release_id_for_track(conn, track_id)
                 artist_id = artist_id or _primary_artist_id_for_track(conn, track_id)
             conn.execute(
                 """
                 INSERT INTO playback_events (
-                    id, session_id, queue_item_id, track_id, release_id, artist_id,
+                    id, user_id, session_id, queue_item_id, track_id, release_id, artist_id,
                     event_type, position_seconds, duration_seconds, play_fraction,
                     created_at, client_event_id, source, payload_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event_id,
+                    user_id,
                     session_id,
                     queue_item_id,
                     track_id,
@@ -582,8 +610,8 @@ class PlaybackStoreMixin:
                 ),
             )
             event_row = conn.execute(
-                "SELECT * FROM playback_events WHERE id = ?",
-                (event_id,),
+                "SELECT * FROM playback_events WHERE id = ? AND user_id = ?",
+                (event_id, user_id),
             ).fetchone()
             delta = self._apply_playback_event_preferences(conn, event_row)
             self._apply_playback_event_session_state(conn, event_row)
@@ -698,7 +726,7 @@ class PlaybackStoreMixin:
         track_id: int,
     ) -> sqlite3.Row | None:
         return conn.execute(
-            "SELECT * FROM user_track_preferences WHERE track_id = ?",
+            "SELECT * FROM user_track_preferences WHERE user_id = discocs_user_id() AND track_id = ?",
             (track_id,),
         ).fetchone()
 
@@ -719,7 +747,7 @@ class PlaybackStoreMixin:
                     last_played_at = ?,
                     score = score + 0.25,
                     updated_at = ?
-                WHERE track_id = ?
+                WHERE user_id = discocs_user_id() AND track_id = ?
                 """,
                 (created_at, created_at, track_id),
             )
@@ -737,7 +765,7 @@ class PlaybackStoreMixin:
                     last_completed_at = ?,
                     score = score + 1.0,
                     updated_at = ?
-                WHERE track_id = ?
+                WHERE user_id = discocs_user_id() AND track_id = ?
                 """,
                 (created_at, created_at, track_id),
             )
@@ -760,7 +788,7 @@ class PlaybackStoreMixin:
                     last_skipped_at = ?,
                     score = score + ?,
                     updated_at = ?
-                WHERE track_id = ?
+                WHERE user_id = discocs_user_id() AND track_id = ?
                 """,
                 (1 if early else 0, created_at, score_delta, created_at, track_id),
             )
@@ -770,7 +798,7 @@ class PlaybackStoreMixin:
                 UPDATE user_track_preferences
                 SET liked = 1, disliked = 0, score = score + CASE WHEN liked = 0 THEN 5.0 ELSE 0 END
                     + CASE WHEN disliked = 1 THEN 5.0 ELSE 0 END, updated_at = ?
-                WHERE track_id = ?
+                WHERE user_id = discocs_user_id() AND track_id = ?
                 """,
                 (created_at, track_id),
             )
@@ -780,7 +808,7 @@ class PlaybackStoreMixin:
                 UPDATE user_track_preferences
                 SET liked = 0, score = score - CASE WHEN liked = 1 THEN 5.0 ELSE 0 END,
                     updated_at = ?
-                WHERE track_id = ?
+                WHERE user_id = discocs_user_id() AND track_id = ?
                 """,
                 (created_at, track_id),
             )
@@ -790,7 +818,7 @@ class PlaybackStoreMixin:
                 UPDATE user_track_preferences
                 SET disliked = 1, liked = 0, score = score - CASE WHEN disliked = 0 THEN 5.0 ELSE 0 END
                     - CASE WHEN liked = 1 THEN 5.0 ELSE 0 END, updated_at = ?
-                WHERE track_id = ?
+                WHERE user_id = discocs_user_id() AND track_id = ?
                 """,
                 (created_at, track_id),
             )
@@ -799,7 +827,7 @@ class PlaybackStoreMixin:
                 """
                 UPDATE user_track_preferences
                 SET replay_count = replay_count + 1, score = score + 2.0, updated_at = ?
-                WHERE track_id = ?
+                WHERE user_id = discocs_user_id() AND track_id = ?
                 """,
                 (created_at, track_id),
             )
@@ -808,7 +836,7 @@ class PlaybackStoreMixin:
                 """
                 UPDATE user_track_preferences
                 SET score = score + 3.0, updated_at = ?
-                WHERE track_id = ?
+                WHERE user_id = discocs_user_id() AND track_id = ?
                 """,
                 (created_at, track_id),
             )
@@ -817,7 +845,7 @@ class PlaybackStoreMixin:
                 """
                 UPDATE user_track_preferences
                 SET score = score - 1.0, updated_at = ?
-                WHERE track_id = ?
+                WHERE user_id = discocs_user_id() AND track_id = ?
                 """,
                 (created_at, track_id),
             )
@@ -838,7 +866,7 @@ class PlaybackStoreMixin:
                 UPDATE user_release_preferences
                 SET play_count = play_count + 1, last_played_at = ?,
                     score = score + 0.25, updated_at = ?
-                WHERE release_id = ?
+                WHERE user_id = discocs_user_id() AND release_id = ?
                 """,
                 (created_at, created_at, release_id),
             )
@@ -854,7 +882,7 @@ class PlaybackStoreMixin:
                 UPDATE user_release_preferences
                 SET completion_count = completion_count + 1, last_completed_at = ?,
                     score = score + 1.0, updated_at = ?
-                WHERE release_id = ?
+                WHERE user_id = discocs_user_id() AND release_id = ?
                 """,
                 (created_at, created_at, release_id),
             )
@@ -868,7 +896,7 @@ class PlaybackStoreMixin:
                 """
                 UPDATE user_release_preferences
                 SET skip_count = skip_count + 1, score = score + ?, updated_at = ?
-                WHERE release_id = ?
+                WHERE user_id = discocs_user_id() AND release_id = ?
                 """,
                 (score_delta * 0.25, created_at, release_id),
             )
@@ -879,7 +907,7 @@ class PlaybackStoreMixin:
                 SET liked = CASE WHEN ? THEN 1 ELSE liked END,
                     score = score + CASE WHEN ? THEN 5.0 ELSE 1.0 END,
                     updated_at = ?
-                WHERE release_id = ?
+                WHERE user_id = discocs_user_id() AND release_id = ?
                 """,
                 (1 if explicit_entity_event and event_type == "liked" else 0, 1 if event_type == "liked" else 0, created_at, release_id),
             )
@@ -900,7 +928,7 @@ class PlaybackStoreMixin:
                 UPDATE user_artist_preferences
                 SET play_count = play_count + 1, last_played_at = ?,
                     score = score + 0.25, updated_at = ?
-                WHERE artist_id = ?
+                WHERE user_id = discocs_user_id() AND artist_id = ?
                 """,
                 (created_at, created_at, artist_id),
             )
@@ -916,7 +944,7 @@ class PlaybackStoreMixin:
                 UPDATE user_artist_preferences
                 SET completion_count = completion_count + 1,
                     score = score + 1.0, updated_at = ?
-                WHERE artist_id = ?
+                WHERE user_id = discocs_user_id() AND artist_id = ?
                 """,
                 (created_at, artist_id),
             )
@@ -930,7 +958,7 @@ class PlaybackStoreMixin:
                 """
                 UPDATE user_artist_preferences
                 SET skip_count = skip_count + 1, score = score + ?, updated_at = ?
-                WHERE artist_id = ?
+                WHERE user_id = discocs_user_id() AND artist_id = ?
                 """,
                 (score_delta * 0.25, created_at, artist_id),
             )
@@ -941,7 +969,7 @@ class PlaybackStoreMixin:
                 SET liked = CASE WHEN ? THEN 1 ELSE liked END,
                     score = score + CASE WHEN ? THEN 5.0 ELSE 1.0 END,
                     updated_at = ?
-                WHERE artist_id = ?
+                WHERE user_id = discocs_user_id() AND artist_id = ?
                 """,
                 (1 if explicit_entity_event and event_type == "liked" else 0, 1 if event_type == "liked" else 0, created_at, artist_id),
             )
@@ -954,8 +982,8 @@ class PlaybackStoreMixin:
     ) -> None:
         conn.execute(
             """
-            INSERT OR IGNORE INTO user_track_preferences (track_id, updated_at)
-            VALUES (?, ?)
+            INSERT OR IGNORE INTO user_track_preferences (user_id, track_id, updated_at)
+            VALUES (discocs_user_id(), ?, ?)
             """,
             (track_id, updated_at),
         )
@@ -968,8 +996,8 @@ class PlaybackStoreMixin:
     ) -> None:
         conn.execute(
             """
-            INSERT OR IGNORE INTO user_release_preferences (release_id, updated_at)
-            VALUES (?, ?)
+            INSERT OR IGNORE INTO user_release_preferences (user_id, release_id, updated_at)
+            VALUES (discocs_user_id(), ?, ?)
             """,
             (release_id, updated_at),
         )
@@ -982,16 +1010,17 @@ class PlaybackStoreMixin:
     ) -> None:
         conn.execute(
             """
-            INSERT OR IGNORE INTO user_artist_preferences (artist_id, updated_at)
-            VALUES (?, ?)
+            INSERT OR IGNORE INTO user_artist_preferences (user_id, artist_id, updated_at)
+            VALUES (discocs_user_id(), ?, ?)
             """,
             (artist_id, updated_at),
         )
 
     def get_track_preference(self, track_id: int) -> UserTrackPreference | None:
+        self.require_user_id()
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM user_track_preferences WHERE track_id = ?",
+                "SELECT * FROM user_track_preferences WHERE user_id = discocs_user_id() AND track_id = ?",
                 (track_id,),
             ).fetchone()
         return row_to_user_track_preference(row) if row else None
@@ -1015,7 +1044,8 @@ class PlaybackStoreMixin:
                 """
                 SELECT track_id
                 FROM user_track_preferences
-                WHERE last_played_at IS NOT NULL AND last_played_at >= ?
+                WHERE user_id = discocs_user_id()
+                  AND last_played_at IS NOT NULL AND last_played_at >= ?
                 """,
                 (cutoff,),
             ).fetchall()
@@ -1072,7 +1102,7 @@ class PlaybackStoreMixin:
                 disliked = CASE WHEN ? THEN 0 ELSE disliked END,
                 score = MAX(score, ? + CASE WHEN ? THEN 5.0 ELSE 0 END),
                 updated_at = ?
-            WHERE track_id = ?
+            WHERE user_id = discocs_user_id() AND track_id = ?
             """,
             (
                 bounded_play_count,
@@ -1109,7 +1139,7 @@ class PlaybackStoreMixin:
                     liked = CASE WHEN ? THEN 1 ELSE liked END,
                     score = MAX(score, ? + CASE WHEN ? THEN 5.0 ELSE 0 END),
                     updated_at = ?
-                WHERE release_id = ?
+                WHERE user_id = discocs_user_id() AND release_id = ?
                 """,
                 (
                     bounded_play_count,
@@ -1143,7 +1173,7 @@ class PlaybackStoreMixin:
                     liked = CASE WHEN ? THEN 1 ELSE liked END,
                     score = MAX(score, ? + CASE WHEN ? THEN 5.0 ELSE 0 END),
                     updated_at = ?
-                WHERE artist_id = ?
+                WHERE user_id = discocs_user_id() AND artist_id = ?
                 """,
                 (
                     bounded_play_count,
@@ -1163,7 +1193,7 @@ class PlaybackStoreMixin:
     def get_release_preference(self, release_id: int) -> UserReleasePreference | None:
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM user_release_preferences WHERE release_id = ?",
+                "SELECT * FROM user_release_preferences WHERE user_id = discocs_user_id() AND release_id = ?",
                 (release_id,),
             ).fetchone()
         return row_to_user_release_preference(row) if row else None
@@ -1171,7 +1201,7 @@ class PlaybackStoreMixin:
     def get_artist_preference(self, artist_id: int) -> UserArtistPreference | None:
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM user_artist_preferences WHERE artist_id = ?",
+                "SELECT * FROM user_artist_preferences WHERE user_id = discocs_user_id() AND artist_id = ?",
                 (artist_id,),
             ).fetchone()
         return row_to_user_artist_preference(row) if row else None
@@ -1180,33 +1210,34 @@ class PlaybackStoreMixin:
         now = utc_now()
         with self.connect() as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO user_artist_preferences (artist_id, updated_at) VALUES (?, ?)",
+                "INSERT OR IGNORE INTO user_artist_preferences (user_id, artist_id, updated_at) VALUES (discocs_user_id(), ?, ?)",
                 (artist_id, now),
             )
             conn.execute(
-                "UPDATE user_artist_preferences SET liked = ?, updated_at = ? WHERE artist_id = ?",
+                "UPDATE user_artist_preferences SET liked = ?, updated_at = ? WHERE user_id = discocs_user_id() AND artist_id = ?",
                 (1 if liked else 0, now, artist_id),
             )
 
     def sync_artist_liked_from_navidrome(self, artist_ids: list[int]) -> None:
         now = utc_now()
         with self.connect() as conn:
-            conn.execute("UPDATE user_artist_preferences SET liked = 0 WHERE liked = 1")
+            conn.execute("UPDATE user_artist_preferences SET liked = 0 WHERE user_id = discocs_user_id() AND liked = 1")
             for artist_id in artist_ids:
                 conn.execute(
-                    "INSERT OR IGNORE INTO user_artist_preferences (artist_id, updated_at) VALUES (?, ?)",
+                    "INSERT OR IGNORE INTO user_artist_preferences (user_id, artist_id, updated_at) VALUES (discocs_user_id(), ?, ?)",
                     (artist_id, now),
                 )
                 conn.execute(
-                    "UPDATE user_artist_preferences SET liked = 1, updated_at = ? WHERE artist_id = ?",
+                    "UPDATE user_artist_preferences SET liked = 1, updated_at = ? WHERE user_id = discocs_user_id() AND artist_id = ?",
                     (now, artist_id),
                 )
 
     def list_playback_events(self, session_id: str | None = None) -> list[PlaybackEvent]:
-        where = ""
+        self.require_user_id()
+        where = "WHERE user_id = discocs_user_id()"
         params: list[object] = []
         if session_id is not None:
-            where = "WHERE session_id = ?"
+            where += " AND session_id = ?"
             params.append(session_id)
         with self.connect() as conn:
             rows = conn.execute(

@@ -64,6 +64,9 @@ def test_release_embedding_round_trip_normalizes_and_orders_rows(tmp_path):
     second = store.load_release_embedding(2, "discogs_multi")
     ids, matrix = store.load_all_release_embeddings("discogs_multi")
 
+    # Shared release rows must not persist or expose per-user preference data.
+    assert store.get_release_aggregate(1).preference_summary_json is None
+
     assert np.allclose(first, np.array([1.0, 0.0], dtype=np.float32))
     assert np.allclose(second, np.array([0.0, 1.0], dtype=np.float32))
     assert ids.tolist() == [1, 2]

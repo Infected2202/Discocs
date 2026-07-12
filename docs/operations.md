@@ -1,7 +1,25 @@
 # Operations
 
+## Multiuser owner migration
+
+Before the first Phase 2 deployment, `DISCOCS_OWNER_USER` must identify the
+Navidrome username that owns all existing preference, playback, flow, mix and
+playlist rows. Production compose defaults to `infected2202`; override it in
+the host `.env` if the owner differs. Startup takes timestamped SQLite backups
+before rebuilding primary keys and fails without changing rows when an owner is
+required but missing.
+
 This document collects practical notes for running the MVP safely while the
 library and analysis database are still local SQLite files.
+
+## Multiuser owner migration
+
+Before the first Phase 2 deployment, `DISCOCS_OWNER_USER` must identify the
+Navidrome username that owns all existing preference, playback, flow, mix and
+playlist rows. Production compose defaults to `infected2202`; override it in
+the host `.env` if the owner differs. Startup takes timestamped SQLite backups
+before rebuilding primary keys and fails without changing rows when an owner is
+required but missing.
 
 ## Runtime Files
 

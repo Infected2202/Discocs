@@ -22,7 +22,10 @@ def _row_to_release_aggregate(row: sqlite3.Row) -> ReleaseAggregate:
         embedding_status=str(row["embedding_status"]),
         top_region_matches_json=row["top_region_matches_json"],
         audio_summary_json=row["audio_summary_json"],
-        preference_summary_json=row["preference_summary_json"],
+        # Personal preference summaries must never be exposed from the shared
+        # release aggregate row. They are computed from scoped preference
+        # tables by the recommendation services instead.
+        preference_summary_json=None,
         updated_at=str(row["updated_at"]),
     )
 
@@ -47,7 +50,7 @@ class ReleaseAggregatesStoreMixin:
                     embedding_status = excluded.embedding_status,
                     top_region_matches_json = excluded.top_region_matches_json,
                     audio_summary_json = excluded.audio_summary_json,
-                    preference_summary_json = excluded.preference_summary_json,
+                    preference_summary_json = NULL,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -60,7 +63,7 @@ class ReleaseAggregatesStoreMixin:
                     agg.embedding_status,
                     agg.top_region_matches_json,
                     agg.audio_summary_json,
-                    agg.preference_summary_json,
+                    None,
                     agg.updated_at,
                 ),
             )
@@ -202,6 +205,7 @@ class ReleaseAggregatesStoreMixin:
                 JOIN embeddings e ON e.track_id = utp.track_id AND e.model_name = ?
                 JOIN tracks t ON t.id = utp.track_id
                 WHERE t.missing_at IS NULL
+                  AND utp.user_id = discocs_user_id()
                   AND (utp.liked = 1 OR utp.score >= ?)
                 ORDER BY utp.score DESC, utp.liked DESC
                 LIMIT ?
@@ -213,7 +217,7 @@ class ReleaseAggregatesStoreMixin:
     def get_albums_for_you_cache(self, model_name: str) -> str | None:
         with self.connect() as conn:  # type: ignore[attr-defined]
             row = conn.execute(
-                "SELECT items_json FROM albums_for_you_cache WHERE model_name = ?",
+                "SELECT items_json FROM albums_for_you_cache WHERE user_id = discocs_user_id() AND model_name = ?",
                 (model_name,),
             ).fetchone()
         return str(row["items_json"]) if row is not None else None
@@ -223,9 +227,9 @@ class ReleaseAggregatesStoreMixin:
         with self.connect() as conn:  # type: ignore[attr-defined]
             conn.execute(
                 """
-                INSERT INTO albums_for_you_cache (model_name, items_json, computed_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(model_name) DO UPDATE SET
+                INSERT INTO albums_for_you_cache (user_id, model_name, items_json, computed_at)
+                VALUES (discocs_user_id(), ?, ?, ?)
+                ON CONFLICT(user_id, model_name) DO UPDATE SET
                     items_json = excluded.items_json,
                     computed_at = excluded.computed_at
                 """,
@@ -236,7 +240,7 @@ class ReleaseAggregatesStoreMixin:
         """Return age of cache in hours, or None if no cache exists."""
         with self.connect() as conn:  # type: ignore[attr-defined]
             row = conn.execute(
-                "SELECT computed_at FROM albums_for_you_cache WHERE model_name = ?",
+                "SELECT computed_at FROM albums_for_you_cache WHERE user_id = discocs_user_id() AND model_name = ?",
                 (model_name,),
             ).fetchone()
         if row is None:
@@ -263,7 +267,7 @@ class ReleaseAggregatesStoreMixin:
                        utp.completion_count
                 FROM release_tracks rt
                 JOIN user_track_preferences utp ON utp.track_id = rt.track_id
-                WHERE rt.release_id = ?
+                WHERE rt.release_id = ? AND utp.user_id = discocs_user_id()
                 """,
                 (release_id,),
             ).fetchall()

@@ -8,6 +8,7 @@ touching live data.
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -144,3 +145,44 @@ def test_init_fails_loudly_when_owner_missing(tmp_path, monkeypatch):
     monkeypatch.delenv(OWNER_USER_ENV, raising=False)
     with pytest.raises(RuntimeError, match=OWNER_USER_ENV):
         Store(db_path).init()
+
+
+def test_preference_and_cache_pk_migrations_preserve_owner_rows(tmp_path, monkeypatch):
+    db_path = tmp_path / "legacy.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """CREATE TABLE user_track_preferences (
+                track_id INTEGER PRIMARY KEY, liked INTEGER NOT NULL DEFAULT 0,
+                disliked INTEGER NOT NULL DEFAULT 0, play_count INTEGER NOT NULL DEFAULT 0,
+                completion_count INTEGER NOT NULL DEFAULT 0, skip_count INTEGER NOT NULL DEFAULT 0,
+                early_skip_count INTEGER NOT NULL DEFAULT 0, replay_count INTEGER NOT NULL DEFAULT 0,
+                last_played_at TEXT, last_completed_at TEXT, last_skipped_at TEXT,
+                score REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"""
+        )
+        conn.execute(
+            "INSERT INTO user_track_preferences (track_id, liked, updated_at) VALUES (7, 1, 'now')"
+        )
+        conn.execute(
+            "CREATE TABLE albums_for_you_cache (model_name TEXT PRIMARY KEY, items_json TEXT NOT NULL, computed_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO albums_for_you_cache VALUES ('discogs_multi', '[1]', 'now')"
+        )
+    INITIALIZED_DB_PATHS.discard(db_path.resolve())
+    monkeypatch.setenv(OWNER_USER_ENV, "infected2202")
+
+    store = Store(db_path)
+    store.init()
+    owner = store.get_user_by_username("infected2202")
+
+    with store.connect() as conn:
+        pref = conn.execute(
+            "SELECT user_id, track_id, liked FROM user_track_preferences"
+        ).fetchone()
+        cache = conn.execute(
+            "SELECT user_id, model_name, items_json FROM albums_for_you_cache"
+        ).fetchone()
+    assert (pref["user_id"], pref["track_id"], pref["liked"]) == (owner["id"], 7, 1)
+    assert (cache["user_id"], cache["model_name"], cache["items_json"]) == (
+        owner["id"], "discogs_multi", "[1]"
+    )

@@ -176,7 +176,7 @@ def test_autoplay_source_context_supports_release_artist_playlist_search_and_gen
     artist_id = store.search_entities("Release Artist")["artists"]["items"][0].artist.id
     with store.connect() as conn:
         cursor = conn.execute(
-            "INSERT INTO playlists (title, kind, source_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO playlists (user_id, title, kind, source_json, created_at, updated_at) VALUES (discocs_user_id(), ?, ?, ?, ?, ?)",
             ("Playlist", "manual", "{}", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
         )
         playlist_id = int(cursor.lastrowid)

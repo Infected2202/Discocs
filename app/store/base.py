@@ -108,15 +108,68 @@ OWNER_BACKFILL_TABLES: tuple[str, ...] = (
 # personal data. Required only when unscoped rows actually exist — see
 # _migrate_owner_backfill.
 OWNER_USER_ENV = "DISCOCS_OWNER_USER"
+# Fallback owner username for dev/test/empty installs where the env is unset.
+# Production is protected by _migrate_owner_backfill (raises on upgrade with
+# data if the env is missing), so this only ever names the single implicit user
+# in tests and fresh dev databases.
+DEFAULT_OWNER_USERNAME = "owner"
+_DEFAULT_USER = object()
+
+# Preference tables whose PK moves from entity-only to (user_id, entity_id).
+# Maps table -> entity-id column. Rebuilt in place by _migrate_preference_pks.
+PREFERENCE_PK_TABLES: dict[str, str] = {
+    "user_track_preferences": "track_id",
+    "user_release_preferences": "release_id",
+    "user_artist_preferences": "artist_id",
+}
+_PREFERENCE_TABLE_DDL: dict[str, str] = {
+    "user_track_preferences": """CREATE TABLE user_track_preferences (
+        user_id INTEGER NOT NULL, track_id INTEGER NOT NULL,
+        liked INTEGER NOT NULL DEFAULT 0, disliked INTEGER NOT NULL DEFAULT 0,
+        play_count INTEGER NOT NULL DEFAULT 0, completion_count INTEGER NOT NULL DEFAULT 0,
+        skip_count INTEGER NOT NULL DEFAULT 0, early_skip_count INTEGER NOT NULL DEFAULT 0,
+        replay_count INTEGER NOT NULL DEFAULT 0, last_played_at TEXT,
+        last_completed_at TEXT, last_skipped_at TEXT, score REAL NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL, PRIMARY KEY (user_id, track_id),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)""",
+    "user_release_preferences": """CREATE TABLE user_release_preferences (
+        user_id INTEGER NOT NULL, release_id INTEGER NOT NULL,
+        liked INTEGER NOT NULL DEFAULT 0, play_count INTEGER NOT NULL DEFAULT 0,
+        completion_count INTEGER NOT NULL DEFAULT 0, skip_count INTEGER NOT NULL DEFAULT 0,
+        last_played_at TEXT, last_completed_at TEXT, score REAL NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL, PRIMARY KEY (user_id, release_id),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)""",
+    "user_artist_preferences": """CREATE TABLE user_artist_preferences (
+        user_id INTEGER NOT NULL, artist_id INTEGER NOT NULL,
+        liked INTEGER NOT NULL DEFAULT 0, play_count INTEGER NOT NULL DEFAULT 0,
+        completion_count INTEGER NOT NULL DEFAULT 0, skip_count INTEGER NOT NULL DEFAULT 0,
+        last_played_at TEXT, score REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, artist_id),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)""",
+}
 
 class StoreBase:
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, *, user_id: int | None | object = _DEFAULT_USER):
         self.db_path = db_path
+        self.user_id = None if user_id is _DEFAULT_USER else user_id
+        self._bind_default_user = user_id is _DEFAULT_USER
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def for_user(self, user_id: int) -> "StoreBase":
+        """Return the same store type bound to one mandatory user identity."""
+        if user_id <= 0:
+            raise ValueError("user_id must be a positive integer")
+        return type(self)(self.db_path, user_id=user_id)
+
+    def require_user_id(self) -> int:
+        if self.user_id is None:
+            raise PermissionError("A user-scoped store is required for personal data")
+        return self.user_id
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=30, isolation_level="IMMEDIATE")
         conn.row_factory = sqlite3.Row
+        conn.create_function("discocs_user_id", 0, self.require_user_id)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 30000")
         conn.execute("PRAGMA synchronous = FULL")
@@ -126,10 +179,17 @@ class StoreBase:
     def init(self) -> None:
         resolved_path = self.db_path.resolve()
         with INIT_LOCK:
-            if resolved_path in INITIALIZED_DB_PATHS:
-                return
-            self._init_schema()
-            INITIALIZED_DB_PATHS.add(resolved_path)
+            if resolved_path not in INITIALIZED_DB_PATHS:
+                self._init_schema()
+                INITIALIZED_DB_PATHS.add(resolved_path)
+        if self._bind_default_user and self.user_id is None:
+            owner_username = os.getenv(OWNER_USER_ENV, "").strip() or DEFAULT_OWNER_USERNAME
+            owner = self.get_user_by_username(owner_username)
+            self.user_id = (
+                int(owner["id"])
+                if owner is not None
+                else self.upsert_user(owner_username)
+            )
 
     def _init_schema(self) -> None:
         with self.connect() as conn:
@@ -423,8 +483,15 @@ class StoreBase:
                     ON playback_events(client_event_id)
                     WHERE client_event_id IS NOT NULL;
 
+                -- Per-user preferences (Phase 2). PK is (user_id, entity_id):
+                -- one row per user per track/release/artist. Fresh installs get
+                -- this shape directly; existing single-user DBs are rebuilt from
+                -- the old entity-only PK by _migrate_preference_pks (rows bound
+                -- to the owner). Keep these column lists in sync with that
+                -- migration's rebuild DDL.
                 CREATE TABLE IF NOT EXISTS user_track_preferences (
-                    track_id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    track_id INTEGER NOT NULL,
                     liked INTEGER NOT NULL DEFAULT 0,
                     disliked INTEGER NOT NULL DEFAULT 0,
                     play_count INTEGER NOT NULL DEFAULT 0,
@@ -436,11 +503,14 @@ class StoreBase:
                     last_completed_at TEXT,
                     last_skipped_at TEXT,
                     score REAL NOT NULL DEFAULT 0,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, track_id),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 );
 
                 CREATE TABLE IF NOT EXISTS user_release_preferences (
-                    release_id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    release_id INTEGER NOT NULL,
                     liked INTEGER NOT NULL DEFAULT 0,
                     play_count INTEGER NOT NULL DEFAULT 0,
                     completion_count INTEGER NOT NULL DEFAULT 0,
@@ -448,18 +518,23 @@ class StoreBase:
                     last_played_at TEXT,
                     last_completed_at TEXT,
                     score REAL NOT NULL DEFAULT 0,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, release_id),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 );
 
                 CREATE TABLE IF NOT EXISTS user_artist_preferences (
-                    artist_id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    artist_id INTEGER NOT NULL,
                     liked INTEGER NOT NULL DEFAULT 0,
                     play_count INTEGER NOT NULL DEFAULT 0,
                     completion_count INTEGER NOT NULL DEFAULT 0,
                     skip_count INTEGER NOT NULL DEFAULT 0,
                     last_played_at TEXT,
                     score REAL NOT NULL DEFAULT 0,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, artist_id),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 );
 
                 CREATE TABLE IF NOT EXISTS generated_mixes (
@@ -635,6 +710,7 @@ class StoreBase:
 
                 CREATE TABLE IF NOT EXISTS flow_profiles (
                     id TEXT PRIMARY KEY,
+                    user_id INTEGER,
                     status TEXT NOT NULL DEFAULT 'pending',
                     model_key TEXT NOT NULL,
                     settings_json TEXT,
@@ -642,9 +718,6 @@ class StoreBase:
                     updated_at TEXT NOT NULL,
                     last_built_at TEXT
                 );
-
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_flow_profiles_model_key
-                    ON flow_profiles(model_key);
 
                 CREATE TABLE IF NOT EXISTS flow_regions (
                     id TEXT PRIMARY KEY,
@@ -709,9 +782,12 @@ class StoreBase:
                     ON flow_generation_runs(session_id, created_at DESC);
 
                 CREATE TABLE IF NOT EXISTS albums_for_you_cache (
-                    model_name TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    model_name TEXT NOT NULL,
                     items_json TEXT NOT NULL,
-                    computed_at TEXT NOT NULL
+                    computed_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, model_name),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 );
 
                 CREATE TABLE IF NOT EXISTS analysis_workers (
@@ -836,6 +912,17 @@ class StoreBase:
             self._ensure_column(conn, "flow_profiles", "user_id", "INTEGER")
             self._ensure_column(conn, "generated_mixes", "user_id", "INTEGER")
             self._ensure_column(conn, "playlists", "user_id", "INTEGER")
+            conn.execute("DROP INDEX IF EXISTS idx_playback_events_client_event_id")
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_playback_events_user_client_event "
+                "ON playback_events(user_id, client_event_id) "
+                "WHERE client_event_id IS NOT NULL"
+            )
+            conn.execute("DROP INDEX IF EXISTS idx_flow_profiles_model_key")
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_flow_profiles_user_model "
+                "ON flow_profiles(user_id, model_key)"
+            )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_playback_sessions_user "
                 "ON playback_sessions(user_id, updated_at)"
@@ -858,6 +945,8 @@ class StoreBase:
             )
             self._backfill_added_timestamps(conn)
         self._migrate_owner_backfill()
+        self._migrate_preference_pks()
+        self._migrate_albums_cache_pk()
 
     def _ensure_column(
         self,
@@ -987,4 +1076,109 @@ class StoreBase:
             owner_id,
             owner,
         )
+
+    def _column_exists(self, conn: sqlite3.Connection, table: str, column: str) -> bool:
+        return any(
+            row["name"] == column
+            for row in conn.execute(f"PRAGMA table_info({table})")
+        )
+
+    def _migrate_preference_pks(self) -> None:
+        """Rebuild preference tables from entity-only PK to (user_id, entity_id).
+
+        SQLite cannot alter a PRIMARY KEY in place, so each old-schema table is
+        recreated and its rows copied, bound to the owner user. Detected by the
+        absence of the ``user_id`` column, so fresh installs (already built with
+        the new shape) and re-runs are no-ops. Same owner contract and
+        safeguards as _migrate_owner_backfill: loud failure without an owner
+        when rows exist, backup first, one transaction.
+        """
+        with self.connect() as conn:
+            pending = [
+                t for t in PREFERENCE_PK_TABLES if not self._column_exists(conn, t, "user_id")
+            ]
+            has_rows = any(
+                conn.execute(f"SELECT 1 FROM {t} LIMIT 1").fetchone() is not None
+                for t in pending
+            )
+        if not pending:
+            return
+
+        owner = os.getenv(OWNER_USER_ENV, "").strip()
+        if has_rows and not owner:
+            raise RuntimeError(
+                f"{OWNER_USER_ENV} is required to migrate existing preference rows "
+                "to an owner PK; refusing to drop or orphan them. Set it to the "
+                "owner's Navidrome username and restart."
+            )
+
+        self._backup_db("premigrate-prefpk")
+        now = utc_now()
+        with self.connect() as conn:
+            owner_id = self._upsert_owner_user_id(conn, owner, now) if has_rows else None
+            for table in pending:
+                self._rebuild_preference_table(
+                    conn, table, owner_id
+                )
+        logger.info("Preference PK migration: rebuilt %s", ", ".join(pending))
+
+    def _rebuild_preference_table(
+        self,
+        conn: sqlite3.Connection,
+        table: str,
+        owner_id: int | None,
+    ) -> None:
+        """Copy an old entity-PK preference table into the new composite-PK one.
+
+        Column list is read from the old table so the copy stays correct even if
+        columns drift; ``user_id`` is prepended with the owner id for every row.
+        """
+        old_cols = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})")]
+        col_list = ", ".join(old_cols)
+        conn.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
+        conn.execute(_PREFERENCE_TABLE_DDL[table])
+        if owner_id is not None:
+            conn.execute(
+                f"INSERT INTO {table} (user_id, {col_list}) "
+                f"SELECT ?, {col_list} FROM {table}_old",
+                (owner_id,),
+            )
+        conn.execute(f"DROP TABLE {table}_old")
+
+    def _migrate_albums_cache_pk(self) -> None:
+        """Move the personalized albums cache to a per-user composite key."""
+        with self.connect() as conn:
+            if self._column_exists(conn, "albums_for_you_cache", "user_id"):
+                return
+            has_rows = conn.execute(
+                "SELECT 1 FROM albums_for_you_cache LIMIT 1"
+            ).fetchone() is not None
+        owner = os.getenv(OWNER_USER_ENV, "").strip()
+        if has_rows and not owner:
+            raise RuntimeError(
+                f"{OWNER_USER_ENV} is required to migrate albums_for_you_cache"
+            )
+        self._backup_db("premigrate-albums-cache")
+        with self.connect() as conn:
+            owner_id = self._upsert_owner_user_id(conn, owner, utc_now()) if has_rows else None
+            conn.execute("ALTER TABLE albums_for_you_cache RENAME TO albums_for_you_cache_old")
+            conn.execute(
+                """CREATE TABLE albums_for_you_cache (
+                    user_id INTEGER NOT NULL,
+                    model_name TEXT NOT NULL,
+                    items_json TEXT NOT NULL,
+                    computed_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, model_name),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )"""
+            )
+            if owner_id is not None:
+                conn.execute(
+                    """INSERT INTO albums_for_you_cache
+                       (user_id, model_name, items_json, computed_at)
+                       SELECT ?, model_name, items_json, computed_at
+                       FROM albums_for_you_cache_old""",
+                    (owner_id,),
+                )
+            conn.execute("DROP TABLE albums_for_you_cache_old")
 

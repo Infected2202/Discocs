@@ -398,7 +398,7 @@ def _preference_state(store: Store) -> dict[str, object]:
             """
             SELECT COUNT(*) AS count, MAX(updated_at) AS max_updated_at
             FROM user_track_preferences
-            WHERE disliked = 0
+            WHERE user_id = discocs_user_id() AND disliked = 0
               AND (
                     liked = 1 OR completion_count > 0 OR replay_count > 0 OR score > 0
                     OR play_count > 0 OR last_played_at IS NOT NULL
@@ -718,7 +718,7 @@ def _load_taste_seeds(store: Store, settings: MixSettings) -> tuple[list[TasteSe
             FROM user_track_preferences p
             JOIN tracks t ON t.id = p.track_id
             JOIN embeddings e ON e.track_id = t.id AND e.model_name = ?
-            WHERE t.missing_at IS NULL
+            WHERE p.user_id = discocs_user_id() AND t.missing_at IS NULL
               AND p.disliked = 0
               AND ({seed_where})
             ORDER BY p.liked DESC, p.score DESC, p.play_count DESC, p.completion_count DESC, t.id
@@ -885,7 +885,9 @@ def _seed_examples(seeds: list[TasteSeed], centroid: np.ndarray, limit: int = 5)
 
 def _track_preference_rows(store: Store) -> dict[int, dict[str, object]]:
     with store.connect() as conn:
-        rows = conn.execute("SELECT * FROM user_track_preferences").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM user_track_preferences WHERE user_id = discocs_user_id()"
+        ).fetchall()
     return {int(row["track_id"]): dict(row) for row in rows}
 
 

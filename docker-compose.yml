@@ -21,6 +21,7 @@ services:
       DISCOCS_DATA_DIR: /app/data
       DISCOCS_MODEL_DIR: /app/models
       DISCOCS_INDEX_DIR: /app/data
+      DISCOCS_OWNER_USER: ${DISCOCS_OWNER_USER:-owner}
 
   discocs-frontend:
     build:

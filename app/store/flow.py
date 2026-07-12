@@ -79,7 +79,7 @@ class FlowStoreMixin:
     def get_flow_profile(self, model_key: str) -> FlowProfile | None:
         with self.connect() as conn:  # type: ignore[attr-defined]
             row = conn.execute(
-                "SELECT * FROM flow_profiles WHERE model_key = ?",
+                "SELECT * FROM flow_profiles WHERE user_id = discocs_user_id() AND model_key = ?",
                 (model_key,),
             ).fetchone()
         return _row_to_flow_profile(row) if row is not None else None
@@ -99,9 +99,9 @@ class FlowStoreMixin:
         with self.connect() as conn:  # type: ignore[attr-defined]
             conn.execute(
                 """
-                INSERT INTO flow_profiles (id, status, model_key, settings_json, created_at, updated_at, last_built_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(model_key) DO UPDATE SET
+                INSERT INTO flow_profiles (id, user_id, status, model_key, settings_json, created_at, updated_at, last_built_at)
+                VALUES (?, discocs_user_id(), ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, model_key) DO UPDATE SET
                     status = excluded.status,
                     settings_json = COALESCE(excluded.settings_json, settings_json),
                     updated_at = excluded.updated_at,
@@ -120,7 +120,11 @@ class FlowStoreMixin:
             rows = conn.execute(
                 """
                 SELECT * FROM flow_regions
-                WHERE profile_id = ?
+                WHERE profile_id = ? AND EXISTS (
+                    SELECT 1 FROM flow_profiles p
+                    WHERE p.id = flow_regions.profile_id
+                      AND p.user_id = discocs_user_id()
+                )
                 ORDER BY region_index
                 """,
                 (profile_id,),
@@ -130,7 +134,9 @@ class FlowStoreMixin:
     def get_flow_region(self, region_id: str) -> FlowRegion | None:
         with self.connect() as conn:  # type: ignore[attr-defined]
             row = conn.execute(
-                "SELECT * FROM flow_regions WHERE id = ?",
+                """SELECT r.* FROM flow_regions r
+                   JOIN flow_profiles p ON p.id = r.profile_id
+                   WHERE r.id = ? AND p.user_id = discocs_user_id()""",
                 (region_id,),
             ).fetchone()
         return _row_to_flow_region(row) if row is not None else None
@@ -149,6 +155,18 @@ class FlowStoreMixin:
         summary_json: str | None = None,
         quality_json: str | None = None,
     ) -> FlowRegion:
+        if self.get_flow_profile_by_id(profile_id) is None:
+            raise ValueError("Flow profile not found")
+        if region_id is not None:
+            with self.connect() as conn:  # type: ignore[attr-defined]
+                owner = conn.execute(
+                    """SELECT p.user_id FROM flow_regions r
+                       JOIN flow_profiles p ON p.id = r.profile_id
+                       WHERE r.id = ?""",
+                    (region_id,),
+                ).fetchone()
+            if owner is not None and int(owner["user_id"]) != self.require_user_id():
+                raise ValueError("Flow region id belongs to another user")
         now = utc_now()
         # Reuse existing region id for same profile+index if present
         with self.connect() as conn:  # type: ignore[attr-defined]
@@ -185,10 +203,14 @@ class FlowStoreMixin:
         return self.get_flow_region(rid)  # type: ignore[return-value]
 
     def delete_flow_regions_for_profile(self, profile_id: str) -> None:
+        if self.get_flow_profile_by_id(profile_id) is None:
+            return
         with self.connect() as conn:  # type: ignore[attr-defined]
             conn.execute("DELETE FROM flow_regions WHERE profile_id = ?", (profile_id,))
 
     def update_flow_region_weight(self, region_id: str, weight: float) -> None:
+        if self.get_flow_region(region_id) is None:
+            return
         now = utc_now()
         with self.connect() as conn:  # type: ignore[attr-defined]
             conn.execute(
@@ -205,6 +227,8 @@ class FlowStoreMixin:
         region_id: str,
         tracks: list[FlowRegionTrack],
     ) -> None:
+        if self.get_flow_region(region_id) is None:
+            raise ValueError("Flow region not found")
         with self.connect() as conn:  # type: ignore[attr-defined]
             conn.execute("DELETE FROM flow_region_tracks WHERE region_id = ?", (region_id,))
             conn.executemany(
@@ -220,6 +244,8 @@ class FlowStoreMixin:
         region_id: str,
         role: str | None = None,
     ) -> list[FlowRegionTrack]:
+        if self.get_flow_region(region_id) is None:
+            return []
         sql = "SELECT * FROM flow_region_tracks WHERE region_id = ?"
         params: list[object] = [region_id]
         if role is not None:
@@ -240,6 +266,8 @@ class FlowStoreMixin:
         model_name: str,
         vector: np.ndarray,
     ) -> None:
+        if self.get_flow_region(region_id) is None:
+            raise ValueError("Flow region not found")
         v = np.asarray(vector, dtype=np.float32)
         norm = float(np.linalg.norm(v))
         if norm > 0:
@@ -264,6 +292,8 @@ class FlowStoreMixin:
         region_id: str,
         model_name: str,
     ) -> np.ndarray | None:
+        if self.get_flow_region(region_id) is None:
+            return None
         with self.connect() as conn:  # type: ignore[attr-defined]
             row = conn.execute(
                 "SELECT dim, vector FROM flow_region_embeddings WHERE region_id = ? AND model_name = ?",
@@ -285,7 +315,9 @@ class FlowStoreMixin:
                 SELECT fre.region_id, fre.dim, fre.vector
                 FROM flow_region_embeddings fre
                 JOIN flow_regions fr ON fr.id = fre.region_id
-                WHERE fr.profile_id = ? AND fre.model_name = ?
+                JOIN flow_profiles fp ON fp.id = fr.profile_id
+                WHERE fr.profile_id = ? AND fp.user_id = discocs_user_id()
+                  AND fre.model_name = ?
                 ORDER BY fr.region_index
                 """,
                 (profile_id, model_name),
@@ -315,9 +347,19 @@ class FlowStoreMixin:
         selected_count: int | None = None,
         score_summary_json: str | None = None,
     ) -> FlowGenerationRun:
+        if profile_id is not None and self.get_flow_profile_by_id(profile_id) is None:
+            raise ValueError("Flow profile not found")
         now = utc_now()
         rid = run_id or str(uuid4())
         with self.connect() as conn:  # type: ignore[attr-defined]
+            conflicting = conn.execute(
+                """SELECT r.id FROM flow_generation_runs r
+                   LEFT JOIN flow_profiles p ON p.id = r.profile_id
+                   WHERE r.id = ? AND (p.user_id IS NULL OR p.user_id != discocs_user_id())""",
+                (rid,),
+            ).fetchone()
+            if conflicting is not None:
+                raise ValueError("Flow generation run id belongs to another user")
             conn.execute(
                 """
                 INSERT INTO flow_generation_runs (
@@ -351,7 +393,11 @@ class FlowStoreMixin:
             rows = conn.execute(
                 """
                 SELECT * FROM flow_generation_runs
-                WHERE session_id = ?
+                WHERE session_id = ? AND EXISTS (
+                    SELECT 1 FROM playback_sessions s
+                    WHERE s.id = flow_generation_runs.session_id
+                      AND s.user_id = discocs_user_id()
+                )
                 ORDER BY created_at DESC
                 LIMIT ?
                 """,
@@ -360,6 +406,8 @@ class FlowStoreMixin:
         return [_row_to_flow_generation_run(row) for row in rows]
 
     def count_flow_regions(self, profile_id: str) -> int:
+        if self.get_flow_profile_by_id(profile_id) is None:
+            return 0
         with self.connect() as conn:  # type: ignore[attr-defined]
             return int(
                 conn.execute(
@@ -367,3 +415,11 @@ class FlowStoreMixin:
                     (profile_id,),
                 ).fetchone()[0]
             )
+
+    def get_flow_profile_by_id(self, profile_id: str) -> FlowProfile | None:
+        with self.connect() as conn:  # type: ignore[attr-defined]
+            row = conn.execute(
+                "SELECT * FROM flow_profiles WHERE id = ? AND user_id = discocs_user_id()",
+                (profile_id,),
+            ).fetchone()
+        return _row_to_flow_profile(row) if row is not None else None

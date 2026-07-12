@@ -355,7 +355,8 @@ def filter_candidates(
                     SELECT release_id FROM release_tracks
                     WHERE track_id = t.id ORDER BY rowid LIMIT 1
                 )
-            LEFT JOIN user_track_preferences utp ON utp.track_id = t.id
+            LEFT JOIN user_track_preferences utp
+              ON utp.track_id = t.id AND utp.user_id = discocs_user_id()
             WHERE t.id IN ({placeholders})
             """,
             track_ids,
@@ -418,7 +419,7 @@ def score_candidates(
             SELECT track_id, liked, score, skip_count, early_skip_count,
                    play_count, completion_count, replay_count
             FROM user_track_preferences
-            WHERE track_id IN ({placeholders})
+            WHERE user_id = discocs_user_id() AND track_id IN ({placeholders})
             """,
             track_ids,
         ).fetchall()

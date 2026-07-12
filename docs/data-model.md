@@ -157,13 +157,15 @@ stored) by comparing `source_embedding_count` with the live
 album-level recommendation and display: `release_id` (PK), `track_count`,
 `available_track_count`, `duration`, `centroid_model`, `medoid_track_id`,
 `embedding_status` (`'pending' | 'ready' | 'unavailable'`),
-`top_region_matches_json`, `audio_summary_json`, `preference_summary_json`,
+`top_region_matches_json`, `audio_summary_json`, legacy `preference_summary_json`,
 `updated_at`.
 
 This is narrower than the originally planned split of `release_aggregates`
 (audio-derived) + `release_user_stats` (play/like counters) — the current
 schema keeps everything in one table, with user-facing counters folded into
-`preference_summary_json` rather than broken out into columns. There is no
+`preference_summary_json` is no longer read or written because preferences are
+per-user while this row is shared; scoped recommendation services compute the
+summary live. There is no
 separate `release_user_stats` table.
 
 Artist-level equivalents (`artist_aggregates`, `artist_user_stats`) from the
@@ -176,7 +178,7 @@ These three tables back Flow, autoplay, album/playlist playback, and manual
 queues through one shared model, per the "generic events" decision in the
 original plan.
 
-`playback_sessions`: `id` (UUID), `source_type`/`source_id`/`source_label`
+`playback_sessions`: `id` (UUID), `user_id` (owner), `source_type`/`source_id`/`source_label`
 (what started the session — release, artist, playlist, search, flow,
 autoplay, manual, generated_mix), `mode` (`linear | shuffle | radio | flow |
 autoplay`), `status` (`active | paused | ended`), `current_track_id`,
@@ -203,11 +205,11 @@ are derived from it and can be rebuilt via `recompute_user_preferences`.
 Explicit and implicit signals are merged into one current-state row per
 entity, computed from `playback_events`:
 
-- `user_track_preferences` (`track_id` PK): `liked`, `disliked`,
+- `user_track_preferences` (`(user_id, track_id)` PK): `liked`, `disliked`,
   `play_count`, `completion_count`, `skip_count`, `early_skip_count`,
   `replay_count`, `last_played_at`, `last_completed_at`, `last_skipped_at`,
   `score`.
-- `user_release_preferences` (`release_id` PK): same shape minus
+- `user_release_preferences` (`(user_id, release_id)` PK): same shape minus
   `disliked`/`early_skip_count`/`replay_count`.
 - `user_artist_preferences` (`artist_id` PK): same shape, further reduced
   (no `completion_count` breakdown beyond what's listed).
@@ -266,8 +268,8 @@ implemented in `ui/src` — see `docs/web-ui.md`.
 
 Tables backing the Flow radio/region-based recommendation feature:
 
-`flow_profiles`: `id`, `status` (`pending | building | ready | empty |
-stale`), `model_key` (unique), `settings_json`, `last_built_at`.
+`flow_profiles`: `id`, `user_id`, `status` (`pending | building | ready | empty |
+stale`), `model_key` (unique per user), `settings_json`, `last_built_at`.
 
 `flow_regions`: `id`, `profile_id` (FK, cascade), `region_index`,
 `centroid_ref`, `medoid_track_id`, `weight`, `seed_count`,
@@ -300,8 +302,8 @@ schema:
 - `analysis_jobs`, `analysis_tasks`, `analysis_workers` — the embedding/
   analysis job queue (see `docs/analysis-pipeline.md`).
 - `scan_state` — key/value store for library scan bookkeeping.
-- `albums_for_you_cache` — one cached "albums for you" result set per model
-  (`model_name` PK, `items_json`, `computed_at`). The only cache table that
+- `albums_for_you_cache` — one cached result set per user/model
+  (`(user_id, model_name)` PK, `items_json`, `computed_at`). The only cache table that
   made it out of the originally planned generic `dashboard_shelf_cache` —
   other dashboard shelves are computed live.
 - `sessions` — web auth sessions; stores only the SHA-256 of the opaque
@@ -327,10 +329,11 @@ it:
   leave `user_id` NULL. The step is idempotent (only NULL rows are touched) and
   takes a `VACUUM INTO` backup (`app.db.premigrate-owner-<ts>.bak`) before
   writing.
-- **Pending PK changes:** `user_track_preferences`, `user_release_preferences`,
-  `user_artist_preferences` (PK → `(user_id, entity_id)`) and
-  `albums_for_you_cache` (PK → `(user_id, model_name)`) migrate later, together
-  with the store methods that read them, so upserts never break mid-flight.
+- **Composite PK and scoped Store (done):** preference tables use
+  `(user_id, entity_id)` and `albums_for_you_cache` uses `(user_id, model_name)`.
+  Upgrade migrations bind legacy rows to `DISCOCS_OWNER_USER`. Personal Store
+  operations are bound through `Store.for_user(user_id)`; an explicitly
+  unscoped Store rejects them.
 
 ## Known Gaps vs. the Original Design
 
