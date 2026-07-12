@@ -193,6 +193,10 @@ server {
    flow, generated mixes, playlists, dashboard и recommendation seeds. HTTP-
    контекст связывает Store с `user_id` активной сессии; service-принципал без
    пользователя не получает доступ к персональным операциям.
+   ✅ **API boundary (чекпоинт 4):** middleware передаёт identity через
+   request-local `ContextVar`, а каждый router получает уже scoped Store из
+   `api/deps.py:context()`. Двухпользовательский API-тест проверяет изоляцию
+   списков и прямых обращений к playlist/playback ID.
 5. **Per-user фон:** flow-профили, генерируемые миксы, play-state sync — по каждому
    пользователю.
 
