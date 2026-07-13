@@ -137,6 +137,19 @@
   background: #3d4347;
 }
 
+/* Neutralize browser autofill styling (yellow/white bg, black text) so
+   autofilled inputs keep matching the app's dark theme. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--foreground);
+  caret-color: var(--foreground);
+  -webkit-box-shadow: 0 0 0px 1000px var(--background) inset;
+  box-shadow: 0 0 0px 1000px var(--background) inset;
+  transition: background-color 9999s ease-in-out 0s;
+}
+
 /* Shelf page-flip animation */
 @keyframes shelf-from-right {
   from { transform: translateX(32px); opacity: 0; }
