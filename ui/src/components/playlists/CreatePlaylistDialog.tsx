@@ -42,6 +42,7 @@ export default function CreatePlaylistDialog() {
         await updatePlaylist(editing.id, {
           title: values.title,
           description: values.description || null,
+          visibility: values.visibility,
         })
         return
       }
