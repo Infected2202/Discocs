@@ -64,7 +64,7 @@ def refresh_playlist_cover(store: Store, settings: Settings, playlist_id: int) -
     playlist (Navidrome down, Pillow missing) the previous cover is kept —
     a stale collage beats no artwork.
     """
-    playlist = store.get_playlist(playlist_id)
+    playlist = store.get_owned_playlist(playlist_id)
     if playlist is None:
         return None
     track_ids = store.playlist_track_ids(playlist_id)

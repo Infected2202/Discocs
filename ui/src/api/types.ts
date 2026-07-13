@@ -262,6 +262,8 @@ export interface PlaylistSummary {
   track_count: number
   artwork: ImageRef
   source: Record<string, unknown> | null
+  visibility?: "public" | "private"
+  editable?: boolean
   created_at: string
   updated_at: string
   action: { type: string; target: string }

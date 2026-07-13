@@ -283,6 +283,7 @@ def row_to_generated_mix_item(row: sqlite3.Row) -> GeneratedMixItem:
 def row_to_playlist(row: sqlite3.Row) -> Playlist:
     return Playlist(
         id=int(row["id"]),
+        user_id=int(row["user_id"]),
         title=str(row["title"]),
         kind=str(row["kind"]),
         description=row["description"],

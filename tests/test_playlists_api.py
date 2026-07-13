@@ -81,11 +81,13 @@ def test_playlist_crud_roundtrip(tmp_path: Path, monkeypatch):
 
     patched = client.patch(
         f"/api/v1/playlists/{playlist['id']}",
-        json={"title": "Night set", "description": None},
+        json={"title": "Night set", "description": None, "visibility": "public"},
     )
     assert patched.status_code == 200
     assert patched.json()["title"] == "Night set"
     assert patched.json()["description"] is None
+    assert patched.json()["visibility"] == "public"
+    assert patched.json()["editable"] is True
 
     deleted = client.delete(f"/api/v1/playlists/{playlist['id']}")
     assert deleted.status_code == 204

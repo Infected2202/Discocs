@@ -135,3 +135,25 @@ def test_mixes_playlists_flow_and_cache_are_user_scoped(tmp_path: Path):
     assert bob.list_playlist_items(playlist.id) == []
     assert bob.get_flow_profile(profile.model_key) is None
     assert bob.get_albums_for_you_cache("discogs_multi") is None
+
+
+def test_public_playlist_is_cross_user_read_only(tmp_path: Path):
+    alice, bob, track_id = _stores(tmp_path)
+    playlist = alice.create_playlist(
+        title="Alice public",
+        source={"visibility": "public"},
+        track_ids=[track_id],
+    )
+
+    assert bob.get_playlist(playlist.id) is not None
+    assert bob.get_owned_playlist(playlist.id) is None
+    assert bob.playlist_track_ids(playlist.id) == [track_id]
+    assert [item.track_id for item in bob.list_playlist_items(playlist.id)] == [track_id]
+    assert bob.update_playlist(playlist.id, title="Hijacked") is None
+    assert bob.remove_playlist_tracks(playlist.id, [track_id]) == 0
+    assert bob.reorder_playlist_tracks(playlist.id, [track_id]) is False
+    assert bob.delete_playlist(playlist.id) is False
+
+    alice.update_playlist(playlist.id, visibility="private")
+    assert bob.get_playlist(playlist.id) is None
+    assert bob.playlist_track_ids(playlist.id) == []

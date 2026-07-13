@@ -107,7 +107,7 @@ def api_v1_list_playlists(
 @router.post("/playlists", response_model=None, status_code=201)
 def api_v1_create_playlist(request: PlaylistCreateRequest) -> dict[str, object] | JSONResponse:
     store, settings = context()
-    source = {"visibility": request.visibility} if request.visibility else None
+    source = {"visibility": request.visibility}
     try:
         playlist = store.create_playlist(
             title=request.title,
@@ -144,6 +144,8 @@ def api_v1_update_playlist(
         kwargs["title"] = patch["title"]
     if "description" in patch:
         kwargs["description"] = patch["description"]
+    if "visibility" in patch:
+        kwargs["visibility"] = patch["visibility"]
     try:
         playlist = store.update_playlist(playlist_id, **kwargs)
     except ValueError as exc:
@@ -156,7 +158,7 @@ def api_v1_update_playlist(
 @router.delete("/playlists/{playlist_id}", response_model=None, status_code=204)
 def api_v1_delete_playlist(playlist_id: int) -> Response | JSONResponse:
     store, _settings = context()
-    playlist = store.get_playlist(playlist_id)
+    playlist = store.get_owned_playlist(playlist_id)
     if playlist is None:
         return api_error(404, "not_found", _PLAYLIST_NOT_FOUND)
     if playlist.cover_path:
@@ -190,7 +192,7 @@ def api_v1_remove_playlist_tracks(
     request: PlaylistTracksRequest,
 ) -> dict[str, object] | JSONResponse:
     store, settings = context()
-    if store.get_playlist(playlist_id) is None:
+    if store.get_owned_playlist(playlist_id) is None:
         return api_error(404, "not_found", _PLAYLIST_NOT_FOUND)
     removed = store.remove_playlist_tracks(playlist_id, request.track_ids)
     if removed:

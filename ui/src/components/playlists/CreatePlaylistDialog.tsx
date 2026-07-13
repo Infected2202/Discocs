@@ -99,19 +99,17 @@ export default function CreatePlaylistDialog() {
             />
           </label>
 
-          {!editing && (
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="text-muted-foreground">Visibility</span>
-              <select
-                value={visibility}
-                onChange={(e) => setVisibility(e.target.value as "public" | "private")}
-                className={FIELD_CLASS}
-              >
-                <option value="private">Private</option>
-                <option value="public">Public</option>
-              </select>
-            </label>
-          )}
+          <label className="flex flex-col gap-1.5 text-sm">
+            <span className="text-muted-foreground">Visibility</span>
+            <select
+              value={visibility}
+              onChange={(e) => setVisibility(e.target.value as "public" | "private")}
+              className={FIELD_CLASS}
+            >
+              <option value="private">Private</option>
+              <option value="public">Public</option>
+            </select>
+          </label>
 
           <div className="flex justify-end gap-2 pt-1">
             <Button type="button" variant="outline" onClick={close}>

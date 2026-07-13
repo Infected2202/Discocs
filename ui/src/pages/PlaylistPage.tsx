@@ -108,6 +108,7 @@ export default function PlaylistPage() {
   }
 
   const detail = isLikes ? null : (data as PlaylistDetail)
+  const editable = !isLikes && detail?.editable !== false
   const tracks = data.tracks as TrackSummary[]
 
   function toggleSelect(trackId: number) {
@@ -175,7 +176,7 @@ export default function PlaylistPage() {
               <Play size={14} fill="currentColor" strokeWidth={0} />
               Play
             </Button>
-            {!isLikes && (
+            {editable && (
               <>
                 <Button size="sm" variant="outline" onClick={handleEdit} className="gap-2">
                   <Pencil size={14} />
@@ -198,7 +199,7 @@ export default function PlaylistPage() {
       />
 
       {/* Selection bar */}
-      {!isLikes && selectedIds.size > 0 && (
+      {editable && selectedIds.size > 0 && (
         <div className="px-4 sm:px-6">
           <div className="flex items-center gap-3 rounded-md bg-muted/60 px-4 py-2 text-sm">
             <span>{selectedIds.size} selected</span>
@@ -226,10 +227,10 @@ export default function PlaylistPage() {
         <VirtualTrackList
           tracks={tracks}
           sourceLabel={data.title}
-          selectable={!isLikes}
+          selectable={editable}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
-          onReorder={isLikes ? undefined : (trackIds) => reorder(trackIds)}
+          onReorder={editable ? (trackIds) => reorder(trackIds) : undefined}
           onPlayTrack={(trackId) => playPlaylistFrom(trackId)}
         />
       </div>

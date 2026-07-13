@@ -370,15 +370,14 @@ class GeneratedMixSaveRequest(BaseModel):
 class PlaylistCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=1000)
-    # Cosmetic for now (single-tenant); stored in source_json for a future
-    # multi-user migration.
-    visibility: str | None = Field(default=None, pattern="^(public|private)$")
+    visibility: str = Field(default="private", pattern="^(public|private)$")
     track_ids: list[int] = Field(default_factory=list)
 
 
 class PlaylistUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=1000)
+    visibility: str | None = Field(default=None, pattern="^(public|private)$")
 
 
 class PlaylistTracksRequest(BaseModel):

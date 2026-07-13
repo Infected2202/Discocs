@@ -244,11 +244,18 @@ again.
 
 ## Playlists
 
-`playlists`: `id`, `title`, `kind` (`manual | saved_mix`, validated against
+`playlists`: `id`, `user_id` (owner), `title`, `kind` (`manual | saved_mix`, validated against
 `PLAYLIST_KINDS`), `description`, `cover_path` (generated 2x2 collage, same
 mechanism as mix covers), `source_json`, timestamps. The `description` and
 `cover_path` columns were added via `_ensure_column` migrations and are
 already present in the live schema.
+
+Visibility is stored in `source_json.visibility`; missing/legacy values are
+treated as `private`. Owners can read and mutate all their playlists. Other
+authenticated users can list, open, cover-fetch and play only `public`
+playlists, and receive `editable: false` from the API. All write paths use a
+separate owner-only lookup, so knowing a public playlist ID grants no mutation
+rights. The special Likes playlist remains personal and outside this list.
 
 `playlist_items`: `playlist_id`, `position`, `track_id`, `created_at`.
 Primary key `(playlist_id, position)`, unique on `(playlist_id, track_id)` —

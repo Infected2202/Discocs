@@ -87,7 +87,7 @@ describe("CreatePlaylistDialog", () => {
     expect(createPlaylist).not.toHaveBeenCalled()
   })
 
-  it("режим редактирования: PATCH вместо создания, без селекта видимости", async () => {
+  it("режим редактирования: PATCH вместо создания, включая видимость", async () => {
     updatePlaylist.mockResolvedValue(makePlaylist(9))
 
     renderDialog()
@@ -95,7 +95,7 @@ describe("CreatePlaylistDialog", () => {
 
     const nameInput = await screen.findByPlaceholderText("Playlist name")
     expect(nameInput).toHaveValue("Playlist 9")
-    expect(screen.queryByRole("combobox")).toBeNull()
+    expect(screen.getByRole("combobox")).toHaveValue("public")
 
     fireEvent.change(nameInput, { target: { value: "Renamed" } })
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
@@ -104,6 +104,7 @@ describe("CreatePlaylistDialog", () => {
       expect(updatePlaylist).toHaveBeenCalledWith(9, {
         title: "Renamed",
         description: "Old description",
+        visibility: "public",
       })
     )
     expect(createPlaylist).not.toHaveBeenCalled()

@@ -171,6 +171,18 @@ describe("PlaylistPage — пользовательский плейлист", (
     await waitFor(() => expect(reorderPlaylistTracks).toHaveBeenCalledWith(5, [2, 1]))
   })
 
+  it("чужой public playlist доступен только для чтения", async () => {
+    fetchPlaylist.mockResolvedValue({ ...makeDetail(), editable: false, visibility: "public" })
+
+    renderPage("/playlists/5")
+    await screen.findByText("Road trip")
+
+    expect(screen.queryByRole("button", { name: /edit/i })).toBeNull()
+    expect(screen.queryByRole("button", { name: /delete/i })).toBeNull()
+    expect(screen.getByTestId("select-1")).toBeDisabled()
+    expect(screen.queryByTestId("reorder")).toBeNull()
+  })
+
   it("likes: без Edit/Delete и без selection", async () => {
     fetchLikesPlaylist.mockResolvedValue({
       id: "likes",

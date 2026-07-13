@@ -81,6 +81,26 @@ def test_two_sessions_cannot_cross_api_personal_boundaries(tmp_path, monkeypatch
     assert alice.get("/api/v1/playlists").json()["total"] == 1
     assert alice.get(f"/api/v1/playlists/{bob_playlist_id}").status_code == 404
 
+    public_playlist = alice.post(
+        "/api/v1/playlists",
+        json={"title": "Alice public", "visibility": "public", "track_ids": []},
+    )
+    assert public_playlist.status_code == 201
+    public_id = public_playlist.json()["id"]
+    assert public_playlist.json()["editable"] is True
+    assert public_playlist.json()["visibility"] == "public"
+
+    bob_public = bob.get(f"/api/v1/playlists/{public_id}")
+    assert bob_public.status_code == 200
+    assert bob_public.json()["editable"] is False
+    assert bob_public.json()["visibility"] == "public"
+    assert bob.get("/api/v1/playlists").json()["total"] == 2
+    assert bob.patch(
+        f"/api/v1/playlists/{public_id}", json={"title": "Hijacked"}
+    ).status_code == 404
+    assert bob.delete(f"/api/v1/playlists/{public_id}").status_code == 404
+    assert alice.get(f"/api/v1/playlists/{public_id}").json()["title"] == "Alice public"
+
 
 def test_interactive_navidrome_client_uses_each_session_credentials(tmp_path, monkeypatch):
     _init_store(tmp_path, monkeypatch)

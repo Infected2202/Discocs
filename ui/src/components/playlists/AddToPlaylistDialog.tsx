@@ -38,7 +38,7 @@ export default function AddToPlaylistDialog() {
   })
 
   // list_playlists is already ordered by updated_at DESC
-  const playlists = data?.items ?? []
+  const playlists = (data?.items ?? []).filter((playlist) => playlist.editable !== false)
   const recent = playlists.slice(0, RECENT_COUNT)
 
   function handleNewPlaylist() {

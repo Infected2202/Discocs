@@ -37,6 +37,7 @@ export interface CreatePlaylistPayload {
 export interface UpdatePlaylistPayload {
   title?: string
   description?: string | null
+  visibility?: "public" | "private"
 }
 
 export function fetchPlaylists(params?: { limit?: number; offset?: number }): Promise<PlaylistListResponse> {

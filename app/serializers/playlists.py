@@ -22,6 +22,8 @@ def playlist_summary_dict(
 ) -> dict[str, object]:
     if track_count is None:
         track_count = store.playlist_track_counts([playlist.id]).get(playlist.id, 0)
+    source = _json_object(playlist.source_json)
+    visibility = "public" if source and source.get("visibility") == "public" else "private"
     return {
         "id": playlist.id,
         "title": playlist.title,
@@ -29,7 +31,9 @@ def playlist_summary_dict(
         "description": playlist.description,
         "track_count": track_count,
         "artwork": _playlist_artwork(store, playlist),
-        "source": _json_object(playlist.source_json),
+        "source": source,
+        "visibility": visibility,
+        "editable": playlist.user_id == store.user_id,
         "created_at": playlist.created_at,
         "updated_at": playlist.updated_at,
         "action": {"type": "open", "target": f"/playlists/{playlist.id}"},

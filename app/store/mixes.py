@@ -106,6 +106,10 @@ _SELECT_GENERATED_MIX_BY_ID = (
     "SELECT * FROM generated_mixes WHERE id = ? AND user_id = discocs_user_id()"
 )
 _SELECT_PLAYLIST_BY_ID = (
+    "SELECT * FROM playlists WHERE id = ? AND (user_id = discocs_user_id() OR "
+    "LOWER(COALESCE(json_extract(source_json, '$.visibility'), 'private')) = 'public')"
+)
+_SELECT_OWNED_PLAYLIST_BY_ID = (
     "SELECT * FROM playlists WHERE id = ? AND user_id = discocs_user_id()"
 )
 _INSERT_PLAYLIST_ITEM = (
@@ -370,7 +374,16 @@ class MixesStoreMixin:
 
     def get_playlist(self, playlist_id: int) -> Playlist | None:
         with self.connect() as conn:
-            row = conn.execute(_SELECT_PLAYLIST_BY_ID, (playlist_id,)).fetchone()
+            row = conn.execute(
+                _SELECT_PLAYLIST_BY_ID, (playlist_id,)
+            ).fetchone()
+        return row_to_playlist(row) if row else None
+
+    def get_owned_playlist(self, playlist_id: int) -> Playlist | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                _SELECT_OWNED_PLAYLIST_BY_ID, (playlist_id,)
+            ).fetchone()
         return row_to_playlist(row) if row else None
 
     def list_playlist_items(self, playlist_id: int) -> list[PlaylistItem]:
@@ -381,7 +394,8 @@ class MixesStoreMixin:
                 WHERE playlist_id = ? AND EXISTS (
                     SELECT 1 FROM playlists p
                     WHERE p.id = playlist_items.playlist_id
-                      AND p.user_id = discocs_user_id()
+                      AND (p.user_id = discocs_user_id() OR
+                           LOWER(COALESCE(json_extract(p.source_json, '$.visibility'), 'private')) = 'public')
                 )
                 ORDER BY position
                 """,
@@ -431,6 +445,7 @@ class MixesStoreMixin:
         *,
         title: str | None = None,
         description: str | None | object = _UNSET,
+        visibility: str | None = None,
     ) -> Playlist | None:
         sets: list[str] = []
         params: list[object] = []
@@ -443,6 +458,10 @@ class MixesStoreMixin:
         if description is not _UNSET:
             sets.append("description = ?")
             params.append(description)
+        if visibility is not None:
+            _require_choice(visibility, {"public", "private"}, "visibility")
+            sets.append("source_json = json_set(COALESCE(source_json, '{}'), '$.visibility', ?)")
+            params.append(visibility)
         with self.connect() as conn:
             if sets:
                 sets.append("updated_at = ?")
@@ -453,7 +472,9 @@ class MixesStoreMixin:
                 )
                 if cursor.rowcount == 0:
                     return None
-            row = conn.execute(_SELECT_PLAYLIST_BY_ID, (playlist_id,)).fetchone()
+            row = conn.execute(
+                _SELECT_OWNED_PLAYLIST_BY_ID, (playlist_id,)
+            ).fetchone()
         return row_to_playlist(row) if row else None
 
     def delete_playlist(self, playlist_id: int) -> bool:
@@ -483,6 +504,7 @@ class MixesStoreMixin:
                 """
                 SELECT * FROM playlists
                 WHERE user_id = discocs_user_id()
+                   OR LOWER(COALESCE(json_extract(source_json, '$.visibility'), 'private')) = 'public'
                 ORDER BY updated_at DESC, id DESC
                 LIMIT ? OFFSET ?
                 """,
@@ -493,7 +515,8 @@ class MixesStoreMixin:
     def count_playlists(self) -> int:
         with self.connect() as conn:
             return int(conn.execute(
-                "SELECT COUNT(*) FROM playlists WHERE user_id = discocs_user_id()"
+                "SELECT COUNT(*) FROM playlists WHERE user_id = discocs_user_id() "
+                "OR LOWER(COALESCE(json_extract(source_json, '$.visibility'), 'private')) = 'public'"
             ).fetchone()[0])
 
     def playlist_track_counts(self, playlist_ids: list[int]) -> dict[int, int]:
@@ -507,7 +530,8 @@ class MixesStoreMixin:
                 SELECT pi.playlist_id, COUNT(*) AS track_count
                 FROM playlist_items pi
                 JOIN playlists p ON p.id = pi.playlist_id
-                WHERE p.user_id = discocs_user_id()
+                WHERE (p.user_id = discocs_user_id() OR
+                       LOWER(COALESCE(json_extract(p.source_json, '$.visibility'), 'private')) = 'public')
                   AND pi.playlist_id IN ({placeholders})
                 GROUP BY pi.playlist_id
                 """,
@@ -530,7 +554,7 @@ class MixesStoreMixin:
         return [int(row["track_id"]) for row in rows]
 
     def add_playlist_tracks(self, playlist_id: int, track_ids: list[int]) -> int:
-        if self.get_playlist(playlist_id) is None:
+        if self.get_owned_playlist(playlist_id) is None:
             raise ValueError(f"Playlist not found: {playlist_id}")
         now = utc_now()
         ids = [int(track_id) for track_id in track_ids]
@@ -565,7 +589,7 @@ class MixesStoreMixin:
         return added
 
     def remove_playlist_tracks(self, playlist_id: int, track_ids: list[int]) -> int:
-        if self.get_playlist(playlist_id) is None:
+        if self.get_owned_playlist(playlist_id) is None:
             return 0
         now = utc_now()
         ids = sorted({int(track_id) for track_id in track_ids})
@@ -611,7 +635,7 @@ class MixesStoreMixin:
         playlist currently holds; otherwise ValueError is raised (the caller
         maps it to 409).
         """
-        if self.get_playlist(playlist_id) is None:
+        if self.get_owned_playlist(playlist_id) is None:
             return False
         now = utc_now()
         ids = [int(track_id) for track_id in track_ids]

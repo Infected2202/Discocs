@@ -565,6 +565,7 @@ class GeneratedMixItem:
 @dataclass(frozen=True)
 class Playlist:
     id: int
+    user_id: int
     title: str
     kind: str
     description: str | None

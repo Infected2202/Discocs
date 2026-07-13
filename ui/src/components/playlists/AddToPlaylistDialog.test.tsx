@@ -67,6 +67,18 @@ describe("AddToPlaylistDialog", () => {
     await waitFor(() => expect(useUIStore.getState().addToPlaylistTrackIds).toBeNull())
   })
 
+  it("не предлагает чужой public playlist как цель для записи", async () => {
+    const own = { ...makePlaylist(1), editable: true }
+    const foreign = { ...makePlaylist(2), editable: false, visibility: "public" as const }
+    fetchPlaylists.mockResolvedValue({ items: [own, foreign], total: 2, limit: 200, offset: 0, next_offset: null })
+
+    renderDialog()
+    useUIStore.getState().openAddToPlaylist([7])
+
+    await screen.findByText("Playlist 1")
+    expect(screen.queryByText("Playlist 2")).toBeNull()
+  })
+
   it("кнопка «New playlist» открывает модалку создания с теми же треками", async () => {
     fetchPlaylists.mockResolvedValue({ items: [], total: 0, limit: 200, offset: 0, next_offset: null })
 
