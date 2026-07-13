@@ -7,9 +7,11 @@ import PlasmaFBM from "@/components/player/PlasmaFBM"
 import { Button } from "@/components/ui/button"
 import { getSession, login } from "@/api/auth"
 import { ApiError } from "@/api/client"
+import { SUPPORTED_LANGUAGES, LANGUAGE_NAMES } from "@/i18n"
+import { cn } from "@/lib/utils"
 
 export default function LoginPage() {
-  const { t } = useTranslation("auth")
+  const { t, i18n } = useTranslation("auth")
   const navigate = useNavigate()
   const location = useLocation()
   const queryClient = useQueryClient()
@@ -75,6 +77,25 @@ export default function LoginPage() {
         >
           <div className="mb-7 text-center text-xl font-semibold tracking-tight text-foreground">
             discocs
+          </div>
+
+          <div className="mb-5 flex justify-center gap-1.5">
+            {SUPPORTED_LANGUAGES.map((lang) => (
+              <button
+                key={lang}
+                type="button"
+                onClick={() => void i18n.changeLanguage(lang)}
+                aria-pressed={i18n.resolvedLanguage === lang}
+                className={cn(
+                  "rounded-full px-3 py-1 text-xs transition-colors",
+                  i18n.resolvedLanguage === lang
+                    ? "bg-foreground/10 text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {LANGUAGE_NAMES[lang]}
+              </button>
+            ))}
           </div>
 
           <div className="flex flex-col gap-3">

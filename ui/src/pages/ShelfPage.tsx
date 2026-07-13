@@ -81,7 +81,7 @@ export default function ShelfPage() {
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
 
   const firstPage = data?.pages[0]
-  const title = firstPage?.title ?? key
+  const title = t(`shelves.${key}`, { ns: "dashboard", defaultValue: firstPage?.title ?? key })
   const allItems = data?.pages.flatMap((p) => p.items) ?? []
 
   return (

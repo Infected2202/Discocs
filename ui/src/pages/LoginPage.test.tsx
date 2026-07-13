@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter, Routes, Route } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import LoginPage from "./LoginPage"
@@ -58,5 +58,15 @@ describe("LoginPage", () => {
     renderLogin()
     expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument()
     expect(screen.queryByText("HOME PAGE")).not.toBeInTheDocument()
+  })
+
+  it("switches the form copy to Russian via the language toggle", async () => {
+    getSession.mockResolvedValue({ authenticated: false, username: null, enabled: true })
+    renderLogin()
+    await screen.findByRole("button", { name: /sign in/i })
+
+    fireEvent.click(screen.getByRole("button", { name: "Русский" }))
+
+    expect(await screen.findByPlaceholderText("Логин")).toBeInTheDocument()
   })
 })

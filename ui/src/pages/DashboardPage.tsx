@@ -84,7 +84,7 @@ export default function DashboardPage() {
       {data?.shelves.map((shelf) => (
         <Shelf
           key={shelf.key}
-          title={shelf.title}
+          title={t(`shelves.${shelf.key}`, { defaultValue: shelf.title })}
           shelfKey={shelf.key}
           items={shelf.items.map((item) => shelfItemToCard(item, handlePlayShelfItem))}
         />

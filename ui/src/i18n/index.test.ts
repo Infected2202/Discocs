@@ -31,4 +31,14 @@ describe("i18n", () => {
     expect(i18n.t("itemCount", { ns: "media", count: 2 })).toBe("2 элемента")
     expect(i18n.t("itemCount", { ns: "media", count: 5 })).toBe("5 элементов")
   })
+
+  it("translates dashboard shelf titles by their backend key in both languages", async () => {
+    await i18n.changeLanguage("en")
+    expect(i18n.t("shelves.recently_added", { ns: "dashboard" })).toBe("Recently Added")
+    expect(i18n.t("shelves.liked_artists", { ns: "dashboard" })).toBe("Favourite Artists")
+
+    await i18n.changeLanguage("ru")
+    expect(i18n.t("shelves.recently_added", { ns: "dashboard" })).toBe("Недавно добавленное")
+    expect(i18n.t("shelves.liked_artists", { ns: "dashboard" })).toBe("Любимые артисты")
+  })
 })

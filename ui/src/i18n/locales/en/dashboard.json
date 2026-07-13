@@ -16,5 +16,18 @@
     "discover": { "title": "Discover", "subtitle": "Something new" },
     "listenAgain": { "title": "Listen Again", "subtitle": "Pick up where you left off" },
     "longTimeNoListen": { "title": "Long Time No Listen", "subtitle": "Forgotten gems" }
+  },
+  "shelves": {
+    "recently_added": "Recently Added",
+    "history": "Recently Played",
+    "listen_again": "Listen Again",
+    "long_time_no_listen": "Long Time No Listen",
+    "mixes_for_you": "Mixes For You",
+    "albums_for_you": "Albums For You",
+    "discover_random": "Discover Random",
+    "new_releases": "New Releases",
+    "liked_artists": "Favourite Artists",
+    "liked_releases": "Favourite Albums",
+    "playlists": "Playlists"
   }
 }

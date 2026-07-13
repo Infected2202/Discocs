@@ -13,12 +13,7 @@ import {
 import { getSession, logout } from "@/api/auth"
 import { redirectToLogin } from "@/lib/authRedirect"
 import { useUserSettings, useUpdateUserSettings } from "@/api/hooks/useUserSettings"
-import { SUPPORTED_LANGUAGES, type SupportedLanguage } from "@/i18n"
-
-const LANGUAGE_NAMES: Record<SupportedLanguage, string> = {
-  en: "English",
-  ru: "Русский",
-}
+import { SUPPORTED_LANGUAGES, LANGUAGE_NAMES } from "@/i18n"
 
 function navidromeStatusUi(status: string, isLoading: boolean, t: TFunction<"profile">) {
   if (isLoading) {

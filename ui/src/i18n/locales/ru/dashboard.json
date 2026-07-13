@@ -16,5 +16,18 @@
     "discover": { "title": "Открытия", "subtitle": "Что-то новое" },
     "listenAgain": { "title": "Слушать снова", "subtitle": "Продолжить с того места, где остановились" },
     "longTimeNoListen": { "title": "Давно не слушали", "subtitle": "Забытые жемчужины" }
+  },
+  "shelves": {
+    "recently_added": "Недавно добавленное",
+    "history": "Недавно прослушанное",
+    "listen_again": "Слушать снова",
+    "long_time_no_listen": "Давно не слушали",
+    "mixes_for_you": "Миксы для вас",
+    "albums_for_you": "Альбомы для вас",
+    "discover_random": "Открытия",
+    "new_releases": "Новые релизы",
+    "liked_artists": "Любимые артисты",
+    "liked_releases": "Любимые альбомы",
+    "playlists": "Плейлисты"
   }
 }
