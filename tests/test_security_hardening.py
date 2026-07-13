@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from app import auth
+from app.api import auth as auth_api
 from app.api.auth import _client_ip
 from app.main import app
 from app.store import INITIALIZED_DB_PATHS, Store
@@ -17,8 +18,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(autouse=True)
 def _reset_limiter():
-    from app.api import auth as auth_api
-
     auth_api._limiter._failures.clear()
     yield
     auth_api._limiter._failures.clear()
@@ -36,7 +35,8 @@ def _enable_gate(tmp_path: Path, monkeypatch) -> None:
     Store(db_path).init()
 
 
-def test_client_ip_uses_proxy_appended_last_hop():
+def test_client_ip_uses_proxy_appended_last_hop(monkeypatch):
+    monkeypatch.setenv("DISCOCS_TRUSTED_PROXY_CIDRS", "172.16.0.0/12")
     request = Request(
         {
             "type": "http",
@@ -45,7 +45,7 @@ def test_client_ip_uses_proxy_appended_last_hop():
             "headers": [
                 (b"x-forwarded-for", b"198.51.100.99, 203.0.113.7"),
             ],
-            "client": ("10.0.0.2", 12345),
+            "client": ("172.20.0.2", 12345),
             "scheme": "http",
             "server": ("testserver", 80),
         }
@@ -54,8 +54,29 @@ def test_client_ip_uses_proxy_appended_last_hop():
     assert _client_ip(request) == "203.0.113.7"
 
 
+def test_direct_lan_client_cannot_forge_forwarded_ip(monkeypatch):
+    monkeypatch.setenv("DISCOCS_TRUSTED_PROXY_CIDRS", "172.16.0.0/12")
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/auth/login",
+            "headers": [(b"x-forwarded-for", b"203.0.113.99")],
+            "client": ("192.168.1.55", 12345),
+            "scheme": "http",
+            "server": ("testserver", 80),
+        }
+    )
+
+    assert _client_ip(request) == "192.168.1.55"
+
+
 def test_rotating_forwarded_ip_cannot_bypass_account_limiter(tmp_path, monkeypatch):
     _enable_gate(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        auth_api, "_client_ip", lambda request: request.headers["x-forwarded-for"]
+    )
+
     monkeypatch.setenv("DISCOCS_LOGIN_MAX_ATTEMPTS", "3")
     monkeypatch.setattr(auth, "verify_navidrome_credentials", lambda *_args, **_kwargs: False)
     client = TestClient(app)
@@ -144,6 +165,15 @@ def test_public_nginx_overwrites_untrusted_identity_headers():
     assert config.count("proxy_set_header X-Forwarded-For $remote_addr;") == 5
     assert config.count('proxy_set_header X-Discocs-Service-Token "";') == 5
     assert "Content-Security-Policy" in config
+
+
+def test_prod_backend_declares_trusted_docker_proxy_cidr():
+    compose = (ROOT / "deploy" / "prod" / "docker-compose.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "DISCOCS_TRUSTED_PROXY_CIDRS:" in compose
+    assert "172.16.0.0/12" in compose
 
 
 def test_authenticated_startup_does_not_enable_wildcard_cors():

@@ -38,6 +38,9 @@ services:
       DISCOCS_SERVICE_TOKEN: ${DISCOCS_SERVICE_TOKEN:-}
       DISCOCS_SESSION_TTL_HOURS: ${DISCOCS_SESSION_TTL_HOURS:-720}
       DISCOCS_CORS_ORIGINS: ${DISCOCS_CORS_ORIGINS:-}
+      # Only Docker-side frontend proxies may supply client identity headers.
+      # Direct LAN callers on :8711 are always keyed by their socket address.
+      DISCOCS_TRUSTED_PROXY_CIDRS: ${DISCOCS_TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7752/health')"]
       interval: 30s

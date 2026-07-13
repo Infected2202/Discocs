@@ -90,6 +90,7 @@
 | `DISCOCS_LOGIN_MAX_ATTEMPTS` | `5` | Порог блокировки логина |
 | `DISCOCS_LOGIN_LOCKOUT_SECONDS` | `900` | Окно блокировки |
 | `DISCOCS_CORS_ORIGINS` | `` | Явный allowlist origin'ов (с куками). При включённом auth пусто = cross-origin доступ выключен |
+| `DISCOCS_TRUSTED_PROXY_CIDRS` | `` | CIDR proxy, от которых backend принимает `X-Forwarded-For`; прямые LAN-клиенты не доверяются |
 | `DISCOCS_NAVIDROME_URL` | из settings.json | Адрес Navidrome для проверки логина |
 
 ## Почему гейт по умолчанию выключен

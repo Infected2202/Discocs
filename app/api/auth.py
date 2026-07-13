@@ -6,7 +6,9 @@ opaque, HttpOnly session cookie; the password is never stored.
 """
 from __future__ import annotations
 
+from ipaddress import ip_address, ip_network
 import logging
+import os
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -50,14 +52,33 @@ def _login_limiter(settings) -> auth.LoginRateLimiter:
     return _limiter
 
 
+def _trusted_proxy(peer: str) -> bool:
+    try:
+        address = ip_address(peer)
+    except ValueError:
+        return False
+    for raw_network in os.getenv("DISCOCS_TRUSTED_PROXY_CIDRS", "").split(","):
+        network = raw_network.strip()
+        if not network:
+            continue
+        try:
+            if address in ip_network(network, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def _client_ip(request: Request) -> str:
+    peer = request.client.host if request.client else "unknown"
     forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        # The public nginx overwrites this header with the actual peer address.
-        # Taking the last hop prevents client-prepended spoofed values from
-        # bypassing the login limiter.
-        return forwarded.split(",")[-1].strip()
-    return request.client.host if request.client else "unknown"
+    if not forwarded or not _trusted_proxy(peer):
+        return peer
+    candidate = forwarded.split(",")[-1].strip()
+    try:
+        return str(ip_address(candidate))
+    except ValueError:
+        return peer
 
 
 def _login_keys(ip: str, username: str) -> tuple[str, str]:

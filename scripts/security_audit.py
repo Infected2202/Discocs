@@ -188,40 +188,25 @@ def audit_backend(base_url: str, *, brute_force: bool, attempts: int) -> Audit:
     )
 
     if brute_force:
-        fixed_user = f"discocs-audit-fixed-{uuid4().hex}"
-        fixed_statuses = []
+        spray_prefix = f"discocs-audit-spray-{uuid4().hex}"
+        spray_statuses = []
         for number in range(attempts):
-            fixed_statuses.append(
-                request(
-                    base_url,
-                    "/api/v1/auth/login",
-                    method="POST",
-                    headers={"X-Forwarded-For": "198.51.100.10"},
-                    payload={"username": fixed_user, "password": f"invalid-{number}"},
-                ).status
-            )
-        audit.expect(
-            "fixed-source brute force is throttled",
-            429 in fixed_statuses,
-            f"statuses were {fixed_statuses}",
-        )
-
-        rotated_user = f"discocs-audit-rotated-{uuid4().hex}"
-        rotated_statuses = []
-        for number in range(attempts):
-            rotated_statuses.append(
+            spray_statuses.append(
                 request(
                     base_url,
                     "/api/v1/auth/login",
                     method="POST",
                     headers={"X-Forwarded-For": f"203.0.113.{number + 1}"},
-                    payload={"username": rotated_user, "password": f"invalid-{number}"},
+                    payload={
+                        "username": f"{spray_prefix}-{number}",
+                        "password": f"invalid-{number}",
+                    },
                 ).status
             )
         audit.expect(
-            "rotating-source brute force is throttled per account",
-            429 in rotated_statuses,
-            f"statuses were {rotated_statuses}",
+            "forged-XFF password spray is throttled by real socket IP",
+            429 in spray_statuses,
+            f"statuses were {spray_statuses}",
         )
 
     return audit

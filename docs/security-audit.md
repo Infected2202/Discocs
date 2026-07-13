@@ -65,8 +65,10 @@ Confirmed before hardening:
 
 Implemented remediation:
 
-- public nginx overwrites `X-Forwarded-For` and strips any incoming
+- frontend nginx overwrites `X-Forwarded-For` and strips any incoming
   `X-Discocs-Service-Token`;
+- backend accepts forwarded identity only from configured Docker proxy CIDRs;
+  direct LAN `:8711` clients are keyed by their real socket address;
 - login failures are limited by both source IP and normalized username;
 - foreign-origin browser mutations are rejected before authentication/IdP IO;
 - wildcard CORS is disabled when auth is enabled unless an explicit allowlist
