@@ -406,8 +406,10 @@ for theming (`ui/src/index.css`):
   (`TiltedArtwork`).
 - **Shelves**: horizontal, paged (not free-scroll) on desktop — `Shelf`
   slices items into `cols`-wide pages and animates between them with
-  prev/next arrow buttons; mobile falls back to native horizontal scroll
-  with snap points. A "More" link routes to the full `/shelf/:key` grid page.
+  prev/next arrow buttons; mobile falls back to native horizontal momentum
+  scrolling with proximity snap points, so a quick swipe can coast across
+  multiple cards while a slow swipe still settles on the nearest card. A
+  "More" link routes to the full `/shelf/:key` grid page.
   Every titled shelf header row (dashboard, artist discography groups, etc.)
   has a thin accent-colored divider (`bg-primary/50`) filling the gap between
   the title/subtitle and the More/prev/next controls, tracking the same

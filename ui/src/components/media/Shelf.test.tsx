@@ -13,8 +13,10 @@ vi.mock("react-router", async (importOriginal) => {
   }
 })
 
+let columns = 4
+
 vi.mock("@/hooks/useColumns", () => ({
-  useColumns: () => 4,
+  useColumns: () => columns,
 }))
 
 vi.mock("@/lib/animateScroll", () => ({
@@ -33,7 +35,32 @@ vi.mock("./MediaCard", () => ({
 }))
 
 describe("Shelf", () => {
-  beforeEach(() => navigate.mockReset())
+  beforeEach(() => {
+    columns = 4
+    navigate.mockReset()
+  })
+
+  it("keeps native touch momentum while gently snapping mobile shelf cards", () => {
+    columns = 2
+    render(
+      <MemoryRouter>
+        <Shelf
+          items={[
+            { id: 1, type: "release", title: "One" },
+            { id: 2, type: "release", title: "Two" },
+            { id: 3, type: "release", title: "Three" },
+          ]}
+        />
+      </MemoryRouter>
+    )
+
+    const scroller = screen.getByText("One").parentElement?.parentElement
+    expect(scroller).toHaveClass("overflow-x-auto")
+    expect(scroller).toHaveStyle({
+      scrollSnapType: "x proximity",
+      WebkitOverflowScrolling: "touch",
+    })
+  })
 
   it("renders shelf navigation as native buttons and disables previous on first page", () => {
     render(

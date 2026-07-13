@@ -121,7 +121,7 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
           className="flex overflow-x-auto px-3 pb-1"
           style={{
             gap: `${MOBILE_GAP_PX}px`,
-            scrollSnapType: "x mandatory",
+            scrollSnapType: "x proximity",
             scrollPaddingLeft: "12px",
             scrollPaddingRight: "12px",
             WebkitOverflowScrolling: "touch",
