@@ -1,25 +1,17 @@
 # Operations
 
-## Multiuser owner migration
+## Legacy implicit user
 
-Before the first Phase 2 deployment, `DISCOCS_OWNER_USER` must identify the
-Navidrome username that owns all existing preference, playback, flow, mix and
-playlist rows. Production compose defaults to `infected2202`; override it in
-the host `.env` if the owner differs. Startup takes timestamped SQLite backups
-before rebuilding primary keys and fails without changing rows when an owner is
-required but missing.
+`DISCOCS_OWNER_USER` now only names the implicit user for private admin/CLI and
+auth-disabled compatibility callers that do not provide an explicit `user_id`.
+Request-scoped multiuser API code does not use this fallback.
+
+The one-time Phase 2 owner/primary-key migration has been retired. Startup never
+rewrites personal ownership or creates `premigrate-*` backups. A pre-Phase-2
+database fails the current schema guard and must be upgraded with an older release.
 
 This document collects practical notes for running the MVP safely while the
 library and analysis database are still local SQLite files.
-
-## Multiuser owner migration
-
-Before the first Phase 2 deployment, `DISCOCS_OWNER_USER` must identify the
-Navidrome username that owns all existing preference, playback, flow, mix and
-playlist rows. Production compose defaults to `infected2202`; override it in
-the host `.env` if the owner differs. Startup takes timestamped SQLite backups
-before rebuilding primary keys and fails without changing rows when an owner is
-required but missing.
 
 ## Runtime Files
 

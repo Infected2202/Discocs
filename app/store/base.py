@@ -5,18 +5,11 @@ Do not import this module directly; use app.store instead.
 """
 from __future__ import annotations
 
-from __future__ import annotations
-
 import logging
 import json
 import os
 import sqlite3
 from dataclasses import replace
-from datetime import datetime, timedelta
-try:
-    from datetime import UTC
-except ImportError:
-    from datetime import timezone as _tz; UTC = _tz.utc
 from pathlib import Path
 from threading import Lock
 from uuid import uuid4
@@ -92,61 +85,23 @@ INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
 _INT_NOT_NULL_DEFAULT_0 = "INTEGER NOT NULL DEFAULT 0"
 
-# Phase 2 multiuser (plans/multiuser-spec.md §2). Personal tables that gain a
-# nullable ``user_id`` column and whose pre-existing rows are back-filled to the
-# owner user on first upgrade. PK-change tables (user_*_preferences,
-# albums_for_you_cache) migrate later, together with their store scoping, so a
-# schema change never lands ahead of the code that reads it.
-OWNER_BACKFILL_TABLES: tuple[str, ...] = (
-    "playback_sessions",
-    "playback_events",
-    "flow_profiles",
-    "generated_mixes",
-    "playlists",
-)
-# Env naming the owner (a Navidrome username) who inherits all pre-existing
-# personal data. Required only when unscoped rows actually exist — see
-# _migrate_owner_backfill.
+# Default identity for legacy single-user callers that construct Store without
+# an explicit user_id. Request-scoped multiuser API code never uses this path.
 OWNER_USER_ENV = "DISCOCS_OWNER_USER"
-# Fallback owner username for dev/test/empty installs where the env is unset.
-# Production is protected by _migrate_owner_backfill (raises on upgrade with
-# data if the env is missing), so this only ever names the single implicit user
-# in tests and fresh dev databases.
 DEFAULT_OWNER_USERNAME = "owner"
 _DEFAULT_USER = object()
 
-# Preference tables whose PK moves from entity-only to (user_id, entity_id).
-# Maps table -> entity-id column. Rebuilt in place by _migrate_preference_pks.
-PREFERENCE_PK_TABLES: dict[str, str] = {
-    "user_track_preferences": "track_id",
-    "user_release_preferences": "release_id",
-    "user_artist_preferences": "artist_id",
+_CURRENT_PERSONAL_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
+    "user_track_preferences": ("user_id", "track_id"),
+    "user_release_preferences": ("user_id", "release_id"),
+    "user_artist_preferences": ("user_id", "artist_id"),
+    "albums_for_you_cache": ("user_id", "model_name"),
 }
-_PREFERENCE_TABLE_DDL: dict[str, str] = {
-    "user_track_preferences": """CREATE TABLE user_track_preferences (
-        user_id INTEGER NOT NULL, track_id INTEGER NOT NULL,
-        liked INTEGER NOT NULL DEFAULT 0, disliked INTEGER NOT NULL DEFAULT 0,
-        play_count INTEGER NOT NULL DEFAULT 0, completion_count INTEGER NOT NULL DEFAULT 0,
-        skip_count INTEGER NOT NULL DEFAULT 0, early_skip_count INTEGER NOT NULL DEFAULT 0,
-        replay_count INTEGER NOT NULL DEFAULT 0, last_played_at TEXT,
-        last_completed_at TEXT, last_skipped_at TEXT, score REAL NOT NULL DEFAULT 0,
-        updated_at TEXT NOT NULL, PRIMARY KEY (user_id, track_id),
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)""",
-    "user_release_preferences": """CREATE TABLE user_release_preferences (
-        user_id INTEGER NOT NULL, release_id INTEGER NOT NULL,
-        liked INTEGER NOT NULL DEFAULT 0, play_count INTEGER NOT NULL DEFAULT 0,
-        completion_count INTEGER NOT NULL DEFAULT 0, skip_count INTEGER NOT NULL DEFAULT 0,
-        last_played_at TEXT, last_completed_at TEXT, score REAL NOT NULL DEFAULT 0,
-        updated_at TEXT NOT NULL, PRIMARY KEY (user_id, release_id),
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)""",
-    "user_artist_preferences": """CREATE TABLE user_artist_preferences (
-        user_id INTEGER NOT NULL, artist_id INTEGER NOT NULL,
-        liked INTEGER NOT NULL DEFAULT 0, play_count INTEGER NOT NULL DEFAULT 0,
-        completion_count INTEGER NOT NULL DEFAULT 0, skip_count INTEGER NOT NULL DEFAULT 0,
-        last_played_at TEXT, score REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
-        PRIMARY KEY (user_id, artist_id),
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)""",
-}
+_SCOPED_PERSONAL_TABLES: tuple[str, ...] = (
+    "playback_sessions", "playback_events", "flow_profiles",
+    "generated_mixes", "playlists",
+)
+
 
 class StoreBase:
     def __init__(self, db_path: Path, *, user_id: int | None | object = _DEFAULT_USER):
@@ -483,12 +438,8 @@ class StoreBase:
                     ON playback_events(client_event_id)
                     WHERE client_event_id IS NOT NULL;
 
-                -- Per-user preferences (Phase 2). PK is (user_id, entity_id):
-                -- one row per user per track/release/artist. Fresh installs get
-                -- this shape directly; existing single-user DBs are rebuilt from
-                -- the old entity-only PK by _migrate_preference_pks (rows bound
-                -- to the owner). Keep these column lists in sync with that
-                -- migration's rebuild DDL.
+                -- Per-user preferences. PK is (user_id, entity_id): one row per
+                -- user per track/release/artist.
                 CREATE TABLE IF NOT EXISTS user_track_preferences (
                     user_id INTEGER NOT NULL,
                     track_id INTEGER NOT NULL,
@@ -903,12 +854,10 @@ class StoreBase:
             self._ensure_column(conn, "generated_mixes", "cover_path", "TEXT")
             self._ensure_column(conn, "playlists", "description", "TEXT")
             self._ensure_column(conn, "playlists", "cover_path", "TEXT")
-            # Phase 2: link a session to its user. Legacy (pre-users) sessions
-            # keep user_id NULL and resolve it lazily via the users table.
+            # Sessions created before identity binding may still resolve their
+            # user lazily by username; personal domain rows may not be unscoped.
             self._ensure_column(conn, "sessions", "user_id", "INTEGER")
             self._ensure_column(conn, "sessions", "nav_secret", "TEXT")
-            # Phase 2: personal ownership on the additive tables (nullable so
-            # existing INSERTs keep working; back-filled to the owner below).
             self._ensure_column(conn, "playback_sessions", "user_id", "INTEGER")
             self._ensure_column(conn, "playback_events", "user_id", "INTEGER")
             self._ensure_column(conn, "flow_profiles", "user_id", "INTEGER")
@@ -945,10 +894,8 @@ class StoreBase:
                 "CREATE INDEX IF NOT EXISTS idx_playlists_user "
                 "ON playlists(user_id)"
             )
+            self._validate_current_multiuser_schema(conn)
             self._backfill_added_timestamps(conn)
-        self._migrate_owner_backfill()
-        self._migrate_preference_pks()
-        self._migrate_albums_cache_pk()
 
     def _ensure_column(
         self,
@@ -960,6 +907,41 @@ class StoreBase:
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+    def _validate_current_multiuser_schema(self, conn: sqlite3.Connection) -> None:
+        """Reject pre-Phase-2 databases without mutating personal data.
+
+        The one-time owner/PK migrations were retired after production rollout.
+        Keeping a loud schema guard avoids accepting an old backup and failing
+        later in unrelated user requests.
+        """
+        problems: list[str] = []
+        for table, expected_pk in _CURRENT_PERSONAL_PRIMARY_KEYS.items():
+            columns = conn.execute(f"PRAGMA table_info({table})").fetchall()
+            actual_pk = tuple(
+                row["name"]
+                for row in sorted(columns, key=lambda row: int(row["pk"]))
+                if int(row["pk"]) > 0
+            )
+            if actual_pk != expected_pk:
+                problems.append(
+                    f"{table} primary key is {actual_pk or 'missing'}, expected {expected_pk}"
+                )
+
+        for table in _SCOPED_PERSONAL_TABLES:
+            pending = conn.execute(
+                f"SELECT 1 FROM {table} WHERE user_id IS NULL LIMIT 1"
+            ).fetchone()
+            if pending is not None:
+                problems.append(f"{table} contains rows without user_id")
+
+        if problems:
+            detail = "; ".join(problems)
+            raise RuntimeError(
+                "Unsupported legacy database schema after retirement of the "
+                f"one-time multiuser migration: {detail}. Restore this backup "
+                "with a pre-retirement release and migrate it before upgrading."
+            )
 
     def _backfill_added_timestamps(self, conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE tracks SET added_at = created_at WHERE added_at IS NULL")
@@ -979,208 +961,4 @@ class StoreBase:
             WHERE added_at IS NULL
             """
         )
-
-    # ------------------------------------------------------------------
-    # Phase 2 multiuser: owner back-fill (plans/multiuser-spec.md §2)
-    # ------------------------------------------------------------------
-    def _count_unscoped_personal_rows(self, conn: sqlite3.Connection) -> int:
-        """Count rows across OWNER_BACKFILL_TABLES that still have user_id NULL.
-
-        Zero means either a fresh/empty DB or an already-migrated one — in both
-        cases the back-fill is a no-op and the owner env is not required.
-        """
-        total = 0
-        for table in OWNER_BACKFILL_TABLES:
-            row = conn.execute(
-                f"SELECT COUNT(*) AS n FROM {table} WHERE user_id IS NULL"
-            ).fetchone()
-            total += int(row["n"])
-        return total
-
-    def _upsert_owner_user_id(
-        self, conn: sqlite3.Connection, navidrome_username: str, now: str
-    ) -> int:
-        """Ensure a users row for the owner exists; return its id.
-
-        Migration is not a login, so ``last_login_at`` is left NULL for a
-        freshly created owner and an existing owner row is not touched.
-        """
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO users (navidrome_username, created_at, last_login_at)
-            VALUES (?, ?, NULL)
-            """,
-            (navidrome_username, now),
-        )
-        row = conn.execute(
-            "SELECT id FROM users WHERE navidrome_username = ?",
-            (navidrome_username,),
-        ).fetchone()
-        return int(row["id"])
-
-    def _backup_db(self, tag: str) -> Path | None:
-        """Snapshot the live DB before a data migration (spec §2 safeguard #1).
-
-        Uses ``VACUUM INTO`` for a consistent single-file copy (WAL-safe). No-op
-        for in-memory or not-yet-created databases (tests / fresh installs).
-        """
-        if str(self.db_path) == ":memory:" or not self.db_path.exists():
-            return None
-        ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        dest = self.db_path.with_name(f"{self.db_path.name}.{tag}-{ts}.bak")
-        backup_conn = sqlite3.connect(self.db_path, isolation_level=None)
-        try:
-            backup_conn.execute("VACUUM INTO ?", (str(dest),))
-        finally:
-            backup_conn.close()
-        logger.info("Backed up %s -> %s before %s migration", self.db_path, dest, tag)
-        return dest
-
-    def _migrate_owner_backfill(self) -> None:
-        """Assign every pre-existing personal row to the owner user.
-
-        Idempotent: only rows with user_id NULL are touched, so re-running (a
-        second process, a restart) is a no-op. If unscoped rows exist but
-        ``DISCOCS_OWNER_USER`` is unset/unresolvable the migration raises rather
-        than silently orphaning history to NULL (spec §2 owner contract).
-        """
-        with self.connect() as conn:
-            pending = self._count_unscoped_personal_rows(conn)
-        if pending == 0:
-            return
-
-        owner = os.getenv(OWNER_USER_ENV, "").strip()
-        if not owner:
-            raise RuntimeError(
-                f"{OWNER_USER_ENV} is required to migrate {pending} pre-existing "
-                "personal row(s) to an owner; refusing to leave user_id NULL. "
-                "Set it to the owner's Navidrome username and restart."
-            )
-
-        self._backup_db("premigrate-owner")
-        now = utc_now()
-        # Single transaction: partial ownership is never observable.
-        with self.connect() as conn:
-            owner_id = self._upsert_owner_user_id(conn, owner, now)
-            for table in OWNER_BACKFILL_TABLES:
-                conn.execute(
-                    f"UPDATE {table} SET user_id = ? WHERE user_id IS NULL",
-                    (owner_id,),
-                )
-            remaining = self._count_unscoped_personal_rows(conn)
-            if remaining != 0:  # pragma: no cover - defensive
-                raise RuntimeError(
-                    f"owner back-fill left {remaining} personal row(s) unscoped"
-                )
-        logger.info(
-            "Owner back-fill: assigned %d personal row(s) to user_id=%d (%s)",
-            pending,
-            owner_id,
-            owner,
-        )
-
-    def _column_exists(self, conn: sqlite3.Connection, table: str, column: str) -> bool:
-        return any(
-            row["name"] == column
-            for row in conn.execute(f"PRAGMA table_info({table})")
-        )
-
-    def _migrate_preference_pks(self) -> None:
-        """Rebuild preference tables from entity-only PK to (user_id, entity_id).
-
-        SQLite cannot alter a PRIMARY KEY in place, so each old-schema table is
-        recreated and its rows copied, bound to the owner user. Detected by the
-        absence of the ``user_id`` column, so fresh installs (already built with
-        the new shape) and re-runs are no-ops. Same owner contract and
-        safeguards as _migrate_owner_backfill: loud failure without an owner
-        when rows exist, backup first, one transaction.
-        """
-        with self.connect() as conn:
-            pending = [
-                t for t in PREFERENCE_PK_TABLES if not self._column_exists(conn, t, "user_id")
-            ]
-            has_rows = any(
-                conn.execute(f"SELECT 1 FROM {t} LIMIT 1").fetchone() is not None
-                for t in pending
-            )
-        if not pending:
-            return
-
-        owner = os.getenv(OWNER_USER_ENV, "").strip()
-        if has_rows and not owner:
-            raise RuntimeError(
-                f"{OWNER_USER_ENV} is required to migrate existing preference rows "
-                "to an owner PK; refusing to drop or orphan them. Set it to the "
-                "owner's Navidrome username and restart."
-            )
-
-        self._backup_db("premigrate-prefpk")
-        now = utc_now()
-        with self.connect() as conn:
-            owner_id = self._upsert_owner_user_id(conn, owner, now) if has_rows else None
-            for table in pending:
-                self._rebuild_preference_table(
-                    conn, table, owner_id
-                )
-        logger.info("Preference PK migration: rebuilt %s", ", ".join(pending))
-
-    def _rebuild_preference_table(
-        self,
-        conn: sqlite3.Connection,
-        table: str,
-        owner_id: int | None,
-    ) -> None:
-        """Copy an old entity-PK preference table into the new composite-PK one.
-
-        Column list is read from the old table so the copy stays correct even if
-        columns drift; ``user_id`` is prepended with the owner id for every row.
-        """
-        old_cols = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})")]
-        col_list = ", ".join(old_cols)
-        conn.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
-        conn.execute(_PREFERENCE_TABLE_DDL[table])
-        if owner_id is not None:
-            conn.execute(
-                f"INSERT INTO {table} (user_id, {col_list}) "
-                f"SELECT ?, {col_list} FROM {table}_old",
-                (owner_id,),
-            )
-        conn.execute(f"DROP TABLE {table}_old")
-
-    def _migrate_albums_cache_pk(self) -> None:
-        """Move the personalized albums cache to a per-user composite key."""
-        with self.connect() as conn:
-            if self._column_exists(conn, "albums_for_you_cache", "user_id"):
-                return
-            has_rows = conn.execute(
-                "SELECT 1 FROM albums_for_you_cache LIMIT 1"
-            ).fetchone() is not None
-        owner = os.getenv(OWNER_USER_ENV, "").strip()
-        if has_rows and not owner:
-            raise RuntimeError(
-                f"{OWNER_USER_ENV} is required to migrate albums_for_you_cache"
-            )
-        self._backup_db("premigrate-albums-cache")
-        with self.connect() as conn:
-            owner_id = self._upsert_owner_user_id(conn, owner, utc_now()) if has_rows else None
-            conn.execute("ALTER TABLE albums_for_you_cache RENAME TO albums_for_you_cache_old")
-            conn.execute(
-                """CREATE TABLE albums_for_you_cache (
-                    user_id INTEGER NOT NULL,
-                    model_name TEXT NOT NULL,
-                    items_json TEXT NOT NULL,
-                    computed_at TEXT NOT NULL,
-                    PRIMARY KEY (user_id, model_name),
-                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-                )"""
-            )
-            if owner_id is not None:
-                conn.execute(
-                    """INSERT INTO albums_for_you_cache
-                       (user_id, model_name, items_json, computed_at)
-                       SELECT ?, model_name, items_json, computed_at
-                       FROM albums_for_you_cache_old""",
-                    (owner_id,),
-                )
-            conn.execute("DROP TABLE albums_for_you_cache_old")
 

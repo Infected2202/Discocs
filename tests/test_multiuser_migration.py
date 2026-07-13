@@ -1,10 +1,4 @@
-"""Phase 2 multiuser — owner back-fill migration (plans/multiuser-spec.md §2).
-
-Covers the safeguards the spec calls out: existing personal rows are all
-reassigned to the owner, a missing/unresolvable owner fails loudly instead of
-leaving user_id NULL, the migration is idempotent, and a backup is taken before
-touching live data.
-"""
+"""Current multiuser schema contract after retiring the one-time migration."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,176 +7,72 @@ import sqlite3
 import pytest
 
 from app.store import INITIALIZED_DB_PATHS, Store
-from app.store.base import OWNER_BACKFILL_TABLES, OWNER_USER_ENV
 from app.models import utc_now
 
 
-def init_store(tmp_path: Path, monkeypatch) -> Store:
-    db_path = tmp_path / "app.db"
+EXPECTED_PRIMARY_KEYS = {
+    "user_track_preferences": ("user_id", "track_id"),
+    "user_release_preferences": ("user_id", "release_id"),
+    "user_artist_preferences": ("user_id", "artist_id"),
+    "albums_for_you_cache": ("user_id", "model_name"),
+}
+
+
+def _configure_store(tmp_path: Path, monkeypatch, name: str = "app.db") -> Path:
+    db_path = tmp_path / name
     INITIALIZED_DB_PATHS.discard(db_path.resolve())
     monkeypatch.setenv("DISCOCS_DB_PATH", str(db_path))
     monkeypatch.setenv("DISCOCS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("DISCOCS_INDEX_DIR", str(tmp_path))
     monkeypatch.setenv("DISCOCS_MODEL_DIR", str(tmp_path / "models"))
-    monkeypatch.delenv(OWNER_USER_ENV, raising=False)
+    return db_path
+
+
+def test_fresh_database_uses_current_multiuser_primary_keys(tmp_path, monkeypatch):
+    db_path = _configure_store(tmp_path, monkeypatch)
     store = Store(db_path)
     store.init()
-    return store
+
+    with store.connect() as conn:
+        for table, expected in EXPECTED_PRIMARY_KEYS.items():
+            columns = conn.execute(f"PRAGMA table_info({table})").fetchall()
+            actual = tuple(
+                row["name"]
+                for row in sorted(columns, key=lambda row: int(row["pk"]))
+                if int(row["pk"]) > 0
+            )
+            assert actual == expected
 
 
-def _seed_unscoped_rows(store: Store) -> int:
-    """Insert one user_id-NULL row into each back-fill table. Returns the count."""
+def test_legacy_primary_key_fails_loudly_without_mutation(tmp_path, monkeypatch):
+    db_path = _configure_store(tmp_path, monkeypatch, "legacy.db")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE user_track_preferences ("
+            "track_id INTEGER PRIMARY KEY, liked INTEGER NOT NULL DEFAULT 0)"
+        )
+
+    with pytest.raises(RuntimeError, match="Unsupported legacy database schema"):
+        Store(db_path).init()
+
+    assert not list(tmp_path.glob("*.premigrate-*.bak"))
+
+
+def test_unscoped_personal_rows_fail_loudly_without_backfill(tmp_path, monkeypatch):
+    db_path = _configure_store(tmp_path, monkeypatch)
+    store = Store(db_path)
+    store.init()
     now = utc_now()
     with store.connect() as conn:
         conn.execute(
-            "INSERT INTO playback_sessions (id, source_type, mode, status, "
-            "started_at, updated_at) VALUES ('s1', 'library', 'linear', 'active', ?, ?)",
+            "INSERT INTO playback_sessions "
+            "(id, source_type, mode, status, started_at, updated_at) "
+            "VALUES ('legacy', 'library', 'linear', 'active', ?, ?)",
             (now, now),
         )
-        conn.execute(
-            "INSERT INTO playback_events (id, event_type, created_at) "
-            "VALUES ('e1', 'play', ?)",
-            (now,),
-        )
-        conn.execute(
-            "INSERT INTO flow_profiles (id, model_key, created_at, updated_at) "
-            "VALUES ('f1', 'model-x', ?, ?)",
-            (now, now),
-        )
-        conn.execute(
-            "INSERT INTO generated_mixes (id, title, mix_type, status, created_at, "
-            "updated_at) VALUES ('m1', 'Mix', 'daily', 'ready', ?, ?)",
-            (now, now),
-        )
-        conn.execute(
-            "INSERT INTO playlists (title, kind, created_at, updated_at) "
-            "VALUES ('P1', 'manual', ?, ?)",
-            (now, now),
-        )
-    return len(OWNER_BACKFILL_TABLES)
 
-
-def _count_null_user_id(store: Store) -> int:
-    with store.connect() as conn:
-        return store._count_unscoped_personal_rows(conn)
-
-
-def test_fresh_db_needs_no_owner(tmp_path, monkeypatch):
-    # Empty DB: init runs the migration and it is a no-op, so no owner env is
-    # required and nothing raises.
-    store = init_store(tmp_path, monkeypatch)
-    assert _count_null_user_id(store) == 0
-    # Re-running the migration explicitly is still a no-op.
-    store._migrate_owner_backfill()
-
-
-def test_backfill_assigns_all_rows_to_owner(tmp_path, monkeypatch):
-    store = init_store(tmp_path, monkeypatch)
-    seeded = _seed_unscoped_rows(store)
-    assert _count_null_user_id(store) == seeded
-
-    monkeypatch.setenv(OWNER_USER_ENV, "infected2202")
-    store._migrate_owner_backfill()
-
-    # Owner user row created and every personal row now points at it.
-    owner = store.get_user_by_username("infected2202")
-    assert owner is not None
-    assert _count_null_user_id(store) == 0
-    with store.connect() as conn:
-        for table in OWNER_BACKFILL_TABLES:
-            rows = conn.execute(
-                f"SELECT user_id FROM {table}"
-            ).fetchall()
-            assert rows, f"{table} lost rows"
-            assert all(r["user_id"] == owner["id"] for r in rows), table
-
-
-def test_backfill_without_owner_raises(tmp_path, monkeypatch):
-    store = init_store(tmp_path, monkeypatch)
-    _seed_unscoped_rows(store)
-    # Unscoped rows present but no owner env → loud failure, not silent NULLs.
-    monkeypatch.delenv(OWNER_USER_ENV, raising=False)
-    with pytest.raises(RuntimeError, match=OWNER_USER_ENV):
-        store._migrate_owner_backfill()
-    # Nothing was reassigned.
-    assert _count_null_user_id(store) == len(OWNER_BACKFILL_TABLES)
-
-
-def test_backfill_is_idempotent(tmp_path, monkeypatch):
-    store = init_store(tmp_path, monkeypatch)
-    _seed_unscoped_rows(store)
-    monkeypatch.setenv(OWNER_USER_ENV, "infected2202")
-    store._migrate_owner_backfill()
-    owner_id = store.get_user_by_username("infected2202")["id"]
-
-    # A second run finds no NULL rows: no-op, no duplicate owner, no error even
-    # if the env were now removed.
-    monkeypatch.delenv(OWNER_USER_ENV, raising=False)
-    store._migrate_owner_backfill()
-    assert _count_null_user_id(store) == 0
-    assert store.get_user_by_username("infected2202")["id"] == owner_id
-
-
-def test_backfill_takes_backup(tmp_path, monkeypatch):
-    store = init_store(tmp_path, monkeypatch)
-    _seed_unscoped_rows(store)
-    monkeypatch.setenv(OWNER_USER_ENV, "infected2202")
-    store._migrate_owner_backfill()
-
-    backups = list(tmp_path.glob("app.db.premigrate-owner-*.bak"))
-    assert len(backups) == 1, backups
-    assert backups[0].stat().st_size > 0
-
-
-def test_init_fails_loudly_when_owner_missing(tmp_path, monkeypatch):
-    # Simulate an upgrade: a DB with pre-existing personal rows re-initialised
-    # without DISCOCS_OWNER_USER must refuse to start.
-    store = init_store(tmp_path, monkeypatch)
-    _seed_unscoped_rows(store)
-
-    db_path = tmp_path / "app.db"
     INITIALIZED_DB_PATHS.discard(db_path.resolve())
-    monkeypatch.delenv(OWNER_USER_ENV, raising=False)
-    with pytest.raises(RuntimeError, match=OWNER_USER_ENV):
+    with pytest.raises(RuntimeError, match="playback_sessions contains rows without user_id"):
         Store(db_path).init()
 
-
-def test_preference_and_cache_pk_migrations_preserve_owner_rows(tmp_path, monkeypatch):
-    db_path = tmp_path / "legacy.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """CREATE TABLE user_track_preferences (
-                track_id INTEGER PRIMARY KEY, liked INTEGER NOT NULL DEFAULT 0,
-                disliked INTEGER NOT NULL DEFAULT 0, play_count INTEGER NOT NULL DEFAULT 0,
-                completion_count INTEGER NOT NULL DEFAULT 0, skip_count INTEGER NOT NULL DEFAULT 0,
-                early_skip_count INTEGER NOT NULL DEFAULT 0, replay_count INTEGER NOT NULL DEFAULT 0,
-                last_played_at TEXT, last_completed_at TEXT, last_skipped_at TEXT,
-                score REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"""
-        )
-        conn.execute(
-            "INSERT INTO user_track_preferences (track_id, liked, updated_at) VALUES (7, 1, 'now')"
-        )
-        conn.execute(
-            "CREATE TABLE albums_for_you_cache (model_name TEXT PRIMARY KEY, items_json TEXT NOT NULL, computed_at TEXT NOT NULL)"
-        )
-        conn.execute(
-            "INSERT INTO albums_for_you_cache VALUES ('discogs_multi', '[1]', 'now')"
-        )
-    INITIALIZED_DB_PATHS.discard(db_path.resolve())
-    monkeypatch.setenv(OWNER_USER_ENV, "infected2202")
-
-    store = Store(db_path)
-    store.init()
-    owner = store.get_user_by_username("infected2202")
-
-    with store.connect() as conn:
-        pref = conn.execute(
-            "SELECT user_id, track_id, liked FROM user_track_preferences"
-        ).fetchone()
-        cache = conn.execute(
-            "SELECT user_id, model_name, items_json FROM albums_for_you_cache"
-        ).fetchone()
-    assert (pref["user_id"], pref["track_id"], pref["liked"]) == (owner["id"], 7, 1)
-    assert (cache["user_id"], cache["model_name"], cache["items_json"]) == (
-        owner["id"], "discogs_multi", "[1]"
-    )
+    assert not list(tmp_path.glob("*.premigrate-*.bak"))

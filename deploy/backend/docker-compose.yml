@@ -18,6 +18,8 @@ services:
       DISCOCS_DATA_DIR: /app/data
       DISCOCS_MODEL_DIR: /app/models
       DISCOCS_INDEX_DIR: /app/data
+      # Implicit identity for private admin/CLI and auth-disabled compatibility;
+      # not used by request-scoped multiuser API calls.
       DISCOCS_OWNER_USER: ${DISCOCS_OWNER_USER:-owner}
 
 volumes:

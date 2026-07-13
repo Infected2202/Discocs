@@ -161,6 +161,12 @@ track_id)` — это create-new-table / copy / rename на **живой БД С
 4. Смена PK и перелив данных — в **одной транзакции**; частично мигрированное
    состояние недопустимо.
 
+> ✅ **Роллаут завершён:** production БД прошла owner/PK migration. Одноразовый
+> startup-код, `VACUUM INTO`-бэкапы и эвакуационные migration-тесты удалены.
+> Текущий startup только валидирует финальную multiuser-схему и громко отклоняет
+> pre-Phase-2 backup; такой backup сначала нужно поднять старым релизом и
+> мигрировать им.
+
 ### 3. Фильтрация всех запросов к персональным таблицам  ✅ РЕАЛИЗОВАНО
 
 **Поверхность шире, чем казалось.** Прямые SQL-обращения к персональным
@@ -460,8 +466,8 @@ Backend `:8711` остаётся приватным LAN-контуром для 
   `playback_sessions`/`playback_events`/`flow_profiles`/`generated_mixes`/
   `playlists` + индексы + owner-backfill инфраструктура (`DISCOCS_OWNER_USER`,
   loud-fail без owner'а, идемпотентность, `VACUUM INTO`-бэкап, эвакуационная
-  проверка счётчиков) — `StoreBase._migrate_owner_backfill`,
-  `tests/test_multiuser_migration.py`. **Отложено:** PK-смена preference-таблиц
+  проверка счётчиков). После завершения rollout эта временная инфраструктура
+  удалена (см. примечание выше). **Отложено:** PK-смена preference-таблиц
   и `albums_for_you_cache` едет вместе со скоупом их store-методов (вертикальный
   срез), чтобы upsert'ы не ломались в промежутке.
 

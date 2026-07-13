@@ -326,26 +326,20 @@ schema:
   unique `navidrome_username`, `created_at`, `last_login_at`. Auto-created on
   first successful login; the `id` is the FK used to scope personal tables.
 
-## Multiuser scoping (Phase 2, in progress)
+## Multiuser scoping (Phase 2, complete)
 
-`plans/multiuser-spec.md` moves the schema from single-user to per-user. Rolled
-out incrementally so a schema change never lands ahead of the code that reads
-it:
+The current baseline schema is multiuser: personal domain tables carry
+`user_id`, preference tables use `(user_id, entity_id)`, and
+`albums_for_you_cache` uses `(user_id, model_name)`.
 
-- **Additive `user_id` (done):** nullable `user_id` columns on
-  `playback_sessions`, `playback_events`, `flow_profiles`, `generated_mixes`,
-  `playlists`, plus supporting indexes. Pre-existing rows are back-filled to an
-  **owner** user on first upgrade (`StoreBase._migrate_owner_backfill`): the
-  owner is named by `DISCOCS_OWNER_USER` (a Navidrome username); if unscoped
-  rows exist and it is unset/unresolvable the migration raises rather than
-  leave `user_id` NULL. The step is idempotent (only NULL rows are touched) and
-  takes a `VACUUM INTO` backup (`app.db.premigrate-owner-<ts>.bak`) before
-  writing.
-- **Composite PK and scoped Store (done):** preference tables use
-  `(user_id, entity_id)` and `albums_for_you_cache` uses `(user_id, model_name)`.
-  Upgrade migrations bind legacy rows to `DISCOCS_OWNER_USER`. Personal Store
-  operations are bound through `Store.for_user(user_id)`; an explicitly
-  unscoped Store rejects them.
+- Request-scoped operations bind `Store.for_user(user_id)`; an explicitly
+  unscoped Store rejects personal access.
+- Startup validates the multiuser primary keys and rejects personal rows whose
+  `user_id` is NULL. It does not rewrite ownership, rebuild primary keys, or
+  create migration backups.
+- Pre-Phase-2 database files are no longer a supported direct upgrade input.
+  Restore them with a pre-retirement release, run its one-time migration, then
+  upgrade to the current release.
 
 ## Known Gaps vs. the Original Design
 
