@@ -326,3 +326,31 @@ describe("AudioEngine.setMediaSession()", () => {
     expect(metadataArgs?.album).toBe("Some EP")
   })
 })
+
+describe("AudioEngine.clear()", () => {
+  it("unloads personal media and returns callbacks to idle", async () => {
+    const engine = await makeEngine()
+    const onTimeUpdate = vi.fn()
+    const onBufferUpdate = vi.fn()
+    const onPlaybackStateChange = vi.fn()
+    engine.init({
+      onTimeUpdate,
+      onBufferUpdate,
+      onPlaybackStateChange,
+      onEnded: vi.fn(),
+      onError: vi.fn(),
+    })
+    engine.load("http://example.com/private-track.flac")
+    const active = audioInstances[audioInstances.length - 1]
+
+    engine.clear()
+
+    expect(active.pause).toHaveBeenCalled()
+    expect(active.src).toBe("")
+    expect(active.load).toHaveBeenCalled()
+    expect(audioInstances).toHaveLength(3)
+    expect(onTimeUpdate).toHaveBeenCalledWith(0, 0)
+    expect(onBufferUpdate).toHaveBeenCalledWith(0)
+    expect(onPlaybackStateChange).toHaveBeenCalledWith("idle")
+  })
+})

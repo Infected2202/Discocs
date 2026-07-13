@@ -14,6 +14,7 @@ interface NavidromeStore {
   toggleAlbumLike(releaseId: number): Promise<void>
   toggleArtistLike(artistId: number): Promise<void>
   fetchLikedIds(): Promise<void>
+  resetForLogout(): void
 }
 
 export const useNavidromeStore = create<NavidromeStore>((set, get) => ({
@@ -91,6 +92,14 @@ export const useNavidromeStore = create<NavidromeStore>((set, get) => ({
       if (liked) reverted.add(artistId); else reverted.delete(artistId)
       set({ likedArtistIds: reverted })
     }
+  },
+
+  resetForLogout() {
+    set({
+      likedIds: new Set(),
+      likedAlbumIds: new Set(),
+      likedArtistIds: new Set(),
+    })
   },
 
   async fetchLikedIds() {

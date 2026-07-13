@@ -216,6 +216,14 @@ with the host firewall; do not publish or forward it from the internet.
    credentials недоступны фону, а импорт сервисных данных одному owner был бы
    утечкой. Starred sync и scrobble выполняются интерактивно от имени сессии.
 
+6. **Client identity isolation:** ✅ explicit logout clears React Query,
+   persisted playback session/position, player queue/history and Media Session,
+   per-user likes, and transient dialogs even if the logout request fails.
+   A global 401 clears persisted playback before redirecting to login. Volume,
+   mute and sidebar preferences remain because they are device-level, not
+   personal library data. The profile popover shows the active username.
+
+
 ### Фаза 3 — Управление сессиями / доп. паранойя (по желанию)
 
 Список активных сессий с отзывом, «запомнить меня» vs короткие сессии, аудит-лог

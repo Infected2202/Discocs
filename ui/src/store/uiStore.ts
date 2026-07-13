@@ -53,6 +53,7 @@ interface UIState {
   createPlaylistOptions: CreatePlaylistDialogOptions | null
   openCreatePlaylist(options?: CreatePlaylistDialogOptions): void
   closeCreatePlaylist(): void
+  resetForLogout(): void
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
@@ -73,6 +74,13 @@ export const useUIStore = create<UIState>((set, get) => ({
   createPlaylistOptions: null,
   openCreatePlaylist(options) {
     set({ createPlaylistOptions: options ?? {}, addToPlaylistTrackIds: null })
+  },
+  resetForLogout() {
+    set({
+      addToPlaylistTrackIds: null,
+      addToPlaylistDefaultTitle: null,
+      createPlaylistOptions: null,
+    })
   },
   closeCreatePlaylist() {
     set({ createPlaylistOptions: null })

@@ -103,6 +103,7 @@ interface PlayerState {
   toggleExpanded(): void
 
   restoreSession(): Promise<void>
+  resetForLogout(): void
 
   // Internal — called by AudioEngine callbacks
   _setTime(currentTime: number, duration: number): void
@@ -652,6 +653,27 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           clearPersistedSessionId()
         }
       }
+    },
+
+    resetForLogout() {
+      throttledSetTime.cancel()
+      throttledPersistPosition.cancel()
+      refillInFlight = false
+      audioEngine.clear()
+      set({
+        session: null,
+        queue: null,
+        playedHistory: [],
+        currentTrackId: null,
+        currentQueueItemId: null,
+        currentTrack: null,
+        playbackState: "idle",
+        currentTime: 0,
+        duration: 0,
+        buffered: 0,
+        error: null,
+        expanded: false,
+      })
     },
 
     toggleExpanded() {

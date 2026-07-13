@@ -302,7 +302,7 @@ scrobble используют per-user client, первичный sync starred �
   **обязан отказать**, а не писать в owner/NULL — при `UserScopedStore` это
   выходит по конструкции (нет `user_id` → метод недоступен).
 
-### 7. UI
+### 7. UI  ✅ РЕАЛИЗОВАНО
 
 - Индикатор текущего пользователя, выход (уже есть logout). Возможно — имя/
   аватар в шапке.
@@ -428,15 +428,13 @@ Backend `:8711` остаётся приватным LAN-контуром для 
   (dimension «Generated mix») и taste-region (flow) — это **личные** данные, их
   скоупить по `user_id`. Соседи (`get_map_track_neighbors`) используют только
   `feedback` (общий) — там ок.
-- **✅ Фронт не чистит кэш при logout.** Проверено: `queryClient`
-  (`ui/src/api/queryClient.ts`) — модульный синглтон, `staleTime: 30s`;
-  `logout()` (`ui/src/api/auth.ts`) только дёргает API. НЕ вызывает
-  `queryClient.clear()`, НЕ чистит localStorage (`sessionId`/позиция), НЕ
-  сбрасывает zustand-сторы. В SPA без полной перезагрузки после logout→login
-  другим юзером в кэше остаются данные предыдущего. Фикс: на logout —
-  `queryClient.clear()` + `clearPersistedSessionId()` +
-  `clearPersistedPlaybackPosition()` + reset сторов (или форс-reload при
-  смене identity).
+- **✅ Фронт очищает identity state.** `logout()` даже при сетевой ошибке
+  очищает React Query, persisted playback session/position, player queue и
+  history, Media Session, liked IDs и transient dialogs. Device-настройки
+  volume/mute/sidebar сохраняются. Глобальный обработчик 401 удаляет persisted
+  playback до hard redirect. Profile popover явно показывает username.
+  Instance-wide Navidrome settings убраны из public UI и остаются в приватной
+  legacy admin.
 - **❓ `MIX_GENERATION_LOCK`** — единый глобальный лок (`app/state.py`).
   Генерация миксов сериализуется между юзерами. При ~3 юзерах приемлемо, но при
   росте — узкое место; заложить возможность лока per-user.
@@ -490,8 +488,8 @@ Backend `:8711` остаётся приватным LAN-контуром для 
    миксов; background mix thread сохраняет `user_id`; service play-state sync
    отключён при multiuser auth, где credentials существуют только в сессии (§6).
 9. **Деплой:** ✅ глобальные job/settings закрыты public nginx (§8).
-10. **UI:** индикатор юзера, проверка отсутствия межаккаунтных утечек в кэше
-    (react-query ключи, `playerStore`).
+10. **UI:** ✅ username indicator + полная очистка client identity state при
+    logout/401; глобальные settings скрыты из public UI (§7, §11).
 11. **Онбординг** (отдельно, после базового мультиюзера) — экран инициализации
     вкусов (§10). Сначала допроектировать.
 

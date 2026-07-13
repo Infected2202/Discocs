@@ -50,6 +50,33 @@ class AudioEngine {
     this.el.pause()
   }
 
+  clear() {
+    const prev = this.el
+    const { volume, muted } = prev
+    prev.pause()
+    prev.src = ""
+    prev.load()
+
+    this.el = this.createElement()
+    this.el.volume = volume
+    this.el.muted = muted
+
+    this.callbacks?.onTimeUpdate(0, 0)
+    this.callbacks?.onBufferUpdate(0)
+    this.callbacks?.onPlaybackStateChange("idle")
+
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.metadata = null
+      for (const action of ["play", "pause", "nexttrack", "previoustrack"] as MediaSessionAction[]) {
+        try {
+          navigator.mediaSession.setActionHandler(action, null)
+        } catch {
+          // browser may not support all actions
+        }
+      }
+    }
+  }
+
   seek(fraction: number) {
     if (!Number.isFinite(this.el.duration)) return
     this.el.currentTime = fraction * this.el.duration

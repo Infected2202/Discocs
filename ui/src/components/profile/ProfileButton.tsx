@@ -48,7 +48,7 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
   }
 
   const { dotColor, statusLabel } = navidromeStatusUi(status, isLoading)
-  const logoutLabel = session?.username ? `Р’С‹Р№С‚Рё (${session.username})` : "Р’С‹Р№С‚Рё"
+  const logoutLabel = session?.username ? `Sign out (${session.username})` : "Sign out"
 
   return (
     <Popover>
@@ -56,7 +56,7 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
         <button
           type="button"
           className="relative flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-muted/40"
-          title="Profile"
+          title={session?.username ? `Profile: ${session.username}` : "Profile"}
         >
           <User size={16} />
           <span className={cn("absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-background", dotColor)} />
@@ -64,6 +64,13 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
       </PopoverTrigger>
       <PopoverContent align={mobile ? "center" : "end"} className="w-56 p-3">
         <div className="space-y-3">
+          <div className="flex items-center gap-2 border-b border-border/50 pb-3">
+            <User size={16} className="text-muted-foreground" />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">{session?.username ?? "Unknown user"}</p>
+              <p className="text-xs text-muted-foreground">Signed in</p>
+            </div>
+          </div>
           <div className="flex items-center gap-2">
             <span className={cn("h-2 w-2 shrink-0 rounded-full", dotColor)} />
             <span className="text-sm">{statusLabel}</span>

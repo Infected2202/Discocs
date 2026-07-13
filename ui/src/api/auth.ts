@@ -1,4 +1,5 @@
 import { apiFetch } from "./client"
+import { resetUserSessionState } from "@/store/userSessionState"
 
 export interface SessionState {
   authenticated: boolean
@@ -18,5 +19,9 @@ export async function login(username: string, password: string): Promise<{ authe
 }
 
 export async function logout(): Promise<void> {
-  await apiFetch("/api/v1/auth/logout", { method: "POST" })
+  try {
+    await apiFetch("/api/v1/auth/logout", { method: "POST" })
+  } finally {
+    resetUserSessionState()
+  }
 }

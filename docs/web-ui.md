@@ -201,20 +201,17 @@ The "View all" destination for any dashboard shelf. Backed by `useShelf`
 
 ### Settings (`/settings`, `SettingsPage.tsx`)
 
-A single flat page — **not** the tabbed
-General/Library/Analysis/Embeddings/Flow/Autoplay/Mixes/Albums/Dashboard/Player/Storage/Advanced
-structure described in the original shell spec. Currently has two sections:
+A personal settings page containing the **Flow Profile** status card (not built
+/ building / ready / cold start / empty). It polls
+`GET /api/v1/jobs/flow-profile/status` every 2s while building and exposes a
+Build/Rebuild button backed by `POST /api/v1/jobs/flow-profile`.
 
-- **Navidrome**: server URL / username / password form, Save and Test
-  connection actions, backed by `GET/POST` Navidrome settings endpoints and a
-  ping endpoint.
-- **Flow Profile**: status card (not built / building / ready / cold start /
-  empty) polling `GET /api/v1/jobs/flow-profile/status` every 2s while
-  building, with a Build/Rebuild button hitting `POST
-  /api/v1/jobs/flow-profile`.
+Instance-wide Navidrome credentials and all operational settings (scan,
+analysis, models, storage, advanced/debug) are intentionally absent from the
+public UI. They remain in the private legacy admin at `:8711/admin`; the
+public nginx also rejects their API endpoints.
 
-Other operational settings (scan, analysis, models, storage, advanced/debug)
-remain in the legacy admin UI at `:8711/admin`, not this page.
+The profile popover shows the active username and provides logout.
 
 ## Player
 

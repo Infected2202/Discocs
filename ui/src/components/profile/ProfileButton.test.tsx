@@ -70,6 +70,16 @@ describe("ProfileButton", () => {
     expect(await screen.findByText("Navidrome connected")).toBeInTheDocument()
   })
 
+  it("shows the current username as a separate identity indicator", async () => {
+    useNavidromeStatus.mockReturnValue({ status: "connected", isLoading: false })
+
+    renderProfileButton()
+    fireEvent.click(await screen.findByTitle("Profile: alice"))
+
+    expect(await screen.findByText("alice")).toBeInTheDocument()
+    expect(screen.getByText("Signed in")).toBeInTheDocument()
+  })
+
   it("redirects after logout even when the API call succeeds", async () => {
     useNavidromeStatus.mockReturnValue({ status: "disconnected", isLoading: false })
     logout.mockResolvedValue(undefined)
