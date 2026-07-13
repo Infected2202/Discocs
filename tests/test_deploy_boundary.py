@@ -6,6 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 NGINX_TEMPLATE = ROOT / "deploy" / "nginx" / "default.conf.template"
 JENKINSFILE = ROOT / "Jenkinsfile"
 WORKER_COMPOSE = ROOT / "docker-compose.worker.yml"
+BACKEND_DOCKERFILE = ROOT / "deploy" / "backend" / "Dockerfile"
+BOT_DOCKERFILE = ROOT / "deploy" / "bot" / "Dockerfile"
 
 
 def _location_body(config: str, selector: str) -> str:
@@ -65,3 +67,23 @@ def test_automated_deploy_ignores_stale_rollback_tag():
     assert (
         "TAG=latest docker compose -p discocs --env-file .env up -d --force-recreate"
     ) in pipeline
+
+
+def test_production_images_refresh_system_security_updates():
+    pipeline = JENKINSFILE.read_text(encoding="utf-8")
+    assert "docker build --pull ${refreshArg}" in pipeline
+    assert "--build-arg SECURITY_REFRESH=${GIT_SHA}" in pipeline
+
+    for dockerfile_path in (BACKEND_DOCKERFILE, BOT_DOCKERFILE):
+        dockerfile = dockerfile_path.read_text(encoding="utf-8")
+        assert "ARG SECURITY_REFRESH=local" in dockerfile
+        assert "apt-get upgrade -y" in dockerfile
+
+
+def test_trivy_blocks_only_fixable_high_or_critical_findings():
+    pipeline = JENKINSFILE.read_text(encoding="utf-8")
+    assert "aquasec/trivy image --ignore-unfixed" in pipeline
+    assert "--severity HIGH,CRITICAL --exit-code 1" in pipeline
+    assert pipeline.index("reportName: 'Trivy: bot'") < pipeline.index(
+        "aquasec/trivy image --ignore-unfixed"
+    )

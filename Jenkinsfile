@@ -125,9 +125,9 @@ pipeline {
       steps {
         script {
           def services = [
-            [name: 'backend',  df: 'deploy/backend/Dockerfile'],
-            [name: 'frontend', df: 'deploy/nginx/Dockerfile'],
-            [name: 'bot',      df: 'deploy/bot/Dockerfile'],
+            [name: 'backend',  df: 'deploy/backend/Dockerfile', refresh: true],
+            [name: 'frontend', df: 'deploy/nginx/Dockerfile', refresh: false],
+            [name: 'bot',      df: 'deploy/bot/Dockerfile', refresh: true],
           ]
           // Каждый сервис — своя ветка parallel, поэтому в stage view/Blue Ocean
           // они видны раздельно, а не одной сплошной стадией.
@@ -135,7 +135,10 @@ pipeline {
             [(svc.name): {
               def img = "${REGISTRY}/${IMAGE_NS}/${svc.name}"
               // BuildKit нужен backend/bot Dockerfile'ам — --mount=type=cache для uv.
-              sh "DOCKER_BUILDKIT=1 docker build -f ${svc.df} -t ${img}:${GIT_SHA} ."
+              // --pull обновляет mutable base image. SECURITY_REFRESH сбрасывает
+              // apt-слой backend/bot даже когда Dockerfile не менялся.
+              def refreshArg = svc.refresh ? "--build-arg SECURITY_REFRESH=${GIT_SHA}" : ""
+              sh "DOCKER_BUILDKIT=1 docker build --pull ${refreshArg} -f ${svc.df} -t ${img}:${GIT_SHA} ."
               sh "docker push ${img}:${GIT_SHA}"             // :<git-sha> — неизменяемый, для отката
               if (env.IS_MAIN == 'true') {
                 sh "docker tag ${img}:${GIT_SHA} ${img}:latest"
@@ -149,7 +152,9 @@ pipeline {
 
     stage('Security Scan') {
       steps {
-        // Trivy, report-only (--exit-code 0 — никогда не валит билд):
+        // Trivy всегда публикует полный отчёт, затем валит билд только при
+        // исправимых HIGH/CRITICAL (--ignore-unfixed оставляет видимыми CVE,
+        // для которых upstream пока не выпустил обновление).
         // 1) CVE в зависимостях (requirements/pnpm-lock) — скан идёт прямо в
         //    RUN сборки Dockerfile.trivy-fs (см. комментарий там), вывод виден
         //    в логе этой стадии как обычный docker build output.
@@ -205,6 +210,17 @@ pipeline {
           reportFiles: 'trivy-bot.html',
           reportName: 'Trivy: bot',
         ])
+        sh '''
+          set -e
+          for svc in backend frontend bot; do
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v trivy-db-cache:/root/.cache/trivy \
+              aquasec/trivy image --ignore-unfixed \
+              --severity HIGH,CRITICAL --exit-code 1 \
+              ${REGISTRY}/${IMAGE_NS}/${svc}:${GIT_SHA}
+          done
+        '''
       }
     }
   }

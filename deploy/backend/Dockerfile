@@ -7,7 +7,10 @@ ENV CUDA_VISIBLE_DEVICES=-1
 
 WORKDIR /app
 
-RUN apt-get update \
+ARG SECURITY_REFRESH=local
+RUN echo "security refresh: ${SECURITY_REFRESH}" \
+    && apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends ffmpeg build-essential \
     && rm -rf /var/lib/apt/lists/*
 
