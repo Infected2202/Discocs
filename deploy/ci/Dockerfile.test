@@ -25,6 +25,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY scripts ./scripts
 COPY tests ./tests
 COPY deploy/nginx/default.conf.template ./deploy/nginx/default.conf.template
+COPY deploy/prod/docker-compose.yml ./deploy/prod/docker-compose.yml
 COPY Jenkinsfile ./Jenkinsfile
 COPY docker-compose.worker.yml ./docker-compose.worker.yml
 
