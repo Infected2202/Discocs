@@ -86,7 +86,7 @@ describe("ProfileButton", () => {
 
     renderProfileButton()
     fireEvent.click(screen.getByTitle("Profile"))
-    fireEvent.click(await screen.findByRole("button", { name: /alice/ }))
+    fireEvent.click(await screen.findByRole("button", { name: /sign out.*alice/i }))
 
     await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(redirectToLogin).toHaveBeenCalledTimes(1))
