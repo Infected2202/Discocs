@@ -13,7 +13,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Query
 
 from app.api.deps import (
-    _navidrome_client,
+    _navidrome_user_client,
     context,
     instant_mix_settings,
     record_instant_mix_request,
@@ -40,13 +40,13 @@ router = APIRouter(prefix="/api/v1")
 @router.get("/navidrome/starred", responses={502: {"description": "Navidrome starred lookup failed"}})
 def get_navidrome_starred(model: str = "discogs_multi") -> dict[str, object]:
     store, settings = context()
-    client = _navidrome_client(settings)
+    client, username = _navidrome_user_client(settings)
     try:
         return build_starred_catalog(
             store,
             client,
             model=model,
-            user=settings.navidrome.user,
+            user=username,
         )
     except Exception as exc:
         navidrome_logger.warning("Navidrome starred failed model=%s error=%s", model, exc)
@@ -56,15 +56,16 @@ def get_navidrome_starred(model: str = "discogs_multi") -> dict[str, object]:
 @router.get("/navidrome/starred/ids", responses={502: {"description": "Navidrome starred lookup failed"}})
 def get_navidrome_starred_ids() -> dict[str, object]:
     store, settings = context()
-    client = _navidrome_client(settings)
+    client, username = _navidrome_user_client(settings)
     try:
         starred_full = client.get_starred_full()
         songs = [parse_song(raw) for raw in starred_full["songs"]]
         data = build_starred_track_ids_from_songs(
             store,
             songs,
-            user=settings.navidrome.user,
+            user=username,
         )
+        store.sync_track_liked_from_navidrome(data["track_ids"])
 
         album_external_ids = [a.get("id", "") for a in starred_full["albums"] if a.get("id")]
         artist_external_ids = [a.get("id", "") for a in starred_full["artists"] if a.get("id")]
@@ -113,7 +114,7 @@ def set_release_navidrome_star(release_id: int, request: NavidromeStarRequest) -
     item_id = store.external_id_for_entity("navidrome", "release", release_id)
     if item_id is None:
         raise HTTPException(status_code=404, detail="Release has no Navidrome mapping")
-    client = _navidrome_client(settings)
+    client, _username = _navidrome_user_client(settings)
     try:
         if request.starred:
             client.star_album(item_id)
@@ -144,7 +145,7 @@ def set_artist_navidrome_star(artist_id: int, request: NavidromeStarRequest) -> 
     item_id = store.external_id_for_entity("navidrome", "artist", artist_id)
     if item_id is None:
         raise HTTPException(status_code=404, detail="Artist has no Navidrome mapping")
-    client = _navidrome_client(settings)
+    client, _username = _navidrome_user_client(settings)
     try:
         if request.starred:
             client.star_artist(item_id)
@@ -179,7 +180,7 @@ def set_track_navidrome_star(track_id: int, request: NavidromeStarRequest) -> di
     item_id = store.external_id_for_track("navidrome", track_id)
     if item_id is None:
         raise HTTPException(status_code=404, detail="Track has no Navidrome mapping")
-    client = _navidrome_client(settings)
+    client, username = _navidrome_user_client(settings)
     try:
         if request.starred:
             client.star_song(item_id)
@@ -196,7 +197,7 @@ def set_track_navidrome_star(track_id: int, request: NavidromeStarRequest) -> di
         raise HTTPException(status_code=502, detail=f"Navidrome star update failed: {exc}") from exc
     navidrome_logger.info(
         "Navidrome star update ok user=%s track_id=%s item_id=%s starred=%s",
-        settings.navidrome.user,
+        username,
         track_id,
         item_id,
         request.starred,
@@ -213,7 +214,7 @@ def set_track_navidrome_star(track_id: int, request: NavidromeStarRequest) -> di
         "track_id": track_id,
         "item_id": item_id,
         "starred": request.starred,
-        "user": settings.navidrome.user,
+        "user": username,
     }
 
 
@@ -232,13 +233,13 @@ def get_navidrome_starred_similar(
     exclude_same_album: bool = True,
 ) -> dict[str, object]:
     store, settings = context()
-    client = _navidrome_client(settings)
+    client, username = _navidrome_user_client(settings)
     try:
         catalog = build_starred_catalog(
             store,
             client,
             model=model,
-            user=settings.navidrome.user,
+            user=username,
         )
     except Exception as exc:
         navidrome_logger.warning("Navidrome starred similar catalog failed model=%s error=%s", model, exc)

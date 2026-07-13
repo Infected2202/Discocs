@@ -92,9 +92,25 @@ async def login(request: Request, body: LoginRequest) -> JSONResponse:
         store,
         settings,
         body.username,
+        body.password,
         ip=ip,
         user_agent=request.headers.get("user-agent"),
     )
+    user = store.get_user_by_username(body.username)
+    if user is not None:
+        try:
+            await run_in_threadpool(
+                auth.sync_navidrome_starred_for_user,
+                store,
+                settings,
+                int(user["id"]),
+                body.username,
+                body.password,
+            )
+        except Exception as exc:  # noqa: BLE001 — star sync must not block login
+            auth_logger.warning(
+                "Initial starred sync failed user=%s error=%s", body.username, exc
+            )
     auth_logger.info("Login ok ip=%s user=%s", ip, body.username)
     response = JSONResponse({"authenticated": True, "username": body.username})
     _set_session_cookie(response, request, settings, token)

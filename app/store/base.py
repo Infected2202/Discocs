@@ -807,8 +807,8 @@ class StoreBase:
 
                 -- Auth sessions. Only the SHA-256 of the opaque session token is
                 -- stored, never the token itself: a DB leak cannot resurrect a
-                -- live session. No password is stored (Navidrome verifies creds
-                -- at login; the password is discarded afterwards).
+                -- live session. nav_secret is authenticated ciphertext whose
+                -- key is derived from the raw token held only by the client.
                 CREATE TABLE IF NOT EXISTS sessions (
                     token_hash TEXT PRIMARY KEY,
                     username TEXT NOT NULL,
@@ -816,7 +816,8 @@ class StoreBase:
                     expires_at TEXT NOT NULL,
                     last_seen_at TEXT NOT NULL,
                     ip TEXT,
-                    user_agent TEXT
+                    user_agent TEXT,
+                    nav_secret TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_sessions_expires
@@ -905,6 +906,7 @@ class StoreBase:
             # Phase 2: link a session to its user. Legacy (pre-users) sessions
             # keep user_id NULL and resolve it lazily via the users table.
             self._ensure_column(conn, "sessions", "user_id", "INTEGER")
+            self._ensure_column(conn, "sessions", "nav_secret", "TEXT")
             # Phase 2: personal ownership on the additive tables (nullable so
             # existing INSERTs keep working; back-filled to the owner below).
             self._ensure_column(conn, "playback_sessions", "user_id", "INTEGER")

@@ -8,6 +8,7 @@ from dataclasses import replace
 import json
 import logging
 
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -28,7 +29,7 @@ from app.models import (
 from app.navidrome import NavidromeClient
 from app.state import TEXT_SEARCH_EMBEDDER, TEXT_SEARCH_EMBEDDER_LOCK
 from app.store import Store
-from app.user_context import current_user_id
+from app.user_context import current_navidrome_credentials, current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,25 @@ def api_error(status_code: int, code: str, message: str) -> JSONResponse:
 
 def _navidrome_client(settings: Settings) -> NavidromeClient:
     return NavidromeClient(settings.navidrome)
+
+
+def _navidrome_user_client(settings: Settings) -> tuple[NavidromeClient, str]:
+    """Build an interactive client from the active session, never service creds."""
+    credentials = current_navidrome_credentials()
+    if credentials is None:
+        if not settings.auth.enabled:
+            return NavidromeClient(settings.navidrome), settings.navidrome.user
+        raise HTTPException(
+            status_code=401,
+            detail="Active user Navidrome credentials are required; sign in again",
+        )
+    nav = replace(
+        settings.navidrome,
+        user=credentials.username,
+        password=credentials.password,
+        auth_mode="token",
+    )
+    return NavidromeClient(nav), credentials.username
 
 
 def text_search_embedder(settings: Settings) -> MuqMulanEmbedder:

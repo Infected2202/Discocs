@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import FileResponse, JSONResponse
 
-from app.api.deps import _navidrome_client, api_error, context, playback_session_settings
+from app.api.deps import _navidrome_user_client, api_error, context, playback_session_settings
 from app.mix_covers import refresh_playlist_cover
 from app.navidrome_starred import build_starred_track_ids
 from app.schemas.requests import (
@@ -28,9 +28,12 @@ _PLAYLIST_NOT_FOUND = "Playlist not found"
 def _liked_track_ids(store, settings) -> list[int]:
     """Return local track IDs for Navidrome-starred tracks, preserving Navidrome order."""
     try:
-        client = _navidrome_client(settings)
-        data = build_starred_track_ids(store, client, user=settings.navidrome.user)
+        client, username = _navidrome_user_client(settings)
+        data = build_starred_track_ids(store, client, user=username)
+        store.sync_track_liked_from_navidrome(data["track_ids"])
         return data["track_ids"]
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Navidrome starred failed: {exc}") from exc
 

@@ -23,7 +23,13 @@ from starlette.requests import Request
 from app import auth
 from app.config import Settings
 from app.store import Store
-from app.user_context import reset_current_user_id, set_current_user_id
+from app.user_context import (
+    NavidromeCredentials,
+    reset_current_navidrome_credentials,
+    reset_current_user_id,
+    set_current_navidrome_credentials,
+    set_current_user_id,
+)
 
 
 def _gate_enabled() -> bool:
@@ -78,9 +84,11 @@ async def auth_gate(request: Request, call_next):
     if _service_token_ok(request, settings.auth.service_token):
         request.state.principal = "service"
         token_context = set_current_user_id(None)
+        nav_context = set_current_navidrome_credentials(None)
         try:
             return await call_next(request)
         finally:
+            reset_current_navidrome_credentials(nav_context)
             reset_current_user_id(token_context)
 
     token = request.cookies.get(settings.auth.session_cookie_name)
@@ -89,9 +97,16 @@ async def auth_gate(request: Request, call_next):
         request.state.principal = resolved.username
         request.state.user_id = resolved.user_id
         token_context = set_current_user_id(resolved.user_id)
+        credentials = (
+            NavidromeCredentials(resolved.username, resolved.navidrome_password)
+            if resolved.navidrome_password
+            else None
+        )
+        nav_context = set_current_navidrome_credentials(credentials)
         try:
             return await call_next(request)
         finally:
+            reset_current_navidrome_credentials(nav_context)
             reset_current_user_id(token_context)
 
     return JSONResponse(

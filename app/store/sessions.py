@@ -3,8 +3,8 @@
 Part of the app/store package — Phase 1 auth gate.
 Do not import this module directly; use app.store instead.
 
-Only the SHA-256 hash of a session token is ever stored — see the ``sessions``
-table comment in app/store/base.py. No credentials are persisted.
+Only the SHA-256 hash of a session token is stored. The optional Navidrome
+password ciphertext cannot be decrypted without the raw token held by client.
 """
 from __future__ import annotations
 
@@ -22,18 +22,19 @@ class SessionsStoreMixin:
         ip: str | None,
         user_agent: str | None,
         user_id: int | None = None,
+        nav_secret: str | None = None,
     ) -> None:
         with self.connect() as conn:
             conn.execute(
                 """
                 INSERT INTO sessions (
                     token_hash, username, user_id, created_at, expires_at,
-                    last_seen_at, ip, user_agent
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    last_seen_at, ip, user_agent, nav_secret
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     token_hash, username, user_id, created_at, expires_at,
-                    created_at, ip, user_agent,
+                    created_at, ip, user_agent, nav_secret,
                 ),
             )
 

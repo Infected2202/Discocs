@@ -9,6 +9,7 @@ description = "Local Discogs-EffNet music recommendations over a personal audio 
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
 dependencies = [
+  "cryptography>=43",
   "fastapi>=0.111",
   "hnswlib>=0.8",
   "mutagen>=1.47",

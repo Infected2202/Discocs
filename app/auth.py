@@ -2,12 +2,12 @@
 
 Model: Navidrome is the identity provider. Login verifies the submitted
 username/password against the configured Navidrome server (Subsonic ``ping``);
-on success an opaque server-side session is created. The password is used only
-to verify and is then discarded — it is never stored.
+on success an opaque server-side session is created. The password is retained
+only as authenticated ciphertext whose key requires the raw client token.
 
-No third-party crypto dependency: session tokens are 256-bit random values from
-``secrets`` and are stored as SHA-256 hashes; comparisons use ``hmac`` constant
-time. See app/store/base.py for the ``sessions`` table.
+Session tokens are 256-bit random values stored as SHA-256 hashes. AES-GCM
+encrypts the per-user Navidrome password with a key derived from the raw token,
+which remains only in the HttpOnly client cookie.
 """
 from __future__ import annotations
 
@@ -21,8 +21,10 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 
 from app.config import Settings
-from app.navidrome import NavidromeClient
+from app.navidrome import NavidromeClient, parse_song
+from app.navidrome_starred import build_starred_track_ids_from_songs
 from app.models import utc_now
+from app.session_crypto import decrypt_nav_secret, encrypt_nav_secret
 from app.store import Store
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ class ResolvedSession:
 
     user_id: int | None
     username: str
+    navidrome_password: str | None = None
 
 
 def generate_token() -> str:
@@ -87,6 +90,7 @@ def create_session(
     store: Store,
     settings: Settings,
     username: str,
+    password: str | None = None,
     *,
     ip: str | None = None,
     user_agent: str | None = None,
@@ -109,6 +113,7 @@ def create_session(
         expires_at=expires,
         ip=ip,
         user_agent=(user_agent or "")[:512] or None,
+        nav_secret=encrypt_nav_secret(token, password) if password else None,
     )
     return token
 
@@ -137,12 +142,52 @@ def resolve_session(store: Store, token: str | None) -> ResolvedSession | None:
         user_row = store.get_user_by_username(username)
         raw_user_id = user_row["id"] if user_row is not None else None
     user_id = int(raw_user_id) if raw_user_id is not None else None
-    return ResolvedSession(user_id=user_id, username=username)
+    password = None
+    secret = row["nav_secret"]
+    if secret:
+        try:
+            password = decrypt_nav_secret(token, str(secret))
+        except Exception:  # noqa: BLE001 — corrupt/tampered secret stays unusable
+            logger.warning("Session Navidrome secret rejected user=%s", username)
+    return ResolvedSession(
+        user_id=user_id,
+        username=username,
+        navidrome_password=password,
+    )
 
 
 def revoke_session(store: Store, token: str | None) -> None:
     if token:
         store.delete_session(hash_token(token))
+
+
+def sync_navidrome_starred_for_user(
+    store: Store,
+    settings: Settings,
+    user_id: int,
+    username: str,
+    password: str,
+    *,
+    client_factory=NavidromeClient,
+) -> None:
+    """Import Navidrome stars into only the authenticated user's preferences."""
+    nav = replace(settings.navidrome, user=username, password=password, auth_mode="token")
+    starred = client_factory(nav).get_starred_full()
+    scoped = store.for_user(user_id)
+    songs = [parse_song(raw) for raw in starred["songs"]]
+    mapped = build_starred_track_ids_from_songs(scoped, songs, user=username)
+    scoped.sync_track_liked_from_navidrome(mapped["track_ids"])
+    artist_ids = []
+    for raw in starred["artists"]:
+        external_id = raw.get("id")
+        if not external_id:
+            continue
+        artist_id = scoped.entity_id_for_external_id(
+            "navidrome", "artist", str(external_id)
+        )
+        if artist_id is not None:
+            artist_ids.append(artist_id)
+    scoped.sync_artist_liked_from_navidrome(artist_ids)
 
 
 def _iso_plus_hours(iso_now: str, hours: int) -> str:

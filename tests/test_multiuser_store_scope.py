@@ -90,6 +90,17 @@ def test_recompute_preferences_cannot_delete_another_users_rows(tmp_path: Path):
     assert bob.get_track_preference(track_id).liked is True
 
 
+def test_navidrome_star_sync_only_replaces_current_users_likes(tmp_path: Path):
+    alice, bob, track_id = _stores(tmp_path)
+    alice.import_external_track_play_state(track_id, liked=True)
+    bob.import_external_track_play_state(track_id, liked=True)
+
+    alice.sync_track_liked_from_navidrome([])
+
+    assert alice.get_track_preference(track_id).liked is False
+    assert bob.get_track_preference(track_id).liked is True
+
+
 def test_artist_popularity_is_an_explicit_global_sum(tmp_path: Path):
     alice, bob, track_id = _stores(tmp_path)
     alice.import_external_track_play_state(track_id, play_count=2)

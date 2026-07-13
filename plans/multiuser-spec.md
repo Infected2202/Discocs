@@ -225,7 +225,7 @@ store-методы отказывают, а не откатываются к own
 двухсессионным тестом: плейлисты и playback-сессии Alice недоступны Bob даже
 при обращении по известному ID, и наоборот.
 
-### 5. Navidrome per-user  ✅ РЕШЕНО (per-user), схема кредов — предложена
+### 5. Navidrome per-user  ✅ РЕАЛИЗОВАНО
 
 Сейчас **лайки = звёзды сервисного аккаунта Navidrome**:
 - `build_starred_track_ids(..., user=settings.navidrome.user)` (`api/playlists.py`),
@@ -271,6 +271,11 @@ scrobble) → строить клиент из per-user кредов сесси�
 Криптопримитив ✅РЕШЕНО: **тянем `cryptography`** (AES). `hashlib`/`hmac` уже в
 проекте, но симметричного шифра в stdlib нет; `cryptography` уже закладывался в
 Фазе 1.5 под пароль Navidrome at-rest. Безопасность в приоритете.
+
+Реализация: AES-GCM с уникальным nonce и ключом SHA-256 от сырого session-token;
+credentials живут в request-local контексте. Интерактивные starred/star/unstar/
+scrobble используют per-user client, первичный sync starred выполняется после
+логина и повторяется при чтении Likes. Ошибка sync не отменяет успешный логин.
 
 ### 6. Фоновые процессы и воркер/бот
 
@@ -473,8 +478,8 @@ localhost/не-проксируемый префикс.
    двухпользовательскими регресс-тестами.
 4. **API-слой:** ✅ request-local `current_user_id`, scoped store во всех
    роутерах. Двухсессионный API-тест исключает доступ по списку и прямому ID.
-5. **Navidrome per-user:** per-user клиент из кредов сессии (шифр по токену),
-   синк starred на логине (§5).
+5. **Navidrome per-user:** ✅ AES-GCM шифр по сырому session-token, per-user
+   клиент для starred/star/scrobble и синк starred на логине (§5).
 6. **Глобальные агрегаты:** публичный `SUM(play_count)` для страницы артиста
    (и, если решим, трека/релиза) поверх per-user данных (§Исключение).
 7. **Плейлисты visibility:** включить поведение private/public, фильтрация

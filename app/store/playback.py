@@ -1232,6 +1232,22 @@ class PlaybackStoreMixin:
                     (now, artist_id),
                 )
 
+    def sync_track_liked_from_navidrome(self, track_ids: list[int]) -> None:
+        """Replace this user's local liked flags with their Navidrome stars."""
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE user_track_preferences SET liked = 0 "
+                "WHERE user_id = discocs_user_id() AND liked = 1"
+            )
+            for track_id in dict.fromkeys(track_ids):
+                self._import_external_track_play_state(
+                    conn,
+                    track_id,
+                    play_count=None,
+                    last_played_at=None,
+                    liked=True,
+                )
+
     def list_playback_events(self, session_id: str | None = None) -> list[PlaybackEvent]:
         self.require_user_id()
         where = "WHERE user_id = discocs_user_id()"

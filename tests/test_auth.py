@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -168,7 +170,7 @@ def test_upsert_user_rejects_empty(tmp_path, monkeypatch):
 def test_create_session_binds_user_id(tmp_path, monkeypatch):
     store = init_store(tmp_path, monkeypatch)
     settings = settings_with_navidrome()
-    token = auth.create_session(store, settings, "carol")
+    token = auth.create_session(store, settings, "carol", "nav-password")
 
     resolved = auth.resolve_session(store, token)
     assert resolved is not None
@@ -178,6 +180,10 @@ def test_create_session_binds_user_id(tmp_path, monkeypatch):
     assert resolved.user_id == expected
     # The id is persisted on the session row, not only re-derived.
     assert store.get_session(auth.hash_token(token))["user_id"] == expected
+    row = store.get_session(auth.hash_token(token))
+    assert row["nav_secret"]
+    assert "nav-password" not in row["nav_secret"]
+    assert resolved.navidrome_password == "nav-password"
 
 
 def test_resolve_session_recovers_user_id_for_legacy_row(tmp_path, monkeypatch):
@@ -198,6 +204,39 @@ def test_resolve_session_recovers_user_id_for_legacy_row(tmp_path, monkeypatch):
     resolved = auth.resolve_session(store, token)
     # Falls back to the users table so the id is still recovered.
     assert resolved.user_id == user_id
+
+
+def test_login_star_sync_is_bound_to_authenticated_user():
+    root = MagicMock()
+    scoped = MagicMock()
+    root.for_user.return_value = scoped
+    scoped.get_track_by_external_id.return_value = SimpleNamespace(id=7)
+    scoped.entity_id_for_external_id.return_value = 9
+
+    class FakeClient:
+        def __init__(self, settings):
+            assert settings.user == "alice"
+            assert settings.password == "secret"
+
+        def get_starred_full(self):
+            return {
+                "songs": [{"id": "song-7", "title": "Seven"}],
+                "albums": [],
+                "artists": [{"id": "artist-9"}],
+            }
+
+    auth.sync_navidrome_starred_for_user(
+        root,
+        settings_with_navidrome(),
+        42,
+        "alice",
+        "secret",
+        client_factory=FakeClient,
+    )
+
+    root.for_user.assert_called_once_with(42)
+    scoped.sync_track_liked_from_navidrome.assert_called_once_with([7])
+    scoped.sync_artist_liked_from_navidrome.assert_called_once_with([9])
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +326,11 @@ def _enable_gate(monkeypatch):
         return username == "alice" and password == "correct"
 
     monkeypatch.setattr(auth, "verify_navidrome_credentials", fake_verify)
+    monkeypatch.setattr(
+        auth,
+        "sync_navidrome_starred_for_user",
+        lambda *_args, **_kwargs: None,
+    )
 
 
 def test_gate_blocks_anonymous_but_allows_public(tmp_path, monkeypatch):

@@ -248,8 +248,23 @@ def maybe_scrobble_navidrome_play(store: Store, settings, result) -> dict[str, o
     item_id = store.external_id_for_track("navidrome", track_id)
     if not item_id:
         return {"status": "skipped", "reason": "no_navidrome_mapping", "track_id": track_id}
+    from dataclasses import replace
+    from app.user_context import current_navidrome_credentials
+
+    credentials = current_navidrome_credentials()
+    if credentials is None:
+        if settings.auth.enabled:
+            return {"status": "skipped", "reason": "missing_user_credentials", "track_id": track_id}
+        nav = settings.navidrome
+    else:
+        nav = replace(
+            settings.navidrome,
+            user=credentials.username,
+            password=credentials.password,
+            auth_mode="token",
+        )
     try:
-        NavidromeClient(settings.navidrome).scrobble_song(
+        NavidromeClient(nav).scrobble_song(
             item_id,
             played_at_ms=playback_event_time_ms(result.event.created_at),
             submission=submission,

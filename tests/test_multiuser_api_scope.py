@@ -44,6 +44,9 @@ def test_two_sessions_cannot_cross_api_personal_boundaries(tmp_path, monkeypatch
             username in {"alice", "bob"} and password == "correct"
         ),
     )
+    monkeypatch.setattr(
+        auth, "sync_navidrome_starred_for_user", lambda *_args, **_kwargs: None
+    )
 
     alice = _login("alice")
     bob = _login("bob")
@@ -77,3 +80,43 @@ def test_two_sessions_cannot_cross_api_personal_boundaries(tmp_path, monkeypatch
     assert bob.get("/api/v1/playlists").json()["total"] == 1
     assert alice.get("/api/v1/playlists").json()["total"] == 1
     assert alice.get(f"/api/v1/playlists/{bob_playlist_id}").status_code == 404
+
+
+def test_interactive_navidrome_client_uses_each_session_credentials(tmp_path, monkeypatch):
+    _init_store(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        auth,
+        "verify_navidrome_credentials",
+        lambda _settings, username, password, **_kwargs: password == f"{username}-password",
+    )
+    monkeypatch.setattr(
+        auth, "sync_navidrome_starred_for_user", lambda *_args, **_kwargs: None
+    )
+    captured: list[tuple[str, str]] = []
+
+    class FakeNavidromeClient:
+        def __init__(self, settings):
+            captured.append((settings.user, settings.password))
+
+        def get_starred_full(self):
+            return {"songs": [], "albums": [], "artists": []}
+
+    monkeypatch.setattr("app.api.deps.NavidromeClient", FakeNavidromeClient)
+
+    alice = TestClient(app)
+    bob = TestClient(app)
+    assert alice.post(
+        "/api/v1/auth/login",
+        json={"username": "alice", "password": "alice-password"},
+    ).status_code == 200
+    assert bob.post(
+        "/api/v1/auth/login",
+        json={"username": "bob", "password": "bob-password"},
+    ).status_code == 200
+
+    assert alice.get("/api/v1/navidrome/starred/ids").status_code == 200
+    assert bob.get("/api/v1/navidrome/starred/ids").status_code == 200
+    assert captured == [
+        ("alice", "alice-password"),
+        ("bob", "bob-password"),
+    ]
