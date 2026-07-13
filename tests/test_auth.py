@@ -147,6 +147,7 @@ def test_resolve_session_valid_and_expired(tmp_path, monkeypatch):
 
 def test_upsert_user_is_idempotent_and_bumps_last_login(tmp_path, monkeypatch):
     store = init_store(tmp_path, monkeypatch)
+    existing_user_ids = store.list_user_ids()
     first = store.upsert_user("alice", now="2026-01-01T00:00:00")
     again = store.upsert_user("alice", now="2026-02-02T00:00:00")
     # Same username → same internal id, no duplicate row.
@@ -159,7 +160,7 @@ def test_upsert_user_is_idempotent_and_bumps_last_login(tmp_path, monkeypatch):
     bob = store.upsert_user("bob", now="2026-01-01T00:00:00")
     assert bob != first
     assert store.get_user_by_id(bob)["navidrome_username"] == "bob"
-    assert store.list_user_ids() == sorted([first, bob])
+    assert store.list_user_ids() == sorted([*existing_user_ids, first, bob])
 
 
 def test_upsert_user_rejects_empty(tmp_path, monkeypatch):
