@@ -92,6 +92,7 @@ export default function MixPage() {
             size={176}
             className="rounded-lg shrink-0"
             fallbackLetter="M"
+            expandable
           />
         }
         kicker={t("generatedMix")}

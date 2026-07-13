@@ -160,6 +160,7 @@ export default function PlaylistPage() {
               size={176}
               className="rounded-lg shrink-0"
               fallbackLetter="P"
+              expandable
             />
           )
         }

@@ -82,6 +82,7 @@ export default function ReleasePage() {
             size={176}
             className="rounded-lg shrink-0"
             fallbackLetter={release.title[0]}
+            expandable
           />
         }
         kicker={release.release_type_label}

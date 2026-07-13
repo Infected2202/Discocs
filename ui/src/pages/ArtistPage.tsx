@@ -81,6 +81,7 @@ export default function ArtistPage() {
             size={144}
             className="rounded-full shrink-0"
             fallbackLetter={artist.name[0]}
+            expandable
           />
         }
         title={artist.name}

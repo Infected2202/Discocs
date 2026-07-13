@@ -72,6 +72,14 @@ rendering rows via `TrackTable`/`TrackRow` or `VirtualTrackList`.
 
 ## Core pages
 
+The large header cover art on the artist, release, playlist, and mix pages
+(`ArtworkImage` with `expandable` set) opens a modal showing the image at
+full size on click — `object-contain` inside a `max-h/max-w: 92vh/92vw` box,
+so it is never stretched and large images are capped to the viewport instead
+of overflowing it. Fallback-letter placeholders (no real artwork) are not
+clickable. Small artwork elsewhere (shelf/grid `MediaCard`s, queue rows) is
+unaffected — it still just navigates on click.
+
 ### Dashboard (`/`, `DashboardPage.tsx`)
 
 The music home screen. Renders `ForYouShelf` (a shelf of static
