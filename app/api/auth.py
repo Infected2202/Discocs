@@ -10,7 +10,7 @@ import logging
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app import auth
 from app.api.deps import api_error, context
@@ -24,6 +24,16 @@ router = APIRouter(prefix="/api/v1/auth")
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=256)
     password: str = Field(min_length=1, max_length=1024)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("username")
+    @classmethod
+    def reject_control_characters(cls, value: str) -> str:
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            raise ValueError("username must not contain control characters")
+        return value
+
 
 
 # Shared per-IP login throttle (thresholds re-synced from settings per request so
@@ -43,8 +53,16 @@ def _login_limiter(settings) -> auth.LoginRateLimiter:
 def _client_ip(request: Request) -> str:
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        # The public nginx overwrites this header with the actual peer address.
+        # Taking the last hop prevents client-prepended spoofed values from
+        # bypassing the login limiter.
+        return forwarded.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"
+
+
+def _login_keys(ip: str, username: str) -> tuple[str, str]:
+    """Throttle both the source and the target account."""
+    return f"ip:{ip}", f"user:{username.strip().casefold()}"
 
 
 def _is_https(request: Request) -> bool:
@@ -73,8 +91,9 @@ async def login(request: Request, body: LoginRequest) -> JSONResponse:
     store, settings = context()
     ip = _client_ip(request)
     limiter = _login_limiter(settings)
+    limiter_keys = _login_keys(ip, body.username)
 
-    if limiter.is_locked(ip):
+    if any(limiter.is_locked(key) for key in limiter_keys):
         auth_logger.warning("Login locked out ip=%s user=%s", ip, body.username)
         return api_error(429, "too_many_attempts", "Too many attempts. Try again later.")
 
@@ -82,11 +101,13 @@ async def login(request: Request, body: LoginRequest) -> JSONResponse:
         auth.verify_navidrome_credentials, settings, body.username, body.password
     )
     if not ok:
-        limiter.record_failure(ip)
+        for key in limiter_keys:
+            limiter.record_failure(key)
         auth_logger.warning("Login failed ip=%s user=%s", ip, body.username)
         return api_error(401, "invalid_credentials", "Invalid username or password.")
 
-    limiter.record_success(ip)
+    for key in limiter_keys:
+        limiter.record_success(key)
     token = await run_in_threadpool(
         auth.create_session,
         store,
@@ -113,6 +134,7 @@ async def login(request: Request, body: LoginRequest) -> JSONResponse:
             )
     auth_logger.info("Login ok ip=%s user=%s", ip, body.username)
     response = JSONResponse({"authenticated": True, "username": body.username})
+    response.headers["Cache-Control"] = "no-store"
     _set_session_cookie(response, request, settings, token)
     return response
 
@@ -125,6 +147,7 @@ async def logout(request: Request) -> JSONResponse:
     token = request.cookies.get(settings.auth.session_cookie_name)
     await run_in_threadpool(auth.revoke_session, store, token)
     response = JSONResponse({"authenticated": False})
+    response.headers["Cache-Control"] = "no-store"
     response.delete_cookie(settings.auth.session_cookie_name, path="/")
     return response
 

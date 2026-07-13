@@ -368,15 +368,19 @@ app.include_router(_api_map.router)
 
 
 
-from app.api.middleware import log_http_request as _log_http_request  # noqa: E402
+from app.api.middleware import (  # noqa: E402
+    add_security_headers as _add_security_headers,
+    log_http_request as _log_http_request,
+)
 from app.api.auth_middleware import auth_gate as _auth_gate  # noqa: E402
 app.middleware("http")(_log_http_request)
 app.middleware("http")(_auth_gate)
+app.middleware("http")(_add_security_headers)
 
-# CORS: same-origin SPA does not need it. Set DISCOCS_CORS_ORIGINS (comma list)
-# to lock down to an explicit allowlist with cookie credentials when exposing to
-# a domain; unset keeps the permissive wildcard (no credentials) for local dev
-# and the native app.
+# Same-origin SPA/dev proxy need no CORS. DISCOCS_CORS_ORIGINS is the explicit
+# credentialed allowlist for a separately hosted or native-webview client.
+# The wildcard fallback exists only while auth is disabled for local legacy
+# development; auth-enabled startup has no implicit cross-origin access.
 _cors_origins_env = os.getenv("DISCOCS_CORS_ORIGINS", "").strip()
 if _cors_origins_env:
     app.add_middleware(
@@ -386,7 +390,7 @@ if _cors_origins_env:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-else:
+elif os.getenv("DISCOCS_AUTH_ENABLED", "").strip().lower() not in {"1", "true", "yes", "on"}:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

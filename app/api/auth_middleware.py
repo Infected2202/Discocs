@@ -54,6 +54,32 @@ PUBLIC_PATHS = frozenset(
 )
 
 
+UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _request_origin(request: Request) -> str:
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    scheme = proto.split(",")[0].strip().lower()
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", ""))
+    host = host.split(",")[0].strip().lower()
+    return f"{scheme}://{host}".rstrip("/")
+
+
+def _origin_allowed(request: Request) -> bool:
+    """Reject browser cross-origin mutations; non-browser clients omit Origin."""
+    origin = request.headers.get("origin")
+    if not origin:
+        return True
+    allowed = {_request_origin(request)}
+    allowed.update(
+        value.strip().rstrip("/")
+        for value in os.getenv("DISCOCS_CORS_ORIGINS", "").split(",")
+        if value.strip()
+    )
+    normalized = origin.strip().rstrip("/").lower()
+    return normalized in {value.lower() for value in allowed}
+
+
 def _service_token_ok(request: Request, service_token: str) -> bool:
     if not service_token:
         return False
@@ -72,7 +98,21 @@ async def auth_gate(request: Request, call_next):
     if not _gate_enabled():
         return await call_next(request)
 
-    if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    if request.method in UNSAFE_METHODS and not _origin_allowed(request):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": {
+                    "code": "cross_origin_request",
+                    "message": "Cross-origin state change rejected.",
+                }
+            },
+        )
+
+    if request.url.path in PUBLIC_PATHS:
         return await call_next(request)
 
     settings = Settings.from_env()

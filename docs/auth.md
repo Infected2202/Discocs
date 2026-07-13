@@ -72,10 +72,12 @@
 
 ## Защита от брутфорса
 
-Логин лимитируется по IP (in-memory, без Redis): `DISCOCS_LOGIN_MAX_ATTEMPTS`
-неудач в окне `DISCOCS_LOGIN_LOCKOUT_SECONDS` → `429`. Успешный вход сбрасывает
-счётчик. За nginx нужен корректный `X-Forwarded-For` (иначе все клиенты за
-прокси сольются в один IP).
+Логин лимитируется одновременно по IP и нормализованному username (in-memory,
+без Redis): `DISCOCS_LOGIN_MAX_ATTEMPTS` неудач в окне
+`DISCOCS_LOGIN_LOCKOUT_SECONDS` → `429`. Поэтому смена IP или прокси не
+снимает блокировку подбора конкретной учётки. Публичный nginx перезаписывает,
+а не дополняет `X-Forwarded-For`: клиент не может подставить первый hop и
+обойти IP-лимит. Успешный вход сбрасывает оба счётчика.
 
 ## Переменные окружения
 
@@ -87,7 +89,7 @@
 | `DISCOCS_SESSION_COOKIE_NAME` | `discocs_session` | Имя cookie |
 | `DISCOCS_LOGIN_MAX_ATTEMPTS` | `5` | Порог блокировки логина |
 | `DISCOCS_LOGIN_LOCKOUT_SECONDS` | `900` | Окно блокировки |
-| `DISCOCS_CORS_ORIGINS` | `` | Явный allowlist origin'ов (с куками). Пусто = wildcard без кук |
+| `DISCOCS_CORS_ORIGINS` | `` | Явный allowlist origin'ов (с куками). При включённом auth пусто = cross-origin доступ выключен |
 | `DISCOCS_NAVIDROME_URL` | из settings.json | Адрес Navidrome для проверки логина |
 
 ## Почему гейт по умолчанию выключен
@@ -193,11 +195,13 @@ with the host firewall; do not publish or forward it from the internet.
    лежит открытым текстом в `data/settings.json` (`app/api/settings.py::update_navidrome_settings`).
    Логин Фазы 1 пароль не хранит, но этот — да. Зашифровать (`cryptography`/Fernet,
    ключ из env).
-4. **CSRF-токен (double-submit)** для мутаций (star/settings). Фаза 1 опирается
-   только на `SameSite=Lax` — для defense-in-depth добавить токен.
-5. Мелочи: security-заголовки на уровне приложения (не только в nginx-sample);
-   lockout логина сейчас in-memory per-process (при рестарте/нескольких воркерах
-   сбрасывается) — перенести в SQLite при необходимости.
+4. ✅ **CSRF defense-in-depth:** browser-мутации с чужим `Origin` отклоняются
+   до вызова Navidrome; session cookie дополнительно остаётся `SameSite=Lax`.
+5. ✅ Security headers стоят и в приложении, и в публичном nginx; SPA получает
+   CSP, wildcard CORS при включённом auth отключён, входящий service-token
+   вырезается на публичной границе.
+6. Остаётся: lockout in-memory per-process сбрасывается при рестарте. Если
+   появится несколько backend-процессов, перенести счётчики в SQLite.
 
 ### Фаза 2 — Мультиюзер (крупный эпик, ради персональных рекомендаций)
 

@@ -12,6 +12,23 @@ from starlette.requests import Request
 logger = logging.getLogger(__name__)
 
 
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
+
+
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    if request.url.path.startswith("/api/v1/auth/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
 def should_log_http_request(path: str) -> bool:
     if path in {"/api/v1/stats", "/api/v1/jobs"}:
         return True
