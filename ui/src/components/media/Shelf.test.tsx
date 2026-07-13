@@ -56,10 +56,14 @@ describe("Shelf", () => {
 
     const scroller = screen.getByText("One").parentElement?.parentElement
     expect(scroller).toHaveClass("overflow-x-auto")
-    expect(scroller).toHaveStyle({
-      scrollSnapType: "x proximity",
-      WebkitOverflowScrolling: "touch",
-    })
+    expect(scroller).toHaveAttribute(
+      "style",
+      expect.stringContaining("scroll-snap-type: x proximity")
+    )
+    expect(scroller).toHaveAttribute(
+      "style",
+      expect.stringContaining("-webkit-overflow-scrolling: touch")
+    )
   })
 
   it("renders shelf navigation as native buttons and disables previous on first page", () => {
@@ -96,7 +100,7 @@ describe("Shelf", () => {
       </MemoryRouter>
     )
 
-    const divider = container.querySelector('[aria-hidden="true"]')
+    const divider = container.querySelector('div[aria-hidden="true"]')
     expect(divider).toBeInTheDocument()
     expect(divider).toHaveClass("flex-1")
     expect(divider?.className).toMatch(/bg-primary\/50/)
@@ -116,7 +120,7 @@ describe("Shelf", () => {
     )
 
     expect(screen.getByRole("button", { name: "Next" })).toBeInTheDocument()
-    expect(container.querySelector('[aria-hidden="true"]')).not.toBeInTheDocument()
+    expect(container.querySelector('div[aria-hidden="true"]')).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Next" }).parentElement).toHaveClass("ml-auto")
   })
 
