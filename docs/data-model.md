@@ -211,8 +211,13 @@ entity, computed from `playback_events`:
   `score`.
 - `user_release_preferences` (`(user_id, release_id)` PK): same shape minus
   `disliked`/`early_skip_count`/`replay_count`.
-- `user_artist_preferences` (`artist_id` PK): same shape, further reduced
+- `user_artist_preferences` (`(user_id, artist_id)` PK): same shape, further reduced
   (no `completion_count` breakdown beyond what's listed).
+
+Artist pages intentionally expose one global behavioral aggregate: top-track
+play counts are computed live as `SUM(user_track_preferences.play_count)` over
+all users. This public popularity signal is separate from every user's scoped
+preference rows. Track/release pages do not expose equivalent global counters.
 
 Thresholds used to classify events live in `app/models.py`:
 `MEANINGFUL_LISTEN_SECONDS/FRACTION`, `EARLY_SKIP_SECONDS/FRACTION`,
@@ -342,8 +347,8 @@ current schema:
 
 - `track_embedding_segments`, `artist_embeddings` — no segment-level or
   artist-level embedding tables.
-- `artist_aggregates`, `artist_user_stats`, `release_user_stats` — artist and
-  release counters live inside `release_aggregates.preference_summary_json`
-  or are computed live; there are no dedicated counter tables.
+- `artist_aggregates`, `artist_user_stats`, `release_user_stats` — there are no
+  dedicated counter tables. Per-user summaries are computed live; the one
+  public artist popularity counter is a live cross-user `SUM(play_count)`.
 - `dashboard_shelf_cache` (generic) — only `albums_for_you_cache` exists;
   other shelves query live rather than through a generic cache table.
