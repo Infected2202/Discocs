@@ -4,8 +4,73 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
-    # All backend API paths — everything else falls through to the SPA
-    location ~ ^/(api|health|admin)(/|$) {
+    # Operational surfaces are available only through the backend's private
+    # LAN port (:8711 in production). Never expose them through the public UI.
+    location ^~ /admin {
+        return 404;
+    }
+
+    location ^~ /api/map {
+        return 404;
+    }
+
+    location ^~ /api/v1/workers {
+        return 404;
+    }
+
+    location ^~ /api/v1/settings {
+        return 404;
+    }
+
+    location = /api/v1/mixes/settings { return 404; }
+    location = /api/v1/instant-mix/settings { return 404; }
+    location = /api/v1/instant-mix/requests { return 404; }
+    location = /api/v1/albums/settings { return 404; }
+    location = /api/v1/navidrome/ping { return 404; }
+    location = /api/v1/navidrome/plugin-event { return 404; }
+    location = /api/v1/models/download-head-pack { return 404; }
+    location = /api/v1/index/rebuild { return 404; }
+
+    # These two job families are personal and remain available to a signed-in
+    # user. Exact locations take precedence over the general /jobs deny below.
+    location = /api/v1/jobs/albums-for-you {
+        proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 300s;
+    }
+
+    location = /api/v1/jobs/albums-for-you/status {
+        proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 300s;
+    }
+
+    location = /api/v1/jobs/flow-profile {
+        proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 300s;
+    }
+
+    location = /api/v1/jobs/flow-profile/status {
+        proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 300s;
+    }
+
+    location ^~ /api/v1/jobs {
+        return 404;
+    }
+
+    # Public application API — everything else falls through to the SPA.
+    location ~ ^/(api|health)(/|$) {
         proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

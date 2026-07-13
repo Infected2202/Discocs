@@ -145,6 +145,15 @@ server {
 }
 ```
 
+Public frontend nginx applies a second deployment boundary before requests
+reach FastAPI. It returns 404 for `/admin`, `/api/map`, worker endpoints and
+global job/settings operations. Only the per-user `albums-for-you` and
+`flow-profile` maintenance endpoints are allowed from the `/jobs` family.
+
+The backend port `:8711` remains the private operational endpoint for the
+legacy admin and remote analysis workers. Restrict it to localhost/private LAN
+with the host firewall; do not publish or forward it from the internet.
+
 ## Дальнейшие фазы (TODO)
 
 Фаза 1 (эта дока выше) приехала **тёмной** — гейт по умолчанию выключен и пока
