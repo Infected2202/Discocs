@@ -1171,16 +1171,21 @@ def fallback_to_essentia_embedding(
     results: list[dict[str, object]],
     failures: list[dict[str, object]],
     completed_task_ids: set[str],
+    embedder_cache: dict[str, DiscogsEffnetEmbedder],
 ) -> None:
     task_id = str(task["task_id"])
     try:
-        vector = np.asarray(
-            DiscogsEffnetEmbedder(
+        embedder = embedder_cache.get(model_name)
+        if embedder is None:
+            embedder = DiscogsEffnetEmbedder(
                 settings,
                 model_name,
                 batch_size=gpu_batch_size,
                 backend="essentia",
-            ).extract_track_vector(audio_path),
+            )
+            embedder_cache[model_name] = embedder
+        vector = np.asarray(
+            embedder.extract_track_vector(audio_path),
             dtype=np.float32,
         )
         append_embedding_result(results, task, model_name, vector)
@@ -1243,6 +1248,7 @@ class WorkerRuntime:
         self.max_tasks_before_exit = max_tasks_before_exit
         self.settings = settings
         self.embedders = embedders
+        self.essentia_fallback_embedders: dict[str, DiscogsEffnetEmbedder] = {}
         self.audio_feature_analyzer = audio_feature_analyzer
         self.head_pack_analyzer = head_pack_analyzer
         self.direct_embedding_pipeline = direct_embedding_pipeline
@@ -1474,6 +1480,7 @@ class WorkerRuntime:
                             self.results,
                             self.failures,
                             self.completed_task_ids,
+                            self.essentia_fallback_embedders,
                         )
                     else:
                         append_worker_failure(self.failures, task_id, exc)
@@ -1591,6 +1598,7 @@ class WorkerRuntime:
                     self.results,
                     self.failures,
                     self.completed_task_ids,
+                    self.essentia_fallback_embedders,
                 )
             else:
                 append_worker_failure(self.failures, task_id, exc)

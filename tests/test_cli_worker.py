@@ -52,6 +52,10 @@ def _task_payload(task_id: str, model_name: str, *, file_size: int = 100, mtime:
 class FakeEffnetEmbedder:
     """Stand-in for app.embedder.DiscogsEffnetEmbedder that needs no TensorFlow/Essentia."""
 
+    # Reset per test via `monkeypatch.setattr(FakeEffnetEmbedder, "instances", [])` -
+    # lets tests assert how many (and which backend) instances got constructed.
+    instances: list["FakeEffnetEmbedder"] = []
+
     def __init__(
         self,
         settings: Settings,
@@ -63,6 +67,7 @@ class FakeEffnetEmbedder:
         direct_patches: np.ndarray | None = None,
         direct_patches_error: Exception | None = None,
         direct_model_output_dim: int = 8,
+        direct_model_predict_error: Exception | None = None,
     ) -> None:
         self.settings = settings
         self.model_name = model_name
@@ -77,6 +82,8 @@ class FakeEffnetEmbedder:
         )
         self._direct_patches_error = direct_patches_error
         self._direct_model_output_dim = direct_model_output_dim
+        self._direct_model_predict_error = direct_model_predict_error
+        type(self).instances.append(self)
 
     def extract_track_vector(self, path: Path) -> np.ndarray:
         return self._vector
@@ -87,14 +94,17 @@ class FakeEffnetEmbedder:
         return self._direct_patches
 
     def direct_model(self) -> "_FakeDirectModel":
-        return _FakeDirectModel(self._direct_model_output_dim)
+        return _FakeDirectModel(self._direct_model_output_dim, predict_error=self._direct_model_predict_error)
 
 
 class _FakeDirectModel:
-    def __init__(self, output_dim: int) -> None:
+    def __init__(self, output_dim: int, *, predict_error: Exception | None = None) -> None:
         self.output_dim = output_dim
+        self.predict_error = predict_error
 
     def predict_patches_unpadded(self, patches: np.ndarray) -> np.ndarray:
+        if self.predict_error is not None:
+            raise self.predict_error
         return np.ones((len(patches), self.output_dim), dtype=np.float32)
 
 
@@ -328,3 +338,44 @@ def test_process_ready_embedding_batches_accumulates_until_target_patches(tmp_pa
     submitted_ids = {r["task_id"] for call in result_calls for r in call["results"]}
     assert submitted_ids == {"t1", "t2"}
     assert not any(path == "/api/v1/workers/failures" for path, _ in calls)
+
+
+def test_essentia_fallback_reuses_one_embedder_for_whole_failed_gpu_batch(tmp_path, monkeypatch):
+    """A whole-batch GPU predict failure falls two tasks back to essentia individually.
+
+    Before the fix, `fallback_to_essentia_embedding` built a brand-new
+    `DiscogsEffnetEmbedder` (and therefore a brand-new Essentia TensorFlow graph)
+    per failed task. On a broken GPU batch that meant one fresh graph per task in
+    the batch, torn down immediately after - which is what was flooding worker
+    logs with Essentia's "no network created" warning. The fallback embedder must
+    be built once per model and reused for every task in the batch.
+    """
+    monkeypatch.setattr(FakeEffnetEmbedder, "instances", [])
+    result, calls = run_worker(
+        monkeypatch,
+        tmp_path,
+        models=["discogs_multi"],
+        claim_sequence=[
+            [
+                _task_payload("t1", "discogs_multi"),
+                _task_payload("t2", "discogs_multi"),
+            ]
+        ],
+        embedding_backend="auto",
+        fake_embedder_is_effnet=True,
+        embedder_kwargs={
+            "direct_patches": np.zeros((2, 4, 4), dtype=np.float32),
+            "direct_model_predict_error": RuntimeError("gpu batch broke"),
+        },
+        extra_args=["--gpu-batch-size", "4", "--ready-batches", "1"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.count("backend=essentia-fallback") == 2
+    result_calls = [payload for path, payload in calls if path == "/api/v1/workers/results"]
+    submitted_ids = {r["task_id"] for call in result_calls for r in call["results"]}
+    assert submitted_ids == {"t1", "t2"}
+    assert not any(path == "/api/v1/workers/failures" for path, _ in calls)
+
+    essentia_instances = [inst for inst in FakeEffnetEmbedder.instances if inst.backend == "essentia"]
+    assert len(essentia_instances) == 1, "expected a single reused essentia fallback embedder"

@@ -13,6 +13,11 @@ from app.store import TrackFeature
 AUDIO_FEATURE_EXTRACTOR = "audio_features_v1"
 EMBEDDING_SAMPLE_RATE = 16000
 ESSENTIA_RHYTHM_SAMPLE_RATE = 44100
+# RhythmExtractor2013's OnsetDetectionGlobal step has a fixed-size internal
+# output buffer and raises "output buffer is full" on very long tracks (DJ
+# mixes, podcasts mistagged as a single track). BPM is stable early on, so a
+# representative prefix is enough — cap the input instead of failing the task.
+RHYTHM_MAX_DURATION_SECONDS = 1800
 logger = logging.getLogger(__name__)
 
 
@@ -72,9 +77,11 @@ def extract_rhythm_features(audio: np.ndarray) -> list[TrackFeature]:
         from essentia.standard import RhythmExtractor2013
     except ImportError as exc:
         raise RuntimeError("essentia-tensorflow is required for rhythm extraction") from exc
+    max_samples = RHYTHM_MAX_DURATION_SECONDS * ESSENTIA_RHYTHM_SAMPLE_RATE
+    rhythm_audio = audio[:max_samples] if audio.size > max_samples else audio
     bpm, _beats, beats_confidence, _estimates, _intervals = RhythmExtractor2013(
         method="multifeature"
-    )(audio)
+    )(rhythm_audio)
     return [
         TrackFeature(
             name="bpm",

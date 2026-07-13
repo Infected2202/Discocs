@@ -49,7 +49,17 @@ eval/results/
 .codex/config.toml
 .mcp.json
 .env.local
+.env
 
 # Personal Claude Code overrides (Jenkins API token, etc.) — never commit
 .claude/settings.local.json
+
+# Agent instruction files and local agent state
+AGENTS.md
+CLAUDE.md
+QWEN.md
+.agents/
+.codex/
+.claude/
+.qwen/
 

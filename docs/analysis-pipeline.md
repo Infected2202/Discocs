@@ -106,7 +106,11 @@ audio_features_v1
 
 Current feature families:
 
-- `RhythmExtractor2013`: BPM and confidence.
+- `RhythmExtractor2013`: BPM and confidence. Input is capped at
+  `RHYTHM_MAX_DURATION_SECONDS` (1800s / 30 min, see `app/audio_features.py`) —
+  its `OnsetDetectionGlobal` step has a fixed-size internal output buffer and
+  raises `output buffer is full` on very long tracks (DJ mixes, podcasts
+  mistagged as a single track). BPM is stable early on, so a prefix is enough.
 - `KeyExtractor`: key, scale, and key strength.
 - `LoudnessEBUR128`: integrated LUFS and loudness range.
 - `DynamicComplexity`: dynamic complexity and dynamic loudness.

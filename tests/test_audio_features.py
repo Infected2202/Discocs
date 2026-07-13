@@ -100,6 +100,58 @@ def test_loudness_extractor_converts_mono_audio_to_stereo(monkeypatch):
     ]
 
 
+def test_rhythm_extractor_truncates_long_audio_to_avoid_buffer_overflow(monkeypatch):
+    calls = []
+
+    class FakeRhythmExtractor2013:
+        def __init__(self, method):
+            assert method == "multifeature"
+
+        def __call__(self, audio):
+            calls.append(audio)
+            return (120.0, [], 0.8, [], [])
+
+    essentia_module = types.ModuleType("essentia")
+    standard_module = types.ModuleType("essentia.standard")
+    standard_module.RhythmExtractor2013 = FakeRhythmExtractor2013
+    monkeypatch.setitem(sys.modules, "essentia", essentia_module)
+    monkeypatch.setitem(sys.modules, "essentia.standard", standard_module)
+
+    max_samples = (
+        audio_features.RHYTHM_MAX_DURATION_SECONDS * audio_features.ESSENTIA_RHYTHM_SAMPLE_RATE
+    )
+    long_audio = np.ones(max_samples + 1000, dtype=np.float32)
+
+    features = audio_features.extract_rhythm_features(long_audio)
+
+    assert len(calls[0]) == max_samples
+    assert features[0].value == 120.0
+
+
+def test_rhythm_extractor_keeps_short_audio_untouched(monkeypatch):
+    calls = []
+
+    class FakeRhythmExtractor2013:
+        def __init__(self, method):
+            assert method == "multifeature"
+
+        def __call__(self, audio):
+            calls.append(audio)
+            return (95.0, [], 0.5, [], [])
+
+    essentia_module = types.ModuleType("essentia")
+    standard_module = types.ModuleType("essentia.standard")
+    standard_module.RhythmExtractor2013 = FakeRhythmExtractor2013
+    monkeypatch.setitem(sys.modules, "essentia", essentia_module)
+    monkeypatch.setitem(sys.modules, "essentia.standard", standard_module)
+
+    short_audio = np.ones(44100 * 30, dtype=np.float32)
+
+    audio_features.extract_rhythm_features(short_audio)
+
+    assert calls[0] is short_audio
+
+
 def test_dynamic_extractor_uses_essentia_rhythm_sample_rate(monkeypatch):
     calls = []
 

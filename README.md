@@ -154,16 +154,35 @@ run_worker.bat
 
 Docker GPU worker launch:
 
-```bash
-docker compose -f docker-compose.worker.yml up -d --build
+Set `DISCOCS_WORKER_SERVER` in the root `.env` (next to
+`docker-compose.worker.yml` — Compose reads it automatically for variable
+substitution) to the server URL reachable from the GPU machine, e.g.:
+
+```text
+DISCOCS_WORKER_SERVER=http://192.168.1.41:8711
 ```
+
+Build and run 5 worker instances:
+
+```bash
+docker compose -f docker-compose.worker.yml build
+docker compose -f docker-compose.worker.yml up -d --scale worker=5
+```
+
+Rebuild after every `app/` change that touches worker code (e.g. `app/cli.py`)
+— a stale image keeps calling old API paths against a moved/renamed backend
+route and fails with 404s that look like a server outage.
 
 The worker image installs the heavy Essentia and MuQ dependencies in a cached
 Docker layer. After the first build, normal `app/` code changes should only
-rebuild the small editable-install layer. For MuQ-MuLan on a single GPU, start
-with one worker container; scaling the same service to many containers can make
-throughput worse because each container loads its own PyTorch model and
-competes for the same CUDA device.
+rebuild the small editable-install layer.
+
+With `--embedding-backend auto`, a broken direct-TensorFlow batch falls back to
+the Essentia backend per task (see `fallback_to_essentia_embedding` in
+`app/cli.py`). The fallback embedder is built once per model and reused for
+every task in the failed batch — building a fresh one per task used to spam
+worker logs with Essentia's `No network created, or last created network has
+been deleted` warning on every throwaway TensorFlow graph.
 
 ## Basic Workflow
 
