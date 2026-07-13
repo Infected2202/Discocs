@@ -7,7 +7,7 @@ import PlasmaFBM from "@/components/player/PlasmaFBM"
 import { Button } from "@/components/ui/button"
 import { getSession, login } from "@/api/auth"
 import { ApiError } from "@/api/client"
-import { SUPPORTED_LANGUAGES, LANGUAGE_NAMES } from "@/i18n"
+import { SUPPORTED_LANGUAGES } from "@/i18n"
 import { cn } from "@/lib/utils"
 
 export default function LoginPage() {
@@ -69,6 +69,28 @@ export default function LoginPage() {
         <PlasmaFBM active accent="#3b6bff" speed={0.7} scale={1.0} opacity={0.9} />
       </div>
 
+      {/* Language toggle */}
+      <div className="fixed right-4 top-4 z-[2] flex items-center gap-1 text-xs">
+        {SUPPORTED_LANGUAGES.map((lang, i) => (
+          <span key={lang} className="flex items-center gap-1">
+            {i > 0 && <span className="text-muted-foreground/40">|</span>}
+            <button
+              type="button"
+              onClick={() => void i18n.changeLanguage(lang)}
+              aria-pressed={i18n.resolvedLanguage === lang}
+              className={cn(
+                "uppercase transition-colors",
+                i18n.resolvedLanguage === lang
+                  ? "font-medium text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {lang}
+            </button>
+          </span>
+        ))}
+      </div>
+
       {/* Centered card */}
       <div className="relative z-[1] flex h-full items-center justify-center px-6">
         <form
@@ -77,25 +99,6 @@ export default function LoginPage() {
         >
           <div className="mb-7 text-center text-xl font-semibold tracking-tight text-foreground">
             discocs
-          </div>
-
-          <div className="mb-5 flex justify-center gap-1.5">
-            {SUPPORTED_LANGUAGES.map((lang) => (
-              <button
-                key={lang}
-                type="button"
-                onClick={() => void i18n.changeLanguage(lang)}
-                aria-pressed={i18n.resolvedLanguage === lang}
-                className={cn(
-                  "rounded-full px-3 py-1 text-xs transition-colors",
-                  i18n.resolvedLanguage === lang
-                    ? "bg-foreground/10 text-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {LANGUAGE_NAMES[lang]}
-              </button>
-            ))}
           </div>
 
           <div className="flex flex-col gap-3">

@@ -65,7 +65,7 @@ describe("LoginPage", () => {
     renderLogin()
     await screen.findByRole("button", { name: /sign in/i })
 
-    fireEvent.click(screen.getByRole("button", { name: "Русский" }))
+    fireEvent.click(screen.getByRole("button", { name: "ru" }))
 
     expect(await screen.findByPlaceholderText("Логин")).toBeInTheDocument()
   })
