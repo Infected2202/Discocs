@@ -72,7 +72,25 @@ describe("Shelf", () => {
     const divider = container.querySelector('[aria-hidden="true"]')
     expect(divider).toBeInTheDocument()
     expect(divider).toHaveClass("flex-1")
-    expect(divider?.className).toMatch(/from-primary/)
+    expect(divider?.className).toMatch(/bg-primary\/50/)
+  })
+
+  it("omits the divider on a titleless shelf (e.g. the For You row) but still right-aligns its arrows", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <Shelf
+          items={Array.from({ length: 9 }, (_, i) => ({
+            id: i + 1,
+            type: "release" as const,
+            title: `Item ${i + 1}`,
+          }))}
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByRole("button", { name: "Next" })).toBeInTheDocument()
+    expect(container.querySelector('[aria-hidden="true"]')).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Next" }).parentElement).toHaveClass("ml-auto")
   })
 
   it("navigates to shelf page from title and more button", () => {

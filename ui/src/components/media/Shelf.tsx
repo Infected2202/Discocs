@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react"
 import MediaCard, { type MediaCardProps } from "./MediaCard"
 import { useColumns } from "@/hooks/useColumns"
 import { animateScroll } from "@/lib/animateScroll"
+import { cn } from "@/lib/utils"
 
 const SCROLL_DURATION = 500 // ms
 
@@ -73,11 +74,13 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
         {subtitle && (
           <span className="text-xs text-muted-foreground truncate hidden sm:inline">{subtitle}</span>
         )}
-        <div
-          aria-hidden="true"
-          className="h-px min-w-3 flex-1 bg-linear-to-r from-primary/50 to-transparent"
-        />
-        <div className="flex items-center gap-1 shrink-0">
+        {title && (
+          <div
+            aria-hidden="true"
+            className="h-px min-w-3 flex-1 bg-primary/50"
+          />
+        )}
+        <div className={cn("flex items-center gap-1 shrink-0", !title && "ml-auto")}>
           {shelfHref && (
             <button
               type="button"

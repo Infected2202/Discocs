@@ -408,10 +408,12 @@ for theming (`ui/src/index.css`):
   slices items into `cols`-wide pages and animates between them with
   prev/next arrow buttons; mobile falls back to native horizontal scroll
   with snap points. A "More" link routes to the full `/shelf/:key` grid page.
-  Every shelf header row (dashboard, artist discography groups, etc.) has a
-  thin accent-colored divider (`from-primary/50 to-transparent`) filling the
-  gap between the title/subtitle and the More/prev/next controls, tracking
-  the same dynamic per-track accent as the rest of the UI.
+  Every titled shelf header row (dashboard, artist discography groups, etc.)
+  has a thin accent-colored divider (`bg-primary/50`) filling the gap between
+  the title/subtitle and the More/prev/next controls, tracking the same
+  dynamic per-track accent as the rest of the UI. Titleless shelves (the
+  dashboard's For You row) omit the divider — its controls are right-aligned
+  with `ml-auto` instead.
 
 Some of the pixel-level claims above (exact card widths, exact heading sizes
 across all breakpoints) were spot-checked against current Tailwind classes
