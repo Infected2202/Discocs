@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next"
 import { Heart, History, Shuffle, Disc3, Plus, Compass, RotateCcw, Clock, Radio, ListMusic } from "lucide-react"
 import Shelf from "./Shelf"
 import { usePlayerStore } from "@/store/playerStore"
@@ -15,14 +16,18 @@ function cardArtwork(icon: React.ReactNode) {
   )
 }
 
-function flowSubtitle(flowAvailable: boolean, flowProfile: { available?: boolean } | undefined) {
+function flowSubtitle(
+  flowAvailable: boolean,
+  flowProfile: { available?: boolean } | undefined,
+  t: (key: string) => string,
+) {
   if (flowAvailable) {
-    return "Your personal stream"
+    return t("cards.flow.subtitlePersonal")
   }
   if (flowProfile) {
-    return "Build your profile first"
+    return t("cards.flow.subtitleBuildProfile")
   }
-  return "Loading…"
+  return t("cards.flow.subtitleLoading")
 }
 
 function buildFlowEnvelope(resp: Awaited<ReturnType<typeof startFlow>>): PlaybackEnvelope {
@@ -44,6 +49,7 @@ function buildFlowEnvelope(resp: Awaited<ReturnType<typeof startFlow>>): Playbac
 }
 
 export default function ForYouShelf() {
+  const { t } = useTranslation("dashboard")
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
   const { data: flowProfile } = useFlowProfile()
   const flowAvailable = flowProfile?.available === true
@@ -63,8 +69,8 @@ export default function ForYouShelf() {
     {
       id: "flow",
       type: "static",
-      title: "Flow",
-      subtitle: flowSubtitle(flowAvailable, flowProfile),
+      title: t("cards.flow.title"),
+      subtitle: flowSubtitle(flowAvailable, flowProfile, t),
       artworkNode: cardArtwork(<Radio size={72} />),
       variant: "shelf",
       disabled: !flowAvailable,
@@ -73,8 +79,8 @@ export default function ForYouShelf() {
     {
       id: "likes",
       type: "playlist",
-      title: "Liked Tracks",
-      subtitle: "Your favourites",
+      title: t("cards.likedTracks.title"),
+      subtitle: t("cards.likedTracks.subtitle"),
       artworkNode: cardArtwork(<Heart size={72} />),
       onPlay: () => playLikes().then(playFromEnvelope).catch(() => {}),
       variant: "shelf",
@@ -82,64 +88,64 @@ export default function ForYouShelf() {
     {
       id: "playlists",
       type: "shelf",
-      title: "Playlists",
-      subtitle: "Your collections",
+      title: t("cards.playlists.title"),
+      subtitle: t("cards.playlists.subtitle"),
       artworkNode: cardArtwork(<ListMusic size={72} />),
       variant: "shelf",
     },
     {
       id: "history",
       type: "shelf",
-      title: "Recently Played",
-      subtitle: "Your listening history",
+      title: t("cards.history.title"),
+      subtitle: t("cards.history.subtitle"),
       artworkNode: cardArtwork(<History size={72} />),
       variant: "shelf",
     },
     {
       id: "mixes_for_you",
       type: "shelf",
-      title: "Mixes For You",
-      subtitle: "AI-generated mixes",
+      title: t("cards.mixesForYou.title"),
+      subtitle: t("cards.mixesForYou.subtitle"),
       artworkNode: cardArtwork(<Shuffle size={72} />),
       variant: "shelf",
     },
     {
       id: "new_releases",
       type: "shelf",
-      title: "New Releases",
-      subtitle: "Fresh from your library",
+      title: t("cards.newReleases.title"),
+      subtitle: t("cards.newReleases.subtitle"),
       artworkNode: cardArtwork(<Disc3 size={72} />),
       variant: "shelf",
     },
     {
       id: "recently_added",
       type: "shelf",
-      title: "Recently Added",
-      subtitle: "New to your collection",
+      title: t("cards.recentlyAdded.title"),
+      subtitle: t("cards.recentlyAdded.subtitle"),
       artworkNode: cardArtwork(<Plus size={72} />),
       variant: "shelf",
     },
     {
       id: "discover_random",
       type: "shelf",
-      title: "Discover",
-      subtitle: "Something new",
+      title: t("cards.discover.title"),
+      subtitle: t("cards.discover.subtitle"),
       artworkNode: cardArtwork(<Compass size={72} />),
       variant: "shelf",
     },
     {
       id: "listen_again",
       type: "shelf",
-      title: "Listen Again",
-      subtitle: "Pick up where you left off",
+      title: t("cards.listenAgain.title"),
+      subtitle: t("cards.listenAgain.subtitle"),
       artworkNode: cardArtwork(<RotateCcw size={72} />),
       variant: "shelf",
     },
     {
       id: "long_time_no_listen",
       type: "shelf",
-      title: "Long Time No Listen",
-      subtitle: "Forgotten gems",
+      title: t("cards.longTimeNoListen.title"),
+      subtitle: t("cards.longTimeNoListen.subtitle"),
       artworkNode: cardArtwork(<Clock size={72} />),
       variant: "shelf",
     },

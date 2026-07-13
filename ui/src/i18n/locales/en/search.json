@@ -1,0 +1,12 @@
+{
+  "typeToSearch": "Type something to search your library.",
+  "noResults": "No results for \"{{query}}\".",
+  "tabs": {
+    "all": "All",
+    "artists": "Artists",
+    "releases": "Releases",
+    "tracks": "Tracks"
+  },
+  "topResult": "Top result",
+  "sourceLabel": "Search: {{query}}"
+}

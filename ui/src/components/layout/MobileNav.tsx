@@ -1,13 +1,9 @@
 import { useEffect } from "react"
 import { NavLink } from "react-router"
+import { useTranslation } from "react-i18next"
 import { Home, Search, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import ProfileButton from "@/components/profile/ProfileButton"
-
-const NAV = [
-  { to: "/", label: "Home", icon: Home, end: true },
-  { to: "/search", label: "Search", icon: Search, end: false },
-]
 
 interface MobileNavProps {
   readonly open: boolean
@@ -15,6 +11,11 @@ interface MobileNavProps {
 }
 
 export default function MobileNav({ open, onClose }: MobileNavProps) {
+  const { t } = useTranslation("nav")
+  const NAV = [
+    { to: "/", label: t("home"), icon: Home, end: true },
+    { to: "/search", label: t("search"), icon: Search, end: false },
+  ]
   useEffect(() => {
     if (open) document.body.style.overflow = "hidden"
     else document.body.style.overflow = ""

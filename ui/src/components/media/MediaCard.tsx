@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router"
+import { useTranslation } from "react-i18next"
 import { Play } from "lucide-react"
 import { cn } from "@/lib/utils"
 import ArtworkImage from "./ArtworkImage"
@@ -33,6 +34,7 @@ export default function MediaCard({
   id, type, title, subtitle, subtitleLinks, href, artwork, artworkNode, onPlay,
   className, variant = "default", disabled = false,
 }: MediaCardProps) {
+  const { t } = useTranslation("media")
   const navigate = useNavigate()
   const isShelf = variant === "shelf"
   const hasSubtitleLinks = (subtitleLinks?.length ?? 0) > 0
@@ -104,7 +106,7 @@ export default function MediaCard({
             type="button"
             onClick={handlePlay}
             className="absolute bottom-2 right-2 flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg opacity-0 translate-y-1 transition-all group-hover:opacity-100 group-hover:translate-y-0"
-            aria-label={`Play ${title}`}
+            aria-label={t("card.play", { title })}
           >
             <Play size={16} fill="currentColor" strokeWidth={0} />
           </button>
@@ -112,7 +114,7 @@ export default function MediaCard({
 
         {disabled && (
           <span className="absolute bottom-2 right-2 rounded bg-black/30 px-1.5 py-0.5 text-[10px] text-white/60">
-            Soon
+            {t("card.soon")}
           </span>
         )}
       </div>

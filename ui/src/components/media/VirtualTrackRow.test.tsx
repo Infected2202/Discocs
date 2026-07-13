@@ -117,13 +117,13 @@ describe("VirtualTrackRow", () => {
 
     expect(screen.queryByRole("link", { name: "Night Drive" })).not.toBeInTheDocument()
     expect(screen.getByText("Night Drive")).toBeInTheDocument()
-    expect(screen.getByText(/1,5/)).toBeInTheDocument()
-    expect(screen.getByText("прослушиваний")).toBeInTheDocument()
+    expect(screen.getByText(/1\.5/)).toBeInTheDocument()
+    expect(screen.getByText("plays")).toBeInTheDocument()
   })
 
   it("hides the metric for artist top tracks with zero plays", () => {
     renderRow({ track: makeTopTrack({ play_count: 0, release: null }) })
 
-    expect(screen.queryByText("прослушиваний")).not.toBeInTheDocument()
+    expect(screen.queryByText("plays")).not.toBeInTheDocument()
   })
 })

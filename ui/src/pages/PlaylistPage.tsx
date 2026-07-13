@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useParams, useNavigate } from "react-router"
+import { useTranslation } from "react-i18next"
 import { Play, ChevronLeft, Pencil, Trash2, X } from "lucide-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
@@ -55,6 +56,7 @@ function LikesArtwork() {
 }
 
 export default function PlaylistPage() {
+  const { t } = useTranslation("playlist")
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -102,7 +104,7 @@ export default function PlaylistPage() {
   if (error || !data) {
     return (
       <div className="p-8">
-        <p className="text-destructive text-sm">Playlist not found.</p>
+        <p className="text-destructive text-sm">{t("notFound")}</p>
       </div>
     )
   }
@@ -132,7 +134,7 @@ export default function PlaylistPage() {
   }
 
   function confirmDelete() {
-    if (globalThis.confirm(`Delete playlist "${data!.title}"?`)) handleDelete()
+    if (globalThis.confirm(t("deleteConfirm", { title: data!.title }))) handleDelete()
   }
 
   return (
@@ -145,7 +147,7 @@ export default function PlaylistPage() {
             className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             <ChevronLeft size={16} />
-            Back
+            {t("actions.back", { ns: "common" })}
           </button>
         }
         artwork={
@@ -161,26 +163,26 @@ export default function PlaylistPage() {
             />
           )
         }
-        kicker="Playlist"
+        kicker={t("playlistKicker")}
         title={data.title}
         truncateTitle={false}
         meta={
           <>
             {detail?.description && <p>{detail.description}</p>}
-            <p className={detail?.description ? "mt-1" : undefined}>{tracks.length} tracks</p>
+            <p className={detail?.description ? "mt-1" : undefined}>{t("trackCount", { count: tracks.length })}</p>
           </>
         }
         actions={
           <>
             <Button size="sm" onClick={() => playPlaylistFrom()} className="gap-2">
               <Play size={14} fill="currentColor" strokeWidth={0} />
-              Play
+              {t("play")}
             </Button>
             {editable && (
               <>
                 <Button size="sm" variant="outline" onClick={handleEdit} className="gap-2">
                   <Pencil size={14} />
-                  Edit
+                  {t("edit")}
                 </Button>
                 <Button
                   size="sm"
@@ -190,7 +192,7 @@ export default function PlaylistPage() {
                   className="gap-2 text-destructive hover:text-destructive"
                 >
                   <Trash2 size={14} />
-                  Delete
+                  {t("delete")}
                 </Button>
               </>
             )}
@@ -202,12 +204,12 @@ export default function PlaylistPage() {
       {editable && selectedIds.size > 0 && (
         <div className="px-4 sm:px-6">
           <div className="flex items-center gap-3 rounded-md bg-muted/60 px-4 py-2 text-sm">
-            <span>{selectedIds.size} selected</span>
+            <span>{t("selectedCount", { count: selectedIds.size })}</span>
             <button
               onClick={() => removeSelected([...selectedIds])}
               disabled={removing}
               className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
-              aria-label="Remove selected tracks"
+              aria-label={t("removeSelectedTracks")}
             >
               <Trash2 size={15} />
             </button>
@@ -216,7 +218,7 @@ export default function PlaylistPage() {
               className="ml-auto flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
             >
               <X size={14} />
-              Cancel
+              {t("actions.cancel", { ns: "common" })}
             </button>
           </div>
         </div>

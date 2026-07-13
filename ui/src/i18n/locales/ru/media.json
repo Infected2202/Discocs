@@ -1,0 +1,29 @@
+{
+  "like": "Нравится",
+  "play": "Воспроизвести",
+  "pause": "Пауза",
+  "selectTrack": "Выбрать «{{title}}»",
+  "plays": "прослушиваний",
+  "trackMenu": {
+    "trackOptions": "Действия с треком",
+    "play": "Воспроизвести",
+    "playNext": "Следующим",
+    "instantMix": "Мгновенный микс",
+    "addToPlaylist": "Добавить в плейлист",
+    "goTo": "Перейти к «{{name}}»",
+    "removeFromQueue": "Убрать из очереди"
+  },
+  "shelf": {
+    "more": "Ещё",
+    "previous": "Назад",
+    "next": "Вперёд"
+  },
+  "card": {
+    "play": "Воспроизвести «{{title}}»",
+    "soon": "Скоро"
+  },
+  "itemCount_one": "{{count}} элемент",
+  "itemCount_few": "{{count}} элемента",
+  "itemCount_many": "{{count}} элементов",
+  "itemCount_other": "{{count}} элемента"
+}

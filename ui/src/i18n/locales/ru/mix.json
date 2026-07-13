@@ -1,0 +1,9 @@
+{
+  "notFound": "Микс не найден.",
+  "generatedMix": "Сгенерированный микс",
+  "trackCount_one": "{{count}} трек",
+  "trackCount_few": "{{count}} трека",
+  "trackCount_many": "{{count}} треков",
+  "trackCount_other": "{{count}} трека",
+  "play": "Воспроизвести"
+}

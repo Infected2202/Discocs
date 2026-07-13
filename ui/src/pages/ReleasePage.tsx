@@ -1,4 +1,5 @@
 import { Link, useParams } from "react-router"
+import { useTranslation } from "react-i18next"
 import { Play, Shuffle } from "lucide-react"
 import { useRelease, useReleaseTracks, useReleaseRelated, useReleaseRecommendations } from "@/api/hooks/useRelease"
 import { Button } from "@/components/ui/button"
@@ -11,12 +12,12 @@ import Shelf from "@/components/media/Shelf"
 import { usePlayerStore } from "@/store/playerStore"
 import type { ReleaseSummary } from "@/api/types"
 
-function formatDuration(seconds: number | null | undefined): string {
+function formatDuration(seconds: number | null | undefined, t: (key: string, opts?: object) => string): string {
   if (!seconds) return ""
   const h = Math.floor(seconds / 3600)
   const m = Math.floor((seconds % 3600) / 60)
-  if (h > 0) return `${h}h ${m}m`
-  return `${m} min`
+  if (h > 0) return t("duration.hoursMinutes", { hours: h, minutes: m })
+  return t("duration.minutes", { minutes: m })
 }
 
 function ReleasePageSkeleton() {
@@ -44,6 +45,7 @@ function ReleasePageSkeleton() {
 }
 
 export default function ReleasePage() {
+  const { t } = useTranslation("release")
   const { id } = useParams<{ id: string }>()
   const releaseId = Number(id)
   const { data: releaseData, isLoading: relLoading, error } = useRelease(releaseId)
@@ -58,7 +60,7 @@ export default function ReleasePage() {
   if (error || !releaseData) {
     return (
       <div className="p-8">
-        <p className="text-destructive text-sm">Release not found.</p>
+        <p className="text-destructive text-sm">{t("notFound")}</p>
       </div>
     )
   }
@@ -94,8 +96,8 @@ export default function ReleasePage() {
               </span>
             ))}
             {release.release_year && <span>· {release.release_year}</span>}
-            {release.track_count > 0 && <span>· {release.track_count} tracks</span>}
-            {release.duration && <span>· {formatDuration(release.duration)}</span>}
+            {release.track_count > 0 && <span>· {t("trackCount", { count: release.track_count })}</span>}
+            {release.duration && <span>· {formatDuration(release.duration, t)}</span>}
           </div>
         }
         actions={
@@ -106,7 +108,7 @@ export default function ReleasePage() {
               className="gap-2"
             >
               <Play size={14} fill="currentColor" strokeWidth={0} />
-              Play
+              {t("play")}
             </Button>
             <Button
               size="sm"
@@ -118,7 +120,7 @@ export default function ReleasePage() {
               className="gap-2"
             >
               <Shuffle size={14} />
-              Shuffle
+              {t("shuffle")}
             </Button>
             <LikeButton entity="album" id={releaseId} variant="control" size={18} />
           </>
@@ -139,7 +141,7 @@ export default function ReleasePage() {
       {/* Related discography */}
       {related.length > 0 && (
         <Shelf
-          title="More from these artists"
+          title={t("moreFromArtists")}
           items={related
             .filter((r) => r.id !== releaseId)
             .map((r) => ({
@@ -156,7 +158,7 @@ export default function ReleasePage() {
       {/* Recommended albums */}
       {recsData?.available && recsData.items.length > 0 && (
         <Shelf
-          title="Recommended Albums"
+          title={t("recommendedAlbums")}
           items={recsData.items.map((item) => ({
             id: item.entity_id,
             type: "release" as const,

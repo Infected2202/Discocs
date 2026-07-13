@@ -4,7 +4,7 @@ Extracted from app/main.py.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR
 from app.state import (
@@ -215,6 +215,14 @@ class InstantMixSettingsRequest(BaseModel):
     max_per_artist: int = Field(default=2, ge=1, le=100)
     exclude_same_album: bool = True
     count_collaboration_artists: bool = True
+
+
+class UserSettingsPatchRequest(BaseModel):
+    """Partial update for per-user settings; unset fields are left untouched."""
+
+    language: str | None = Field(default=None, pattern="^(en|ru)$")
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class GeneratedMixSettingsRequest(BaseModel):

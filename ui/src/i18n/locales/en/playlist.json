@@ -1,0 +1,35 @@
+{
+  "notFound": "Playlist not found.",
+  "playlistKicker": "Playlist",
+  "trackCount_one": "{{count}} track",
+  "trackCount_other": "{{count}} tracks",
+  "play": "Play",
+  "edit": "Edit",
+  "delete": "Delete",
+  "deleteConfirm": "Delete playlist \"{{title}}\"?",
+  "selectedCount_one": "{{count}} selected",
+  "selectedCount_other": "{{count}} selected",
+  "removeSelectedTracks": "Remove selected tracks",
+  "createDialog": {
+    "createTitle": "New playlist",
+    "editTitle": "Edit playlist",
+    "nameLabel": "Name",
+    "namePlaceholder": "Playlist name",
+    "descriptionLabel": "Description",
+    "descriptionPlaceholder": "Optional description",
+    "visibilityLabel": "Visibility",
+    "visibilityPrivate": "Private",
+    "visibilityPublic": "Public",
+    "create": "Create"
+  },
+  "addToDialog": {
+    "title": "Add to playlist",
+    "loading": "Loading playlists…",
+    "recent": "Recent",
+    "allPlaylists": "All playlists",
+    "empty": "No playlists yet.",
+    "trackCount_one": "{{count}} track",
+    "trackCount_other": "{{count}} tracks",
+    "newPlaylist": "New playlist"
+  }
+}

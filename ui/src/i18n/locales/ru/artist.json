@@ -1,0 +1,17 @@
+{
+  "notFound": "Артист не найден.",
+  "play": "Воспроизвести",
+  "shuffle": "Перемешать",
+  "trackCount_one": "{{formatted}} трек",
+  "trackCount_few": "{{formatted}} трека",
+  "trackCount_many": "{{formatted}} треков",
+  "trackCount_other": "{{formatted}} трека",
+  "releaseCount_one": "{{formatted}} релиз",
+  "releaseCount_few": "{{formatted}} релиза",
+  "releaseCount_many": "{{formatted}} релизов",
+  "releaseCount_other": "{{formatted}} релиза",
+  "playCount_one": "{{formatted}} прослушивание",
+  "playCount_few": "{{formatted}} прослушивания",
+  "playCount_many": "{{formatted}} прослушиваний",
+  "playCount_other": "{{formatted}} прослушивания"
+}

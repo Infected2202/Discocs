@@ -1,0 +1,27 @@
+{
+  "like": "Like",
+  "play": "Play",
+  "pause": "Pause",
+  "selectTrack": "Select {{title}}",
+  "plays": "plays",
+  "trackMenu": {
+    "trackOptions": "Track options",
+    "play": "Play",
+    "playNext": "Play next",
+    "instantMix": "Instant mix",
+    "addToPlaylist": "Add to playlist",
+    "goTo": "Go to {{name}}",
+    "removeFromQueue": "Remove from queue"
+  },
+  "shelf": {
+    "more": "More",
+    "previous": "Previous",
+    "next": "Next"
+  },
+  "card": {
+    "play": "Play {{title}}",
+    "soon": "Soon"
+  },
+  "itemCount_one": "{{count}} item",
+  "itemCount_other": "{{count}} items"
+}

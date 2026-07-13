@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useTranslation } from "react-i18next"
 import {
   Dialog,
   DialogContent,
@@ -14,6 +15,7 @@ const FIELD_CLASS =
   "w-full rounded-md bg-muted px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
 
 export default function CreatePlaylistDialog() {
+  const { t } = useTranslation("playlist")
   const options = useUIStore((s) => s.createPlaylistOptions)
   const close = useUIStore((s) => s.closeCreatePlaylist)
   const queryClient = useQueryClient()
@@ -74,50 +76,50 @@ export default function CreatePlaylistDialog() {
     <Dialog open={options !== null} onOpenChange={(open) => { if (!open) close() }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{editing ? "Edit playlist" : "New playlist"}</DialogTitle>
+          <DialogTitle>{editing ? t("createDialog.editTitle") : t("createDialog.createTitle")}</DialogTitle>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <label className="flex flex-col gap-1.5 text-sm">
-            <span className="text-muted-foreground">Name</span>
+            <span className="text-muted-foreground">{t("createDialog.nameLabel")}</span>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Playlist name"
+              placeholder={t("createDialog.namePlaceholder")}
               className={FIELD_CLASS}
               autoFocus
             />
           </label>
 
           <label className="flex flex-col gap-1.5 text-sm">
-            <span className="text-muted-foreground">Description</span>
+            <span className="text-muted-foreground">{t("createDialog.descriptionLabel")}</span>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Optional description"
+              placeholder={t("createDialog.descriptionPlaceholder")}
               rows={3}
               className={`${FIELD_CLASS} resize-none`}
             />
           </label>
 
           <label className="flex flex-col gap-1.5 text-sm">
-            <span className="text-muted-foreground">Visibility</span>
+            <span className="text-muted-foreground">{t("createDialog.visibilityLabel")}</span>
             <select
               value={visibility}
               onChange={(e) => setVisibility(e.target.value as "public" | "private")}
               className={FIELD_CLASS}
             >
-              <option value="private">Private</option>
-              <option value="public">Public</option>
+              <option value="private">{t("createDialog.visibilityPrivate")}</option>
+              <option value="public">{t("createDialog.visibilityPublic")}</option>
             </select>
           </label>
 
           <div className="flex justify-end gap-2 pt-1">
             <Button type="button" variant="outline" onClick={close}>
-              Cancel
+              {t("actions.cancel", { ns: "common" })}
             </Button>
             <Button type="submit" disabled={!trimmedTitle || isPending}>
-              {editing ? "Save" : "Create"}
+              {editing ? t("actions.save", { ns: "common" }) : t("createDialog.create")}
             </Button>
           </div>
         </form>

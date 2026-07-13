@@ -1,0 +1,20 @@
+{
+  "loadError": "Failed to load dashboard: {{message}}",
+  "cards": {
+    "flow": {
+      "title": "Flow",
+      "subtitlePersonal": "Your personal stream",
+      "subtitleBuildProfile": "Build your profile first",
+      "subtitleLoading": "Loading…"
+    },
+    "likedTracks": { "title": "Liked Tracks", "subtitle": "Your favourites" },
+    "playlists": { "title": "Playlists", "subtitle": "Your collections" },
+    "history": { "title": "Recently Played", "subtitle": "Your listening history" },
+    "mixesForYou": { "title": "Mixes For You", "subtitle": "AI-generated mixes" },
+    "newReleases": { "title": "New Releases", "subtitle": "Fresh from your library" },
+    "recentlyAdded": { "title": "Recently Added", "subtitle": "New to your collection" },
+    "discover": { "title": "Discover", "subtitle": "Something new" },
+    "listenAgain": { "title": "Listen Again", "subtitle": "Pick up where you left off" },
+    "longTimeNoListen": { "title": "Long Time No Listen", "subtitle": "Forgotten gems" }
+  }
+}

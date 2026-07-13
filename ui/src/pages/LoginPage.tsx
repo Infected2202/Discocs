@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { useLocation, useNavigate } from "react-router"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useTranslation } from "react-i18next"
 import { User, Lock, ArrowRight, Loader2 } from "lucide-react"
 import PlasmaFBM from "@/components/player/PlasmaFBM"
 import { Button } from "@/components/ui/button"
@@ -8,6 +9,7 @@ import { getSession, login } from "@/api/auth"
 import { ApiError } from "@/api/client"
 
 export default function LoginPage() {
+  const { t } = useTranslation("auth")
   const navigate = useNavigate()
   const location = useLocation()
   const queryClient = useQueryClient()
@@ -48,11 +50,11 @@ export default function LoginPage() {
       navigate(from, { replace: true })
     } catch (err) {
       if (err instanceof ApiError && err.status === 429) {
-        setError("Слишком много попыток. Попробуйте позже.")
+        setError(t("errors.tooManyAttempts"))
       } else if (err instanceof ApiError && err.status === 401) {
-        setError("Неверный логин или пароль.")
+        setError(t("errors.invalidCredentials"))
       } else {
-        setError("Сервис недоступен. Попробуйте ещё раз.")
+        setError(t("errors.serviceUnavailable"))
       }
       setSubmitting(false)
     }
@@ -79,20 +81,20 @@ export default function LoginPage() {
             <Field
               icon={<User className="size-4" />}
               type="text"
-              placeholder="Логин"
+              placeholder={t("usernamePlaceholder")}
               autoComplete="username"
               value={username}
               onChange={setUsername}
-              ariaLabel="Логин Navidrome"
+              ariaLabel={t("usernameAriaLabel")}
             />
             <Field
               icon={<Lock className="size-4" />}
               type="password"
-              placeholder="Пароль"
+              placeholder={t("passwordPlaceholder")}
               autoComplete="current-password"
               value={password}
               onChange={setPassword}
-              ariaLabel="Пароль Navidrome"
+              ariaLabel={t("passwordAriaLabel")}
             />
           </div>
 
@@ -112,7 +114,7 @@ export default function LoginPage() {
               <Loader2 className="size-4 animate-spin" />
             ) : (
               <>
-                Войти
+                {t("signIn")}
                 <ArrowRight className="size-4" />
               </>
             )}

@@ -1,0 +1,13 @@
+{
+  "notFound": "Release not found.",
+  "play": "Play",
+  "shuffle": "Shuffle",
+  "trackCount_one": "{{count}} track",
+  "trackCount_other": "{{count}} tracks",
+  "duration": {
+    "hoursMinutes": "{{hours}}h {{minutes}}m",
+    "minutes": "{{minutes}} min"
+  },
+  "moreFromArtists": "More from these artists",
+  "recommendedAlbums": "Recommended Albums"
+}

@@ -1,14 +1,15 @@
 import { NavLink } from "react-router"
+import { useTranslation } from "react-i18next"
 import { Home, Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 import ProfileButton from "@/components/profile/ProfileButton"
 
-const NAV = [
-  { to: "/", label: "Home", icon: Home, end: true },
-  { to: "/search", label: "Search", icon: Search, end: false },
-]
-
 export default function MobileTabBar() {
+  const { t } = useTranslation("nav")
+  const NAV = [
+    { to: "/", label: t("home"), icon: Home, end: true },
+    { to: "/search", label: t("search"), icon: Search, end: false },
+  ]
   return (
     <nav className="md:hidden fixed bottom-[92px] left-0 right-0 z-30 flex items-center justify-around h-14 bg-card border-t border-border px-2">
       {NAV.map(({ to, label, icon: Icon, end }) => (

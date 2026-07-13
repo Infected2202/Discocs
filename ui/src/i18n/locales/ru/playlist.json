@@ -1,0 +1,41 @@
+{
+  "notFound": "Плейлист не найден.",
+  "playlistKicker": "Плейлист",
+  "trackCount_one": "{{count}} трек",
+  "trackCount_few": "{{count}} трека",
+  "trackCount_many": "{{count}} треков",
+  "trackCount_other": "{{count}} трека",
+  "play": "Воспроизвести",
+  "edit": "Изменить",
+  "delete": "Удалить",
+  "deleteConfirm": "Удалить плейлист «{{title}}»?",
+  "selectedCount_one": "Выбрано {{count}}",
+  "selectedCount_few": "Выбрано {{count}}",
+  "selectedCount_many": "Выбрано {{count}}",
+  "selectedCount_other": "Выбрано {{count}}",
+  "removeSelectedTracks": "Убрать выбранные треки",
+  "createDialog": {
+    "createTitle": "Новый плейлист",
+    "editTitle": "Изменить плейлист",
+    "nameLabel": "Название",
+    "namePlaceholder": "Название плейлиста",
+    "descriptionLabel": "Описание",
+    "descriptionPlaceholder": "Описание (необязательно)",
+    "visibilityLabel": "Доступность",
+    "visibilityPrivate": "Приватный",
+    "visibilityPublic": "Публичный",
+    "create": "Создать"
+  },
+  "addToDialog": {
+    "title": "Добавить в плейлист",
+    "loading": "Загрузка плейлистов…",
+    "recent": "Недавние",
+    "allPlaylists": "Все плейлисты",
+    "empty": "Плейлистов пока нет.",
+    "trackCount_one": "{{count}} трек",
+    "trackCount_few": "{{count}} трека",
+    "trackCount_many": "{{count}} треков",
+    "trackCount_other": "{{count}} трека",
+    "newPlaylist": "Новый плейлист"
+  }
+}

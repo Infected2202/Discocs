@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { Link } from "react-router"
+import { useTranslation } from "react-i18next"
 import { Play, Pause, Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 import ArtworkImage from "./ArtworkImage"
@@ -20,16 +21,15 @@ function formatDuration(seconds: number | null | undefined): string {
   return `${m}:${String(s).padStart(2, "0")}`
 }
 
-const playCountFormatter = new Intl.NumberFormat("ru", { notation: "compact", compactDisplay: "short" })
-
 /** Trailing metric: play count for artist top tracks, else track duration. */
-function renderMetric(track: TrackRowTrack): React.ReactNode {
+function renderMetric(track: TrackRowTrack, language: string, playsLabel: string): React.ReactNode {
   if ("play_count" in track) {
     if (track.play_count <= 0) return null
+    const formatter = new Intl.NumberFormat(language, { notation: "compact", compactDisplay: "short" })
     return (
       <>
-        {playCountFormatter.format(track.play_count)}
-        <span className="hidden sm:inline"> прослушиваний</span>
+        {formatter.format(track.play_count)}
+        <span className="hidden sm:inline"> {playsLabel}</span>
       </>
     )
   }
@@ -95,6 +95,7 @@ export default function VirtualTrackRow({
   onToggleSelect,
   onPlayTrack,
 }: VirtualTrackRowProps) {
+  const { t, i18n } = useTranslation("media")
   const [hovered, setHovered] = useState(false)
 
   const currentTrackId = usePlayerStore((s) => s.currentTrackId)
@@ -139,7 +140,7 @@ export default function VirtualTrackRow({
         <button
           onClick={handlePlay}
           className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:text-foreground mx-auto"
-          aria-label={isPlaying ? "Pause" : "Play"}
+          aria-label={isPlaying ? t("pause") : t("play")}
         >
           {hovered || isActive ? (
             isPlaying ? (
@@ -221,7 +222,7 @@ export default function VirtualTrackRow({
 
       {/* Metric: play count (artist top tracks) or duration */}
       <div className="py-2 pr-2 text-right text-xs text-muted-foreground tabular-nums whitespace-nowrap">
-        {renderMetric(track)}
+        {renderMetric(track, i18n.language, t("plays"))}
       </div>
 
       {/* Like */}
@@ -242,7 +243,7 @@ export default function VirtualTrackRow({
               onClick={(e) => { e.stopPropagation(); onToggleSelect?.(track.id) }}
               role="checkbox"
               aria-checked={selected}
-              aria-label={`Select ${track.title}`}
+              aria-label={t("selectTrack", { title: track.title })}
               className="flex h-7 w-7 items-center justify-center mx-auto"
             >
               <span

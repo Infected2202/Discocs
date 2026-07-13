@@ -1,4 +1,5 @@
 import { useParams } from "react-router"
+import { useTranslation } from "react-i18next"
 import { Play, Bookmark } from "lucide-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useMix } from "@/api/hooks/useMix"
@@ -36,6 +37,7 @@ function MixPageSkeleton() {
 }
 
 export default function MixPage() {
+  const { t, i18n } = useTranslation("mix")
   const { id } = useParams<{ id: string }>()
   const mixId = id!
   const queryClient = useQueryClient()
@@ -68,7 +70,7 @@ export default function MixPage() {
   if (error || !mix) {
     return (
       <div className="p-8">
-        <p className="text-destructive text-sm">Mix not found.</p>
+        <p className="text-destructive text-sm">{t("notFound")}</p>
       </div>
     )
   }
@@ -92,24 +94,24 @@ export default function MixPage() {
             fallbackLetter="M"
           />
         }
-        kicker="Generated mix"
+        kicker={t("generatedMix")}
         title={mix.title}
         meta={
           <>
-            {tracks.length} tracks
-            {mix.created_at && ` · ${new Date(mix.created_at).toLocaleDateString()}`}
+            {t("trackCount", { count: tracks.length })}
+            {mix.created_at && ` · ${new Date(mix.created_at).toLocaleDateString(i18n.language)}`}
           </>
         }
         actions={
           <>
             <Button size="sm" onClick={() => playMixFrom()} className="gap-2">
               <Play size={14} fill="currentColor" strokeWidth={0} />
-              Play
+              {t("play")}
             </Button>
             {!isSaved && (
               <Button size="sm" variant="outline" onClick={handleSave} className="gap-2">
                 <Bookmark size={14} />
-                Save
+                {t("actions.save", { ns: "common" })}
               </Button>
             )}
           </>

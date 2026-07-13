@@ -1,0 +1,20 @@
+{
+  "loadError": "Не удалось загрузить главную: {{message}}",
+  "cards": {
+    "flow": {
+      "title": "Flow",
+      "subtitlePersonal": "Ваш персональный поток",
+      "subtitleBuildProfile": "Сначала соберите профиль",
+      "subtitleLoading": "Загрузка…"
+    },
+    "likedTracks": { "title": "Понравившиеся треки", "subtitle": "Ваши избранные" },
+    "playlists": { "title": "Плейлисты", "subtitle": "Ваши коллекции" },
+    "history": { "title": "Недавно прослушанное", "subtitle": "История прослушивания" },
+    "mixesForYou": { "title": "Миксы для вас", "subtitle": "Миксы, сгенерированные ИИ" },
+    "newReleases": { "title": "Новые релизы", "subtitle": "Свежее в вашей библиотеке" },
+    "recentlyAdded": { "title": "Недавно добавленное", "subtitle": "Новое в коллекции" },
+    "discover": { "title": "Открытия", "subtitle": "Что-то новое" },
+    "listenAgain": { "title": "Слушать снова", "subtitle": "Продолжить с того места, где остановились" },
+    "longTimeNoListen": { "title": "Давно не слушали", "subtitle": "Забытые жемчужины" }
+  }
+}

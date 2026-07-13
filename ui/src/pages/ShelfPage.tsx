@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
 import { useParams, useNavigate } from "react-router"
+import { useTranslation } from "react-i18next"
 import { ChevronLeft } from "lucide-react"
 import { useShelf } from "@/api/hooks/useShelf"
 import { usePlayerStore } from "@/store/playerStore"
@@ -39,6 +40,7 @@ function GridSkeleton() {
 }
 
 export default function ShelfPage() {
+  const { t } = useTranslation("media")
   const { key = "" } = useParams<{ key: string }>()
   const navigate = useNavigate()
   const playSource = usePlayerStore((s) => s.playSource)
@@ -89,13 +91,13 @@ export default function ShelfPage() {
         <button
           onClick={() => navigate(-1)}
           className="flex items-center justify-center w-8 h-8 rounded-full hover:bg-muted transition-colors"
-          aria-label="Back"
+          aria-label={t("actions.back", { ns: "common" })}
         >
           <ChevronLeft size={18} />
         </button>
         <h1 className="text-xl font-semibold">{title}</h1>
         {firstPage && (
-          <span className="text-sm text-muted-foreground">{firstPage.total} items</span>
+          <span className="text-sm text-muted-foreground">{t("itemCount", { count: firstPage.total })}</span>
         )}
       </div>
 

@@ -325,6 +325,12 @@ schema:
 - `users` — application user identity (Phase 2 multiuser): internal `id`,
   unique `navidrome_username`, `created_at`, `last_login_at`. Auto-created on
   first successful login; the `id` is the FK used to scope personal tables.
+- `user_settings` — generic per-user key/value preferences: `(user_id, key)`
+  PK, `value` (opaque string), `updated_at`. Currently holds `language`
+  (`en`/`ru`, see `docs/web-ui.md` §Internationalization); new settings are
+  new keys, not new columns or migrations. Validation of which keys/values are
+  accepted lives at the API layer (`UserSettingsPatchRequest`,
+  `app/schemas/requests.py`), not in the schema.
 
 ## Multiuser scoping (Phase 2, complete)
 

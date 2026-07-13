@@ -1,0 +1,17 @@
+{
+  "actions": {
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "close": "Close",
+    "confirm": "Confirm",
+    "retry": "Retry",
+    "tryAgain": "Try again",
+    "back": "Back"
+  },
+  "status": {
+    "loading": "Loading…",
+    "error": "Something went wrong",
+    "unknown": "Unknown"
+  }
+}

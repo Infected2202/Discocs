@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router"
+import { useTranslation } from "react-i18next"
 import {
   Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat1, Infinity, Volume2, VolumeX, Volume1,
@@ -151,6 +152,7 @@ function VolumeControl({
 }
 
 export default function PlayerBar() {
+  const { t } = useTranslation("player")
   const currentTrack    = usePlayerStore((s) => s.currentTrack)
   const playbackState   = usePlayerStore((s) => s.playbackState)
   const volume          = usePlayerStore((s) => s.volume)
@@ -289,7 +291,7 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
         {/* ── LEFT: transport + time ── */}
         <div className="flex items-center gap-1 shrink-0">
           <SkipPreview track={prevTrack}>
-            <button onClick={() => skipPrevious()} disabled={!currentTrack} className={skipBtn} title="Previous track">
+            <button onClick={() => skipPrevious()} disabled={!currentTrack} className={skipBtn} title={t("previousTrack")}>
               <SkipBack size={18} />
             </button>
           </SkipPreview>
@@ -309,7 +311,7 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
           </button>
 
           <SkipPreview track={nextTrack}>
-            <button onClick={() => skipNext()} disabled={!currentTrack} className={skipBtn} title="Next track">
+            <button onClick={() => skipNext()} disabled={!currentTrack} className={skipBtn} title={t("nextTrack")}>
               <SkipForward size={18} />
             </button>
           </SkipPreview>
@@ -349,7 +351,7 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
           <button
             onClick={() => toggleRepeatOne()}
             className={cn(iconBtn, repeatOne && activeBtn, "hidden md:flex")}
-            title="Repeat one"
+            title={t("repeatOne")}
           >
             <Repeat1 size={16} />
           </button>
@@ -357,7 +359,7 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
           <button
             onClick={() => toggleShuffle()}
             className={cn(iconBtn, shuffle && activeBtn, "hidden md:flex")}
-            title="Shuffle"
+            title={t("shuffle")}
           >
             <Shuffle size={16} />
           </button>
@@ -365,7 +367,7 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
           <button
             onClick={() => toggleAutoplay()}
             className={cn(iconBtn, autoplay && activeBtn, "hidden md:flex")}
-            title="Autoplay"
+            title={t("autoplay")}
           >
             <Infinity size={16} />
           </button>
@@ -373,7 +375,7 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
           <button
             onClick={toggleExpanded}
             className={iconBtn}
-            title="Expand player"
+            title={t("expandPlayer")}
           >
             <ChevronUp size={16} />
           </button>
@@ -384,6 +386,7 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
 }
 
 function TrackMoreMenu({ trackId }: { readonly trackId: number }) {
+  const { t } = useTranslation("player")
   async function handleInstantMix() {
     const { apiFetch } = await import("@/api/client")
     const { usePlayerStore: store } = await import("@/store/playerStore")
@@ -407,7 +410,7 @@ function TrackMoreMenu({ trackId }: { readonly trackId: number }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuItem onClick={handleInstantMix}>
-          Instant mix
+          {t("instantMix")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -421,6 +424,7 @@ function TrackDetails({
   readonly snapshot: PlayerBarTrackSnapshot
   readonly iconBtn: string
 }) {
+  const { t } = useTranslation("player")
   const recordEvent = usePlayerStore((s) => s.recordEvent)
   const { track, trackId } = snapshot
 
@@ -475,7 +479,7 @@ function TrackDetails({
             </p>
           </>
         ) : (
-          <p className="text-sm text-muted-foreground">Nothing playing</p>
+          <p className="text-sm text-muted-foreground">{t("nothingPlaying")}</p>
         )}
       </div>
 
@@ -485,7 +489,7 @@ function TrackDetails({
           <button
             onClick={() => recordEvent("disliked")}
             className={iconBtn}
-            title="Dislike"
+            title={t("dislike")}
           >
             <ThumbsDown size={15} />
           </button>

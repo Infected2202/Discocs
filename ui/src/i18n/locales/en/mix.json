@@ -1,0 +1,7 @@
+{
+  "notFound": "Mix not found.",
+  "generatedMix": "Generated mix",
+  "trackCount_one": "{{count}} track",
+  "trackCount_other": "{{count}} tracks",
+  "play": "Play"
+}

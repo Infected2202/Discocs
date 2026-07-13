@@ -1,4 +1,5 @@
 import { ThumbsUp, Heart } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { useNavidromeStore } from "@/store/navidromeStore"
 
@@ -27,9 +28,11 @@ export default function LikeButton({
   id,
   variant = "control",
   size = 15,
-  title = "Like",
+  title,
   className,
 }: LikeButtonProps) {
+  const { t } = useTranslation("media")
+  const resolvedTitle = title ?? t("like")
   const liked = useNavidromeStore((s) =>
     entity === "track"
       ? s.likedIds.has(id)
@@ -49,7 +52,7 @@ export default function LikeButton({
   return (
     <button
       type="button"
-      title={title}
+      title={resolvedTitle}
       onClick={(event) => {
         event.stopPropagation()
         toggle(id)

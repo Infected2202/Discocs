@@ -1,15 +1,16 @@
 import { NavLink, useLocation } from "react-router"
+import { useTranslation } from "react-i18next"
 import { Home, Search, PanelLeftClose, PanelLeftOpen } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useUIStore } from "@/store/uiStore"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
-const NAV = [
-  { to: "/", label: "Home", icon: Home, end: true },
-  { to: "/search", label: "Search", icon: Search, end: false },
-]
-
 export default function Sidebar() {
+  const { t } = useTranslation("nav")
+  const NAV = [
+    { to: "/", label: t("home"), icon: Home, end: true },
+    { to: "/search", label: t("search"), icon: Search, end: false },
+  ]
   const collapsed = useUIStore((s) => s.sidebarCollapsed)
   const toggleSidebar = useUIStore((s) => s.toggleSidebar)
   const location = useLocation()
@@ -59,10 +60,10 @@ export default function Sidebar() {
                     className={cn("absolute inset-0 transition-opacity duration-200", collapsed ? "opacity-100" : "opacity-0")}
                   />
                 </span>
-                <span className={textCls}>Collapse</span>
+                <span className={textCls}>{t("collapse")}</span>
               </button>
             </TooltipTrigger>
-            {collapsed && <TooltipContent side="right">Expand sidebar</TooltipContent>}
+            {collapsed && <TooltipContent side="right">{t("expandSidebar")}</TooltipContent>}
           </Tooltip>
         </TooltipProvider>
       </div>

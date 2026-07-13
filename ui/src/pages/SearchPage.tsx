@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useSearchParams } from "react-router"
+import { useTranslation } from "react-i18next"
 import { useSearch } from "@/api/hooks/useSearch"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -26,6 +27,7 @@ function ResultSkeleton() {
 }
 
 export default function SearchPage() {
+  const { t } = useTranslation("search")
   const [searchParams] = useSearchParams()
   const urlQuery = searchParams.get("q") ?? ""
   const [tab, setTab] = useState<TabKey>("all")
@@ -44,7 +46,7 @@ export default function SearchPage() {
     <div className="py-4 space-y-6">
       {/* Empty / no query */}
       {!urlQuery && (
-        <p className="px-4 sm:px-6 text-sm text-muted-foreground">Type something to search your library.</p>
+        <p className="px-4 sm:px-6 text-sm text-muted-foreground">{t("typeToSearch")}</p>
       )}
 
       {/* Loading */}
@@ -52,29 +54,29 @@ export default function SearchPage() {
 
       {/* No results */}
       {!isLoading && urlQuery && !hasResults && (
-        <p className="px-4 sm:px-6 text-sm text-muted-foreground">No results for "{urlQuery}".</p>
+        <p className="px-4 sm:px-6 text-sm text-muted-foreground">{t("noResults", { query: urlQuery })}</p>
       )}
 
       {/* Results */}
       {hasResults && (
         <Tabs value={tab} onValueChange={(v) => setTab(v as TabKey)} className="px-4 sm:px-6">
           <TabsList>
-            <TabsTrigger value="all">All</TabsTrigger>
+            <TabsTrigger value="all">{t("tabs.all")}</TabsTrigger>
             <TabsTrigger value="artists" disabled={artists.length === 0}>
-              Artists {artists.length > 0 && `(${groups["artists"]?.total ?? artists.length})`}
+              {t("tabs.artists")} {artists.length > 0 && `(${groups["artists"]?.total ?? artists.length})`}
             </TabsTrigger>
             <TabsTrigger value="releases" disabled={releases.length === 0}>
-              Releases {releases.length > 0 && `(${groups["releases"]?.total ?? releases.length})`}
+              {t("tabs.releases")} {releases.length > 0 && `(${groups["releases"]?.total ?? releases.length})`}
             </TabsTrigger>
             <TabsTrigger value="tracks" disabled={tracks.length === 0}>
-              Tracks {tracks.length > 0 && `(${groups["tracks"]?.total ?? tracks.length})`}
+              {t("tabs.tracks")} {tracks.length > 0 && `(${groups["tracks"]?.total ?? tracks.length})`}
             </TabsTrigger>
           </TabsList>
 
           {/* Top result */}
           {(tab === "all") && data?.top_result && (
             <div className="mt-4 mb-6">
-              <p className="text-xs text-muted-foreground mb-2 uppercase tracking-wide">Top result</p>
+              <p className="text-xs text-muted-foreground mb-2 uppercase tracking-wide">{t("topResult")}</p>
               <div className="inline-block">
                 <MediaCard
                   id={"id" in data.top_result.entity ? (data.top_result.entity as { id: number }).id : 0}
@@ -103,7 +105,7 @@ export default function SearchPage() {
           <TabsContent value="all">
             {artists.length > 0 && (
               <section className="space-y-3 mt-2">
-                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Artists</h2>
+                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{t("tabs.artists")}</h2>
                 <div className="flex flex-wrap gap-1">
                   {artists.slice(0, 6).map((a) => (
                     <MediaCard key={a.id} id={a.id} type="artist" title={a.name} artwork={a.image}
@@ -114,7 +116,7 @@ export default function SearchPage() {
             )}
             {releases.length > 0 && (
               <section className="space-y-3 mt-6">
-                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Releases</h2>
+                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{t("tabs.releases")}</h2>
                 <div className="flex flex-wrap gap-1">
                   {releases.slice(0, 6).map((r) => (
                     <MediaCard key={r.id} id={r.id} type="release" title={r.title}
@@ -127,8 +129,8 @@ export default function SearchPage() {
             )}
             {tracks.length > 0 && (
               <section className="space-y-3 mt-6">
-                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Tracks</h2>
-                <VirtualTrackList tracks={tracks.slice(0, 8)} virtualized={false} sourceLabel={`Search: ${urlQuery}`} />
+                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{t("tabs.tracks")}</h2>
+                <VirtualTrackList tracks={tracks.slice(0, 8)} virtualized={false} sourceLabel={t("sourceLabel", { query: urlQuery })} />
               </section>
             )}
           </TabsContent>
@@ -155,7 +157,7 @@ export default function SearchPage() {
 
           <TabsContent value="tracks">
             <div className="mt-2">
-              <VirtualTrackList tracks={tracks} virtualized={false} sourceLabel={`Search: ${urlQuery}`} />
+              <VirtualTrackList tracks={tracks} virtualized={false} sourceLabel={t("sourceLabel", { query: urlQuery })} />
             </div>
           </TabsContent>
         </Tabs>

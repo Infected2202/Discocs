@@ -1,0 +1,26 @@
+{
+  "page": {
+    "heading": "Settings",
+    "description": "Manage your personal recommendation profile."
+  },
+  "flowProfile": {
+    "heading": "Flow Profile",
+    "description": "Flow uses your listening history to build a personal taste profile. Rebuild after you've added new music or want to refresh recommendations.",
+    "status": {
+      "not_built": "Not built",
+      "building": "Building…",
+      "ready": "Ready",
+      "cold_start": "Exploring (cold start)",
+      "empty": "No eligible tracks",
+      "unknown": "Unknown"
+    },
+    "regionCount_one": "{{count}} taste region",
+    "regionCount_other": "{{count}} taste regions",
+    "lastBuilt": "Last built {{date}}",
+    "buildingButton": "Building…",
+    "rebuildButton": "Rebuild Profile",
+    "buildButton": "Build Profile",
+    "coldStartHint": "No taste signal yet — Flow is exploring a diverse sample of your library. Like tracks and rebuild to personalise.",
+    "emptyHint": "No tracks with embeddings found. Analyze your library and try again."
+  }
+}

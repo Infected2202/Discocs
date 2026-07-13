@@ -1,4 +1,5 @@
 import { useParams } from "react-router"
+import { useTranslation } from "react-i18next"
 import { Play, Shuffle } from "lucide-react"
 import { useArtist, useArtistDiscography } from "@/api/hooks/useArtist"
 import { Button } from "@/components/ui/button"
@@ -42,6 +43,7 @@ function ArtistPageSkeleton() {
 }
 
 export default function ArtistPage() {
+  const { t, i18n } = useTranslation("artist")
   const { id } = useParams<{ id: string }>()
   const artistId = Number(id)
   const { data: artistData, isLoading: artistLoading, error } = useArtist(artistId)
@@ -59,7 +61,7 @@ export default function ArtistPage() {
   if (error || !artistData) {
     return (
       <div className="p-8">
-        <p className="text-destructive text-sm">Artist not found.</p>
+        <p className="text-destructive text-sm">{t("notFound")}</p>
       </div>
     )
   }
@@ -84,9 +86,9 @@ export default function ArtistPage() {
         title={artist.name}
         meta={
           <>
-            {stats.tracks.toLocaleString()} tracks
-            {stats.releases > 0 && ` · ${stats.releases.toLocaleString()} releases`}
-            {stats.plays > 0 && ` · ${stats.plays.toLocaleString()} plays`}
+            {t("trackCount", { count: stats.tracks, formatted: stats.tracks.toLocaleString(i18n.language) })}
+            {stats.releases > 0 && ` · ${t("releaseCount", { count: stats.releases, formatted: stats.releases.toLocaleString(i18n.language) })}`}
+            {stats.plays > 0 && ` · ${t("playCount", { count: stats.plays, formatted: stats.plays.toLocaleString(i18n.language) })}`}
           </>
         }
         actions={
@@ -97,7 +99,7 @@ export default function ArtistPage() {
               className="gap-2"
             >
               <Play size={14} fill="currentColor" strokeWidth={0} />
-              Play
+              {t("play")}
             </Button>
             <Button
               size="sm"
@@ -109,7 +111,7 @@ export default function ArtistPage() {
               className="gap-2"
             >
               <Shuffle size={14} />
-              Shuffle
+              {t("shuffle")}
             </Button>
             <LikeButton entity="artist" id={artistId} variant="control" size={18} />
           </>

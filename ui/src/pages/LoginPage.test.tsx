@@ -38,7 +38,7 @@ describe("LoginPage", () => {
   it("shows the form when there is no valid session", async () => {
     getSession.mockResolvedValue({ authenticated: false, username: null, enabled: true })
     renderLogin()
-    expect(await screen.findByRole("button", { name: /войти/i })).toBeInTheDocument()
+    expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument()
   })
 
   it("skips the form when the session is still valid", async () => {
@@ -56,7 +56,7 @@ describe("LoginPage", () => {
   it("stays on the form when the session check itself fails", async () => {
     getSession.mockRejectedValue(new TypeError("Failed to fetch"))
     renderLogin()
-    expect(await screen.findByRole("button", { name: /войти/i })).toBeInTheDocument()
+    expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument()
     expect(screen.queryByText("HOME PAGE")).not.toBeInTheDocument()
   })
 })

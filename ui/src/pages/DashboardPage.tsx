@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next"
 import { useDashboard } from "@/api/hooks/useDashboard"
 import Shelf from "@/components/media/Shelf"
 import ForYouShelf from "@/components/media/ForYouShelf"
@@ -46,6 +47,7 @@ function DashboardSkeleton() {
 }
 
 export default function DashboardPage() {
+  const { t } = useTranslation("dashboard")
   const { data, isLoading, error } = useDashboard(16)
   const playSource = usePlayerStore((s) => s.playSource)
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
@@ -75,7 +77,7 @@ export default function DashboardPage() {
 
       {error && (
         <div className="px-4 sm:px-6">
-          <p className="text-sm text-destructive">Failed to load dashboard: {error.message}</p>
+          <p className="text-sm text-destructive">{t("loadError", { message: error.message })}</p>
         </div>
       )}
 

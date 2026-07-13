@@ -1,0 +1,17 @@
+{
+  "previousTrack": "Previous track",
+  "nextTrack": "Next track",
+  "repeatOne": "Repeat one",
+  "shuffle": "Shuffle",
+  "autoplay": "Autoplay",
+  "autoplayDescription": "Similar tracks added at end of queue",
+  "expandPlayer": "Expand player",
+  "instantMix": "Instant mix",
+  "dislike": "Dislike",
+  "nothingPlaying": "Nothing playing",
+  "nowPlaying": "Now Playing",
+  "queue": "Queue",
+  "queueEmpty": "Queue is empty.",
+  "saveQueueToPlaylist": "Save queue to playlist",
+  "trackFallback": "Track #{{id}}"
+}

@@ -1,0 +1,15 @@
+{
+  "notFound": "Релиз не найден.",
+  "play": "Воспроизвести",
+  "shuffle": "Перемешать",
+  "trackCount_one": "{{count}} трек",
+  "trackCount_few": "{{count}} трека",
+  "trackCount_many": "{{count}} треков",
+  "trackCount_other": "{{count}} трека",
+  "duration": {
+    "hoursMinutes": "{{hours}} ч {{minutes}} мин",
+    "minutes": "{{minutes}} мин"
+  },
+  "moreFromArtists": "Ещё от этих артистов",
+  "recommendedAlbums": "Рекомендованные альбомы"
+}

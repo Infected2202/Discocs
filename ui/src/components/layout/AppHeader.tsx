@@ -1,9 +1,11 @@
 import { useState, useEffect } from "react"
 import { useNavigate, useSearchParams } from "react-router"
+import { useTranslation } from "react-i18next"
 import { Search } from "lucide-react"
 import ProfileButton from "@/components/profile/ProfileButton"
 
 export default function AppHeader() {
+  const { t } = useTranslation("nav")
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const urlQuery = searchParams.get("q") ?? ""
@@ -36,7 +38,7 @@ export default function AppHeader() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search artists, releases, tracks…"
+            placeholder={t("searchPlaceholder")}
             className="w-full rounded-lg bg-muted/50 pl-9 pr-4 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>

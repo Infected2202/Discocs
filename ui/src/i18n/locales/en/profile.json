@@ -1,0 +1,21 @@
+{
+  "navidrome": {
+    "checking": "Checking…",
+    "connected": "Navidrome authenticated",
+    "disconnected": "Navidrome not connected"
+  },
+  "trigger": {
+    "titleWithUser": "Profile: {{username}}",
+    "title": "Profile"
+  },
+  "unknownUser": "Unknown user",
+  "signedIn": "Signed in",
+  "openSettings": "Open settings",
+  "language": "Language",
+  "signOut": {
+    "default": "Sign out",
+    "withUser": "Sign out ({{username}})",
+    "pending": "Signing out…",
+    "failed": "Sign out failed. Try again."
+  }
+}

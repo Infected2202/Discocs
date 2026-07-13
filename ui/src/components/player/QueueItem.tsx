@@ -1,4 +1,5 @@
 import { memo } from "react"
+import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { usePlayerStore } from "@/store/playerStore"
 import ArtworkImage from "@/components/media/ArtworkImage"
@@ -19,6 +20,7 @@ export interface QueueItemProps {
 }
 
 function QueueItem({ track, trackId, itemId, variant = "queue", isCurrent, dimmed }: QueueItemProps) {
+  const { t } = useTranslation("player")
   const id = track?.id ?? trackId
   const sessionId      = usePlayerStore((s) => s.session?.id)
   const refreshQueue   = usePlayerStore((s) => s.refreshQueue)
@@ -68,7 +70,7 @@ function QueueItem({ track, trackId, itemId, variant = "queue", isCurrent, dimme
         </div>
         <div className="flex-1 min-w-0">
           <p className={cn("text-sm font-medium truncate", isCurrent && "text-primary")}>
-            {track?.title ?? `Track #${id}`}
+            {track?.title ?? t("trackFallback", { id })}
           </p>
           <p className="text-xs text-muted-foreground truncate">
             {track?.artists?.map((a) => a.name).join(", ") ?? "—"}

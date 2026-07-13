@@ -1,0 +1,17 @@
+{
+  "previousTrack": "Предыдущий трек",
+  "nextTrack": "Следующий трек",
+  "repeatOne": "Повтор трека",
+  "shuffle": "Перемешать",
+  "autoplay": "Автовоспроизведение",
+  "autoplayDescription": "Похожие треки добавляются в конец очереди",
+  "expandPlayer": "Развернуть плеер",
+  "instantMix": "Мгновенный микс",
+  "dislike": "Не нравится",
+  "nothingPlaying": "Ничего не играет",
+  "nowPlaying": "Сейчас играет",
+  "queue": "Очередь",
+  "queueEmpty": "Очередь пуста.",
+  "saveQueueToPlaylist": "Сохранить очередь в плейлист",
+  "trackFallback": "Трек #{{id}}"
+}

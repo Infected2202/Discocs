@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { useNavigate } from "react-router"
 import { useQuery } from "@tanstack/react-query"
+import { useTranslation } from "react-i18next"
 import { Settings, User, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useNavidromeStatus } from "@/api/hooks/useNavidromeStatus"
@@ -10,27 +11,35 @@ import {
 } from "@/components/ui/popover"
 import { getSession, logout } from "@/api/auth"
 import { redirectToLogin } from "@/lib/authRedirect"
+import { useUserSettings, useUpdateUserSettings } from "@/api/hooks/useUserSettings"
+import { SUPPORTED_LANGUAGES, type SupportedLanguage } from "@/i18n"
 
-function navidromeStatusUi(status: string, isLoading: boolean) {
+const LANGUAGE_NAMES: Record<SupportedLanguage, string> = {
+  en: "English",
+  ru: "Русский",
+}
+
+function navidromeStatusUi(status: string, isLoading: boolean, t: (key: string) => string) {
   if (isLoading) {
     return {
       dotColor: "bg-muted-foreground",
-      statusLabel: "Checking…",
+      statusLabel: t("navidrome.checking"),
     }
   }
   if (status === "connected") {
     return {
       dotColor: "bg-green-500",
-      statusLabel: "Navidrome authenticated",
+      statusLabel: t("navidrome.connected"),
     }
   }
   return {
     dotColor: "bg-red-500",
-    statusLabel: "Navidrome not connected",
+    statusLabel: t("navidrome.disconnected"),
   }
 }
 
 export default function ProfileButton({ mobile = false }: { readonly mobile?: boolean }) {
+  const { t } = useTranslation("profile")
   const navigate = useNavigate()
   const [logoutPending, setLogoutPending] = useState(false)
   const [logoutFailed, setLogoutFailed] = useState(false)
@@ -41,6 +50,8 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
     retry: false,
     staleTime: 60_000,
   })
+  const { data: userSettings } = useUserSettings()
+  const { mutate: setLanguage, isPending: languagePending } = useUpdateUserSettings()
 
   async function handleLogout() {
     if (logoutPending) return
@@ -58,8 +69,11 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
     }
   }
 
-  const { dotColor, statusLabel } = navidromeStatusUi(status, isLoading)
-  const logoutLabel = session?.username ? `Sign out (${session.username})` : "Sign out"
+  const { dotColor, statusLabel } = navidromeStatusUi(status, isLoading, t)
+  const logoutLabel = session?.username
+    ? t("signOut.withUser", { username: session.username })
+    : t("signOut.default")
+  const activeLanguage = userSettings?.language ?? "en"
 
   return (
     <Popover>
@@ -67,7 +81,7 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
         <button
           type="button"
           className="relative flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-muted/40"
-          title={session?.username ? `Profile: ${session.username}` : "Profile"}
+          title={session?.username ? t("trigger.titleWithUser", { username: session.username }) : t("trigger.title")}
         >
           <User size={16} />
           <span className={cn("absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-background", dotColor)} />
@@ -78,13 +92,30 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
           <div className="flex items-center gap-2 border-b border-border/50 pb-3">
             <User size={16} className="text-muted-foreground" />
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{session?.username ?? "Unknown user"}</p>
-              <p className="text-xs text-muted-foreground">Signed in</p>
+              <p className="truncate text-sm font-medium">{session?.username ?? t("unknownUser")}</p>
+              <p className="text-xs text-muted-foreground">{t("signedIn")}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <span className={cn("h-2 w-2 shrink-0 rounded-full", dotColor)} />
             <span className="text-sm">{statusLabel}</span>
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-xs text-muted-foreground">{t("language")}</p>
+            <div className="flex gap-1.5">
+              {SUPPORTED_LANGUAGES.map((lang) => (
+                <Button
+                  key={lang}
+                  variant={activeLanguage === lang ? "default" : "outline"}
+                  size="sm"
+                  className="flex-1"
+                  disabled={languagePending}
+                  onClick={() => setLanguage({ language: lang })}
+                >
+                  {LANGUAGE_NAMES[lang]}
+                </Button>
+              ))}
+            </div>
           </div>
           <Button
             variant="outline"
@@ -93,7 +124,7 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
             onClick={() => navigate("/settings")}
           >
             <Settings size={14} className="mr-2" />
-            Open settings
+            {t("openSettings")}
           </Button>
           <Button
             variant="ghost"
@@ -103,11 +134,11 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
             disabled={logoutPending}
           >
             <LogOut size={14} className="mr-2" />
-            {logoutPending ? "Signing out…" : logoutLabel}
+            {logoutPending ? t("signOut.pending") : logoutLabel}
           </Button>
           {logoutFailed && (
             <p className="text-xs text-destructive" role="alert">
-              Sign out failed. Try again.
+              {t("signOut.failed")}
             </p>
           )}
         </div>

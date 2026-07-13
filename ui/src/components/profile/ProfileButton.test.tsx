@@ -9,6 +9,8 @@ const useNavidromeStatus = vi.fn()
 const getSession = vi.fn()
 const logout = vi.fn()
 const redirectToLogin = vi.fn()
+const getUserSettings = vi.fn()
+const updateUserSettings = vi.fn()
 
 vi.mock("react-router", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-router")>()
@@ -31,6 +33,11 @@ vi.mock("@/lib/authRedirect", () => ({
   redirectToLogin: () => redirectToLogin(),
 }))
 
+vi.mock("@/api/settings", () => ({
+  getUserSettings: () => getUserSettings(),
+  updateUserSettings: (patch: unknown) => updateUserSettings(patch),
+}))
+
 function renderProfileButton() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -49,7 +56,11 @@ describe("ProfileButton", () => {
     getSession.mockReset()
     logout.mockReset()
     redirectToLogin.mockReset()
+    getUserSettings.mockReset()
+    updateUserSettings.mockReset()
     getSession.mockResolvedValue({ username: "alice" })
+    getUserSettings.mockResolvedValue({ language: "en" })
+    updateUserSettings.mockResolvedValue({ language: "ru" })
   })
 
   it("shows the loading status while Navidrome state is pending", async () => {
@@ -103,5 +114,29 @@ describe("ProfileButton", () => {
     await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
     expect(redirectToLogin).not.toHaveBeenCalled()
     expect(await screen.findByRole("alert")).toHaveTextContent("Sign out failed. Try again.")
+  })
+
+  it("shows a language switcher with the active language highlighted", async () => {
+    useNavidromeStatus.mockReturnValue({ status: "connected", isLoading: false })
+
+    renderProfileButton()
+    fireEvent.click(screen.getByTitle("Profile"))
+
+    const english = await screen.findByRole("button", { name: "English" })
+    const russian = await screen.findByRole("button", { name: "Русский" })
+    expect(english).toBeInTheDocument()
+    expect(russian).toBeInTheDocument()
+  })
+
+  it("patches the language setting when a different language is picked", async () => {
+    useNavidromeStatus.mockReturnValue({ status: "connected", isLoading: false })
+
+    renderProfileButton()
+    fireEvent.click(screen.getByTitle("Profile"))
+    fireEvent.click(await screen.findByRole("button", { name: "Русский" }))
+
+    await waitFor(() =>
+      expect(updateUserSettings).toHaveBeenCalledWith({ language: "ru" })
+    )
   })
 })

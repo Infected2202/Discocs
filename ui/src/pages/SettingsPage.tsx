@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { useTranslation } from "react-i18next"
 import { CheckCircle2, XCircle, Loader2, Radio, Activity } from "lucide-react"
 import { apiFetch, apiUrl } from "@/api/client"
 import { Button } from "@/components/ui/button"
@@ -15,6 +16,7 @@ interface FlowProfileStatus {
 }
 
 function FlowProfileSection() {
+  const { t, i18n } = useTranslation("settings")
   const qc = useQueryClient()
 
   const { data: status, isLoading: loadingStatus } = useQuery<FlowProfileStatus>({
@@ -33,31 +35,22 @@ function FlowProfileSection() {
     },
   })
 
-  const statusLabel: Record<string, string> = {
-    not_built: "Not built",
-    building: "Building…",
-    ready: "Ready",
-    cold_start: "Exploring (cold start)",
-    empty: "No eligible tracks",
-  }
-
   const isBuilding = building || status?.status === "building"
   const isBuilt = status?.status === "ready" || status?.status === "cold_start"
 
   return (
     <section className="space-y-5">
       <div>
-        <h2 className="text-base font-semibold">Flow Profile</h2>
+        <h2 className="text-base font-semibold">{t("flowProfile.heading")}</h2>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Flow uses your listening history to build a personal taste profile.
-          Rebuild after you've added new music or want to refresh recommendations.
+          {t("flowProfile.description")}
         </p>
       </div>
 
       {loadingStatus ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 size={14} className="animate-spin" />
-          Loading…
+          {t("status.loading", { ns: "common" })}
         </div>
       ) : (
         <div className="space-y-4">
@@ -80,17 +73,21 @@ function FlowProfileSection() {
                   : status?.status === "cold_start" ? "text-blue-500"
                     : "text-foreground"
               }>
-                {statusLabel[status?.status ?? "not_built"] ?? status?.status ?? "Unknown"}
+                {t(`flowProfile.status.${status?.status ?? "not_built"}`, {
+                  defaultValue: status?.status ?? t("status.unknown", { ns: "common" }),
+                })}
               </span>
             </div>
 
             {status && status.status !== "not_built" && (
               <div className="text-xs text-muted-foreground space-y-0.5">
                 {status.region_count > 0 && (
-                  <p>{status.region_count} taste region{status.region_count !== 1 ? "s" : ""}</p>
+                  <p>{t("flowProfile.regionCount", { count: status.region_count })}</p>
                 )}
                 {status.last_built_at && (
-                  <p>Last built {new Date(status.last_built_at).toLocaleString()}</p>
+                  <p>{t("flowProfile.lastBuilt", {
+                    date: new Date(status.last_built_at).toLocaleString(i18n.language),
+                  })}</p>
                 )}
               </div>
             )}
@@ -104,22 +101,21 @@ function FlowProfileSection() {
             className="gap-2"
           >
             {isBuilding
-              ? <><Loader2 size={13} className="animate-spin" />Building…</>
+              ? <><Loader2 size={13} className="animate-spin" />{t("flowProfile.buildingButton")}</>
               : isBuilt
-                ? "Rebuild Profile"
-                : "Build Profile"}
+                ? t("flowProfile.rebuildButton")
+                : t("flowProfile.buildButton")}
           </Button>
 
           {status?.status === "cold_start" && (
             <p className="text-xs text-muted-foreground">
-              No taste signal yet — Flow is exploring a diverse sample of your
-              library. Like tracks and rebuild to personalise.
+              {t("flowProfile.coldStartHint")}
             </p>
           )}
 
           {status?.status === "empty" && (
             <p className="text-xs text-muted-foreground">
-              No tracks with embeddings found. Analyze your library and try again.
+              {t("flowProfile.emptyHint")}
             </p>
           )}
         </div>
@@ -131,12 +127,13 @@ function FlowProfileSection() {
 // ---------------------------------------------------------------------------
 
 export default function SettingsPage() {
+  const { t } = useTranslation("settings")
   return (
     <div className="py-8 px-4 sm:px-6 max-w-lg space-y-10">
       <div>
-        <h1 className="text-2xl font-bold">Settings</h1>
+        <h1 className="text-2xl font-bold">{t("page.heading")}</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Manage your personal recommendation profile.
+          {t("page.description")}
         </p>
       </div>
 

@@ -12,6 +12,7 @@ import { useTrackTitle } from "@/hooks/useTrackTitle"
 import { useArtworkTheme } from "@/hooks/useArtworkTheme"
 import { useNavidromeStore } from "@/store/navidromeStore"
 import { usePlayerStore } from "@/store/playerStore"
+import { useUserSettings } from "@/api/hooks/useUserSettings"
 import PlasmaFBM from "@/components/player/PlasmaFBM"
 import { ScrollContext } from "@/contexts/ScrollContext"
 
@@ -19,6 +20,7 @@ export default function AppShell() {
   useKeyboardShortcuts()
   useTrackTitle()
   useArtworkTheme()
+  useUserSettings()
 
   const mainRef = useRef<HTMLElement>(null)
 

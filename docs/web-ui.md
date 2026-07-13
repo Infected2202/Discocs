@@ -211,9 +211,45 @@ analysis, models, storage, advanced/debug) are intentionally absent from the
 public UI. They remain in the private legacy admin at `:8711/admin`; the
 public nginx also rejects their API endpoints.
 
-The profile popover shows the active username and provides logout. It redirects
-to `/login` only after the backend confirms that the session was revoked; a
-failed request leaves the user in place and shows a retryable error.
+The profile popover shows the active username, a language switcher (see
+Internationalization below), and provides logout. It redirects to `/login`
+only after the backend confirms that the session was revoked; a failed
+request leaves the user in place and shows a retryable error.
+
+## Internationalization
+
+The UI ships English and Russian copy via `react-i18next` /`i18next`
+(`ui/src/i18n/`). English is the source language and the fallback for any
+untranslated key. This covers the public web UI only — the legacy admin
+(`app/ui.html`) is not localized.
+
+- **Dictionaries**: `ui/src/i18n/locales/{en,ru}/*.json`, one namespace per
+  feature area (`common`, `nav`, `profile`, `auth`, `settings`, `player`,
+  `dashboard`, `media`, `search`, `artist`, `release`, `mix`, `playlist`).
+  All namespaces are bundled statically (no lazy per-route loading — the
+  dictionaries are small) and registered in `ui/src/i18n/index.ts`.
+- **Pluralization**: keys that vary by count use i18next's `_one`/`_few`/
+  `_many`/`_other` suffixes (Russian has four plural categories vs. English's
+  two); i18next picks the category via `Intl.PluralRules` from the `count`
+  option passed to `t()`.
+- **Language selection**: exposed only in the profile popover
+  (`ProfileButton`), not on the Settings page — a `SUPPORTED_LANGUAGES`
+  toggle that `PATCH`es `/api/v1/me/settings` (`{ language: "en" | "ru" }`)
+  and calls `i18n.changeLanguage()` immediately (optimistic; no reload).
+  `useUserSettings` (`ui/src/api/hooks/useUserSettings.ts`), mounted once in
+  `AppShell`, fetches the stored setting on load and applies it.
+- **Persistence**: the backend `user_settings` table (see
+  `docs/data-model.md`) is the source of truth, so the choice follows the
+  account across devices. `i18next-browser-languagedetector` also caches the
+  active language to `localStorage` (key: `LANGUAGE_STORAGE_KEY` in
+  `ui/src/i18n/index.ts`) purely to avoid an English flash before the
+  `/me/settings` fetch resolves on the next load; on conflict the backend
+  value wins once it arrives. Before login (and before that fetch), the
+  detector falls back to the cached value or `navigator.language`.
+- **Locale-aware formatting**: dates (`toLocaleString`/`toLocaleDateString`)
+  and compact numbers (`Intl.NumberFormat`) are constructed with
+  `i18n.language` rather than a hardcoded locale, so they follow the active
+  UI language too.
 
 ## Player
 

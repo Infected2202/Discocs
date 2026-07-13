@@ -1,0 +1,11 @@
+{
+  "notFound": "Artist not found.",
+  "play": "Play",
+  "shuffle": "Shuffle",
+  "trackCount_one": "{{formatted}} track",
+  "trackCount_other": "{{formatted}} tracks",
+  "releaseCount_one": "{{formatted}} release",
+  "releaseCount_other": "{{formatted}} releases",
+  "playCount_one": "{{formatted}} play",
+  "playCount_other": "{{formatted}} plays"
+}

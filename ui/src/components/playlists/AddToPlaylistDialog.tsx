@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useTranslation } from "react-i18next"
 import { Plus } from "lucide-react"
 import {
   Dialog,
@@ -15,6 +16,7 @@ import type { PlaylistSummary } from "@/api/types"
 const RECENT_COUNT = 4
 
 export default function AddToPlaylistDialog() {
+  const { t } = useTranslation("playlist")
   const trackIds = useUIStore((s) => s.addToPlaylistTrackIds)
   const defaultTitle = useUIStore((s) => s.addToPlaylistDefaultTitle)
   const close = useUIStore((s) => s.closeAddToPlaylist)
@@ -49,14 +51,14 @@ export default function AddToPlaylistDialog() {
     <Dialog open={open} onOpenChange={(next) => { if (!next) close() }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add to playlist</DialogTitle>
+          <DialogTitle>{t("addToDialog.title")}</DialogTitle>
         </DialogHeader>
 
-        {isLoading && <p className="text-sm text-muted-foreground">Loading playlists…</p>}
+        {isLoading && <p className="text-sm text-muted-foreground">{t("addToDialog.loading")}</p>}
 
         {!isLoading && recent.length > 0 && (
           <div className="flex flex-col gap-2">
-            <p className="text-xs text-muted-foreground uppercase tracking-wide">Recent</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">{t("addToDialog.recent")}</p>
             <div className="grid grid-cols-4 gap-3">
               {recent.map((playlist) => (
                 <button
@@ -81,9 +83,9 @@ export default function AddToPlaylistDialog() {
 
         {!isLoading && (
           <div className="flex flex-col gap-2">
-            <p className="text-xs text-muted-foreground uppercase tracking-wide">All playlists</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">{t("addToDialog.allPlaylists")}</p>
             {playlists.length === 0 && (
-              <p className="text-sm text-muted-foreground">No playlists yet.</p>
+              <p className="text-sm text-muted-foreground">{t("addToDialog.empty")}</p>
             )}
             {playlists.length > 0 && (
               <div className="max-h-64 overflow-y-auto flex flex-col gap-0.5 -mx-2">
@@ -105,7 +107,7 @@ export default function AddToPlaylistDialog() {
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm truncate">{playlist.title}</span>
                       <span className="block text-xs text-muted-foreground">
-                        {playlist.track_count} tracks
+                        {t("addToDialog.trackCount", { count: playlist.track_count })}
                       </span>
                     </span>
                   </button>
@@ -117,7 +119,7 @@ export default function AddToPlaylistDialog() {
 
         <Button variant="outline" className="gap-2" onClick={handleNewPlaylist}>
           <Plus size={15} />
-          New playlist
+          {t("addToDialog.newPlaylist")}
         </Button>
       </DialogContent>
     </Dialog>

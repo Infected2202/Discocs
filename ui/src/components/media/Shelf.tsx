@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router"
+import { useTranslation } from "react-i18next"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import MediaCard, { type MediaCardProps } from "./MediaCard"
 import { useColumns } from "@/hooks/useColumns"
@@ -18,6 +19,7 @@ const MOBILE_COLS = 2
 const MOBILE_GAP_PX = 8
 
 export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfProps) {
+  const { t } = useTranslation("media")
   const navigate = useNavigate()
   const cols = useColumns()
   const isMobile = cols === MOBILE_COLS
@@ -78,7 +80,7 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
               onClick={() => navigate(shelfHref)}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors px-1.5 py-0.5 rounded hover:bg-muted"
             >
-              More
+              {t("shelf.more")}
             </button>
           )}
           {!isMobile && totalPages > 1 && (
@@ -88,7 +90,7 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
                 onClick={() => canPrev && goTo(page - 1)}
                 disabled={!canPrev}
                 className={`flex items-center justify-center w-5 h-5 rounded-full border border-border transition-colors ${canPrev ? "hover:bg-muted" : "opacity-30 pointer-events-none"}`}
-                aria-label="Previous"
+                aria-label={t("shelf.previous")}
               >
                 <ChevronLeft size={11} />
               </button>
@@ -97,7 +99,7 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
                 onClick={() => canNext && goTo(page + 1)}
                 disabled={!canNext}
                 className={`flex items-center justify-center w-5 h-5 rounded-full border border-border transition-colors ${canNext ? "hover:bg-muted" : "opacity-30 pointer-events-none"}`}
-                aria-label="Next"
+                aria-label={t("shelf.next")}
               >
                 <ChevronRight size={11} />
               </button>

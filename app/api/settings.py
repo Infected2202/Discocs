@@ -9,7 +9,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
-from app.api.deps import api_error, context, instant_mix_settings
+from app.api.deps import api_error, context, instant_mix_settings, request_field_names
 from app.config import load_runtime_settings, save_runtime_settings
 from app.logging_config import get_navidrome_plugin_logger
 from app.navidrome import NavidromeClient
@@ -17,6 +17,7 @@ from app.schemas.requests import (
     InstantMixSettingsRequest,
     NavidromePluginEventRequest,
     NavidromeSettingsRequest,
+    UserSettingsPatchRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,30 @@ def record_navidrome_plugin_event(request: NavidromePluginEventRequest) -> dict[
         request.message,
     )
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Per-user settings (language, and future UI/behavior preferences)
+# ---------------------------------------------------------------------------
+
+@router.get("/me/settings")
+def get_user_settings() -> dict[str, object]:
+    store, _settings = context()
+    return store.get_user_settings()
+
+
+@router.patch("/me/settings")
+def update_user_settings(request: UserSettingsPatchRequest) -> dict[str, object]:
+    store, _settings = context()
+    fields = request_field_names(request)
+    values = {
+        name: value
+        for name, value in request.model_dump().items()
+        if name in fields and value is not None
+    }
+    if not values:
+        return store.get_user_settings()
+    return store.set_user_settings(values)
 
 
 # ---------------------------------------------------------------------------

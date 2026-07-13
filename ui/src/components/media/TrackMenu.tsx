@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router"
+import { useTranslation } from "react-i18next"
 import { MoreHorizontal, Play, ListEnd, ListPlus, ListX, User, Disc3, Radio } from "lucide-react"
 import {
   DropdownMenu,
@@ -24,6 +25,7 @@ interface TrackMenuProps {
 }
 
 export default function TrackMenu({ track, sourceLabel, onPlayTrack, onRemoveFromQueue }: TrackMenuProps) {
+  const { t } = useTranslation("media")
   const navigate = useNavigate()
   const sessionId      = usePlayerStore((s) => s.session?.id)
   const playSource     = usePlayerStore((s) => s.playSource)
@@ -66,7 +68,7 @@ export default function TrackMenu({ track, sourceLabel, onPlayTrack, onRemoveFro
           variant="ghost"
           size="icon"
           className="h-7 w-7 text-muted-foreground opacity-0 group-hover/row:opacity-100 data-[state=open]:opacity-100"
-          aria-label="Track options"
+          aria-label={t("trackMenu.trackOptions")}
         >
           <MoreHorizontal size={15} />
         </Button>
@@ -75,22 +77,22 @@ export default function TrackMenu({ track, sourceLabel, onPlayTrack, onRemoveFro
       <DropdownMenuContent align="end" className="w-48">
         <DropdownMenuItem onClick={handlePlay}>
           <Play size={14} className="mr-2" />
-          Play
+          {t("trackMenu.play")}
         </DropdownMenuItem>
 
         <DropdownMenuItem onClick={handlePlayNext}>
           <ListEnd size={14} className="mr-2" />
-          Play next
+          {t("trackMenu.playNext")}
         </DropdownMenuItem>
 
         <DropdownMenuItem onClick={handleInstantMix}>
           <Radio size={14} className="mr-2" />
-          Instant mix
+          {t("trackMenu.instantMix")}
         </DropdownMenuItem>
 
         <DropdownMenuItem onClick={() => openAddToPlaylist([track.id])}>
           <ListPlus size={14} className="mr-2" />
-          Add to playlist
+          {t("trackMenu.addToPlaylist")}
         </DropdownMenuItem>
 
         {track.artists.length > 0 && (
@@ -99,7 +101,7 @@ export default function TrackMenu({ track, sourceLabel, onPlayTrack, onRemoveFro
             {track.artists.map((artist) => (
               <DropdownMenuItem key={artist.id} onClick={() => navigate(`/artists/${artist.id}`)}>
                 <User size={14} className="mr-2" />
-                Go to {artist.name}
+                {t("trackMenu.goTo", { name: artist.name })}
               </DropdownMenuItem>
             ))}
           </>
@@ -110,7 +112,7 @@ export default function TrackMenu({ track, sourceLabel, onPlayTrack, onRemoveFro
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => navigate(`/releases/${release.id}`)}>
               <Disc3 size={14} className="mr-2" />
-              Go to {release.title}
+              {t("trackMenu.goTo", { name: release.title })}
             </DropdownMenuItem>
           </>
         )}
@@ -120,7 +122,7 @@ export default function TrackMenu({ track, sourceLabel, onPlayTrack, onRemoveFro
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onClick={onRemoveFromQueue}>
               <ListX size={14} className="mr-2" />
-              Remove from queue
+              {t("trackMenu.removeFromQueue")}
             </DropdownMenuItem>
           </>
         )}

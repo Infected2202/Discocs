@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import { Link } from "react-router"
+import { useTranslation } from "react-i18next"
 import {
   Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat1, Infinity, ChevronDown,
@@ -20,6 +21,7 @@ import type { TrackSummary } from "@/api/types"
 import { hiresArtworkUrl as hiresUrl } from "@/lib/artworkUrl"
 
 export default function ExpandedPlayer() {
+  const { t } = useTranslation("player")
   const [mobileTab, setMobileTab] = useState<"player" | "queue">("player")
   const [artworkPulse, setArtworkPulse] = useState<"play" | "pause" | null>(null)
   const [dragProgress, setDragProgress] = useState<number | null>(null)
@@ -112,11 +114,11 @@ export default function ExpandedPlayer() {
           <button
             onClick={() => setMobileTab("player")}
             className={cn("px-3 py-1 text-sm rounded-md transition-colors", mobileTab === "player" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
-          >Now Playing</button>
+          >{t("nowPlaying")}</button>
           <button
             onClick={() => setMobileTab("queue")}
             className={cn("px-3 py-1 text-sm rounded-md transition-colors", mobileTab === "queue" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
-          >Queue</button>
+          >{t("queue")}</button>
         </div>
         <button onClick={toggleExpanded} className={iconBtn}>
           <ChevronDown size={20} />
@@ -206,7 +208,7 @@ export default function ExpandedPlayer() {
                       <button
                         onClick={() => recordEvent("disliked")}
                         className={cn(iconBtn, "p-1.5")}
-                        title="Dislike"
+                        title={t("dislike")}
                       >
                         <ThumbsDown size={18} />
                       </button>
@@ -217,7 +219,7 @@ export default function ExpandedPlayer() {
                       <button className={cn(iconBtn, "p-1.5")}><MoreHorizontal size={18} /></button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-44">
-                      <DropdownMenuItem onClick={handleInstantMix}>Instant mix</DropdownMenuItem>
+                      <DropdownMenuItem onClick={handleInstantMix}>{t("instantMix")}</DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -308,11 +310,11 @@ export default function ExpandedPlayer() {
                 <button
                   onClick={() => openAddToPlaylist(queueTrackIds, session?.source_label ?? undefined)}
                   className={cn(iconBtn, "flex items-center gap-1.5 px-2.5 text-sm font-medium")}
-                  title="Save queue to playlist"
-                  aria-label="Save queue to playlist"
+                  title={t("saveQueueToPlaylist")}
+                  aria-label={t("saveQueueToPlaylist")}
                 >
                   <ListPlus size={18} />
-                  Save
+                  {t("actions.save", { ns: "common" })}
                 </button>
               )}
               <button onClick={toggleExpanded} className={iconBtn}>
@@ -321,8 +323,8 @@ export default function ExpandedPlayer() {
             </div>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium">Autoplay</p>
-                <p className="text-xs text-muted-foreground leading-tight">Similar tracks added at end of queue</p>
+                <p className="text-sm font-medium">{t("autoplay")}</p>
+                <p className="text-xs text-muted-foreground leading-tight">{t("autoplayDescription")}</p>
               </div>
               <button
                 onClick={() => toggleAutoplay()}
@@ -344,7 +346,7 @@ export default function ExpandedPlayer() {
           {/* Queue list — all items, current highlighted */}
           <div className="flex-1 overflow-y-auto">
             {(queue?.items ?? []).length === 0 && (queue?.autoplay_pool ?? []).length === 0 && (
-              <p className="text-sm text-muted-foreground px-5 pt-4">Queue is empty.</p>
+              <p className="text-sm text-muted-foreground px-5 pt-4">{t("queueEmpty")}</p>
             )}
 
             {queue?.items.map((item) => {
@@ -365,7 +367,7 @@ export default function ExpandedPlayer() {
             {(queue?.autoplay_pool ?? []).length > 0 && (
               <>
                 <div className="mx-4 mt-3 mb-1 border-t border-border/40" />
-                <p className="px-4 py-1 text-xs text-muted-foreground font-medium">Autoplay</p>
+                <p className="px-4 py-1 text-xs text-muted-foreground font-medium">{t("autoplay")}</p>
                 {queue?.autoplay_pool.map((item) => (
                   <QueueItem
                     key={item.id}

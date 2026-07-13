@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react"
+import { useTranslation } from "react-i18next"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import VirtualTrackList from "./VirtualTrackList"
 import { animateScroll } from "@/lib/animateScroll"
@@ -13,6 +14,7 @@ interface PopularTracksProps {
 }
 
 export default function PopularTracks({ tracks, sourceLabel }: PopularTracksProps) {
+  const { t } = useTranslation("media")
   const [page, setPage] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
@@ -70,14 +72,14 @@ export default function PopularTracks({ tracks, sourceLabel }: PopularTracksProp
         <button
           onClick={() => canPrev && goTo(page - 1)}
           className={`flex items-center justify-center w-7 h-7 rounded-full border border-border transition-colors ${canPrev ? "hover:bg-muted" : "opacity-30 pointer-events-none"}`}
-          aria-label="Previous"
+          aria-label={t("shelf.previous")}
         >
           <ChevronLeft size={14} />
         </button>
         <button
           onClick={() => canNext && goTo(page + 1)}
           className={`flex items-center justify-center w-7 h-7 rounded-full border border-border transition-colors ${canNext ? "hover:bg-muted" : "opacity-30 pointer-events-none"}`}
-          aria-label="Next"
+          aria-label={t("shelf.next")}
         >
           <ChevronRight size={14} />
         </button>

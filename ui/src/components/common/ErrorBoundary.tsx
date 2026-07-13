@@ -1,7 +1,8 @@
 import { Component, type ReactNode } from "react"
+import { withTranslation, type WithTranslation } from "react-i18next"
 import { AlertTriangle, RotateCcw } from "lucide-react"
 
-interface Props {
+interface Props extends WithTranslation {
   children: ReactNode
 }
 
@@ -10,7 +11,7 @@ interface State {
   message: string
 }
 
-export default class ErrorBoundary extends Component<Props, State> {
+class ErrorBoundary extends Component<Props, State> {
   state: State = { hasError: false, message: "" }
 
   static getDerivedStateFromError(error: Error): State {
@@ -23,11 +24,12 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
+      const { t } = this.props
       return (
         <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 px-6 text-center">
           <AlertTriangle size={40} className="text-muted-foreground" />
           <div>
-            <p className="text-sm font-medium">Something went wrong</p>
+            <p className="text-sm font-medium">{t("status.error")}</p>
             <p className="text-xs text-muted-foreground mt-1 max-w-sm truncate">
               {this.state.message}
             </p>
@@ -37,7 +39,7 @@ export default class ErrorBoundary extends Component<Props, State> {
             className="flex items-center gap-2 rounded-lg bg-muted px-4 py-2 text-sm font-medium hover:bg-muted/70 transition-colors"
           >
             <RotateCcw size={14} />
-            Try again
+            {t("actions.tryAgain")}
           </button>
         </div>
       )
@@ -46,3 +48,5 @@ export default class ErrorBoundary extends Component<Props, State> {
     return this.props.children
   }
 }
+
+export default withTranslation("common")(ErrorBoundary)

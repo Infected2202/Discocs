@@ -787,6 +787,19 @@ class StoreBase:
                     last_login_at TEXT
                 );
 
+                -- Per-user preferences (language, and future UI/behavior
+                -- settings), a generic key/value store so new settings don't
+                -- need schema migrations. Values are opaque strings; callers
+                -- agree on the encoding per key (e.g. plain language code).
+                CREATE TABLE IF NOT EXISTS user_settings (
+                    user_id INTEGER NOT NULL,
+                    key TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, key),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+
                 -- Collection map / embedding atlas. A projection is a persisted
                 -- snapshot of 2D coordinates for one embedding model; multiple
                 -- projections per model are allowed. This is a diagnostic view

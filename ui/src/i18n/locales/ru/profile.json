@@ -1,0 +1,21 @@
+{
+  "navidrome": {
+    "checking": "Проверка…",
+    "connected": "Navidrome подключён",
+    "disconnected": "Navidrome не подключён"
+  },
+  "trigger": {
+    "titleWithUser": "Профиль: {{username}}",
+    "title": "Профиль"
+  },
+  "unknownUser": "Неизвестный пользователь",
+  "signedIn": "Вы вошли",
+  "openSettings": "Открыть настройки",
+  "language": "Язык",
+  "signOut": {
+    "default": "Выйти",
+    "withUser": "Выйти ({{username}})",
+    "pending": "Выход…",
+    "failed": "Не удалось выйти. Попробуйте ещё раз."
+  }
+}
