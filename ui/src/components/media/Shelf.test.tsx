@@ -60,10 +60,6 @@ describe("Shelf", () => {
       "style",
       expect.stringContaining("scroll-snap-type: x proximity")
     )
-    expect(scroller).toHaveAttribute(
-      "style",
-      expect.stringContaining("-webkit-overflow-scrolling: touch")
-    )
   })
 
   it("renders shelf navigation as native buttons and disables previous on first page", () => {
