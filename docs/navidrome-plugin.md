@@ -101,8 +101,10 @@ Configuration (`NavidromeSettings`, via env or `data/settings.json`):
 | `play_state_refresh_albums` | `DISCOCS_NAVIDROME_PLAY_STATE_REFRESH_ALBUMS` | `25` | How many recently played albums to scan each tick. |
 
 The maintenance loop ticks every 15s and throttles the refresh to the configured
-interval, so you no longer need to run `navidrome-sync` by hand just to update
-play history.
+interval in legacy/single-user mode. When `DISCOCS_AUTH_ENABLED=true`, this
+service-account refresh is disabled: multiuser credentials are encrypted by
+the active session token and are intentionally unavailable to background work.
+Interactive starred sync and scrobbling still update each user's own state.
 
 ## Build
 

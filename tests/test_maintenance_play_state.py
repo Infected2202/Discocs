@@ -68,6 +68,16 @@ def test_refresh_skipped_without_navidrome_url(monkeypatch):
     assert calls == []
 
 
+def test_refresh_skipped_when_multiuser_auth_enabled(monkeypatch):
+    calls = _patch_refresh(monkeypatch)
+    settings = _settings(play_state_refresh_seconds=60)
+    settings = replace(settings, auth=replace(settings.auth, enabled=True))
+
+    maintenance._maybe_refresh_navidrome_play_state(store=object(), settings=settings)
+
+    assert calls == []
+
+
 class _FakeStore:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -100,8 +110,50 @@ def test_run_maintenance_tick_uses_passed_in_store(monkeypatch):
     monkeypatch.setattr(maintenance, "sync_memory_jobs_from_durable_jobs", lambda jobs: None)
     monkeypatch.setattr(maintenance, "maybe_start_next_deferred_job", lambda: None)
     monkeypatch.setattr("app.services.albums_for_you.refresh_albums_for_you", lambda store, model: None)
+    monkeypatch.setattr(maintenance, "_maybe_refresh_generated_mixes", lambda *_args: None)
+    monkeypatch.setattr(maintenance, "_maybe_refresh_flow_profile", lambda *_args: None)
 
     maintenance.run_maintenance_tick(fake_store)
 
     assert "expire_analysis_leases" in fake_store.calls
     assert "albums_for_you_cache_age_hours" in fake_store.calls
+
+
+def test_unscoped_maintenance_refreshes_each_user_store(monkeypatch):
+    root = _FakeStore()
+    root.user_id = None
+    root.list_user_ids = lambda: [11, 22]
+    scoped = {user_id: object() for user_id in root.list_user_ids()}
+    root.for_user = lambda user_id: scoped[user_id]
+    settings = _settings(play_state_refresh_seconds=0)
+    refreshed: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(maintenance.Settings, "from_env", staticmethod(lambda: settings))
+    monkeypatch.setattr(maintenance, "sync_memory_jobs_from_durable_jobs", lambda jobs: None)
+    monkeypatch.setattr(maintenance, "maybe_start_next_deferred_job", lambda: None)
+    monkeypatch.setattr(
+        maintenance,
+        "_maybe_refresh_albums_for_you",
+        lambda store, _settings: refreshed.append(("albums", store)),
+    )
+    monkeypatch.setattr(
+        maintenance,
+        "_maybe_refresh_generated_mixes",
+        lambda store, _settings: refreshed.append(("mixes", store)),
+    )
+    monkeypatch.setattr(
+        maintenance,
+        "_maybe_refresh_flow_profile",
+        lambda store, _settings: refreshed.append(("flow", store)),
+    )
+
+    maintenance.run_maintenance_tick(root)
+
+    assert refreshed == [
+        ("albums", scoped[11]),
+        ("mixes", scoped[11]),
+        ("flow", scoped[11]),
+        ("albums", scoped[22]),
+        ("mixes", scoped[22]),
+        ("flow", scoped[22]),
+    ]

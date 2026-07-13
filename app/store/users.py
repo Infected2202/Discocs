@@ -15,6 +15,11 @@ import sqlite3
 
 
 class UsersStoreMixin:
+    def list_user_ids(self) -> list[int]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT id FROM users ORDER BY id").fetchall()
+        return [int(row["id"]) for row in rows]
+
     def upsert_user(self, navidrome_username: str, *, now: str) -> int:
         """Insert-or-touch a user by Navidrome username; return internal id.
 

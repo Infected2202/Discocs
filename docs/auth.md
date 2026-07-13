@@ -201,8 +201,11 @@ server {
    request-local `ContextVar`, а каждый router получает уже scoped Store из
    `api/deps.py:context()`. Двухпользовательский API-тест проверяет изоляцию
    списков и прямых обращений к playlist/playback ID.
-5. **Per-user фон:** flow-профили, генерируемые миксы, play-state sync — по каждому
-   пользователю.
+5. **Per-user фон:** ✅ maintenance итерирует всех пользователей отдельными
+   scoped Store для albums-for-you, flow и generated mixes. Фоновый service-
+   account play-state refresh при включённом auth отключён: session-bound
+   credentials недоступны фону, а импорт сервисных данных одному owner был бы
+   утечкой. Starred sync и scrobble выполняются интерактивно от имени сессии.
 
 ### Фаза 3 — Управление сессиями / доп. паранойя (по желанию)
 

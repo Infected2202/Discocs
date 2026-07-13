@@ -552,7 +552,9 @@ def ensure_dashboard_mixes_fast(store: Store, settings: object) -> dict[str, obj
         return diagnostics
     if embedding_count <= 5000:
         return ensure_dashboard_mixes(store, settings, mix_settings).diagnostics
-    started = _start_dashboard_mix_generation(settings.db_path, settings)  # type: ignore[attr-defined]
+    started = _start_dashboard_mix_generation(
+        settings.db_path, settings, store.require_user_id()
+    )  # type: ignore[attr-defined]
     diagnostics = dict(plan.diagnostics)
     diagnostics.update({
         "reason": "scheduled" if started else "already_running",
@@ -563,14 +565,20 @@ def ensure_dashboard_mixes_fast(store: Store, settings: object) -> dict[str, obj
     return diagnostics
 
 
-def _start_dashboard_mix_generation(db_path: Path, settings: object) -> bool:
+def _start_dashboard_mix_generation(
+    db_path: Path, settings: object, user_id: int
+) -> bool:
     if not MIX_GENERATION_LOCK.acquire(blocking=False):
         return False
 
     def run() -> None:
         try:
-            logger.info("Background generated mix refresh started db_path=%s", db_path)
-            background_store = Store(db_path)
+            logger.info(
+                "Background generated mix refresh started db_path=%s user_id=%s",
+                db_path,
+                user_id,
+            )
+            background_store = Store(db_path, user_id=user_id)
             background_store.init()
             result = ensure_dashboard_mixes(background_store, settings, _generated_mix_settings(settings))
             logger.info(
