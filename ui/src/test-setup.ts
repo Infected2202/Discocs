@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom"
+import { afterEach } from "vitest"
 import i18n from "./i18n"
 
 // Tests assert against English copy; force it regardless of the host

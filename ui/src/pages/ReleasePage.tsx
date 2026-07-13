@@ -1,5 +1,6 @@
 import { Link, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
+import type { TFunction } from "i18next"
 import { Play, Shuffle } from "lucide-react"
 import { useRelease, useReleaseTracks, useReleaseRelated, useReleaseRecommendations } from "@/api/hooks/useRelease"
 import { Button } from "@/components/ui/button"
@@ -12,7 +13,7 @@ import Shelf from "@/components/media/Shelf"
 import { usePlayerStore } from "@/store/playerStore"
 import type { ReleaseSummary } from "@/api/types"
 
-function formatDuration(seconds: number | null | undefined, t: (key: string, opts?: object) => string): string {
+function formatDuration(seconds: number | null | undefined, t: TFunction<"release">): string {
   if (!seconds) return ""
   const h = Math.floor(seconds / 3600)
   const m = Math.floor((seconds % 3600) / 60)

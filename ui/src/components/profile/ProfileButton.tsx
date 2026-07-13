@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router"
 import { useQuery } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
+import type { TFunction } from "i18next"
 import { Settings, User, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useNavidromeStatus } from "@/api/hooks/useNavidromeStatus"
@@ -19,7 +20,7 @@ const LANGUAGE_NAMES: Record<SupportedLanguage, string> = {
   ru: "Русский",
 }
 
-function navidromeStatusUi(status: string, isLoading: boolean, t: (key: string) => string) {
+function navidromeStatusUi(status: string, isLoading: boolean, t: TFunction<"profile">) {
   if (isLoading) {
     return {
       dotColor: "bg-muted-foreground",

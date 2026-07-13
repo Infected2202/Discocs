@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next"
+import type { TFunction } from "i18next"
 import { Heart, History, Shuffle, Disc3, Plus, Compass, RotateCcw, Clock, Radio, ListMusic } from "lucide-react"
 import Shelf from "./Shelf"
 import { usePlayerStore } from "@/store/playerStore"
@@ -19,7 +20,7 @@ function cardArtwork(icon: React.ReactNode) {
 function flowSubtitle(
   flowAvailable: boolean,
   flowProfile: { available?: boolean } | undefined,
-  t: (key: string) => string,
+  t: TFunction<"dashboard">,
 ) {
   if (flowAvailable) {
     return t("cards.flow.subtitlePersonal")
