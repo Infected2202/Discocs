@@ -361,23 +361,3 @@ export interface AutoplayRefillResponse {
   candidate_count: number
   debug: Record<string, unknown> | null
 }
-
-// ----------------------------------------------------------------------------
-// Settings
-// ----------------------------------------------------------------------------
-
-export interface NavidromeSettings {
-  url: string
-  user: string
-  password_set: boolean
-  auth_mode: string
-  timeout_seconds: number
-  download_mode: string
-  temp_dir: string
-}
-
-export interface NavidromePingResponse {
-  status: string
-  version: string
-  server_version: string
-}

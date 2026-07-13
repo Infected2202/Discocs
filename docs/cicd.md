@@ -101,7 +101,12 @@ git remote set-url --add --push origin http://192.168.1.41:3064/HS/discocs.git
 
 Деплой автоматический на успешной сборке `main`: Jenkins по SSH заливает
 `deploy/prod/docker-compose.yml` в `TARGET_DIR` на `TARGET_SERVER` (`.env` там уже лежит,
-CI его не перезаписывает) и там же гоняет `pull` + `up -d --force-recreate --wait`. Вручную на хосте:
+CI его не перезаписывает) и там же гоняет `pull` + `up -d --force-recreate --wait`
+с явным `TAG=latest`. Это важно: временный rollback-`TAG` в серверном `.env`
+не должен навсегда заморозить backend или frontend на старом образе после
+успешного нового pipeline.
+
+Вручную на хосте команды по-прежнему учитывают `TAG` из `.env`:
 
 ```bash
 cd /home/infected2202/docker/discocs   # TARGET_DIR, там же лежит .env
@@ -125,6 +130,9 @@ TAG=a1b2c3d   # значение из тега образа / номера ко�
 # правишь TAG в TARGET_DIR/.env на сервере, затем:
 docker compose -p discocs --env-file .env up -d --force-recreate
 ```
+
+Следующий успешный pipeline `main` автоматически вернёт `latest`. После проверки
+отката удали `TAG` из `.env`, чтобы ручные команды тоже снова брали `latest`.
 
 ## Бот
 

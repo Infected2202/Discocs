@@ -14,13 +14,13 @@ function navidromeStatusUi(status: string, isLoading: boolean) {
   if (isLoading) {
     return {
       dotColor: "bg-muted-foreground",
-      statusLabel: "CheckingвЂ¦",
+      statusLabel: "Checking…",
     }
   }
   if (status === "connected") {
     return {
       dotColor: "bg-green-500",
-      statusLabel: "Navidrome connected",
+      statusLabel: "Navidrome authenticated",
     }
   }
   return {

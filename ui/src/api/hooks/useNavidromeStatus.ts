@@ -18,6 +18,6 @@ export function useNavidromeStatus(): { status: NavidromeStatus; isLoading: bool
   if (isLoading) return { status: "unknown", isLoading: true }
   if (isError || !data) return { status: "disconnected", isLoading: false }
 
-  const connected = data.authenticated
+  const connected = data.authenticated && Boolean(data.username)
   return { status: connected ? "connected" : "disconnected", isLoading: false }
 }

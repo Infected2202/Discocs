@@ -228,8 +228,8 @@ pipeline {
               ssh -p "$TARGET_PORT" -o StrictHostKeyChecking=no "$TARGET_USER@$TARGET_SERVER" '
                 set -e
                 cd '"$TARGET_DIR"'
-                docker compose -p discocs --env-file .env pull
-                docker compose -p discocs --env-file .env up -d --force-recreate --remove-orphans --wait --wait-timeout 120
+                TAG=latest docker compose -p discocs --env-file .env pull
+                TAG=latest docker compose -p discocs --env-file .env up -d --force-recreate --remove-orphans --wait --wait-timeout 120
                 docker image prune -f
               '
             '''

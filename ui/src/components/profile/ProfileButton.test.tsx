@@ -58,7 +58,7 @@ describe("ProfileButton", () => {
     renderProfileButton()
     fireEvent.click(screen.getByTitle("Profile"))
 
-    expect(await screen.findByText((content) => content.includes("Checking"))).toBeInTheDocument()
+    expect(await screen.findByText("Checking…")).toBeInTheDocument()
   })
 
   it("shows the connected status when Navidrome is available", async () => {
@@ -67,7 +67,7 @@ describe("ProfileButton", () => {
     renderProfileButton()
     fireEvent.click(screen.getByTitle("Profile"))
 
-    expect(await screen.findByText("Navidrome connected")).toBeInTheDocument()
+    expect(await screen.findByText("Navidrome authenticated")).toBeInTheDocument()
   })
 
   it("shows the current username as a separate identity indicator", async () => {

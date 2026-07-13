@@ -34,6 +34,9 @@ describe("SettingsPage", () => {
     renderSettings()
 
     expect(screen.queryByRole("heading", { name: "Navidrome" })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Server URL")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Username")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument()
     expect(screen.getByRole("heading", { name: "Flow Profile" })).toBeInTheDocument()
     await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/api/v1/jobs/flow-profile/status"))
     expect(apiFetch).not.toHaveBeenCalledWith("/api/v1/settings/navidrome")
