@@ -80,7 +80,7 @@ describe("ProfileButton", () => {
     expect(screen.getByText("Signed in")).toBeInTheDocument()
   })
 
-  it("redirects after logout even when the API call succeeds", async () => {
+  it("redirects after the server confirms logout", async () => {
     useNavidromeStatus.mockReturnValue({ status: "disconnected", isLoading: false })
     logout.mockResolvedValue(undefined)
 
@@ -90,5 +90,18 @@ describe("ProfileButton", () => {
 
     await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(redirectToLogin).toHaveBeenCalledTimes(1))
+  })
+
+  it("stays in the app and reports a failed server-side logout", async () => {
+    useNavidromeStatus.mockReturnValue({ status: "connected", isLoading: false })
+    logout.mockRejectedValue(new Error("offline"))
+
+    renderProfileButton()
+    fireEvent.click(screen.getByTitle("Profile"))
+    fireEvent.click(await screen.findByRole("button", { name: /sign out.*alice/i }))
+
+    await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
+    expect(redirectToLogin).not.toHaveBeenCalled()
+    expect(await screen.findByRole("alert")).toHaveTextContent("Sign out failed. Try again.")
   })
 })

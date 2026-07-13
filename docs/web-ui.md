@@ -211,7 +211,9 @@ analysis, models, storage, advanced/debug) are intentionally absent from the
 public UI. They remain in the private legacy admin at `:8711/admin`; the
 public nginx also rejects their API endpoints.
 
-The profile popover shows the active username and provides logout.
+The profile popover shows the active username and provides logout. It redirects
+to `/login` only after the backend confirms that the session was revoked; a
+failed request leaves the user in place and shows a retryable error.
 
 ## Player
 

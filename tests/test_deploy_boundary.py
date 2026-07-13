@@ -54,6 +54,20 @@ def test_public_nginx_keeps_personal_maintenance_routes():
         assert "proxy_pass" in _location_body(config, selector)
 
 
+def test_public_nginx_preserves_external_origin_for_backend_csrf_checks():
+    config = NGINX_TEMPLATE.read_text(encoding="utf-8")
+    proxy_count = config.count("proxy_pass ")
+
+    # $host drops a non-default port (for example the production :5173),
+    # which makes a genuinely same-origin browser POST look cross-origin to
+    # the backend. Forward the browser-visible authority and scheme in every
+    # public proxy location.
+    assert "proxy_set_header Host $host;" not in config
+    assert config.count("proxy_set_header Host $http_host;") == proxy_count
+    assert config.count("proxy_set_header X-Forwarded-Host $http_host;") == proxy_count
+    assert config.count("proxy_set_header X-Forwarded-Proto $scheme;") == proxy_count
+
+
 def test_local_worker_receives_service_token_from_environment():
     config = WORKER_COMPOSE.read_text(encoding="utf-8")
 

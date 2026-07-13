@@ -70,6 +70,11 @@
 сразу уводит обратно (на страницу из `state.from`, которую передал
 `RequireAuth`), форма не показывается.
 
+Выход перенаправляет на `/login` только после успешного ответа
+`POST /api/v1/auth/logout`. Если запрос не дошёл до сервера или был отклонён,
+popover остаётся открытым и показывает ошибку: клиент не выдаёт живую
+серверную сессию за завершённую.
+
 ## Защита от брутфорса
 
 Логин лимитируется одновременно по IP и нормализованному username (in-memory,
@@ -173,6 +178,10 @@ Public frontend nginx applies a second deployment boundary before requests
 reach FastAPI. It returns 404 for `/admin`, `/api/map`, worker endpoints and
 global job/settings operations. Only the per-user `albums-for-you` and
 `flow-profile` maintenance endpoints are allowed from the `/jobs` family.
+The proxy preserves the browser-visible authority (including a non-default
+port such as `:5173`) and scheme in `Host`, `X-Forwarded-Host`, and
+`X-Forwarded-Proto`; backend same-origin checks therefore compare against the
+actual public origin rather than the container's internal address.
 
 The backend port `:8711` remains the private operational endpoint for the
 legacy admin and remote analysis workers. Restrict it to localhost/private LAN

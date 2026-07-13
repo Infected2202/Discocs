@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { useNavigate } from "react-router"
 import { useQuery } from "@tanstack/react-query"
 import { Settings, User, LogOut } from "lucide-react"
@@ -31,6 +32,8 @@ function navidromeStatusUi(status: string, isLoading: boolean) {
 
 export default function ProfileButton({ mobile = false }: { readonly mobile?: boolean }) {
   const navigate = useNavigate()
+  const [logoutPending, setLogoutPending] = useState(false)
+  const [logoutFailed, setLogoutFailed] = useState(false)
   const { status, isLoading } = useNavidromeStatus()
   const { data: session } = useQuery({
     queryKey: ["auth", "session"],
@@ -40,10 +43,18 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
   })
 
   async function handleLogout() {
+    if (logoutPending) return
+    setLogoutPending(true)
+    setLogoutFailed(false)
     try {
       await logout()
-    } finally {
       redirectToLogin()
+    } catch {
+      // Do not pretend that the server-side session was revoked. Otherwise
+      // LoginPage sees the still-valid cookie and immediately returns to the
+      // app, which looks like an automatic re-login.
+      setLogoutFailed(true)
+      setLogoutPending(false)
     }
   }
 
@@ -89,10 +100,16 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
             size="sm"
             className="w-full text-muted-foreground"
             onClick={handleLogout}
+            disabled={logoutPending}
           >
             <LogOut size={14} className="mr-2" />
-            {logoutLabel}
+            {logoutPending ? "Signing out…" : logoutLabel}
           </Button>
+          {logoutFailed && (
+            <p className="text-xs text-destructive" role="alert">
+              Sign out failed. Try again.
+            </p>
+          )}
         </div>
       </PopoverContent>
     </Popover>
