@@ -7,6 +7,7 @@ services:
     restart: unless-stopped
     environment:
       DISCOCS_WORKER_SERVER: ${DISCOCS_WORKER_SERVER:-http://192.168.1.41:8711}
+      DISCOCS_SERVICE_TOKEN: ${DISCOCS_SERVICE_TOKEN:-}
       DISCOCS_WORKER_ID: ${DISCOCS_WORKER_ID:-auto}
       DISCOCS_WORKER_EMBEDDING_MODELS: ${DISCOCS_WORKER_EMBEDDING_MODELS:-discogs_multi,discogs_track,discogs_release,discogs_label}
       DISCOCS_WORKER_AUDIO_FEATURE_MODEL: ${DISCOCS_WORKER_AUDIO_FEATURE_MODEL:-audio_features_v1}

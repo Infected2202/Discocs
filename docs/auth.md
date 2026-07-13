@@ -95,8 +95,12 @@
 ## Чек-лист включения (при выносе в домен)
 
 1. Сгенерировать токен: `openssl rand -hex 32`.
-2. Прописать `DISCOCS_SERVICE_TOKEN` **одинаково** у backend, bot, worker
-   (см. `deploy/prod/.env.example`, `deploy/worker/docker-compose.yml`).
+2. Прописать `DISCOCS_SERVICE_TOKEN` **одинаково** у backend, bot, worker.
+   Для локальных GPU-workers значение задаётся в корневом `.env` и передаётся
+   через `docker-compose.worker.yml`; для production backend/bot — в
+   `/home/infected2202/docker/discocs/.env` по шаблону
+   `deploy/prod/.env.example`. Сначала пересоздать workers с токеном и только
+   затем включать гейт на backend, чтобы не остановить очередь анализа.
 3. Плагин Navidrome: если используется с гейтом — задать тот же токен в его
    HTTP-заголовках; иначе его эндпоинты доступны только на внутреннем
    (не проксируемом наружу) порту.
@@ -106,6 +110,18 @@
    браузерный API; **не** пробрасывать наружу `/workers` и порт бэкенда 8711.
 7. Проверить: аноним → редирект на `/login`; вход валидными кредами Navidrome →
    доступ; воркер/бот с токеном работают.
+
+Для текущего развёртывания порядок команд после записи одного и того же секрета
+в оба `.env`:
+
+```powershell
+docker compose -p discocs -f docker-compose.worker.yml up -d --force-recreate
+```
+
+```bash
+cd /home/infected2202/docker/discocs
+docker compose -p discocs --env-file .env up -d --force-recreate --remove-orphans --wait --wait-timeout 120
+```
 
 ## Пример доменного nginx (Let's Encrypt)
 

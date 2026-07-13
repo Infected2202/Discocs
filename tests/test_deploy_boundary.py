@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NGINX_TEMPLATE = ROOT / "deploy" / "nginx" / "default.conf.template"
+WORKER_COMPOSE = ROOT / "docker-compose.worker.yml"
 
 
 def _location_body(config: str, selector: str) -> str:
@@ -48,3 +49,9 @@ def test_public_nginx_keeps_personal_maintenance_routes():
 
     for selector in personal_routes:
         assert "proxy_pass" in _location_body(config, selector)
+
+
+def test_local_worker_receives_service_token_from_environment():
+    config = WORKER_COMPOSE.read_text(encoding="utf-8")
+
+    assert "DISCOCS_SERVICE_TOKEN: ${DISCOCS_SERVICE_TOKEN:-}" in config
