@@ -73,7 +73,11 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
         {subtitle && (
           <span className="text-xs text-muted-foreground truncate hidden sm:inline">{subtitle}</span>
         )}
-        <div className="ml-auto flex items-center gap-1 shrink-0">
+        <div
+          aria-hidden="true"
+          className="h-px min-w-3 flex-1 bg-linear-to-r from-primary/50 to-transparent"
+        />
+        <div className="flex items-center gap-1 shrink-0">
           {shelfHref && (
             <button
               type="button"

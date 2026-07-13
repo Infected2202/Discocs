@@ -58,6 +58,23 @@ describe("Shelf", () => {
     expect(screen.getByRole("button", { name: "Next" })).toBeEnabled()
   })
 
+  it("renders an accent-colored divider stretching from the title to the header controls", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <Shelf
+          title="Albums"
+          shelfKey="albums_for_you"
+          items={[{ id: 1, type: "release", title: "One" }]}
+        />
+      </MemoryRouter>
+    )
+
+    const divider = container.querySelector('[aria-hidden="true"]')
+    expect(divider).toBeInTheDocument()
+    expect(divider).toHaveClass("flex-1")
+    expect(divider?.className).toMatch(/from-primary/)
+  })
+
   it("navigates to shelf page from title and more button", () => {
     render(
       <MemoryRouter>
