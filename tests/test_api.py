@@ -365,12 +365,15 @@ def test_api_v1_artist_discography_include_tracks_and_explicit_groups(tmp_path: 
     response = client.get(f"/api/v1/artists/{artist_id}/discography?include_tracks=true")
 
     assert response.status_code == 200
+    ordered_keys = [group["key"] for group in response.json()["groups"]]
     groups = {group["key"]: group for group in response.json()["groups"]}
     assert groups["albums"]["items"][0]["title"] == "Album Release"
     assert groups["albums"]["items"][0]["tracks"][0]["title"] == "Album Track"
     assert groups["eps"]["items"][0]["title"] == "EP Release"
     assert groups["singles"]["items"][0]["title"] == "Single Release"
     assert groups["featured_in"]["items"][0]["title"] == "Beta Album"
+    # "Featured In" (вторичная дискография) всегда в самом низу страницы артиста.
+    assert ordered_keys == ["albums", "eps", "singles", "compilations", "releases", "featured_in"]
 
 
 def test_api_v1_release_related_discography_uses_track_participants(tmp_path: Path, monkeypatch):

@@ -83,13 +83,16 @@ def api_v1_artist_discography(
     artist = store.get_artist(artist_id)
     if artist is None:
         return api_error(404, "not_found", _ARTIST_NOT_FOUND)
+    # Порядок ключей = порядок шелфов на странице артиста (фронт рендерит
+    # группы как пришли). "Featured In" (релизы, где артист лишь приглашённый)
+    # держим в самом низу — это вторичная дискография.
     titles = {
         "albums": "Albums",
         "eps": "EPs",
         "singles": "Singles",
         "compilations": "Compilations",
-        "featured_in": "Featured In",
         "releases": "Releases",
+        "featured_in": "Featured In",
     }
     discography = store.artist_discography(artist_id)
     groups = []
