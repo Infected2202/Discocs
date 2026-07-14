@@ -1,19 +1,27 @@
 import { useState, useEffect } from "react"
 
-function getColumns(): number {
-  const w = window.innerWidth
-  if (w >= 1280) return 8
-  if (w >= 1024) return 6
-  if (w >= 640) return 4
-  return 2
+export interface ColumnLayout {
+  /** Number of cards per row / per slider page. */
+  readonly cols: number
+  /** True on narrow (phone) viewports, where shelves use the touch layout. */
+  readonly isMobile: boolean
 }
 
-export function useColumns(): number {
-  const [cols, setCols] = useState(getColumns)
+function getLayout(): ColumnLayout {
+  const w = window.innerWidth
+  if (w >= 1280) return { cols: 8, isMobile: false }
+  if (w >= 1024) return { cols: 6, isMobile: false }
+  if (w >= 640) return { cols: 4, isMobile: false }
+  // Phones: 4 across — 2 felt absurdly sparse.
+  return { cols: 4, isMobile: true }
+}
+
+export function useColumns(): ColumnLayout {
+  const [layout, setLayout] = useState(getLayout)
   useEffect(() => {
-    const handler = () => setCols(getColumns())
+    const handler = () => setLayout(getLayout())
     window.addEventListener("resize", handler)
     return () => window.removeEventListener("resize", handler)
   }, [])
-  return cols
+  return layout
 }

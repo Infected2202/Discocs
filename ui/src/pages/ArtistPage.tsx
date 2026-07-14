@@ -131,6 +131,7 @@ export default function ArtistPage() {
           <Shelf
             key={group.key}
             title={group.title}
+            grid
             items={(group.items as ReleaseSummary[]).map((r) =>
               releaseSummaryToCard(r, () => playSource("release", r.id, r.title))
             )}

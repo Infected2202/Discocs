@@ -1,4 +1,4 @@
-import { apiFetch } from "./client"
+import { apiFetch, apiUrl } from "./client"
 import type {
   RelatedDiscographyResponse,
   ReleaseAvailabilityStub,
@@ -18,6 +18,9 @@ export function fetchReleaseRelated(id: number): Promise<RelatedDiscographyRespo
   return apiFetch(`/api/v1/releases/${id}/related-discography`)
 }
 
-export function fetchReleaseRecommendations(id: number): Promise<ReleaseAvailabilityStub> {
-  return apiFetch(`/api/v1/releases/${id}/recommendations`)
+export function fetchReleaseRecommendations(
+  id: number,
+  limit = 16,
+): Promise<ReleaseAvailabilityStub> {
+  return apiFetch(apiUrl(`/api/v1/releases/${id}/recommendations`, { limit }))
 }

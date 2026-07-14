@@ -14,16 +14,21 @@ interface ShelfProps {
   readonly subtitle?: string | null
   readonly items: MediaCardProps[]
   readonly shelfKey?: string
+  /**
+   * Раскладывает все карточки статичной сеткой во много строк вместо
+   * листаемого горизонтального слайдера. Ничего не обрезает и не пагинирует —
+   * используется на странице артиста, где нужна вся дискография сразу.
+   */
+  readonly grid?: boolean
 }
 
-const MOBILE_COLS = 2
+const MOBILE_COLS = 4
 const MOBILE_GAP_PX = 8
 
-export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfProps) {
+export default function Shelf({ title = "", subtitle, items, shelfKey, grid = false }: ShelfProps) {
   const { t } = useTranslation("media")
   const navigate = useNavigate()
-  const cols = useColumns()
-  const isMobile = cols === MOBILE_COLS
+  const { cols, isMobile } = useColumns()
   const [page, setPage] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const animating = useRef(false)
@@ -32,6 +37,7 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
   const totalPages = Math.ceil(sliced.length / cols)
   const canPrev = page > 0
   const canNext = page < totalPages - 1
+  const showArrows = !grid && !isMobile && totalPages > 1
 
   useEffect(() => {
     setPage(0)
@@ -59,7 +65,7 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
   return (
     <section className="shelf-section space-y-1">
       {/* Header */}
-      {(title || shelfKey || (!isMobile && totalPages > 1)) && <div className="px-4 sm:px-6 flex items-center gap-2 min-w-0">
+      {(title || shelfKey || showArrows) && <div className="px-4 sm:px-6 flex items-center gap-2 min-w-0">
         {shelfHref ? (
           <button
             type="button"
@@ -90,7 +96,7 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
               {t("shelf.more")}
             </button>
           )}
-          {!isMobile && totalPages > 1 && (
+          {showArrows && (
             <>
               <button
                 type="button"
@@ -115,10 +121,23 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
         </div>
       </div>}
 
-      {/* Slider */}
-      {isMobile ? (
+      {/* Body */}
+      {grid ? (
         <div
-          className="flex overflow-x-auto px-3 pb-1"
+          className="px-3 pb-1"
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+            gap: "2px",
+          }}
+        >
+          {items.map((item) => (
+            <MediaCard key={`${item.type}-${item.id}`} {...item} variant="shelf" />
+          ))}
+        </div>
+      ) : isMobile ? (
+        <div
+          className="no-scrollbar flex overflow-x-auto px-3 pb-1"
           style={{
             gap: `${MOBILE_GAP_PX}px`,
             scrollSnapType: "x proximity",
@@ -131,7 +150,7 @@ export default function Shelf({ title = "", subtitle, items, shelfKey }: ShelfPr
             <div
               key={`${item.type}-${item.id}`}
               style={{
-                flex: `0 0 calc((100% - ${MOBILE_GAP_PX}px) / ${MOBILE_COLS})`,
+                flex: `0 0 calc((100% - ${(MOBILE_COLS - 1) * MOBILE_GAP_PX}px) / ${MOBILE_COLS})`,
                 minWidth: 0,
                 scrollSnapAlign: "start",
               }}

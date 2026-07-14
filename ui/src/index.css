@@ -137,6 +137,16 @@
   background: #3d4347;
 }
 
+/* Hide the scrollbar while keeping the element scrollable — used on the
+   horizontal card shelves, where the native bar is visual noise. */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE / legacy Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Chromium / WebKit */
+}
+
 /* Neutralize browser autofill styling (yellow/white bg, black text) so
    autofilled inputs keep matching the app's dark theme. */
 input:-webkit-autofill,

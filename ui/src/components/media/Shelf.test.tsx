@@ -14,9 +14,10 @@ vi.mock("react-router", async (importOriginal) => {
 })
 
 let columns = 4
+let isMobile = false
 
 vi.mock("@/hooks/useColumns", () => ({
-  useColumns: () => columns,
+  useColumns: () => ({ cols: columns, isMobile }),
 }))
 
 vi.mock("@/lib/animateScroll", () => ({
@@ -37,11 +38,13 @@ vi.mock("./MediaCard", () => ({
 describe("Shelf", () => {
   beforeEach(() => {
     columns = 4
+    isMobile = false
     navigate.mockReset()
   })
 
   it("keeps native touch momentum while gently snapping mobile shelf cards", () => {
-    columns = 2
+    columns = 4
+    isMobile = true
     render(
       <MemoryRouter>
         <Shelf
@@ -54,12 +57,16 @@ describe("Shelf", () => {
       </MemoryRouter>
     )
 
-    const scroller = screen.getByText("One").parentElement?.parentElement
+    const cardWrapper = screen.getByText("One").parentElement
+    const scroller = cardWrapper?.parentElement
     expect(scroller).toHaveClass("overflow-x-auto")
+    expect(scroller).toHaveClass("no-scrollbar")
     expect(scroller).toHaveAttribute(
       "style",
       expect.stringContaining("scroll-snap-type: x proximity")
     )
+    // Four cards across on mobile, not two.
+    expect(cardWrapper).toHaveAttribute("style", expect.stringContaining("/ 4)"))
   })
 
   it("renders shelf navigation as native buttons and disables previous on first page", () => {
@@ -118,6 +125,29 @@ describe("Shelf", () => {
     expect(screen.getByRole("button", { name: "Next" })).toBeInTheDocument()
     expect(container.querySelector('div[aria-hidden="true"]')).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Next" }).parentElement).toHaveClass("ml-auto")
+  })
+
+  it("renders every item as a static multi-row grid without pagination when grid is set", () => {
+    columns = 4
+    const items = Array.from({ length: 12 }, (_, i) => ({
+      id: i + 1,
+      type: "release" as const,
+      title: `Album ${i + 1}`,
+    }))
+
+    render(
+      <MemoryRouter>
+        <Shelf title="Albums" grid items={items} />
+      </MemoryRouter>
+    )
+
+    // All 12 cards are present, not sliced to cols * 2 (= 8) like the slider.
+    for (const item of items) {
+      expect(screen.getByText(item.title)).toBeInTheDocument()
+    }
+    // No horizontal pagination in grid mode.
+    expect(screen.queryByRole("button", { name: "Next" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Previous" })).not.toBeInTheDocument()
   })
 
   it("navigates to shelf page from title and more button", () => {
