@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 from time import perf_counter
 from typing import Annotated, Callable
 from urllib.error import HTTPError, URLError
@@ -1126,11 +1127,23 @@ def serialized_head_outputs(outputs: list[HeadOutput]) -> list[dict[str, object]
     ]
 
 
+def format_worker_failure_traceback(exc: Exception) -> str:
+    return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).rstrip("\n")
+
+
 def append_worker_failure(
     failures: list[dict[str, object]],
     task_id: str,
     exc: Exception,
 ) -> None:
+    tb_text = format_worker_failure_traceback(exc)
+    analysis_logger.error(
+        "Worker task failed task_id=%s error_type=%s error=%s\n%s",
+        task_id, type(exc).__name__, exc, tb_text,
+    )
+    # Also to stderr: the worker's Docker volume isn't host-mounted, so
+    # `docker logs` is the only readily reachable place to see the traceback.
+    typer.echo(f"traceback task_id={task_id}:\n{tb_text}", err=True)
     failures.append(
         {
             "task_id": task_id,
