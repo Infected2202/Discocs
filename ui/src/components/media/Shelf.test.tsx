@@ -65,8 +65,9 @@ describe("Shelf", () => {
       "style",
       expect.stringContaining("scroll-snap-type: x proximity")
     )
-    // Four cards across on mobile, not two.
-    expect(cardWrapper).toHaveAttribute("style", expect.stringContaining("/ 4)"))
+    // Four cards across on mobile, not two (jsdom normalizes the calc() to
+    // a 0.25 multiplier with the three 8px inter-card gaps subtracted).
+    expect(cardWrapper).toHaveAttribute("style", expect.stringContaining("0.25*(100% - 24px)"))
   })
 
   it("renders shelf navigation as native buttons and disables previous on first page", () => {
