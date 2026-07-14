@@ -126,7 +126,7 @@ pipeline {
         script {
           def services = [
             [name: 'backend',  df: 'deploy/backend/Dockerfile', refresh: true],
-            [name: 'frontend', df: 'deploy/nginx/Dockerfile', refresh: false],
+            [name: 'frontend', df: 'deploy/nginx/Dockerfile', refresh: true],
             [name: 'bot',      df: 'deploy/bot/Dockerfile', refresh: true],
           ]
           // Каждый сервис — своя ветка parallel, поэтому в stage view/Blue Ocean
@@ -136,7 +136,9 @@ pipeline {
               def img = "${REGISTRY}/${IMAGE_NS}/${svc.name}"
               // BuildKit нужен backend/bot Dockerfile'ам — --mount=type=cache для uv.
               // --pull обновляет mutable base image. SECURITY_REFRESH сбрасывает
-              // apt-слой backend/bot даже когда Dockerfile не менялся.
+              // слой обновления системных пакетов даже когда Dockerfile не менялся:
+              // apt-get upgrade у backend/bot, apk upgrade у frontend (иначе Trivy
+              // валит фиксабельные HIGH в curl/libcurl базового nginx-образа).
               def refreshArg = svc.refresh ? "--build-arg SECURITY_REFRESH=${GIT_SHA}" : ""
               sh "DOCKER_BUILDKIT=1 docker build --pull ${refreshArg} -f ${svc.df} -t ${img}:${GIT_SHA} ."
               sh "docker push ${img}:${GIT_SHA}"             // :<git-sha> — неизменяемый, для отката

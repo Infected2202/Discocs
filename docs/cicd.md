@@ -278,12 +278,15 @@ Community не умеет бесплатно (SCA — уязвимости в з
 - `trivy image` — CVE в уже собранных образах `backend`/`frontend`/`bot`, через
   `docker.sock` (не bind-mount воркспейса — тут монтируется только сокет, это работает).
 
-Прод-образы собираются с `docker build --pull`. Для backend и bot значение
-`SECURITY_REFRESH=${GIT_SHA}` дополнительно инвалидирует apt-слой на каждом
-коммите, а Dockerfile выполняет `apt-get upgrade` перед установкой runtime-
-пакетов. Это не даёт успешной сборке переиспользовать старый слой Debian с
-уже исправленными CVE; неизменяемые application dependency layers по-прежнему
-могут браться из BuildKit-кэша.
+Прод-образы собираются с `docker build --pull`. Все три сервиса получают
+`SECURITY_REFRESH=${GIT_SHA}`, который дополнительно инвалидирует слой
+обновления системных пакетов на каждом коммите: backend и bot выполняют
+`apt-get upgrade` (Debian), frontend — `apk upgrade` поверх
+`nginx-unprivileged:alpine` (базовый образ отстаёт от alpine-репозитория, из-за
+чего Trivy валил фиксабельные HIGH в `curl`/`libcurl`, напр. CVE-2026-5773 /
+CVE-2026-6276). Это не даёт успешной сборке переиспользовать старый слой с уже
+исправленными CVE; неизменяемые application dependency layers по-прежнему могут
+браться из BuildKit-кэша.
 
 БД уязвимостей Trivy (~150+ МБ) кэшируется, а не качается заново на каждый билд:
 для `trivy fs` — через `--mount=type=cache` прямо в `RUN` сборки `Dockerfile.trivy-fs`
