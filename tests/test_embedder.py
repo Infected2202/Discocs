@@ -1,3 +1,5 @@
+import inspect
+
 import numpy as np
 import pytest
 from contextlib import nullcontext
@@ -115,3 +117,18 @@ def test_ensure_int_max_str_digits_compat_adds_missing_shims() -> None:
 
     assert fake_sys.get_int_max_str_digits() == 0
     assert fake_sys.set_int_max_str_digits(1234) is None
+
+
+def test_set_int_max_str_digits_shim_parameter_name_matches_torch_polyfill() -> None:
+    """On Python builds missing sys.set_int_max_str_digits, torch._dynamo.polyfills.sys
+    later registers its own set_int_max_str_digits(maxdigits) as a substitute for it via
+    torch._dynamo.decorators.substitute_in_graph, which rejects the pairing if the parameter
+    name differs from ours (not just type/count) -- breaking MuQ-MuLan loading with
+    "Signature mismatch ... _maxdigits != maxdigits" the last time this got renamed.
+    """
+    fake_sys = type("FakeSys", (), {})()
+
+    _ensure_int_max_str_digits_compat(fake_sys)
+
+    params = list(inspect.signature(fake_sys.set_int_max_str_digits).parameters)
+    assert params == ["maxdigits"]

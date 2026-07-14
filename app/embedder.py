@@ -44,7 +44,7 @@ def _ensure_int_max_str_digits_compat(sys_module) -> None:
 
         sys_module.get_int_max_str_digits = get_int_max_str_digits
     if not hasattr(sys_module, "set_int_max_str_digits"):
-        def set_int_max_str_digits(_maxdigits: int) -> None:
+        def set_int_max_str_digits(maxdigits: int) -> None:
             return None
 
         sys_module.set_int_max_str_digits = set_int_max_str_digits
