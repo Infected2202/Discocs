@@ -126,7 +126,8 @@ def content_disposition(filename: str) -> str:
 
 
 def _safe_suffix(value: str | None) -> str | None:
-    suffix = Path(value or "").suffix.lower()
+    raw = str(value or "").strip().lower()
+    suffix = raw if _SAFE_EXTENSION.fullmatch(raw) else Path(raw).suffix
     return suffix if _SAFE_EXTENSION.fullmatch(suffix) else None
 
 
