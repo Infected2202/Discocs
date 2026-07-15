@@ -43,7 +43,7 @@ describe("Shelf", () => {
   })
 
   it("keeps native touch momentum while gently snapping mobile shelf cards", () => {
-    columns = 4
+    columns = 2
     isMobile = true
     render(
       <MemoryRouter>
@@ -65,9 +65,9 @@ describe("Shelf", () => {
       "style",
       expect.stringContaining("scroll-snap-type: x proximity")
     )
-    // Four cards across on mobile, not two (jsdom normalizes the calc() to
-    // a 0.25 multiplier with the three 8px inter-card gaps subtracted).
-    expect(cardWrapper).toHaveAttribute("style", expect.stringContaining("0.25*(100% - 24px)"))
+    // Two cards across on mobile (jsdom normalizes the calc() to a 0.5
+    // multiplier with the single 8px inter-card gap subtracted).
+    expect(cardWrapper).toHaveAttribute("style", expect.stringContaining("0.5*(100% - 8px)"))
   })
 
   it("boosts a fast mobile swipe far enough to coast to the shelf end", () => {

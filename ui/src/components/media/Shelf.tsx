@@ -23,7 +23,7 @@ interface ShelfProps {
   readonly grid?: boolean
 }
 
-const MOBILE_COLS = 4
+const MOBILE_COLS = 2
 const MOBILE_GAP_PX = 8
 
 export default function Shelf({ title = "", subtitle, items, shelfKey, grid = false }: ShelfProps) {
