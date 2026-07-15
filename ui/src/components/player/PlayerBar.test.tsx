@@ -201,7 +201,10 @@ describe("PlayerBar — контекстное меню трека", () => {
   it("показывает общий набор действий с треком", async () => {
     renderBar()
 
-    fireEvent.click(screen.getByRole("button", { name: "Track options" }))
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Track options" }), {
+      button: 0,
+      ctrlKey: false,
+    })
 
     expect(await screen.findByRole("menuitem", { name: "Play" })).toBeInTheDocument()
     expect(screen.getByRole("menuitem", { name: "Play next" })).toBeInTheDocument()
