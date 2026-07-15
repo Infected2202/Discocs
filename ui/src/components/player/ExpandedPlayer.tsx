@@ -4,16 +4,14 @@ import { useTranslation } from "react-i18next"
 import {
   Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat1, Infinity, ChevronDown,
-  Volume2, VolumeX, Volume1, ThumbsDown, MoreHorizontal, ListPlus,
+  Volume2, VolumeX, Volume1, ThumbsDown, ListPlus,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { usePlayerStore } from "@/store/playerStore"
 import { useUIStore } from "@/store/uiStore"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import LikeButton from "@/components/media/LikeButton"
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import TrackMenu from "@/components/media/TrackMenu"
 import QueueItem from "@/components/player/QueueItem"
 import { SeekIndicators, TimeReadout } from "@/components/player/PlaybackProgress"
 import { useDragSlider } from "@/components/player/useDragSlider"
@@ -45,7 +43,6 @@ export default function ExpandedPlayer() {
   const toggleRepeatOne    = usePlayerStore((s) => s.toggleRepeatOne)
   const toggleAutoplay     = usePlayerStore((s) => s.toggleAutoplay)
   const toggleExpanded     = usePlayerStore((s) => s.toggleExpanded)
-  const playFromEnvelope     = usePlayerStore((s) => s.playFromEnvelope)
   const recordEvent        = usePlayerStore((s) => s.recordEvent)
   const openAddToPlaylist  = useUIStore((s) => s.openAddToPlaylist)
 
@@ -76,17 +73,6 @@ export default function ExpandedPlayer() {
     onChange: setVolume,
   })
 
-  async function handleInstantMix() {
-    if (!currentTrackId) return
-    try {
-      const { apiFetch } = await import("@/api/client")
-      const envelope = await apiFetch<import("@/api/types").PlaybackEnvelope>(
-        `/api/v1/tracks/${currentTrackId}/instant-mix`,
-        { method: "POST" }
-      )
-      await playFromEnvelope(envelope)
-    } catch { /* ignore */ }
-  }
 
   const iconBtn = "p-2 rounded-lg transition-colors text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-30"
   const activeBtn = "text-primary hover:text-primary"
@@ -214,14 +200,13 @@ export default function ExpandedPlayer() {
                       </button>
                     </>
                   )}
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button className={cn(iconBtn, "p-1.5")}><MoreHorizontal size={18} /></button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-44">
-                      <DropdownMenuItem onClick={handleInstantMix}>{t("instantMix")}</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  {currentTrack && (
+                    <TrackMenu
+                      track={currentTrack}
+                      triggerClassName="h-8 w-8 opacity-100 rounded-lg hover:bg-muted/60"
+                      triggerIconSize={18}
+                    />
+                  )}
                 </div>
               </div>
             </div>

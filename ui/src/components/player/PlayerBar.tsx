@@ -4,22 +4,20 @@ import { useTranslation } from "react-i18next"
 import {
   Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat1, Infinity, Volume2, VolumeX, Volume1,
-  ChevronUp, ThumbsDown, MoreHorizontal,
+  ChevronUp, ThumbsDown,
 } from "lucide-react"
 import type { TrackSummary } from "@/api/types"
 import { cn } from "@/lib/utils"
 import { usePlayerStore } from "@/store/playerStore"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import LikeButton from "@/components/media/LikeButton"
+import TrackMenu from "@/components/media/TrackMenu"
 import PlayerBackdrop from "@/components/player/PlayerBackdrop.tsx"
 import styles from "./PlayerBar.module.css"
 import { readTrackAccentTransitionDurationMs } from "./plasmaUtils.ts"
 import { preloadArtworkImage } from "./playerBarTransitionUtils.ts"
 import { SeekIndicators, TimeReadout } from "@/components/player/PlaybackProgress"
 import { useDragSlider } from "@/components/player/useDragSlider"
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip"
@@ -385,38 +383,6 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
   )
 }
 
-function TrackMoreMenu({ trackId }: { readonly trackId: number }) {
-  const { t } = useTranslation("player")
-  async function handleInstantMix() {
-    const { apiFetch } = await import("@/api/client")
-    const { usePlayerStore: store } = await import("@/store/playerStore")
-    try {
-      const envelope = await apiFetch<import("@/api/types").PlaybackEnvelope>(
-        `/api/v1/tracks/${trackId}/instant-mix`,
-        { method: "POST" }
-      )
-      await store.getState().playFromEnvelope(envelope)
-    } catch {
-      // ignore
-    }
-  }
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button className="p-1.5 rounded transition-colors text-muted-foreground hover:text-foreground">
-          <MoreHorizontal size={15} />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-44">
-        <DropdownMenuItem onClick={handleInstantMix}>
-          {t("instantMix")}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
 function TrackDetails({
   snapshot,
   iconBtn,
@@ -493,9 +459,14 @@ function TrackDetails({
           >
             <ThumbsDown size={15} />
           </button>
-          <div className="hidden md:block">
-            <TrackMoreMenu trackId={trackId} />
-          </div>
+          {track && (
+            <div className="hidden md:block">
+              <TrackMenu
+                track={track}
+                triggerClassName="h-7 w-7 opacity-100 rounded"
+              />
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -185,3 +185,28 @@ describe("PlayerBar — кнопка Dislike", () => {
     expect(useNavidromeStore.getState().likedIds.has(2)).toBe(false)
   })
 })
+
+describe("PlayerBar — контекстное меню трека", () => {
+  beforeEach(() => {
+    const current = makeItem("b", makeTrack(2, "Current Song"))
+    usePlayerStore.setState({
+      currentTrack: current.track,
+      currentTrackId: 2,
+      currentQueueItemId: "b",
+      session: null,
+      queue: makeQueue([current]),
+    })
+  })
+
+  it("показывает общий набор действий с треком", async () => {
+    renderBar()
+
+    fireEvent.click(screen.getByRole("button", { name: "Track options" }))
+
+    expect(await screen.findByRole("menuitem", { name: "Play" })).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Play next" })).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Instant mix" })).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Add to playlist" })).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Go to Artist 2" })).toBeInTheDocument()
+  })
+})

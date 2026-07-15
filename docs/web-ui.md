@@ -271,11 +271,15 @@ Fixed to the bottom of the viewport, always mounted. Structure:
 - a thin seek bar spanning the full width along the top edge of the bar;
 - a `72px` control row: transport (prev / play-pause / next) and elapsed/total
   time on the left; track artwork, title, artist, release link, like/dislike,
-  and an overflow menu (Instant mix, "Don't play this") in the center; volume
+  and the shared track overflow menu (play, play next, Instant mix, add to
+  playlist, artist/release navigation) in the center; volume
   (hover-reveal slider), repeat-one, shuffle, autoplay toggle, and an expand
   chevron on the right (volume/repeat/shuffle/autoplay are hidden below `md`).
 - track swaps cross-fade (artwork preloaded before the swap; see
   `docs/ui-player.md` for exact timings) rather than popping instantly.
+
+The collapsed and expanded players reuse `TrackMenu`, so every track surface
+exposes the same base actions; a surface can add only context-specific actions.
 
 Native `<audio controls>` is never shown — audio is a hidden playback engine
 only, consistent with the original player spec.

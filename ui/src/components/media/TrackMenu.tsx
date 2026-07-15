@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { apiFetch } from "@/api/client"
 import { patchQueue } from "@/api/playback"
 import { usePlayerStore } from "@/store/playerStore"
+import { cn } from "@/lib/utils"
 import { useUIStore } from "@/store/uiStore"
 import type { PlaybackEnvelope, TrackSummary, ReleaseTrackItem } from "@/api/types"
 
@@ -22,9 +23,19 @@ interface TrackMenuProps {
   readonly onPlayTrack?: (trackId: number) => void
   /** When set, adds a "Remove from queue" item — for rows that live in the current playback queue. */
   readonly onRemoveFromQueue?: () => void
+  /** Lets player surfaces keep their own control sizing while sharing the same menu. */
+  readonly triggerClassName?: string
+  readonly triggerIconSize?: number
 }
 
-export default function TrackMenu({ track, sourceLabel, onPlayTrack, onRemoveFromQueue }: TrackMenuProps) {
+export default function TrackMenu({
+  track,
+  sourceLabel,
+  onPlayTrack,
+  onRemoveFromQueue,
+  triggerClassName,
+  triggerIconSize = 15,
+}: TrackMenuProps) {
   const { t } = useTranslation("media")
   const navigate = useNavigate()
   const sessionId      = usePlayerStore((s) => s.session?.id)
@@ -67,10 +78,13 @@ export default function TrackMenu({ track, sourceLabel, onPlayTrack, onRemoveFro
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 text-muted-foreground opacity-0 group-hover/row:opacity-100 data-[state=open]:opacity-100"
+          className={cn(
+            "h-7 w-7 text-muted-foreground opacity-0 group-hover/row:opacity-100 data-[state=open]:opacity-100",
+            triggerClassName,
+          )}
           aria-label={t("trackMenu.trackOptions")}
         >
-          <MoreHorizontal size={15} />
+          <MoreHorizontal size={triggerIconSize} style={{ width: triggerIconSize, height: triggerIconSize }} />
         </Button>
       </DropdownMenuTrigger>
 
