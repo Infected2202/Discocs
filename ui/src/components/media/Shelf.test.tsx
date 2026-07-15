@@ -1,4 +1,4 @@
-import { createEvent, fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import Shelf from "./Shelf"
@@ -37,6 +37,7 @@ vi.mock("./MediaCard", () => ({
 
 describe("Shelf", () => {
   beforeEach(() => {
+    vi.useRealTimers()
     columns = 4
     isMobile = false
     navigate.mockReset()
@@ -70,7 +71,8 @@ describe("Shelf", () => {
     expect(cardWrapper).toHaveAttribute("style", expect.stringContaining("0.5*(100% - 8px)"))
   })
 
-  it("boosts a fast mobile swipe far enough to coast to the shelf end", () => {
+  it("disables snapping during native momentum and restores it after scrolling settles", () => {
+    vi.useFakeTimers()
     isMobile = true
     render(
       <MemoryRouter>
@@ -85,34 +87,26 @@ describe("Shelf", () => {
     )
 
     const scroller = screen.getByText("One").parentElement?.parentElement as HTMLDivElement
-    const scrollTo = vi.fn()
-    Object.defineProperties(scroller, {
-      scrollLeft: { configurable: true, value: 200, writable: true },
-      scrollWidth: { configurable: true, value: 1600 },
-      clientWidth: { configurable: true, value: 400 },
-      scrollTo: { configurable: true, value: scrollTo },
-    })
+    fireEvent.touchStart(scroller)
+    expect(scroller.style.scrollSnapType).toBe("none")
 
-    const start = createEvent.touchStart(scroller, {
-      touches: [{ clientX: 300 }],
-    })
-    Object.defineProperty(start, "timeStamp", { value: 100 })
-    fireEvent(scroller, start)
+    fireEvent.scroll(scroller)
+    vi.advanceTimersByTime(200)
+    expect(scroller.style.scrollSnapType).toBe("none")
 
-    const move = createEvent.touchMove(scroller, {
-      touches: [{ clientX: 100 }],
-    })
-    Object.defineProperty(move, "timeStamp", { value: 200 })
-    fireEvent(scroller, move)
+    fireEvent.touchEnd(scroller)
+    vi.advanceTimersByTime(100)
+    expect(scroller.style.scrollSnapType).toBe("none")
 
-    const end = createEvent.touchEnd(scroller)
-    Object.defineProperty(end, "timeStamp", { value: 210 })
-    fireEvent(scroller, end)
+    // Native momentum keeps emitting scroll events, so each one postpones
+    // grid alignment until the shelf has actually stopped moving.
+    fireEvent.scroll(scroller)
+    vi.advanceTimersByTime(139)
+    expect(scroller.style.scrollSnapType).toBe("none")
 
-    expect(scrollTo).toHaveBeenCalledWith({
-      left: 1200,
-      behavior: "smooth",
-    })
+    vi.advanceTimersByTime(1)
+    expect(scroller.style.scrollSnapType).toBe("x proximity")
+    vi.useRealTimers()
   })
 
   it("renders shelf navigation as native buttons and disables previous on first page", () => {
