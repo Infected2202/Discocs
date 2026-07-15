@@ -183,6 +183,15 @@ port such as `:5173`) and scheme in `Host`, `X-Forwarded-Host`, and
 `X-Forwarded-Proto`; backend same-origin checks therefore compare against the
 actual public origin rather than the container's internal address.
 
+When TLS terminates on a separate edge host, that proxy must overwrite
+`X-Forwarded-Proto` with its own `$scheme` and `Host` with the public host before
+forwarding through the tunnel. The frontend accepts only the exact `http` or
+`https` values from that header and otherwise falls back to its local scheme.
+This keeps browser CSRF origin checks aligned with the public URL and makes the
+backend set the session cookie with `Secure` even though the edge-to-frontend
+hop is plain HTTP. The frontend port must remain reachable only from trusted
+LAN/tunnel peers; the edge must also clear incoming `X-Discocs-Service-Token`.
+
 The backend port `:8711` remains the private operational endpoint for the
 legacy admin and remote analysis workers. Restrict it to localhost/private LAN
 with the host firewall; do not publish or forward it from the internet.
