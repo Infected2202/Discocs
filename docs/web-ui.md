@@ -407,8 +407,10 @@ for theming (`ui/src/index.css`):
 - **Shelves**: horizontal, paged (not free-scroll) on desktop — `Shelf`
   slices items into `cols`-wide pages and animates between them with
   prev/next arrow buttons; mobile falls back to native horizontal momentum
-  scrolling with proximity snap points, so a quick swipe can coast across
-  multiple cards while a slow swipe still settles on the nearest card. A
+  scrolling with proximity snap points. A quick swipe gets an additional
+  velocity-based smooth projection (clamped to the shelf bounds), allowing
+  it to coast across multiple cards or all the way to the end, while a slow
+  swipe still settles on the nearest card. A
   "More" link routes to the full `/shelf/:key` grid page.
   Every titled shelf header row (dashboard, artist discography groups, etc.)
   has a thin accent-colored divider (`bg-primary/50`) filling the gap between

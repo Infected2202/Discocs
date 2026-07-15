@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { createEvent, fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import Shelf from "./Shelf"
@@ -68,6 +68,51 @@ describe("Shelf", () => {
     // Four cards across on mobile, not two (jsdom normalizes the calc() to
     // a 0.25 multiplier with the three 8px inter-card gaps subtracted).
     expect(cardWrapper).toHaveAttribute("style", expect.stringContaining("0.25*(100% - 24px)"))
+  })
+
+  it("boosts a fast mobile swipe far enough to coast to the shelf end", () => {
+    isMobile = true
+    render(
+      <MemoryRouter>
+        <Shelf
+          items={[
+            { id: 1, type: "release", title: "One" },
+            { id: 2, type: "release", title: "Two" },
+            { id: 3, type: "release", title: "Three" },
+          ]}
+        />
+      </MemoryRouter>
+    )
+
+    const scroller = screen.getByText("One").parentElement?.parentElement as HTMLDivElement
+    const scrollTo = vi.fn()
+    Object.defineProperties(scroller, {
+      scrollLeft: { configurable: true, value: 200, writable: true },
+      scrollWidth: { configurable: true, value: 1600 },
+      clientWidth: { configurable: true, value: 400 },
+      scrollTo: { configurable: true, value: scrollTo },
+    })
+
+    const start = createEvent.touchStart(scroller, {
+      touches: [{ clientX: 300 }],
+    })
+    Object.defineProperty(start, "timeStamp", { value: 100 })
+    fireEvent(scroller, start)
+
+    const move = createEvent.touchMove(scroller, {
+      touches: [{ clientX: 100 }],
+    })
+    Object.defineProperty(move, "timeStamp", { value: 200 })
+    fireEvent(scroller, move)
+
+    const end = createEvent.touchEnd(scroller)
+    Object.defineProperty(end, "timeStamp", { value: 210 })
+    fireEvent(scroller, end)
+
+    expect(scrollTo).toHaveBeenCalledWith({
+      left: 1200,
+      behavior: "smooth",
+    })
   })
 
   it("renders shelf navigation as native buttons and disables previous on first page", () => {

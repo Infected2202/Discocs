@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import MediaCard, { type MediaCardProps } from "./MediaCard"
 import { useColumns } from "@/hooks/useColumns"
+import { useTouchMomentum } from "@/hooks/useTouchMomentum"
 import { animateScroll } from "@/lib/animateScroll"
 import { cn } from "@/lib/utils"
 
@@ -31,6 +32,7 @@ export default function Shelf({ title = "", subtitle, items, shelfKey, grid = fa
   const { cols, isMobile } = useColumns()
   const [page, setPage] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
+  const touchMomentumHandlers = useTouchMomentum(containerRef)
   const animating = useRef(false)
 
   const sliced = isMobile ? items : items.slice(0, cols * 2)
@@ -137,6 +139,8 @@ export default function Shelf({ title = "", subtitle, items, shelfKey, grid = fa
         </div>
       ) : isMobile ? (
         <div
+          ref={containerRef}
+          {...touchMomentumHandlers}
           className="no-scrollbar flex overflow-x-auto px-3 pb-1"
           style={{
             gap: `${MOBILE_GAP_PX}px`,
