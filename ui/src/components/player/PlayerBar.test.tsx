@@ -212,4 +212,18 @@ describe("PlayerBar — контекстное меню трека", () => {
     expect(screen.getByRole("menuitem", { name: "Add to playlist" })).toBeInTheDocument()
     expect(screen.getByRole("menuitem", { name: "Go to Artist 2" })).toBeInTheDocument()
   })
+
+  it("переход из меню не открывает расширенный плеер", async () => {
+    const toggleExpanded = vi.fn()
+    usePlayerStore.setState({ toggleExpanded })
+    renderBar()
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Track options" }), {
+      button: 0,
+      ctrlKey: false,
+    })
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Go to Artist 2" }))
+
+    expect(toggleExpanded).not.toHaveBeenCalled()
+  })
 })

@@ -281,7 +281,7 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
       <div
         className="relative z-10 h-[72px] flex items-center px-4 gap-2 cursor-pointer"
         onClick={(e) => {
-          if ((e.target as HTMLElement).closest("button, a, [role='switch']")) return
+          if ((e.target as HTMLElement).closest("button, a, [role='switch'], [role='menuitem']")) return
           toggleExpanded()
         }}
       >
