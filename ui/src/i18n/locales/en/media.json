@@ -10,6 +10,7 @@
     "playNext": "Play next",
     "instantMix": "Instant mix",
     "addToPlaylist": "Add to playlist",
+    "download": "Download",
     "goTo": "Go to {{name}}",
     "removeFromQueue": "Remove from queue"
   },

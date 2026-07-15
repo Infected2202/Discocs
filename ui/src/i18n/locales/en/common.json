@@ -8,7 +8,8 @@
     "retry": "Retry",
     "tryAgain": "Try again",
     "back": "Back",
-    "viewFullSize": "View full size"
+    "viewFullSize": "View full size",
+    "download": "Download"
   },
   "status": {
     "loading": "Loading…",

@@ -112,6 +112,10 @@ describe("PlaylistPage — пользовательский плейлист", (
     await screen.findByText("Road trip")
     expect(screen.getByText("Long drives")).toBeInTheDocument()
     expect(fetchPlaylist).toHaveBeenCalledWith(5)
+    expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(
+      "href",
+      "/api/v1/playlists/5/download",
+    )
 
     fireEvent.click(screen.getByRole("button", { name: /edit/i }))
     expect(useUIStore.getState().createPlaylistOptions?.playlist?.id).toBe(5)
@@ -198,5 +202,9 @@ describe("PlaylistPage — пользовательский плейлист", (
     expect(screen.queryByRole("button", { name: /delete/i })).toBeNull()
     expect(screen.getByTestId("select-1")).toBeDisabled()
     expect(fetchPlaylist).not.toHaveBeenCalled()
+    expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(
+      "href",
+      "/api/v1/playlists/likes/download",
+    )
   })
 })

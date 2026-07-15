@@ -113,4 +113,21 @@ describe("ReleasePage — шелф рекомендаций без битого 
     expect(screen.getByText("Recommended Albums")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "More" })).toBeNull()
   })
+
+  it("показывает ссылку скачивания для непустого альбома", () => {
+    useReleaseTracks.mockReturnValue({
+      data: {
+        ...makeTracksData(),
+        items: [{ id: 7, title: "Track", artists: [], release: null }],
+      },
+      isLoading: false,
+    })
+
+    renderPage()
+
+    expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(
+      "href",
+      "/api/v1/releases/5/download",
+    )
+  })
 })

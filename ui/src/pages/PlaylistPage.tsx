@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useParams, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
-import { Play, ChevronLeft, Pencil, Trash2, X } from "lucide-react"
+import { Download, Play, ChevronLeft, Pencil, Trash2, X } from "lucide-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   fetchLikesPlaylist,
@@ -179,6 +179,19 @@ export default function PlaylistPage() {
               <Play size={14} fill="currentColor" strokeWidth={0} />
               {t("play")}
             </Button>
+            {tracks.length > 0 && (
+              <Button size="sm" variant="outline" asChild className="gap-2">
+                <a
+                  href={isLikes
+                    ? "/api/v1/playlists/likes/download"
+                    : `/api/v1/playlists/${playlistId}/download`}
+                  download
+                >
+                  <Download size={14} />
+                  {t("actions.download", { ns: "common" })}
+                </a>
+              </Button>
+            )}
             {editable && (
               <>
                 <Button size="sm" variant="outline" onClick={handleEdit} className="gap-2">

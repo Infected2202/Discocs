@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
-import { MoreHorizontal, Play, ListEnd, ListPlus, ListX, User, Disc3, Radio } from "lucide-react"
+import { MoreHorizontal, Play, ListEnd, ListPlus, ListX, User, Disc3, Radio, Download } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -107,6 +107,13 @@ export default function TrackMenu({
         <DropdownMenuItem onClick={() => openAddToPlaylist([track.id])}>
           <ListPlus size={14} className="mr-2" />
           {t("trackMenu.addToPlaylist")}
+        </DropdownMenuItem>
+
+        <DropdownMenuItem asChild>
+          <a href={`/api/v1/tracks/${track.id}/download`} download>
+            <Download size={14} className="mr-2" />
+            {t("trackMenu.download")}
+          </a>
         </DropdownMenuItem>
 
         {track.artists.length > 0 && (

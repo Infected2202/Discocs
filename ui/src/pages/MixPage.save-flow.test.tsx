@@ -29,7 +29,20 @@ function makeMix(status = "draft"): GeneratedMixDetail {
     track_count: 2,
     artwork: null,
     created_at: "2026-07-08T00:00:00Z",
-    items: [],
+    items: [{
+      track_id: 7,
+      track: {
+        id: 7,
+        title: "Track",
+        artists: [],
+        release: null,
+        duration: 120,
+        artwork: { url: null, source: "placeholder", placeholder: true },
+      },
+      position: 0,
+      score: null,
+      reason: null,
+    }],
   }
 }
 
@@ -81,5 +94,9 @@ describe("MixPage — save-флоу через модалку плейлиста
 
     renderMixPage()
     expect(screen.queryByRole("button", { name: /save/i })).toBeNull()
+    expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(
+      "href",
+      "/api/v1/mixes/mix-1/download",
+    )
   })
 })

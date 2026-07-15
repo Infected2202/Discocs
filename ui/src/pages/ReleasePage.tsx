@@ -1,7 +1,7 @@
 import { Link, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import type { TFunction } from "i18next"
-import { Play, Shuffle } from "lucide-react"
+import { Download, Play, Shuffle } from "lucide-react"
 import { useRelease, useReleaseTracks, useReleaseRelated, useReleaseRecommendations } from "@/api/hooks/useRelease"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -125,6 +125,14 @@ export default function ReleasePage() {
               {t("shuffle")}
             </Button>
             <LikeButton entity="album" id={releaseId} variant="control" size={18} />
+            {tracks.length > 0 && (
+              <Button size="sm" variant="outline" asChild className="gap-2">
+                <a href={`/api/v1/releases/${releaseId}/download`} download>
+                  <Download size={14} />
+                  {t("actions.download", { ns: "common" })}
+                </a>
+              </Button>
+            )}
           </>
         }
       />

@@ -1,6 +1,6 @@
 import { useParams } from "react-router"
 import { useTranslation } from "react-i18next"
-import { Play, Bookmark } from "lucide-react"
+import { Download, Play, Bookmark } from "lucide-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useMix } from "@/api/hooks/useMix"
 import { playMix, saveMix } from "@/api/mixes"
@@ -109,6 +109,14 @@ export default function MixPage() {
               <Play size={14} fill="currentColor" strokeWidth={0} />
               {t("play")}
             </Button>
+            {tracks.length > 0 && (
+              <Button size="sm" variant="outline" asChild className="gap-2">
+                <a href={`/api/v1/mixes/${encodeURIComponent(mixId)}/download`} download>
+                  <Download size={14} />
+                  {t("actions.download", { ns: "common" })}
+                </a>
+              </Button>
+            )}
             {!isSaved && (
               <Button size="sm" variant="outline" onClick={handleSave} className="gap-2">
                 <Bookmark size={14} />

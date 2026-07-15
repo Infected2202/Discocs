@@ -10,6 +10,7 @@
     "playNext": "Следующим",
     "instantMix": "Мгновенный микс",
     "addToPlaylist": "Добавить в плейлист",
+    "download": "Скачать",
     "goTo": "Перейти к «{{name}}»",
     "removeFromQueue": "Убрать из очереди"
   },
