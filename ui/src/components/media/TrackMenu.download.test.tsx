@@ -23,14 +23,17 @@ vi.mock("@/store/playerStore", () => ({
   }),
 }))
 
-const track = {
+const track: TrackSummary = {
   id: 42,
   title: "Download me",
   artists: [],
   release: null,
   duration: 120,
   artwork: { url: null, source: "placeholder", placeholder: true },
-} as TrackSummary
+  explicit: false,
+  liked: false,
+  actions: [],
+}
 
 describe("TrackMenu download", () => {
   it("links the download action to the attachment endpoint", () => {
