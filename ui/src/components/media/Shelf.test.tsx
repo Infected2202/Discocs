@@ -71,7 +71,7 @@ describe("Shelf", () => {
     expect(cardWrapper).toHaveAttribute("style", expect.stringContaining("0.5*(100% - 8px)"))
   })
 
-  it("disables snapping during native momentum and restores it after scrolling settles", () => {
+  it("smoothly aligns to the nearest card after native momentum settles", () => {
     vi.useFakeTimers()
     isMobile = true
     render(
@@ -87,6 +87,20 @@ describe("Shelf", () => {
     )
 
     const scroller = screen.getByText("One").parentElement?.parentElement as HTMLDivElement
+    const cardWrappers = ["One", "Two", "Three"].map(
+      (title) => screen.getByText(title).parentElement as HTMLDivElement
+    )
+    const scrollTo = vi.fn()
+    Object.defineProperties(scroller, {
+      scrollLeft: { configurable: true, value: 130, writable: true },
+      scrollWidth: { configurable: true, value: 1000 },
+      clientWidth: { configurable: true, value: 400 },
+      scrollTo: { configurable: true, value: scrollTo },
+    })
+    Object.defineProperty(cardWrappers[0], "offsetLeft", { configurable: true, value: 12 })
+    Object.defineProperty(cardWrappers[1], "offsetLeft", { configurable: true, value: 220 })
+    Object.defineProperty(cardWrappers[2], "offsetLeft", { configurable: true, value: 428 })
+
     fireEvent.touchStart(scroller)
     expect(scroller.style.scrollSnapType).toBe("none")
 
@@ -102,6 +116,16 @@ describe("Shelf", () => {
     // grid alignment until the shelf has actually stopped moving.
     fireEvent.scroll(scroller)
     vi.advanceTimersByTime(139)
+    expect(scroller.style.scrollSnapType).toBe("none")
+
+    vi.advanceTimersByTime(1)
+    expect(scroller.style.scrollSnapType).toBe("none")
+    expect(scrollTo).toHaveBeenCalledWith({ left: 208, behavior: "smooth" })
+
+    // The smooth adjustment itself emits scroll events. Snap is restored
+    // only after that short animation has also become idle.
+    fireEvent.scroll(scroller)
+    vi.advanceTimersByTime(99)
     expect(scroller.style.scrollSnapType).toBe("none")
 
     vi.advanceTimersByTime(1)

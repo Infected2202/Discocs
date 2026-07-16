@@ -412,9 +412,10 @@ for theming (`ui/src/index.css`):
   slices items into `cols`-wide pages and animates between them with
   prev/next arrow buttons; mobile falls back to native horizontal momentum
   scrolling. Snap points are disabled while the finger and native momentum
-  are moving the shelf, then restored to `proximity` after scroll events have
-  been idle for a short interval. This keeps light gestures local and aligns
-  cards only after the shelf has stopped. A
+  are moving the shelf. After scroll events become idle, the shelf smoothly
+  moves to the nearest card while snap remains disabled; `proximity` is
+  restored only after that alignment also settles. This keeps light gestures
+  local and avoids an abrupt final jump. A
   "More" link routes to the full `/shelf/:key` grid page.
   Every titled shelf header row (dashboard, artist discography groups, etc.)
   has a thin accent-colored divider (`bg-primary/50`) filling the gap between
