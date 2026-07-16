@@ -340,9 +340,10 @@ The current baseline schema is multiuser: personal domain tables carry
 
 - Request-scoped operations bind `Store.for_user(user_id)`; an explicitly
   unscoped Store rejects personal access.
-- Startup validates the multiuser primary keys and rejects personal rows whose
-  `user_id` is NULL. It does not rewrite ownership, rebuild primary keys, or
-  create migration backups.
+- Startup repairs legacy `playlists.user_id IS NULL` rows by assigning them to
+  the Navidrome username in `DISCOCS_OWNER_USER`. Before changing ownership it
+  creates an `app.db.prerepair-playlist-owner-<timestamp>.bak` snapshot. Other
+  personal rows with a missing owner are still rejected by the schema guard.
 - Pre-Phase-2 database files are no longer a supported direct upgrade input.
   Restore them with a pre-retirement release, run its one-time migration, then
   upgrade to the current release.
