@@ -49,5 +49,6 @@ continuing to deny operational/admin endpoints.
 ## UI
 
 The track overflow menu contains **Download**. Release, playlist (including
-Liked Tracks), and generated-mix headers expose a **Download** action whenever
-the collection has at least one track.
+Liked Tracks), and generated-mix headers expose an icon-only download action
+with an accessible label whenever the collection has at least one track. In a
+release header, download is placed before the final Like action.

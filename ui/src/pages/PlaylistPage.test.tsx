@@ -112,10 +112,12 @@ describe("PlaylistPage — пользовательский плейлист", (
     await screen.findByText("Road trip")
     expect(screen.getByText("Long drives")).toBeInTheDocument()
     expect(fetchPlaylist).toHaveBeenCalledWith(5)
-    expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(
+    const download = screen.getByRole("link", { name: "Download" })
+    expect(download).toHaveAttribute(
       "href",
       "/api/v1/playlists/5/download",
     )
+    expect(download).not.toHaveTextContent("Download")
 
     fireEvent.click(screen.getByRole("button", { name: /edit/i }))
     expect(useUIStore.getState().createPlaylistOptions?.playlist?.id).toBe(5)

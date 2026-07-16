@@ -110,10 +110,14 @@ export default function MixPage() {
               {t("play")}
             </Button>
             {tracks.length > 0 && (
-              <Button size="sm" variant="outline" asChild className="gap-2">
-                <a href={`/api/v1/mixes/${encodeURIComponent(mixId)}/download`} download>
+              <Button size="icon-sm" variant="outline" asChild>
+                <a
+                  href={`/api/v1/mixes/${encodeURIComponent(mixId)}/download`}
+                  download
+                  aria-label={t("actions.download", { ns: "common" })}
+                  title={t("actions.download", { ns: "common" })}
+                >
                   <Download size={14} />
-                  {t("actions.download", { ns: "common" })}
                 </a>
               </Button>
             )}

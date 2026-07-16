@@ -114,7 +114,7 @@ describe("ReleasePage — шелф рекомендаций без битого 
     expect(screen.queryByRole("button", { name: "More" })).toBeNull()
   })
 
-  it("показывает ссылку скачивания для непустого альбома", () => {
+  it("показывает скачивание иконкой перед завершающим лайком", () => {
     useReleaseTracks.mockReturnValue({
       data: {
         ...makeTracksData(),
@@ -125,9 +125,14 @@ describe("ReleasePage — шелф рекомендаций без битого 
 
     renderPage()
 
-    expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(
+    const download = screen.getByRole("link", { name: "Download" })
+    const like = screen.getByRole("button", { name: "Like" })
+
+    expect(download).toHaveAttribute(
       "href",
       "/api/v1/releases/5/download",
     )
+    expect(download).not.toHaveTextContent("Download")
+    expect(download.compareDocumentPosition(like)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 })

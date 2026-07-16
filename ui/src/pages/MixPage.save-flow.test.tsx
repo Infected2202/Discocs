@@ -97,9 +97,11 @@ describe("MixPage — save-флоу через модалку плейлиста
 
     renderMixPage()
     expect(screen.queryByRole("button", { name: /save/i })).toBeNull()
-    expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(
+    const download = screen.getByRole("link", { name: "Download" })
+    expect(download).toHaveAttribute(
       "href",
       "/api/v1/mixes/mix-1/download",
     )
+    expect(download).not.toHaveTextContent("Download")
   })
 })
