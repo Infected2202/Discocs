@@ -6,12 +6,9 @@
 auth-disabled compatibility callers that do not provide an explicit `user_id`.
 Request-scoped multiuser API code does not use this fallback.
 
-The broad one-time Phase 2 owner/primary-key migration has been retired. A
-targeted startup repair remains for playlists created before multiuser scoping:
-rows with `playlists.user_id IS NULL` are assigned to `DISCOCS_OWNER_USER` after
-creating `app.db.prerepair-playlist-owner-<timestamp>.bak`. The setting is
-required only while such rows exist. Other pre-Phase-2 personal data still fails
-the current schema guard and must be upgraded with an older release.
+The one-time Phase 2 owner/primary-key migration has been retired. Startup never
+rewrites personal ownership or creates `premigrate-*` backups. A pre-Phase-2
+database fails the current schema guard and must be upgraded with an older release.
 
 This document collects practical notes for running the MVP safely while the
 library and analysis database are still local SQLite files.

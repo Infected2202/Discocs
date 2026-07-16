@@ -10,7 +10,6 @@ import json
 import os
 import sqlite3
 from dataclasses import replace
-from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 from uuid import uuid4
@@ -908,10 +907,8 @@ class StoreBase:
                 "CREATE INDEX IF NOT EXISTS idx_playlists_user "
                 "ON playlists(user_id)"
             )
-            self._backfill_added_timestamps(conn)
-        self._repair_unowned_playlists()
-        with self.connect() as conn:
             self._validate_current_multiuser_schema(conn)
+            self._backfill_added_timestamps(conn)
 
     def _ensure_column(
         self,
@@ -958,68 +955,6 @@ class StoreBase:
                 f"one-time multiuser migration: {detail}. Restore this backup "
                 "with a pre-retirement release and migrate it before upgrading."
             )
-
-    def _backup_db(self, tag: str) -> Path | None:
-        """Create a consistent SQLite snapshot before a data repair."""
-        if str(self.db_path) == ":memory:" or not self.db_path.exists():
-            return None
-        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        destination = self.db_path.with_name(
-            f"{self.db_path.name}.{tag}-{timestamp}.bak"
-        )
-        source = sqlite3.connect(self.db_path)
-        backup = sqlite3.connect(destination)
-        try:
-            source.backup(backup)
-        finally:
-            backup.close()
-            source.close()
-        logger.info("Backed up %s -> %s before %s repair", self.db_path, destination, tag)
-        return destination
-
-    def _repair_unowned_playlists(self) -> None:
-        """Assign playlists created before multiuser scoping to the configured owner."""
-        with self.connect() as conn:
-            pending = int(
-                conn.execute(
-                    "SELECT COUNT(*) FROM playlists WHERE user_id IS NULL"
-                ).fetchone()[0]
-            )
-        if pending == 0:
-            return
-
-        owner_username = os.getenv(OWNER_USER_ENV, "").strip()
-        if not owner_username:
-            raise RuntimeError(
-                f"{OWNER_USER_ENV} is required to repair {pending} playlist(s) "
-                "without an owner"
-            )
-
-        self._backup_db("prerepair-playlist-owner")
-        now = utc_now()
-        with self.connect() as conn:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO users (navidrome_username, created_at, last_login_at)
-                VALUES (?, ?, NULL)
-                """,
-                (owner_username, now),
-            )
-            owner = conn.execute(
-                "SELECT id FROM users WHERE navidrome_username = ?",
-                (owner_username,),
-            ).fetchone()
-            owner_id = int(owner["id"])
-            updated = conn.execute(
-                "UPDATE playlists SET user_id = ? WHERE user_id IS NULL",
-                (owner_id,),
-            ).rowcount
-        logger.info(
-            "Playlist owner repair: assigned %d playlist(s) to user_id=%d (%s)",
-            updated,
-            owner_id,
-            owner_username,
-        )
 
     def _backfill_added_timestamps(self, conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE tracks SET added_at = created_at WHERE added_at IS NULL")
