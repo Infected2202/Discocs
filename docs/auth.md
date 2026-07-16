@@ -236,7 +236,9 @@ with the host firewall; do not publish or forward it from the internet.
    `user_id` пишется в новую колонку `sessions.user_id`. `resolve_session`
    отдаёт `ResolvedSession(user_id, username)`, middleware кладёт
    `request.state.user_id` (у `service`-принципала — `None`). Легаси-сессии
-   (без `user_id`) резолвят id через `users` по username. Регистрации нет —
+   (без `user_id`) резолвят id через `users` по username. Navidrome username
+   сопоставляется без учёта регистра; это также канонизирует старые сессии,
+   созданные с отличающимся регистром. Регистрации нет —
    аккаунты заводит владелец в Navidrome (§9 спеки).
 3. **Per-user креды Navidrome:** ✅ пароль хранится только как AES-GCM
    ciphertext в строке сессии; ключ выводится из сырого session-token, которого

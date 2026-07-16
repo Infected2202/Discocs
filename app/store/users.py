@@ -30,25 +30,32 @@ class UsersStoreMixin:
         if not navidrome_username:
             raise ValueError("navidrome_username must be non-empty")
         with self.connect() as conn:
-            conn.execute(
+            row = conn.execute(
+                "SELECT id FROM users "
+                "WHERE navidrome_username = ? COLLATE NOCASE ORDER BY id LIMIT 1",
+                (navidrome_username,),
+            ).fetchone()
+            if row is not None:
+                user_id = int(row["id"])
+                conn.execute(
+                    "UPDATE users SET last_login_at = ? WHERE id = ?",
+                    (now, user_id),
+                )
+                return user_id
+            cursor = conn.execute(
                 """
                 INSERT INTO users (navidrome_username, created_at, last_login_at)
                 VALUES (?, ?, ?)
-                ON CONFLICT(navidrome_username)
-                DO UPDATE SET last_login_at = excluded.last_login_at
                 """,
                 (navidrome_username, now, now),
             )
-            row = conn.execute(
-                "SELECT id FROM users WHERE navidrome_username = ?",
-                (navidrome_username,),
-            ).fetchone()
-            return int(row["id"])
+            return int(cursor.lastrowid)
 
     def get_user_by_username(self, navidrome_username: str) -> sqlite3.Row | None:
         with self.connect() as conn:
             return conn.execute(
-                "SELECT * FROM users WHERE navidrome_username = ?",
+                "SELECT * FROM users "
+                "WHERE navidrome_username = ? COLLATE NOCASE ORDER BY id LIMIT 1",
                 (navidrome_username,),
             ).fetchone()
 

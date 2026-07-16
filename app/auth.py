@@ -137,10 +137,11 @@ def resolve_session(store: Store, token: str | None) -> ResolvedSession | None:
         return None
     store.touch_session(token_hash, now)
     username = str(row["username"])
-    raw_user_id = row["user_id"]
-    if raw_user_id is None:
-        user_row = store.get_user_by_username(username)
-        raw_user_id = user_row["id"] if user_row is not None else None
+    # Navidrome usernames are case-insensitive. Always resolve the canonical
+    # users row so sessions created during the case-sensitive implementation
+    # do not remain isolated from data owned by a differently-cased spelling.
+    user_row = store.get_user_by_username(username)
+    raw_user_id = user_row["id"] if user_row is not None else row["user_id"]
     user_id = int(raw_user_id) if raw_user_id is not None else None
     password = None
     secret = row["nav_secret"]

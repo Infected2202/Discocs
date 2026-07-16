@@ -149,10 +149,10 @@ def test_upsert_user_is_idempotent_and_bumps_last_login(tmp_path, monkeypatch):
     store = init_store(tmp_path, monkeypatch)
     existing_user_ids = store.list_user_ids()
     first = store.upsert_user("alice", now="2026-01-01T00:00:00")
-    again = store.upsert_user("alice", now="2026-02-02T00:00:00")
-    # Same username → same internal id, no duplicate row.
+    again = store.upsert_user("ALICE", now="2026-02-02T00:00:00")
+    # Navidrome username casing does not create a second identity.
     assert first == again
-    row = store.get_user_by_username("alice")
+    row = store.get_user_by_username("AlIcE")
     assert row["id"] == first
     assert row["created_at"] == "2026-01-01T00:00:00"
     assert row["last_login_at"] == "2026-02-02T00:00:00"
@@ -206,6 +206,37 @@ def test_resolve_session_recovers_user_id_for_legacy_row(tmp_path, monkeypatch):
     resolved = auth.resolve_session(store, token)
     # Falls back to the users table so the id is still recovered.
     assert resolved.user_id == user_id
+
+
+def test_resolve_session_canonicalizes_existing_case_duplicate(tmp_path, monkeypatch):
+    store = init_store(tmp_path, monkeypatch)
+    now = datetime.fromisoformat(utc_now())
+    canonical_id = store.upsert_user("infected2202", now=now.isoformat())
+    with store.connect() as conn:
+        duplicate_id = int(
+            conn.execute(
+                "INSERT INTO users (navidrome_username, created_at, last_login_at) "
+                "VALUES ('Infected2202', ?, ?)",
+                (now.isoformat(), now.isoformat()),
+            ).lastrowid
+        )
+    assert duplicate_id != canonical_id
+
+    token = "case-duplicate-token"
+    store.create_session(
+        token_hash=auth.hash_token(token),
+        username="Infected2202",
+        user_id=duplicate_id,
+        created_at=now.isoformat(),
+        expires_at=(now + timedelta(hours=1)).isoformat(),
+        ip=None,
+        user_agent=None,
+    )
+
+    resolved = auth.resolve_session(store, token)
+    assert resolved is not None
+    assert resolved.username == "Infected2202"
+    assert resolved.user_id == canonical_id
 
 
 def test_login_star_sync_is_bound_to_authenticated_user():
