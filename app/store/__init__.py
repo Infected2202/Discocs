@@ -15,6 +15,7 @@ from app.store.files import FilesStoreMixin
 from app.store.jobs import JobsStoreMixin
 from app.store.embeddings import EmbeddingsStoreMixin
 from app.store.release_aggregates import ReleaseAggregatesStoreMixin
+from app.store.artist_aggregates import ArtistAggregatesStoreMixin
 from app.store.flow import FlowStoreMixin
 from app.store.map_atlas import MapAtlasStoreMixin
 from app.store.sessions import SessionsStoreMixin
@@ -52,6 +53,7 @@ from app.models import (  # noqa: F401
     AnalysisJob,
     AnalysisTask,
     AnalysisWorker,
+    ArtistAggregate,
     Artist,
     ArtistSummaryRow,
     ExternalTrack,
@@ -101,6 +103,7 @@ class Store(
     JobsStoreMixin,
     EmbeddingsStoreMixin,
     ReleaseAggregatesStoreMixin,
+    ArtistAggregatesStoreMixin,
     FlowStoreMixin,
     MapAtlasStoreMixin,
     SessionsStoreMixin,

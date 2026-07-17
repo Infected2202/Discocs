@@ -137,8 +137,8 @@ falls back to a letter placeholder inside `ArtworkImage`.
 
 ### Artist page (`/artists/:id`, `ArtistPage.tsx`)
 
-Backend calls: `useArtist`, `useArtistDiscography` (`GET
-/api/v1/artists/{id}`, `/discography`).
+Backend calls: `useArtist`, `useArtistDiscography`, `useArtistSimilar` (`GET
+/api/v1/artists/{id}`, `/discography`, `/similar?limit=16`).
 
 Layout: circular avatar (`144px`) on the left, artist name and local stats
 (`tracks · releases · plays`, each field only shown if > 0) on the right,
@@ -146,11 +146,12 @@ with Play and like-heart actions. Below: a `PopularTracks` block built from
 `artist.top_tracks` (falls back to the first 5 tracks if none of them have a
 positive play count — i.e. it does not hide the section when local play data
 is genuinely absent, unlike the original "omit if unavailable" spec), then
-one `Shelf` per non-empty discography group returned by the API (e.g. Albums,
-EPs, Singles, Featured In — grouping logic lives server-side). There is
-currently no tabbed Discography/Top Tracks/Similar Artists/Bio navigation on
-this page — it is a single scrolling page with sequential sections, and no
-Similar Artists section is rendered yet.
+one grid `Shelf` per non-empty discography group returned by the API (e.g.
+Albums, EPs, Singles, Featured In — grouping logic lives server-side). A
+regular 16-item "Similar artists" shelf is rendered last when artist
+aggregates are available. There is no tabbed Discography/Top Tracks/Similar
+Artists/Bio navigation on this page; it remains a single scrolling page with
+sequential sections.
 
 ### Mix page (`/mixes/:id`, `MixPage.tsx`)
 

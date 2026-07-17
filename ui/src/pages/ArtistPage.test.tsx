@@ -3,14 +3,16 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import ArtistPage from "./ArtistPage"
-import type { ArtistResponse, ArtistDiscographyResponse } from "@/api/types"
+import type { ArtistResponse, ArtistDiscographyResponse, ArtistSimilarResponse } from "@/api/types"
 
 const useArtist = vi.fn()
 const useArtistDiscography = vi.fn()
+const useArtistSimilar = vi.fn()
 
 vi.mock("@/api/hooks/useArtist", () => ({
   useArtist: (...args: unknown[]) => useArtist(...args),
   useArtistDiscography: (...args: unknown[]) => useArtistDiscography(...args),
+  useArtistSimilar: (...args: unknown[]) => useArtistSimilar(...args),
 }))
 
 const playSource = vi.fn()
@@ -33,7 +35,9 @@ vi.mock("@/components/media/PopularTracks", () => ({
 }))
 
 vi.mock("@/components/media/Shelf", () => ({
-  default: () => <div data-testid="shelf" />,
+  default: ({ title, items }: { title: string; items: Array<{ title: string }> }) => (
+    <div data-testid="shelf"><span>{title}</span>{items.map((item) => <span key={item.title}>{item.title}</span>)}</div>
+  ),
 }))
 
 vi.mock("@/components/media/ArtworkImage", () => ({
@@ -79,6 +83,7 @@ describe("ArtistPage — кнопка Shuffle", () => {
     toggleArtistLike.mockReset()
     useArtist.mockReturnValue({ data: makeArtistData(), isLoading: false, error: null })
     useArtistDiscography.mockReturnValue({ data: makeDiscoData(), isLoading: false })
+    useArtistSimilar.mockReturnValue({ data: { artist: { id: 3, name: "Max Cooper" }, items: [], available: true, basis: "artist_similarity" } satisfies ArtistSimilarResponse })
   })
 
   it("запускает воспроизведение артиста и включает шафл", async () => {
@@ -106,5 +111,27 @@ describe("ArtistPage — кнопка Shuffle", () => {
     const shuffle = screen.getByRole("button", { name: "Shuffle" })
     expect(shuffle).toHaveAttribute("data-size", "icon-sm")
     expect(shuffle).not.toHaveTextContent("Shuffle")
+  })
+
+  it("рендерит полку похожих артистов внизу страницы", () => {
+    useArtistSimilar.mockReturnValue({
+      data: {
+        artist: { id: 3, name: "Max Cooper" },
+        available: true,
+        basis: "artist_similarity",
+        items: [{
+          id: 9,
+          name: "Jon Hopkins",
+          sort_name: null,
+          image: { url: null, source: "none", placeholder: true },
+          library_stats: { tracks: 12, releases: 3, liked_tracks: 0, plays: 0 },
+        }],
+      } satisfies ArtistSimilarResponse,
+    })
+
+    renderPage()
+
+    expect(screen.getByTestId("shelf")).toHaveTextContent("Similar artists")
+    expect(screen.getByTestId("shelf")).toHaveTextContent("Jon Hopkins")
   })
 })

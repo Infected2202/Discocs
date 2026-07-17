@@ -47,6 +47,7 @@ from app.schemas.requests import (
     NavidromeSyncRequest,
 )
 from app.services.release_aggregates import run_release_aggregate_job
+from app.services.artist_aggregates import run_artist_aggregate_job
 from app.services.release_scoring import release_recommendation_defaults
 from app.services.jobs import (
     create_deferred_job_if_busy,
@@ -169,6 +170,8 @@ def stats(model: str = "discogs_multi") -> dict[str, object]:
         model_exists = model_path.exists()
     agg_ready = store.count_release_aggregates(model)
     agg_pending = store.count_releases_needing_aggregation(model)
+    artist_agg_ready = store.count_artist_aggregates(model)
+    artist_agg_pending = store.count_artists_needing_aggregation(model)
     logger.info("Stats base_counts seconds=%.3f", perf_counter() - counts_started)
     data: dict[str, object] = {
         "db": str(settings.db_path),
@@ -188,6 +191,7 @@ def stats(model: str = "discogs_multi") -> dict[str, object]:
         "audio_features_missing_tracks": audio_status["missing_tracks"],
         "audio_features": audio_status,
         "release_aggregates": {"ready": agg_ready, "pending": agg_pending},
+        "artist_aggregates": {"ready": artist_agg_ready, "pending": artist_agg_pending},
         "model": model,
         "models": known_models,
         "model_stats": model_stats,
@@ -699,6 +703,47 @@ def api_v1_release_aggregates_status(
         "model_name": model_name,
         "ready": ready,
         "pending": pending,
+    }
+
+
+@router.post("/jobs/artist-aggregates")
+def api_v1_artist_aggregates_job(
+    model_name: Annotated[str, Query()] = "discogs_multi",
+    limit: Annotated[int, Query(ge=0, description="Max artists to process (0 = all)")] = 0,
+) -> dict[str, object]:
+    """Compute release-derived artist aggregates in a tracked daemon job."""
+    from threading import Thread
+    store, _settings = context()
+    pending = store.count_artists_needing_aggregation(model_name)
+    if pending == 0:
+        return {
+            "status": "ok", "message": "All artists already aggregated",
+            "pending": 0, "model_name": model_name,
+        }
+    job_id = create_job(
+        "artist_aggregates", f"Computing aggregates for {pending} artists (model={model_name})"
+    )
+
+    def _run() -> None:
+        run_artist_aggregate_job(store, model_name, limit=limit, job_id=job_id)
+
+    Thread(target=_run, daemon=True, name=f"artist-agg-{job_id[:8]}").start()
+    return {
+        "status": "started", "job_id": job_id,
+        "message": f"Artist aggregate job started for {pending} artists",
+        "pending": pending, "model_name": model_name,
+    }
+
+
+@router.get("/jobs/artist-aggregates/status")
+def api_v1_artist_aggregates_status(
+    model_name: Annotated[str, Query()] = "discogs_multi",
+) -> dict[str, object]:
+    store, _settings = context()
+    return {
+        "model_name": model_name,
+        "ready": store.count_artist_aggregates(model_name),
+        "pending": store.count_artists_needing_aggregation(model_name),
     }
 
 

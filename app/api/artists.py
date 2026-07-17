@@ -21,6 +21,7 @@ from app.schemas.responses import (
 )
 from app.serializers.entities import (
     artist_link_dict,
+    artist_summary_dict,
     artist_summary_with_external_image,
     ensure_artist_external_info,
     entity_action,
@@ -37,6 +38,7 @@ from app.services.cover import (
     remember_cover_error,
 )
 from app.state import COVER_TIMEOUT_SECONDS
+from app.services.artist_similarity import find_similar_artists
 
 logger = logging.getLogger(__name__)
 
@@ -192,9 +194,38 @@ def api_v1_artist_top_tracks(artist_id: int) -> dict[str, object] | JSONResponse
 
 
 @router.get("/artists/{artist_id}/similar", response_model=ArtistAvailabilityStubResponse)
-def api_v1_artist_similar(artist_id: int) -> dict[str, object] | JSONResponse:
-    store, _settings = context()
+def api_v1_artist_similar(
+    artist_id: int,
+    limit: Annotated[int, Query(ge=1, le=50)] = 16,
+    include_debug: bool = False,
+) -> dict[str, object] | JSONResponse:
+    store, settings = context()
     artist = store.get_artist(artist_id)
     if artist is None:
         return api_error(404, "not_found", _ARTIST_NOT_FOUND)
-    return {"artist": artist_link_dict(artist.artist), "items": [], "available": False, "basis": "not_available"}
+    model_name = settings.default_model
+    if store.load_artist_embedding(artist_id, model_name) is None:
+        return {
+            "artist": artist_link_dict(artist.artist),
+            "items": [],
+            "available": False,
+            "basis": "no_aggregate",
+        }
+
+    items: list[dict[str, object]] = []
+    for result in find_similar_artists(store, model_name, artist_id, limit=limit):
+        candidate = store.get_artist(result.artist_id)
+        if candidate is None:
+            continue
+        item = artist_summary_dict(candidate)
+        if include_debug:
+            item["score"] = result.score
+            item["centroid_similarity"] = result.centroid_similarity
+            item["catalog_similarity"] = result.catalog_similarity
+        items.append(item)
+    return {
+        "artist": artist_link_dict(artist.artist),
+        "items": items,
+        "available": True,
+        "basis": "artist_similarity",
+    }

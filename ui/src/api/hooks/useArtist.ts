@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { fetchArtist, fetchArtistDiscography, fetchArtistTopTracks, type DiscographySort } from "../artists"
+import { fetchArtist, fetchArtistDiscography, fetchArtistSimilar, fetchArtistTopTracks, type DiscographySort } from "../artists"
 
 export function useArtist(id: number) {
   return useQuery({
@@ -19,5 +19,12 @@ export function useArtistTopTracks(id: number) {
   return useQuery({
     queryKey: ["artist", id, "top-tracks"],
     queryFn: () => fetchArtistTopTracks(id),
+  })
+}
+
+export function useArtistSimilar(id: number) {
+  return useQuery({
+    queryKey: ["artist", id, "similar"],
+    queryFn: () => fetchArtistSimilar(id),
   })
 }

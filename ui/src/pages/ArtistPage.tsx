@@ -1,7 +1,7 @@
 import { useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { Play, Shuffle } from "lucide-react"
-import { useArtist, useArtistDiscography } from "@/api/hooks/useArtist"
+import { useArtist, useArtistDiscography, useArtistSimilar } from "@/api/hooks/useArtist"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
@@ -10,7 +10,7 @@ import LikeButton from "@/components/media/LikeButton"
 import Shelf from "@/components/media/Shelf"
 import PopularTracks from "@/components/media/PopularTracks"
 import { usePlayerStore } from "@/store/playerStore"
-import type { ReleaseSummary } from "@/api/types"
+import type { ArtistSummary, ReleaseSummary } from "@/api/types"
 
 function releaseSummaryToCard(r: ReleaseSummary, onPlay: () => void) {
   return {
@@ -48,6 +48,7 @@ export default function ArtistPage() {
   const artistId = Number(id)
   const { data: artistData, isLoading: artistLoading, error } = useArtist(artistId)
   const { data: discoData, isLoading: discoLoading } = useArtistDiscography(artistId)
+  const { data: similarData } = useArtistSimilar(artistId)
   const popularTracks = (() => {
     const items = artistData?.top_tracks ?? []
     const hasPlays = items.some((t) => t.play_count > 0)
@@ -138,6 +139,20 @@ export default function ArtistPage() {
           />
         )
       })}
+
+      {/* Similar artists */}
+      {(similarData?.items.length ?? 0) > 0 && (
+        <Shelf
+          title={t("similarArtists")}
+          items={(similarData?.items ?? []).map((item: ArtistSummary) => ({
+            id: item.id,
+            type: "artist" as const,
+            title: item.name,
+            artwork: item.image,
+            onPlay: () => playSource("artist", item.id, item.name),
+          }))}
+        />
+      )}
       </div>{/* /z-10 */}
     </div>
   )

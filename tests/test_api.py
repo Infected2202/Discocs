@@ -310,7 +310,40 @@ def test_api_v1_artist_discography_groups_unknown_releases(tmp_path: Path, monke
     groups = {group["key"]: group for group in discography_response.json()["groups"]}
     assert groups["releases"]["items"][0]["title"] == "Unknown Type"
     assert top_tracks_response.json()["available"] is True
-    assert similar_response.json()["basis"] == "not_available"
+    assert similar_response.json()["basis"] == "no_aggregate"
+
+
+def test_api_v1_artist_similar_returns_artist_cards_with_default_limit(tmp_path: Path, monkeypatch):
+    import app.api.artists as api_artists_module
+    from app.services.artist_similarity import ArtistSimilarityResult
+
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path / "source" / "one.flac", artist="Source", album="Source Album")
+    add_track(store, tmp_path / "candidate" / "one.flac", artist="Candidate", album="Candidate Album")
+    source_id = store.search_entities("Source")["artists"]["items"][0].artist.id
+    candidate_id = store.search_entities("Candidate")["artists"]["items"][0].artist.id
+    store.save_artist_embedding(source_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    store.save_artist_embedding(candidate_id, "discogs_multi", np.array([0.9, 0.1], dtype=np.float32))
+
+    seen: dict[str, object] = {}
+
+    def fake_find(store_arg, model_name, artist_id, *, limit):
+        seen.update(store_is_valid=isinstance(store_arg, Store), model=model_name, artist_id=artist_id, limit=limit)
+        return [ArtistSimilarityResult(candidate_id, 0.91, 0.93, 0.88)]
+
+    monkeypatch.setattr(api_artists_module, "find_similar_artists", fake_find)
+    response = TestClient(app).get(f"/api/v1/artists/{source_id}/similar")
+
+    assert response.status_code == 200
+    assert response.json()["basis"] == "artist_similarity"
+    assert response.json()["items"][0]["name"] == "Candidate"
+    assert response.json()["items"][0]["image"]["placeholder"] is True
+    assert seen == {
+        "store_is_valid": True,
+        "model": "discogs_multi",
+        "artist_id": source_id,
+        "limit": 16,
+    }
 
 
 def test_api_v1_search_prefers_exact_release_top_result(tmp_path: Path, monkeypatch):
@@ -1237,6 +1270,8 @@ def test_test_ui_loads():
     assert "Metrics" in response.text
     assert "metricsSummary" in response.text
     assert "Discogs-EffNet heads" in response.text
+    assert "Artist aggregates" in response.text
+    assert "/api/v1/jobs/artist-aggregates" in response.text
     assert "/api/v1/metrics/search" in response.text
     assert "coverMarkup(t)" in response.text
     assert "Lost files" in response.text

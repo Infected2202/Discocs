@@ -122,9 +122,10 @@ from this table and use `space="cosine"`; UI/API similarity is reported as
 (`release_id, model_name` primary key) — a derived/aggregated vector per
 release rather than a raw per-track vector.
 
-There is no segment-level embedding table (`track_embedding_segments` from
-the original plan) and no `artist_embeddings` table — neither is
-implemented.
+`artist_embeddings` mirrors the same vector shape at artist granularity. Its
+vectors are normalized means of the artist's owned, ready release embeddings;
+each release has equal weight. There is no segment-level embedding table
+(`track_embedding_segments` from the original plan).
 
 Related analysis tables (not embeddings, but adjacent): `track_predictions`
 (top-N labels per model), `track_model_outputs` (full score vectors for
@@ -168,9 +169,11 @@ per-user while this row is shared; scoped recommendation services compute the
 summary live. There is no
 separate `release_user_stats` table.
 
-Artist-level equivalents (`artist_aggregates`, `artist_user_stats`) from the
-original plan are not implemented — artist pages compute their summaries
-live rather than from a cached aggregate table.
+`artist_aggregates` stores the release count, ready release count, centroid
+model, medoid release, status, and update timestamp used by artist-similarity
+recommendations. It is shared audio-derived state, not a personal preference
+row. `artist_user_stats` remains unimplemented; artist-page playback summaries
+are computed live.
 
 ## Playback Sessions, Queue, and Events
 
@@ -352,10 +355,9 @@ The current baseline schema is multiuser: personal domain tables carry
 Entities described in the original design that are not present in the
 current schema:
 
-- `track_embedding_segments`, `artist_embeddings` — no segment-level or
-  artist-level embedding tables.
-- `artist_aggregates`, `artist_user_stats`, `release_user_stats` — there are no
-  dedicated counter tables. Per-user summaries are computed live; the one
-  public artist popularity counter is a live cross-user `SUM(play_count)`.
+- `track_embedding_segments` — no segment-level embedding table.
+- `artist_user_stats`, `release_user_stats` — there are no dedicated personal
+  counter tables. Per-user summaries are computed live; the one public artist
+  popularity counter is a live cross-user `SUM(play_count)`.
 - `dashboard_shelf_cache` (generic) — only `albums_for_you_cache` exists;
   other shelves query live rather than through a generic cache table.

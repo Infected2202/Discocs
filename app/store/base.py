@@ -659,6 +659,29 @@ class StoreBase:
                     FOREIGN KEY (release_id) REFERENCES releases(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS artist_aggregates (
+                    artist_id INTEGER PRIMARY KEY,
+                    release_count INTEGER NOT NULL DEFAULT 0,
+                    available_release_count INTEGER NOT NULL DEFAULT 0,
+                    centroid_model TEXT,
+                    medoid_release_id INTEGER,
+                    embedding_status TEXT NOT NULL DEFAULT 'pending',
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE,
+                    FOREIGN KEY (medoid_release_id) REFERENCES releases(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS artist_embeddings (
+                    artist_id INTEGER NOT NULL,
+                    model_name TEXT NOT NULL,
+                    dim INTEGER NOT NULL,
+                    vector BLOB NOT NULL,
+                    vector_norm REAL NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (artist_id, model_name),
+                    FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS flow_profiles (
                     id TEXT PRIMARY KEY,
                     user_id INTEGER,

@@ -68,6 +68,13 @@ export interface ArtistAvailabilityStub {
   basis: string
 }
 
+export interface ArtistSimilarResponse {
+  artist: ArtistLink
+  items: ArtistSummary[]
+  available: boolean
+  basis: string
+}
+
 export interface ArtistTopTrack extends TrackSummary {
   play_count: number
 }

@@ -1,5 +1,5 @@
 import { apiFetch, apiUrl } from "./client"
-import type { ArtistDiscographyResponse, ArtistTopTracksResponse, ArtistResponse } from "./types"
+import type { ArtistDiscographyResponse, ArtistTopTracksResponse, ArtistResponse, ArtistSimilarResponse } from "./types"
 
 export function fetchArtist(id: number): Promise<ArtistResponse> {
   return apiFetch(`/api/v1/artists/${id}`)
@@ -16,4 +16,8 @@ export function fetchArtistDiscography(
 
 export function fetchArtistTopTracks(id: number): Promise<ArtistTopTracksResponse> {
   return apiFetch(`/api/v1/artists/${id}/top-tracks`)
+}
+
+export function fetchArtistSimilar(id: number, limit = 16): Promise<ArtistSimilarResponse> {
+  return apiFetch(apiUrl(`/api/v1/artists/${id}/similar`, { limit }))
 }

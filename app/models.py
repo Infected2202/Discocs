@@ -88,6 +88,18 @@ class ReleaseAggregate:
     updated_at: str
 
 
+@dataclass(frozen=True)
+class ArtistAggregate:
+    artist_id: int
+    release_count: int
+    available_release_count: int
+    centroid_model: str | None
+    medoid_release_id: int | None
+    # 'pending' | 'ready' | 'unavailable'
+    embedding_status: str
+    updated_at: str
+
+
 # ---------------------------------------------------------------------------
 # Flow engine
 # ---------------------------------------------------------------------------
