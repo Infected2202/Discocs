@@ -21,7 +21,6 @@ from app.schemas.responses import (
 )
 from app.serializers.entities import (
     artist_link_dict,
-    artist_summary_dict,
     artist_summary_with_external_image,
     ensure_artist_external_info,
     entity_action,
@@ -217,7 +216,7 @@ def api_v1_artist_similar(
         candidate = store.get_artist(result.artist_id)
         if candidate is None:
             continue
-        item = artist_summary_dict(candidate)
+        item = artist_summary_with_external_image(store, settings, candidate)
         if include_debug:
             item["score"] = result.score
             item["centroid_similarity"] = result.centroid_similarity

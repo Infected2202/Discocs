@@ -324,6 +324,23 @@ def test_api_v1_artist_similar_returns_artist_cards_with_default_limit(tmp_path:
     candidate_id = store.search_entities("Candidate")["artists"]["items"][0].artist.id
     store.save_artist_embedding(source_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
     store.save_artist_embedding(candidate_id, "discogs_multi", np.array([0.9, 0.1], dtype=np.float32))
+    with store.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO external_ids (provider, entity_type, entity_id, external_id, raw_json, synced_at)
+            VALUES ('navidrome', 'artist', ?, 'artist-candidate', NULL, '2026-01-01T00:00:00+00:00')
+            """,
+            (candidate_id,),
+        )
+
+    class FakeNavidromeClient:
+        def __init__(self, _settings):
+            pass
+
+        def get_artist_info2(self, artist_id: str, *, count: int = 0):
+            assert artist_id == "artist-candidate"
+            assert count == 0
+            return {"largeImageUrl": "https://lastfm.example/candidate.jpg"}
 
     seen: dict[str, object] = {}
 
@@ -332,12 +349,18 @@ def test_api_v1_artist_similar_returns_artist_cards_with_default_limit(tmp_path:
         return [ArtistSimilarityResult(candidate_id, 0.91, 0.93, 0.88)]
 
     monkeypatch.setattr(api_artists_module, "find_similar_artists", fake_find)
+    monkeypatch.setattr(serializers_entities_module, "NavidromeClient", FakeNavidromeClient)
     response = TestClient(app).get(f"/api/v1/artists/{source_id}/similar")
 
     assert response.status_code == 200
     assert response.json()["basis"] == "artist_similarity"
     assert response.json()["items"][0]["name"] == "Candidate"
-    assert response.json()["items"][0]["image"]["placeholder"] is True
+    assert response.json()["items"][0]["image"] == {
+        "url": f"/api/v1/artists/{candidate_id}/cover",
+        "source": "external",
+        "placeholder": False,
+    }
+    assert store.get_artist(candidate_id).artist.image_url == "https://lastfm.example/candidate.jpg"  # type: ignore[union-attr]
     assert seen == {
         "store_is_valid": True,
         "model": "discogs_multi",

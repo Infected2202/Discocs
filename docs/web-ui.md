@@ -149,9 +149,11 @@ is genuinely absent, unlike the original "omit if unavailable" spec), then
 one grid `Shelf` per non-empty discography group returned by the API (e.g.
 Albums, EPs, Singles, Featured In — grouping logic lives server-side). A
 regular 16-item "Similar artists" shelf is rendered last when artist
-aggregates are available. There is no tabbed Discography/Top Tracks/Similar
-Artists/Bio navigation on this page; it remains a single scrolling page with
-sequential sections.
+aggregates are available. Missing similar-artist images are enriched through
+the same Navidrome `getArtistInfo2` path used by search and artist pages, then
+served through the backend cover proxy. There is no tabbed Discography/Top
+Tracks/Similar Artists/Bio navigation on this page; it remains a single
+scrolling page with sequential sections.
 
 ### Mix page (`/mixes/:id`, `MixPage.tsx`)
 
