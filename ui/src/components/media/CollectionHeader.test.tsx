@@ -43,11 +43,13 @@ describe("CollectionHeader", () => {
     expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument()
   })
 
-  it("truncates the title by default and can opt out", () => {
+  it("wraps long titles by default and can explicitly truncate them", () => {
     const { rerender } = render(<CollectionHeader artwork={<div />} title="Long" />)
-    expect(screen.getByRole("heading", { level: 1 }).className).toContain("truncate")
+    const heading = screen.getByRole("heading", { level: 1 })
+    expect(heading.className).not.toContain("truncate")
+    expect(heading.className).toContain("[overflow-wrap:anywhere]")
 
-    rerender(<CollectionHeader artwork={<div />} title="Long" truncateTitle={false} />)
-    expect(screen.getByRole("heading", { level: 1 }).className).not.toContain("truncate")
+    rerender(<CollectionHeader artwork={<div />} title="Long" truncateTitle />)
+    expect(screen.getByRole("heading", { level: 1 }).className).toContain("truncate")
   })
 })

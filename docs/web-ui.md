@@ -80,6 +80,14 @@ of overflowing it. Fallback-letter placeholders (no real artwork) are not
 clickable. Small artwork elsewhere (shelf/grid `MediaCard`s, queue rows) is
 unaffected — it still just navigates on click.
 
+Collection titles wrap at word boundaries (and, for unbroken strings, at any
+character) instead of widening the page on narrow screens. Track-row context
+menus stay visible on touch/pen devices and use the compact hover-only
+treatment only for fine pointers. Long playlist and mix track lists are
+virtualized relative to their actual offset inside AppShell's scrolling
+`<main>`, including the headers above them, so reversing scroll direction does
+not expose an unrendered gap.
+
 ### Dashboard (`/`, `DashboardPage.tsx`)
 
 The music home screen. Renders `ForYouShelf` (a shelf of static

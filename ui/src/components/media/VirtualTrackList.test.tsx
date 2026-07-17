@@ -3,7 +3,11 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { useRef } from "react"
 import { ScrollContext } from "@/contexts/ScrollContext"
-import VirtualTrackList, { moveTrackById } from "./VirtualTrackList"
+import VirtualTrackList, {
+  getListScrollMargin,
+  getVirtualRowOffset,
+  moveTrackById,
+} from "./VirtualTrackList"
 import type { TrackSummary } from "@/api/types"
 
 // jsdom has no layout engine — mock useVirtualizer to render all rows directly
@@ -181,5 +185,23 @@ describe("moveTrackById", () => {
     const original = list.map((t) => ({ ...t }))
     moveTrackById(list, 1, 3)
     expect(list.map((t) => t.id)).toEqual(original.map((t) => t.id))
+  })
+})
+
+describe("virtual-list positioning", () => {
+  it("measures the list offset in the scroll element's coordinate space", () => {
+    const listElement = {
+      getBoundingClientRect: () => ({ top: 420 }) as DOMRect,
+    }
+    const scrollElement = {
+      getBoundingClientRect: () => ({ top: 20 }) as DOMRect,
+      scrollTop: 300,
+    }
+
+    expect(getListScrollMargin(listElement, scrollElement)).toBe(700)
+  })
+
+  it("subtracts scroll margin from each absolute row position", () => {
+    expect(getVirtualRowOffset(4340, 700)).toBe(3640)
   })
 })

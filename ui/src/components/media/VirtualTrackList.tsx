@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {
   DndContext,
@@ -25,6 +25,19 @@ import { useScrollRef } from "@/contexts/ScrollContext"
 import VirtualTrackRow, { type TrackRowTrack } from "./VirtualTrackRow"
 
 const ROW_HEIGHT = 52
+
+export function getListScrollMargin(
+  listElement: Pick<HTMLElement, "getBoundingClientRect">,
+  scrollElement: Pick<HTMLElement, "getBoundingClientRect" | "scrollTop">,
+): number {
+  const listRect = listElement.getBoundingClientRect()
+  const scrollRect = scrollElement.getBoundingClientRect()
+  return Math.max(0, listRect.top - scrollRect.top + scrollElement.scrollTop)
+}
+
+export function getVirtualRowOffset(start: number, scrollMargin: number): number {
+  return start - scrollMargin
+}
 
 interface VirtualTrackListProps {
   readonly tracks: TrackRowTrack[]
@@ -77,7 +90,11 @@ interface RowProps {
 }
 
 /** A single reorderable row: a sortable node positioned by the virtualizer. */
-function SortableTrackRow({ start, ...rowProps }: RowProps & { readonly start: number }) {
+function SortableTrackRow({
+  start,
+  scrollMargin,
+  ...rowProps
+}: RowProps & { readonly start: number; readonly scrollMargin: number }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: rowProps.track.id,
   })
@@ -95,7 +112,7 @@ function SortableTrackRow({ start, ...rowProps }: RowProps & { readonly start: n
         // transform-positioned rows would all measure at top:0 — the overlay
         // would spawn at the top of the list and collision detection would
         // reflow rows in the wrong places.
-        top: start,
+        top: getVirtualRowOffset(start, scrollMargin),
         left: 0,
         width: "100%",
         // Sibling reflow comes from the sorting strategy's transform. The item
@@ -128,6 +145,8 @@ export default function VirtualTrackList({
   virtualized = true,
 }: VirtualTrackListProps) {
   const scrollRef = useScrollRef()
+  const listRef = useRef<HTMLDivElement>(null)
+  const [scrollMargin, setScrollMargin] = useState(0)
   const reorderable = onReorder != null
   // Widen the metric column for artist top tracks so "N прослушиваний" fits.
   const metricWide = tracks.length > 0 && "play_count" in tracks[0]
@@ -148,12 +167,41 @@ export default function VirtualTrackList({
   }, [tracks])
 
   const items = reorderable ? order : tracks
+  const selectionActive = (selectedIds?.size ?? 0) > 0
+
+  // The list lives below AppShell and collection headers inside the shared
+  // scroll element. Keep the virtualizer aligned with that document offset.
+  useLayoutEffect(() => {
+    const listElement = listRef.current
+    const scrollElement = scrollRef?.current
+    if (!listElement || !scrollElement) return
+
+    const updateScrollMargin = () => {
+      const next = getListScrollMargin(listElement, scrollElement)
+      setScrollMargin((current) => current === next ? current : next)
+    }
+
+    updateScrollMargin()
+    globalThis.addEventListener("resize", updateScrollMargin)
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(updateScrollMargin)
+    resizeObserver?.observe(scrollElement)
+    const pageElement = listElement.parentElement?.parentElement
+    if (pageElement) resizeObserver?.observe(pageElement)
+
+    return () => {
+      globalThis.removeEventListener("resize", updateScrollMargin)
+      resizeObserver?.disconnect()
+    }
+  }, [scrollRef, selectionActive])
 
   const rowVirtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef?.current ?? null,
     estimateSize: () => ROW_HEIGHT,
     overscan: 8,
+    scrollMargin,
     getItemKey: (index) => items[index]?.id ?? index,
   })
 
@@ -165,8 +213,6 @@ export default function VirtualTrackList({
 
   const totalSize = rowVirtualizer.getTotalSize()
   const virtualItems = rowVirtualizer.getVirtualItems()
-  const selectionActive = (selectedIds?.size ?? 0) > 0
-
   function rowProps(track: TrackRowTrack, index: number): RowProps {
     return {
       track,
@@ -219,13 +265,18 @@ export default function VirtualTrackList({
   }
 
   const container = (
-    <div style={{ height: totalSize, position: "relative" }}>
+    <div ref={listRef} style={{ height: totalSize, position: "relative" }}>
       {virtualItems.map((virtualRow) => {
         const track = items[virtualRow.index]
         const props = rowProps(track, virtualRow.index)
         if (reorderable) {
           return (
-            <SortableTrackRow key={track.id} start={virtualRow.start} {...props} />
+            <SortableTrackRow
+              key={track.id}
+              start={virtualRow.start}
+              scrollMargin={scrollMargin}
+              {...props}
+            />
           )
         }
         return (
@@ -238,7 +289,7 @@ export default function VirtualTrackList({
               top: 0,
               left: 0,
               width: "100%",
-              transform: `translateY(${virtualRow.start}px)`,
+              transform: `translateY(${getVirtualRowOffset(virtualRow.start, scrollMargin)}px)`,
             }}
           >
             <VirtualTrackRow {...props} />

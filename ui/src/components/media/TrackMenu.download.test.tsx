@@ -36,6 +36,14 @@ const track: TrackSummary = {
 }
 
 describe("TrackMenu download", () => {
+  it("marks the trigger for touch-visible responsive styling", () => {
+    render(<MemoryRouter><TrackMenu track={track} /></MemoryRouter>)
+
+    expect(screen.getByRole("button", { name: "Track options" })).toHaveClass(
+      "track-menu-trigger",
+    )
+  })
+
   it("links the download action to the attachment endpoint", () => {
     render(<MemoryRouter><TrackMenu track={track} /></MemoryRouter>)
 

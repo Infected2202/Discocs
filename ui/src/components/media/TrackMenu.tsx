@@ -79,7 +79,7 @@ export default function TrackMenu({
           variant="ghost"
           size="icon"
           className={cn(
-            "h-7 w-7 text-muted-foreground opacity-0 group-hover/row:opacity-100 data-[state=open]:opacity-100",
+            "track-menu-trigger h-7 w-7 text-muted-foreground data-[state=open]:opacity-100 focus-visible:opacity-100",
             triggerClassName,
           )}
           aria-label={t("trackMenu.trackOptions")}

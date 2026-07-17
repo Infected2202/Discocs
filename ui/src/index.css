@@ -147,6 +147,20 @@
   display: none; /* Chromium / WebKit */
 }
 
+/* Touchscreens have no persistent hover state, so row actions must remain
+   discoverable. Pointer devices can keep the quieter hover-only treatment. */
+.track-menu-trigger {
+  opacity: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .track-menu-trigger {
+    opacity: 0;
+  }
+  .group\/row:hover .track-menu-trigger {
+    opacity: 1;
+  }
+}
+
 /* Neutralize browser autofill styling (yellow/white bg, black text) so
    autofilled inputs keep matching the app's dark theme. */
 input:-webkit-autofill,

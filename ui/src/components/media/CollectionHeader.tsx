@@ -10,8 +10,8 @@ interface CollectionHeaderProps {
   readonly kicker?: ReactNode
   readonly title: string
   /**
-   * Truncate the title to one line on overflow. On by default; turn off for
-   * user-authored titles (playlists) that should wrap instead of clip.
+   * Truncate the title to one line on overflow. Off by default so collection
+   * names wrap safely on narrow screens.
    */
   readonly truncateTitle?: boolean
   /** Muted metadata under the title (artists, counts, description…). */
@@ -31,7 +31,7 @@ export default function CollectionHeader({
   artwork,
   kicker,
   title,
-  truncateTitle = true,
+  truncateTitle = false,
   meta,
   actions,
 }: CollectionHeaderProps) {
@@ -40,11 +40,18 @@ export default function CollectionHeader({
       {above}
       <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
         {artwork}
-        <div className="pb-0 sm:pb-2 min-w-0">
+        <div className="w-full min-w-0 flex-1 pb-0 sm:pb-2">
           {kicker && (
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">{kicker}</p>
           )}
-          <h1 className={cn("text-3xl font-bold", truncateTitle && "truncate")}>{title}</h1>
+          <h1
+            className={cn(
+              "max-w-full text-3xl font-bold leading-tight",
+              truncateTitle ? "truncate" : "whitespace-normal [overflow-wrap:anywhere]",
+            )}
+          >
+            {title}
+          </h1>
           {meta && <div className="text-sm text-muted-foreground mt-1">{meta}</div>}
           {actions && <div className="mt-4 flex gap-2 items-center">{actions}</div>}
         </div>
