@@ -85,7 +85,6 @@ export default function ReleasePage() {
             expandable
           />
         }
-        kicker={release.release_type_label}
         title={release.title}
         meta={
           <div className="flex flex-wrap gap-1">
@@ -113,16 +112,16 @@ export default function ReleasePage() {
               {t("play")}
             </Button>
             <Button
-              size="sm"
+              size="icon-sm"
               variant="outline"
+              aria-label={t("shuffle")}
+              title={t("shuffle")}
               onClick={async () => {
                 await playSource("release", releaseId, release.title)
                 await patchSession()
               }}
-              className="gap-2"
             >
               <Shuffle size={14} />
-              {t("shuffle")}
             </Button>
             {tracks.length > 0 && (
               <Button size="icon-sm" variant="outline" asChild>

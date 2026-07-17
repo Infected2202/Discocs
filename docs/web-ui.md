@@ -86,7 +86,10 @@ menus stay visible on touch/pen devices and use the compact hover-only
 treatment only for fine pointers. Long playlist and mix track lists are
 virtualized relative to their actual offset inside AppShell's scrolling
 `<main>`, including the headers above them, so reversing scroll direction does
-not expose an unrendered gap.
+not expose an unrendered gap. Collection-header Shuffle actions are icon-only
+at every viewport width while retaining accessible labels and tooltips. Release
+pages omit the release-type kicker (Album, EP, Single, and similar) at every
+viewport width.
 
 ### Dashboard (`/`, `DashboardPage.tsx`)
 

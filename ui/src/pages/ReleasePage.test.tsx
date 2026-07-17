@@ -135,4 +135,13 @@ describe("ReleasePage — шелф рекомендаций без битого 
     expect(download).not.toHaveTextContent("Download")
     expect(download.compareDocumentPosition(like)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
+
+  it("показывает Shuffle только иконкой и не выводит тип релиза", () => {
+    renderPage()
+
+    const shuffle = screen.getByRole("button", { name: "Shuffle" })
+    expect(shuffle).toHaveAttribute("data-size", "icon-sm")
+    expect(shuffle).not.toHaveTextContent("Shuffle")
+    expect(screen.queryByText("Album")).toBeNull()
+  })
 })

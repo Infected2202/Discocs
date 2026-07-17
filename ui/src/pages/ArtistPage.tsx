@@ -103,16 +103,16 @@ export default function ArtistPage() {
               {t("play")}
             </Button>
             <Button
-              size="sm"
+              size="icon-sm"
               variant="outline"
+              aria-label={t("shuffle")}
+              title={t("shuffle")}
               onClick={async () => {
                 await playSource("artist", artistId, artist.name)
                 await toggleShuffle()
               }}
-              className="gap-2"
             >
               <Shuffle size={14} />
-              {t("shuffle")}
             </Button>
             <LikeButton entity="artist" id={artistId} variant="control" size={18} />
           </>

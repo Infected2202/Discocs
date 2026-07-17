@@ -99,4 +99,12 @@ describe("ArtistPage — кнопка Shuffle", () => {
     expect(playSource).toHaveBeenCalledWith("artist", 3, "Max Cooper")
     expect(toggleShuffle).not.toHaveBeenCalled()
   })
+
+  it("показывает Shuffle только иконкой на любой ширине", () => {
+    renderPage()
+
+    const shuffle = screen.getByRole("button", { name: "Shuffle" })
+    expect(shuffle).toHaveAttribute("data-size", "icon-sm")
+    expect(shuffle).not.toHaveTextContent("Shuffle")
+  })
 })
