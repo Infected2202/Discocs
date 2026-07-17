@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -140,3 +141,90 @@ def test_interactive_navidrome_client_uses_each_session_credentials(tmp_path, mo
         ("alice", "alice-password"),
         ("bob", "bob-password"),
     ]
+
+
+def test_play_state_refresh_uses_active_user_credentials_and_store(tmp_path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        auth,
+        "verify_navidrome_credentials",
+        lambda _settings, username, password, **_kwargs: password == f"{username}-password",
+    )
+    monkeypatch.setattr(
+        auth, "sync_navidrome_starred_for_user", lambda *_args, **_kwargs: None
+    )
+    calls: list[tuple[int, str, str, int]] = []
+
+    class FakeNavidromeClient:
+        def __init__(self, settings):
+            self.settings = settings
+
+    def fake_refresh(scoped_store, client, *, album_count):
+        calls.append(
+            (
+                scoped_store.user_id,
+                client.settings.user,
+                client.settings.password,
+                album_count,
+            )
+        )
+        return SimpleNamespace(seen_count=4, updated_count=3, unmapped_count=1)
+
+    monkeypatch.setattr("app.api.deps.NavidromeClient", FakeNavidromeClient)
+    monkeypatch.setattr("app.navidrome_sync.refresh_navidrome_play_state", fake_refresh)
+
+    alice = TestClient(app)
+    bob = TestClient(app)
+    assert alice.post(
+        "/api/v1/auth/login",
+        json={"username": "alice", "password": "alice-password"},
+    ).status_code == 200
+    assert bob.post(
+        "/api/v1/auth/login",
+        json={"username": "bob", "password": "bob-password"},
+    ).status_code == 200
+
+    alice_response = alice.post("/api/v1/navidrome/play-state/refresh")
+    bob_response = bob.post("/api/v1/navidrome/play-state/refresh")
+
+    assert alice_response.status_code == 200
+    assert alice_response.json() == {
+        "user": "alice",
+        "seen_count": 4,
+        "updated_count": 3,
+        "unmapped_count": 1,
+    }
+    assert bob_response.status_code == 200
+    assert [call[0] for call in calls] == [
+        store.get_user_by_username("alice")["id"],
+        store.get_user_by_username("bob")["id"],
+    ]
+    assert [call[1:3] for call in calls] == [
+        ("alice", "alice-password"),
+        ("bob", "bob-password"),
+    ]
+    assert [call[3] for call in calls] == [25, 25]
+
+
+def test_play_state_refresh_reports_navidrome_failure(tmp_path, monkeypatch):
+    _init_store(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        auth,
+        "verify_navidrome_credentials",
+        lambda _settings, _username, password, **_kwargs: password == "correct",
+    )
+    monkeypatch.setattr(
+        auth, "sync_navidrome_starred_for_user", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr("app.api.deps.NavidromeClient", lambda _settings: object())
+
+    def fail_refresh(*_args, **_kwargs):
+        raise RuntimeError("recent endpoint unavailable")
+
+    monkeypatch.setattr("app.navidrome_sync.refresh_navidrome_play_state", fail_refresh)
+    client = _login("alice")
+
+    response = client.post("/api/v1/navidrome/play-state/refresh")
+
+    assert response.status_code == 502
+    assert "recent endpoint unavailable" in response.json()["detail"]

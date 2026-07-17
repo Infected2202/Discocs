@@ -6,6 +6,10 @@ import { useEffect } from "react"
 
 type HistoryShelf = Shelf & { items: ShelfItem[] }
 
+async function syncPlayState(): Promise<void> {
+  await apiFetch("/api/v1/navidrome/play-state/refresh", { method: "POST" })
+}
+
 function replaceHistoryShelf(dashboard: DashboardResponse, items: ShelfItem[]): DashboardResponse {
   return {
     ...dashboard,
@@ -16,7 +20,17 @@ function replaceHistoryShelf(dashboard: DashboardResponse, items: ShelfItem[]): 
 }
 
 async function refreshHistoryShelf(limit: number): Promise<HistoryShelf> {
+  try {
+    await syncPlayState()
+  } catch { /* keep the locally cached history when Navidrome is unavailable */ }
   return apiFetch(apiUrl("/api/v1/dashboard/shelves/history", { limit }))
+}
+
+async function fetchSyncedDashboard(limit: number): Promise<DashboardResponse> {
+  try {
+    await syncPlayState()
+  } catch { /* dashboard remains usable when Navidrome is unavailable */ }
+  return fetchDashboard(limit)
 }
 
 export function useDashboard(limit = 12) {
@@ -37,7 +51,7 @@ export function useDashboard(limit = 12) {
 
   return useQuery({
     queryKey: ["dashboard", limit],
-    queryFn: () => fetchDashboard(limit),
-    staleTime: Infinity,
+    queryFn: () => fetchSyncedDashboard(limit),
+    staleTime: 60_000,
   })
 }

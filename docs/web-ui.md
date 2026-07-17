@@ -348,7 +348,8 @@ Additional shelves beyond the original plan, all backed by
 `app/services/dashboard.py`:
 
 - `history` ("Recently Played") — tracks ordered by `last_played_at` desc;
-  this is the shelf polled every 60s from the dashboard hook.
+  the dashboard first performs a lightweight, session-bound Navidrome
+  play-state refresh and repeats it before polling this shelf every 60s.
 - `mixes_for_you` — active/saved generated mixes (`app/mixes.py`); the
   dashboard endpoint also triggers `ensure_dashboard_mixes_fast`, which
   either generates mixes inline (small libraries) or kicks off a background

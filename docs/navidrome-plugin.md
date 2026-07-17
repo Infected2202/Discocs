@@ -101,10 +101,12 @@ Configuration (`NavidromeSettings`, via env or `data/settings.json`):
 | `play_state_refresh_albums` | `DISCOCS_NAVIDROME_PLAY_STATE_REFRESH_ALBUMS` | `25` | How many recently played albums to scan each tick. |
 
 The maintenance loop ticks every 15s and throttles the refresh to the configured
-interval in legacy/single-user mode. When `DISCOCS_AUTH_ENABLED=true`, this
-service-account refresh is disabled: multiuser credentials are encrypted by
-the active session token and are intentionally unavailable to background work.
-Interactive starred sync and scrobbling still update each user's own state.
+interval in legacy/single-user mode. When `DISCOCS_AUTH_ENABLED=true`, the
+service-account refresh remains disabled. Instead, the dashboard calls
+`POST /api/v1/navidrome/play-state/refresh` on load and before its 60-second
+history refresh. That endpoint uses the active session's encrypted credentials
+and scoped Store, so only the current user's `play_count` / `last_played_at` are
+updated. It still scans only recent albums; it does not run a full catalog sync.
 
 ## Build
 

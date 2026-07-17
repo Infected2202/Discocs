@@ -37,6 +37,40 @@ navidrome_plugin_logger = get_navidrome_plugin_logger()
 router = APIRouter(prefix="/api/v1")
 
 
+@router.post(
+    "/navidrome/play-state/refresh",
+    responses={502: {"description": "Navidrome play-state refresh failed"}},
+)
+def refresh_current_user_navidrome_play_state() -> dict[str, object]:
+    """Refresh recent play counts/timestamps for the active Navidrome user."""
+    store, settings = context()
+    client, username = _navidrome_user_client(settings)
+    try:
+        from app.navidrome_sync import refresh_navidrome_play_state  # noqa: PLC0415
+
+        result = refresh_navidrome_play_state(
+            store,
+            client,
+            album_count=settings.navidrome.play_state_refresh_albums,
+        )
+    except Exception as exc:
+        navidrome_logger.warning(
+            "Navidrome play-state refresh failed user=%s error=%s",
+            username,
+            exc,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Navidrome play-state refresh failed: {exc}",
+        ) from exc
+    return {
+        "user": username,
+        "seen_count": result.seen_count,
+        "updated_count": result.updated_count,
+        "unmapped_count": result.unmapped_count,
+    }
+
+
 @router.get("/navidrome/starred", responses={502: {"description": "Navidrome starred lookup failed"}})
 def get_navidrome_starred(model: str = "discogs_multi") -> dict[str, object]:
     store, settings = context()

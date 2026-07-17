@@ -260,7 +260,9 @@ with the host firewall; do not publish or forward it from the internet.
    scoped Store для albums-for-you, flow и generated mixes. Фоновый service-
    account play-state refresh при включённом auth отключён: session-bound
    credentials недоступны фону, а импорт сервисных данных одному owner был бы
-   утечкой. Starred sync и scrobble выполняются интерактивно от имени сессии.
+   утечкой. Starred sync, scrobble и лёгкий refresh недавних прослушиваний
+   выполняются интерактивно от имени активной сессии и пишут только в её
+   scoped Store.
 
 6. **Client identity isolation:** ✅ explicit logout clears React Query,
    persisted playback session/position, player queue/history and Media Session,
