@@ -101,7 +101,7 @@ class ArtistAggregatesStoreMixin:
         """
 
     def list_artist_ids_for_aggregation(self, *, model_name: str, limit: int = 0) -> list[int]:
-        sql = self._artists_needing_aggregation_sql(count_only=False) + " ORDER BY artist_id"
+        sql = self._artists_needing_aggregation_sql(count_only=False) + " ORDER BY s.artist_id"
         params: list[object] = [model_name, model_name, model_name, model_name]
         if limit > 0:
             sql += " LIMIT ?"
