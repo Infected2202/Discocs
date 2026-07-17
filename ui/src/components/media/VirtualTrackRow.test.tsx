@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import VirtualTrackRow from "./VirtualTrackRow"
+import VirtualTrackRow, { trackGridTemplates } from "./VirtualTrackRow"
 import type { ArtistTopTrack, TrackSummary } from "@/api/types"
 
 const playSource = vi.fn()
@@ -125,5 +125,18 @@ describe("VirtualTrackRow", () => {
     renderRow({ track: makeTopTrack({ play_count: 0, release: null }) })
 
     expect(screen.queryByText("plays")).not.toBeInTheDocument()
+  })
+
+  it("uses a content-sized metric on mobile and fixed alignment on desktop", () => {
+    const templates = trackGridTemplates({
+      showArtwork: true,
+      showRelease: true,
+      selectable: false,
+      metricWide: false,
+    })
+
+    expect(templates.mobile).toContain("minmax(0,1fr) max-content 32px 32px")
+    expect(templates.mobile).not.toContain("80px")
+    expect(templates.desktop).toContain("80px 32px 32px")
   })
 })

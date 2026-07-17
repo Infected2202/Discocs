@@ -74,9 +74,10 @@ export function trackGridTemplates({
     "32px", // menu
     selectable ? "32px" : null, // selection checkbox
   ]
-  // Mobile keeps a compact metric column ("1,5K"); desktop widens it when the
-  // metric spells out "прослушиваний".
-  const mobile = [...lead, "80px", ...controls].filter(Boolean).join(" ")
+  // Mobile gives the metric only its intrinsic width (duration or compact
+  // play count), keeping its spacing to the action buttons tight and even.
+  // Desktop retains a fixed aligned column and widens it for full play counts.
+  const mobile = [...lead, "max-content", ...controls].filter(Boolean).join(" ")
   const desktopLead = showRelease ? [...lead, "minmax(0,180px)"] : lead
   const desktop = [...desktopLead, metricWide ? "176px" : "80px", ...controls].filter(Boolean).join(" ")
   return { mobile, desktop }
@@ -171,7 +172,7 @@ export default function VirtualTrackRow({
       )}
 
       {/* Title + artists */}
-      <div className="py-2 pr-4 min-w-0">
+      <div className="min-w-0 py-2 pr-2 md:pr-4">
         <div className="min-w-0">
           {track.release ? (
             <Link

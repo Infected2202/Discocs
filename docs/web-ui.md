@@ -89,7 +89,9 @@ virtualized relative to their actual offset inside AppShell's scrolling
 not expose an unrendered gap. Collection-header Shuffle actions are icon-only
 at every viewport width while retaining accessible labels and tooltips. Release
 pages omit the release-type kicker (Album, EP, Single, and similar) at every
-viewport width.
+viewport width. On mobile track rows, the duration/play-count column is sized
+to its content instead of reserving the desktop `80px`; this gives titles more
+room and keeps the metric visually close to the Like and context-menu actions.
 
 ### Dashboard (`/`, `DashboardPage.tsx`)
 
