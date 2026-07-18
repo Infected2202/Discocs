@@ -16,10 +16,9 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 
 vi.mock("@/store/playerStore", () => ({
   usePlayerStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
-    session: null,
     playSource: vi.fn(),
-    refreshQueue: vi.fn(),
-    playFromEnvelope: vi.fn(),
+    adoptInstantMix: vi.fn(),
+    playNext: vi.fn(),
   }),
 }))
 

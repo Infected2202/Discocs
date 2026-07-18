@@ -10,7 +10,6 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { apiFetch } from "@/api/client"
-import { patchQueue } from "@/api/playback"
 import { usePlayerStore } from "@/store/playerStore"
 import { cn } from "@/lib/utils"
 import { useUIStore } from "@/store/uiStore"
@@ -38,10 +37,9 @@ export default function TrackMenu({
 }: TrackMenuProps) {
   const { t } = useTranslation("media")
   const navigate = useNavigate()
-  const sessionId      = usePlayerStore((s) => s.session?.id)
   const playSource     = usePlayerStore((s) => s.playSource)
-  const refreshQueue   = usePlayerStore((s) => s.refreshQueue)
-  const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
+  const adoptInstantMix = usePlayerStore((s) => s.adoptInstantMix)
+  const playNext       = usePlayerStore((s) => s.playNext)
   const openAddToPlaylist = useUIStore((s) => s.openAddToPlaylist)
   const release = track.release
 
@@ -59,17 +57,12 @@ export default function TrackMenu({
         `/api/v1/tracks/${track.id}/instant-mix`,
         { method: "POST" }
       )
-      await playFromEnvelope(envelope)
+      await adoptInstantMix(envelope)
     } catch { /* ignore */ }
   }
 
   async function handlePlayNext() {
-    if (!sessionId) {
-      await playSource("track", track.id, sourceLabel ?? track.title)
-      return
-    }
-    await patchQueue(sessionId, { operation: "add", track_id: track.id })
-    await refreshQueue()
+    await playNext(track.id, sourceLabel ?? track.title)
   }
 
   return (

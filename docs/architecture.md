@@ -233,7 +233,11 @@ Also relevant: `PATCH /api/v1/playback/sessions/{id}` accepts
 `autoplay_enabled` toggling, and `POST /api/v1/tracks/{track_id}/instant-mix`
 (`app/api/mixes.py`) starts a track-scoped instant mix session/queue from the
 shared track action menu — a related but distinct one-shot flow, not
-continuous autoplay.
+continuous autoplay. When that seed track is already playing, the web player
+adopts the new session and queue without reloading the audio, preserving its
+playback position and paused/playing state. The shared **Play next** action
+adds a manual queue item and then moves it immediately after the current item;
+plain queue `add` remains append-only at the API level.
 
 All `AutoplaySettings` fields (`visible_buffer`, `candidate_count`,
 `max_per_artist`, `max_per_release`, `source_weight`, `accepted_weight`,

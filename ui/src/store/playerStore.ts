@@ -100,6 +100,8 @@ interface PlayerState {
   recordEvent(eventType: string, extra?: Record<string, unknown>): Promise<void>
   handleTrackEnded(): Promise<void>
   playFromEnvelope(envelope: PlaybackEnvelope, preferredTrackId?: number): Promise<void>
+  adoptInstantMix(envelope: PlaybackEnvelope): Promise<void>
+  playNext(trackId: number, sourceLabel?: string): Promise<void>
   toggleExpanded(): void
 
   restoreSession(): Promise<void>
@@ -605,6 +607,76 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         persistSessionId(envelope.session.id)
         await playFirstOrPreferred(applied, preferredTrackId)
         scheduleAutoplayRefill()
+      } catch (err) {
+        set({ error: (err as Error).message })
+      }
+    },
+
+    async adoptInstantMix(envelope) {
+      const { currentTrackId: playingTrackId, playbackState } = get()
+      const canPreservePlayback = playbackState === "playing"
+        || playbackState === "paused"
+        || playbackState === "loading"
+      const matchingItem = playingTrackId == null
+        ? null
+        : envelope.queue.items.find((item) => item.track_id === playingTrackId) ?? null
+
+      const preservedItem = canPreservePlayback ? matchingItem : null
+      // Instant Mix for the currently playing track replaces only its listening
+      // context. Reusing the loaded audio keeps the exact playback position and
+      // paused/playing state instead of restarting the file from zero.
+      if (!preservedItem) {
+        await get().playFromEnvelope(envelope)
+        return
+      }
+
+      set({ error: null })
+      try {
+        let adopted = envelope
+        if (envelope.session.current_queue_item_id !== preservedItem.id) {
+          adopted = await patchSession(envelope.session.id, {
+            current_track_id: preservedItem.track_id,
+            current_queue_item_id: preservedItem.id,
+          })
+        }
+        applyEnvelope(adopted, true)
+        persistSessionId(adopted.session.id)
+        scheduleAutoplayRefill()
+      } catch (err) {
+        set({ error: (err as Error).message })
+      }
+    },
+
+    async playNext(trackId, sourceLabel) {
+      const { session, queue, currentQueueItemId } = get()
+      if (!session?.id || !queue || !currentQueueItemId) {
+        await get().playSource("track", trackId, sourceLabel ?? String(trackId))
+        return
+      }
+
+      try {
+        const existingIds = new Set(queue.items.map((item) => item.id))
+        const added = await patchQueue(session.id, { operation: "add", track_id: trackId })
+        const addedItem = added.queue.items.find((item) => !existingIds.has(item.id))
+        const currentIndex = added.queue.items.findIndex((item) => item.id === currentQueueItemId)
+
+        if (!addedItem || currentIndex < 0) {
+          applyEnvelope(added)
+          return
+        }
+
+        const targetPosition = currentIndex + 1
+        if (added.queue.items[targetPosition]?.id === addedItem.id) {
+          applyEnvelope(added)
+          return
+        }
+
+        const moved = await patchQueue(session.id, {
+          operation: "move",
+          queue_item_id: addedItem.id,
+          position: targetPosition,
+        })
+        applyEnvelope(moved)
       } catch (err) {
         set({ error: (err as Error).message })
       }
