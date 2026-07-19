@@ -223,14 +223,14 @@ pipeline {
               // Trivy всегда публикует полный отчёт, затем валит билд только при
               // исправимых HIGH/CRITICAL (--ignore-unfixed оставляет видимыми CVE,
               // для которых upstream пока не выпустил обновление).
-              sh "docker run --rm ${mounts} aquasec/trivy image --skip-db-update --exit-code 0 ${img}"
+              sh "docker run --rm ${mounts} aquasec/trivy image --skip-db-update --cache-backend memory --exit-code 0 ${img}"
               // HTML-версия того же скана — для вкладки на билде (publishHTML ниже),
               // чтобы не искать находки по консоли. create+cp вместо `docker run
               // -v <файл>`: воркспейс агента недоступен хостовому демону как путь
               // (docker-outside-of-docker, та же причина, что везде в этом файле).
               sh """
                 set -e
-                CID=\$(docker create ${mounts} aquasec/trivy image --skip-db-update --exit-code 0 --format template --template "@contrib/html.tpl" -o "/trivy-${svc}.html" ${img})
+                CID=\$(docker create ${mounts} aquasec/trivy image --skip-db-update --cache-backend memory --exit-code 0 --format template --template "@contrib/html.tpl" -o "/trivy-${svc}.html" ${img})
                 docker start -a "\$CID"
                 docker cp "\$CID:/trivy-${svc}.html" "trivy-${svc}.html"
                 docker rm -f "\$CID"
@@ -245,7 +245,7 @@ pipeline {
               ])
               // Гейт — строго после публикации отчёта: падение на HIGH/CRITICAL
               // не должно лишать нас HTML-вкладки с находками.
-              sh "docker run --rm ${mounts} aquasec/trivy image --skip-db-update --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 ${img}"
+              sh "docker run --rm ${mounts} aquasec/trivy image --skip-db-update --cache-backend memory --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 ${img}"
             }]
           })
         }

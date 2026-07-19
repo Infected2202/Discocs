@@ -24,7 +24,8 @@ push в Gitea ──webhook──> Jenkins
    │                 Build&Push — Docker Login, затем сборка backend/frontend/bot
    │                              (ещё 3 вложенные ветки) → Nexus (docker-dev @ :5000),
    │                              теги: :<git-sha> (всегда) + :latest (только с main)
-   └─ Security Scan одно обновление БД Trivy, затем 3 ветки parallel по образам:
+   └─ Security Scan одно обновление БД Trivy, затем 3 ветки parallel по образам
+   │                 с отдельным in-memory scan cache:
    │                 полный отчёт → HTML-вкладка (publishHTML) → блокирующий гейт
    └─ Deploy        [post/success, только main] по SSH на TARGET_SERVER:
                        scp compose в TARGET_DIR → docker compose pull && up -d --force-recreate
@@ -302,7 +303,10 @@ Trivy разнесён по двум стадиям — по тому, что и
 БД уязвимостей обновляется ровно один раз, отдельным `trivy image
 --download-db-only` до разветвления, а сами сканы идут с `--skip-db-update`:
 три параллельные ветки на общем volume `trivy-db-cache` иначе полезли бы качать
-и распаковывать ~150+ МБ конкурентно в один и тот же каталог.
+и распаковывать ~150+ МБ конкурентно в один и тот же каталог. При этом mutable
+scan cache каждой ветки работает с `--cache-backend memory`: общий filesystem
+cache Trivy использует BoltDB lock и не допускает параллельные процессы. Таким
+образом vulnerability DB остаётся общей, а конфликтующий layer cache изолирован.
 
 Прод-образы собираются с `docker build --pull`. Все три сервиса получают
 `SECURITY_REFRESH=${GIT_SHA}`, который дополнительно инвалидирует слой

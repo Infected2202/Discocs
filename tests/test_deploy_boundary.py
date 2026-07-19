@@ -135,7 +135,10 @@ def test_production_images_refresh_system_security_updates():
 
 def test_trivy_blocks_only_fixable_high_or_critical_findings():
     pipeline = JENKINSFILE.read_text(encoding="utf-8")
-    gate = "aquasec/trivy image --skip-db-update --ignore-unfixed"
+    gate = (
+        "aquasec/trivy image --skip-db-update --cache-backend memory "
+        "--ignore-unfixed"
+    )
     assert gate in pipeline
     assert "--severity HIGH,CRITICAL --exit-code 1" in pipeline
     # HTML-вкладка публикуется до блокирующего гейта — иначе падение на
@@ -200,3 +203,7 @@ def test_image_scans_share_one_vulnerability_db_refresh():
     assert warmup < fan_out
     assert pipeline.count("--download-db-only") == 1
     assert pipeline.count("aquasec/trivy image --skip-db-update") == 3
+    # Image branches share the read-only vulnerability DB, but their mutable
+    # layer scan cache must be process-local: filesystem cache uses a BoltDB
+    # lock and cannot serve parallel Trivy processes.
+    assert pipeline.count("--cache-backend memory") == 3
