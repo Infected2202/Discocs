@@ -224,15 +224,15 @@ pipeline {
           // volume, иначе полезли бы качать/распаковывать БД конкурентно в один
           // и тот же каталог.
           sh 'docker run --rm -v trivy-db-cache:/root/.cache/trivy aquasec/trivy image --download-db-only'
-          // Ветка на сервис. Образ разбирается РОВНО ОДИН РАЗ — в JSON, а
-          // человекочитаемая таблица, HTML-вкладка и блокирующий гейт получаются
-          // из этого JSON через `trivy convert` (переформатирование готового
-          // отчёта, без повторного чтения слоёв и без обращения к БД).
+          // Ветка на сервис. Отчётная часть (таблица в консоль + HTML-вкладка)
+          // берётся из ОДНОГО разбора образа: скан пишет JSON, а обе формы
+          // делает `trivy convert` — переформатирование готового отчёта, без
+          // повторного чтения слоёв и без обращения к БД.
           // Раньше на каждый образ приходилось три полных скана, и с
           // --cache-backend memory (он нужен: общий fs-кэш на трёх параллельных
           // ветках даёт "Failed to acquire cache or database lock", билд #238)
           // каждый из них начинал с нуля — только backend стоил 30.6+24.0+22.7с
-          // на билде #239.
+          // на билде #239. Гейт остаётся отдельным сканом, см. комментарий ниже.
           def mounts = '-v /var/run/docker.sock:/var/run/docker.sock -v trivy-db-cache:/root/.cache/trivy'
           parallel(['backend', 'frontend', 'bot'].collectEntries { svc ->
             [(svc): {
@@ -259,20 +259,16 @@ pipeline {
                 reportName: "Trivy: ${svc}",
               ])
               // Гейт — строго после публикации отчёта: падение на HIGH/CRITICAL
-              // не должно лишать нас HTML-вкладки с находками. Фильтры severity
-              // применяет `convert` к тому же JSON, поэтому гейт видит ровно те
-              // находки, что и опубликованный отчёт, и стоит доли секунды.
-              // Ни сокет, ни БД ему не нужны — на входе только готовый JSON.
-              sh """
-                set -e
-                CID=\$(docker create aquasec/trivy convert --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 /report.json)
-                docker cp "trivy-${svc}.json" "\$CID:/report.json"
-                set +e
-                docker start -a "\$CID"
-                RC=\$?
-                docker rm -f "\$CID"
-                exit \$RC
-              """
+              // не должно лишать нас HTML-вкладки с находками.
+              //
+              // Это отдельный скан, а не `convert` над уже готовым JSON:
+              // у `convert` из фильтров только --severity/--exit-code/
+              // --ignore-policy, флага --ignore-unfixed у него нет (проверено
+              // на билде #247: "unknown flag: --ignore-unfixed"). Отфильтровать
+              // unfixed через Rego-политику технически можно, но ошибка в ней
+              // даёт молча пропускающий гейт — для проверки безопасности это
+              // худший вид отказа, поэтому здесь родной флаг и лишние ~20с.
+              sh "docker run --rm ${mounts} aquasec/trivy image --skip-db-update --cache-backend memory --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 ${img}"
             }]
           })
         }

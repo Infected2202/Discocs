@@ -189,9 +189,13 @@ def test_python_images_install_dependencies_before_copying_sources():
 
 def test_trivy_blocks_only_fixable_high_or_critical_findings():
     pipeline = JENKINSFILE.read_text(encoding="utf-8")
+    # Гейт обязан быть настоящим сканом с родным --ignore-unfixed: у `trivy
+    # convert` такого флага нет (билд #247: "unknown flag: --ignore-unfixed"),
+    # а отфильтровать unfixed через Rego-политику — риск молча пропускающего
+    # гейта.
     gate = (
-        "aquasec/trivy convert --ignore-unfixed "
-        "--severity HIGH,CRITICAL --exit-code 1 /report.json"
+        "aquasec/trivy image --skip-db-update --cache-backend memory "
+        "--ignore-unfixed --severity HIGH,CRITICAL --exit-code 1"
     )
     assert gate in pipeline
     # HTML-вкладка публикуется до блокирующего гейта — иначе падение на
@@ -199,18 +203,18 @@ def test_trivy_blocks_only_fixable_high_or_critical_findings():
     assert pipeline.index('reportName: "Trivy: ${svc}"') < pipeline.index(gate)
 
 
-def test_each_image_is_analyzed_only_once():
-    """Гейт и отчёты переиспользуют один JSON, а не пересканируют образ."""
+def test_reports_reuse_a_single_image_analysis():
+    """Таблица и HTML не пересканируют образ, а переформатируют один JSON."""
     code = _pipeline_code()
 
-    # Ровно один реальный разбор слоёв на ветку. Раньше их было три (таблица,
-    # HTML, гейт), и с --cache-backend memory каждый начинал с нуля: только
-    # backend стоил 30.6+24.0+22.7с на билде #239.
-    assert code.count("trivy image --skip-db-update") == 1
+    # Два разбора слоёв на ветку: отчётный скан и гейт. Раньше их было три —
+    # с --cache-backend memory каждый начинал с нуля, и только backend стоил
+    # 30.6+24.0+22.7с на билде #239.
+    assert code.count("trivy image --skip-db-update") == 2
     assert code.count("--format json -o /report.json") == 1
 
-    # Таблица в консоль, HTML-вкладка и гейт — три `convert` над этим JSON.
-    assert code.count("trivy convert") == 3
+    # Таблица в консоль и HTML-вкладка — два `convert` над этим JSON.
+    assert code.count("trivy convert") == 2
 
 
 def test_independent_checks_run_in_one_parallel_stage():
@@ -269,11 +273,10 @@ def test_image_scans_share_one_vulnerability_db_refresh():
     # а сам скан идёт с --skip-db-update.
     assert warmup < fan_out
     assert code.count("--download-db-only") == 1
-    assert code.count("--skip-db-update") == 1
+    assert code.count("--skip-db-update") == 2
 
     # Ветки делят read-only БД уязвимостей, но изменяемый layer scan cache
     # обязан быть локальным для процесса: filesystem-кэш держит BoltDB-лок и
     # не обслуживает параллельные процессы Trivy ("Failed to acquire cache or
-    # database lock", билд #238). Скан на ветку теперь один — значит и
-    # --cache-backend memory ровно один.
-    assert code.count("--cache-backend memory") == 1
+    # database lock", билд #238). Оба скана ветки — с memory-бэкендом.
+    assert code.count("--cache-backend memory") == 2
