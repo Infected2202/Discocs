@@ -228,13 +228,13 @@ def test_public_preview_exposes_universal_metadata_without_audio(tmp_path, monke
     assert response.headers["content-type"].startswith("text/html")
     assert response.headers["cache-control"] == "public, max-age=300"
     assert "x-robots-tag" not in response.headers
-    assert 'property="og:type" content="music.song"' in response.text
+    assert 'property="og:type" content="website"' in response.text
     assert 'property="og:title" content="Visible &lt;track&gt; &amp; &quot;friends&quot;"' in response.text
     assert 'property="og:description" content="Preview Artist · Album · 2:03"' in response.text
     assert f'property="og:url" content="https://music.example/share/{token}"' in response.text
     assert f'property="og:image" content="https://music.example/api/v1/public/shares/{token}/cover?preview=1"' in response.text
     assert 'name="twitter:card" content="summary_large_image"' in response.text
-    assert 'property="music:duration" content="123"' in response.text
+    assert "music:" not in response.text
     assert "og:audio" not in response.text
     assert "<audio" not in response.text
     assert 'name="robots"' not in response.text
@@ -267,10 +267,10 @@ def test_public_release_preview_contains_album_metadata(tmp_path, monkeypatch):
     response = TestClient(app).get(f"/api/v1/public/shares/{token}/preview")
 
     assert response.status_code == 200
-    assert 'property="og:type" content="music.album"' in response.text
+    assert 'property="og:type" content="website"' in response.text
     assert 'property="og:title" content="Album Title"' in response.text
     assert 'property="og:description" content="Album Artist · 2 tracks · 4:06"' in response.text
-    assert "music:duration" not in response.text
+    assert "music:" not in response.text
 
 
 def test_public_cover_and_audio_are_privately_cacheable(tmp_path, monkeypatch):

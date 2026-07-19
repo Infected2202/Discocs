@@ -461,21 +461,15 @@ def public_share_preview(token: str, request: Request) -> Response:
     values = _preview_values(store, share)
     if values is None:
         return _unavailable()
-    title, description, duration = values
+    title, description, _duration = values
     share_url = _public_url(request, token)
     cover_url = f'{_public_asset_url(request, token, "cover")}?preview=1'
     escaped_title = escape(title, quote=True)
     escaped_description = escape(description, quote=True)
     escaped_share_url = escape(share_url, quote=True)
     escaped_cover_url = escape(cover_url, quote=True)
-    object_type = "music.song" if share.source_type == "track" else "music.album"
-    duration_meta = (
-        f'    <meta property="music:duration" content="{int(duration)}">\n'
-        if duration is not None
-        else ""
-    )
     document = f"""<!doctype html>
-<html lang="en" prefix="og: https://ogp.me/ns# music: https://ogp.me/ns/music#">
+<html lang="en" prefix="og: https://ogp.me/ns#">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -483,14 +477,14 @@ def public_share_preview(token: str, request: Request) -> Response:
     <title>{escaped_title}</title>
     <meta name="description" content="{escaped_description}">
     <link rel="canonical" href="{escaped_share_url}">
-    <meta property="og:type" content="{object_type}">
+    <meta property="og:type" content="website">
     <meta property="og:site_name" content="discocs">
     <meta property="og:title" content="{escaped_title}">
     <meta property="og:description" content="{escaped_description}">
     <meta property="og:url" content="{escaped_share_url}">
     <meta property="og:image" content="{escaped_cover_url}">
     <meta property="og:image:alt" content="{escaped_title}">
-{duration_meta}    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="{escaped_title}">
     <meta name="twitter:description" content="{escaped_description}">
     <meta name="twitter:image" content="{escaped_cover_url}">
