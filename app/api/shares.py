@@ -226,7 +226,20 @@ def _management_dict(store: object, share: Share) -> dict[str, object]:
 
 def _public_url(request: Request, token: str) -> str:
     configured = os.getenv("DISCOCS_PUBLIC_URL", "").strip().rstrip("/")
-    base = configured or str(request.base_url).rstrip("/")
+    forwarded_proto = (
+        request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+    )
+    forwarded_host = (
+        request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip()
+    )
+    forwarded_origin = ""
+    if (
+        forwarded_proto in {"http", "https"}
+        and forwarded_host
+        and re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", forwarded_host)
+    ):
+        forwarded_origin = f"{forwarded_proto}://{forwarded_host}"
+    base = configured or forwarded_origin or str(request.base_url).rstrip("/")
     return f"{base}/share/{token}"
 
 

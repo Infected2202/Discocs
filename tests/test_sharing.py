@@ -216,8 +216,12 @@ def test_public_preview_exposes_universal_metadata_without_audio(tmp_path, monke
         source_type="track", source_id=track_id, expires_at=_future()
     )
 
-    response = TestClient(app, base_url="https://music.example").get(
-        f"/api/v1/public/shares/{token}/preview"
+    response = TestClient(app, base_url="http://backend:7752").get(
+        f"/api/v1/public/shares/{token}/preview",
+        headers={
+            "x-forwarded-proto": "https",
+            "x-forwarded-host": "music.example",
+        },
     )
 
     assert response.status_code == 200
