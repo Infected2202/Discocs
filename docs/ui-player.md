@@ -70,8 +70,13 @@ user gesture after a reload.
 
 ## Browser audio prefetch
 
-`AudioEngine` uses `preload="auto"` for the active track and reports full
-buffering only when `TimeRanges` continuously cover the complete duration.
+`AudioEngine` uses `preload="auto"` for immediate playback, then explicitly
+fetches the active response into a complete in-memory `Blob`. This closes the
+mobile-browser gap where native buffering stops around 90%. When the Blob is
+ready, playback switches to its local `blob:` URL at the same timestamp; only
+then is the active track reported as 100% available and next-track prefetch is
+allowed. If native `TimeRanges` reach 100% first, the redundant fetch is
+aborted.
 The seek bar renders every browser `TimeRanges` segment separately, so a gap
 created by an unbuffered seek is not shown as downloaded. Dragging uses Pointer
 Events and pointer capture, giving mouse, touch, and pen the same commit path;
@@ -81,7 +86,7 @@ A completed Blob is consumed through a local `blob:` URL at transition time;
 an unfinished or stale prefetch is aborted and playback falls back immediately
 to the normal `/api/v1/tracks/{id}/audio` URL.
 
-The browser retains at most the active prepared Blob and one upcoming Blob.
+The browser retains at most the forced complete active Blob and one upcoming Blob.
 Object URLs are revoked after use, on profile/source changes, and on logout.
 This is intentionally an in-memory transition buffer, not offline storage.
 

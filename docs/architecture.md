@@ -196,13 +196,15 @@ Implementation files: `app/api/playback.py`, `app/store/playback.py`,
 ### Browser audio buffering and transcoding
 
 The web player keeps buffering on the client device. The active
-`HTMLAudioElement` uses `preload="auto"`; once its `TimeRanges` cover the full
-duration, `playerStore` explicitly fetches the next queue item's `/audio`
-response as a `Blob`. A completed Blob is played through a local `blob:` URL,
-so the track transition does not wait for a new mobile-network request. Only
-the active prepared Blob and one next Blob are retained. Queue/profile changes
-abort stale fetches, and object URLs are revoked after use or logout. An early
-skip never waits for prefetch and falls back to the ordinary network URL.
+`HTMLAudioElement` uses `preload="auto"` for immediate playback and a parallel
+full-response fetch guarantees completion when a mobile browser stops native
+buffering early. Once ready, playback adopts the local `blob:` source at the
+same timestamp. Only after the active track is fully available does
+`playerStore` fetch the next queue item's `/audio` response as another Blob,
+so the transition does not wait for mobile networking. Only the active Blob
+and one next Blob are retained. Source/queue changes abort stale fetches, and
+object URLs are revoked after use or logout. An early skip never waits for
+prefetch and falls back to the ordinary network URL.
 
 Playback settings are per-user keys in `user_settings`:
 

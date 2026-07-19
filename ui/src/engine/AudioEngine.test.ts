@@ -351,6 +351,100 @@ describe("AudioEngine — Blob prefetch", () => {
   })
 })
 
+describe("AudioEngine — forced active cache", () => {
+  it("после старта догружает текущий трек полностью и продолжает с локального Blob", async () => {
+    const engine = await makeEngine()
+    const onBufferUpdate = vi.fn()
+    const onFullyBuffered = vi.fn()
+    const createObjectURL = vi.fn().mockReturnValue("blob:active")
+    let resolveBlob!: (blob: Blob) => void
+    const blobPromise = new Promise<Blob>((resolve) => { resolveBlob = resolve })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      blob: vi.fn().mockReturnValue(blobPromise),
+    }))
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL: vi.fn() })
+    engine.init({
+      onTimeUpdate: vi.fn(), onBufferUpdate, onFullyBuffered,
+      onPlaybackStateChange: vi.fn(), onEnded: vi.fn(), onError: vi.fn(),
+    })
+    engine.load("/audio/1", 1, "mp3-192")
+    const networkElement = audioInstances.at(-1)!
+    networkElement.currentTime = 42
+    networkElement.paused = false
+
+    await engine.play()
+    expect(fetch).toHaveBeenCalledWith("/audio/1", expect.objectContaining({
+      credentials: "same-origin",
+      signal: expect.any(AbortSignal),
+    }))
+
+    resolveBlob(new Blob(["complete audio"]))
+    await vi.waitFor(() => expect(audioInstances).toHaveLength(3))
+    const blobElement = audioInstances.at(-1)!
+    expect(blobElement.src).toBe("blob:active")
+    expect(networkElement.src).toBe("")
+
+    blobElement.duration = 180
+    blobElement.emit("loadedmetadata")
+
+    expect(blobElement.currentTime).toBe(42)
+    expect(blobElement.play).toHaveBeenCalledOnce()
+    expect(onBufferUpdate).toHaveBeenLastCalledWith([{ start: 0, end: 1 }])
+    expect(onFullyBuffered).toHaveBeenCalledWith(1, "mp3-192")
+  })
+
+  it("не запускает второй fetch при повторном play, пока первый выполняется", async () => {
+    const engine = await makeEngine()
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      blob: vi.fn().mockReturnValue(new Promise<Blob>(() => undefined)),
+    }))
+    engine.load("/audio/1", 1, "raw")
+
+    await engine.play()
+    await engine.play()
+
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it("отменяет догрузку старого трека при смене source", async () => {
+    const engine = await makeEngine()
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      blob: vi.fn().mockReturnValue(new Promise<Blob>(() => undefined)),
+    }))
+    engine.load("/audio/1", 1, "raw")
+    await engine.play()
+    const signal = vi.mocked(fetch).mock.calls[0][1]?.signal
+
+    engine.load("/audio/2", 2, "raw")
+
+    expect(signal?.aborted).toBe(true)
+  })
+
+  it("не держит дублирующий fetch, если нативный TimeRanges первым достиг 100%", async () => {
+    const engine = await makeEngine()
+    const createObjectURL = vi.fn()
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL: vi.fn() })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      blob: vi.fn().mockReturnValue(new Promise<Blob>(() => undefined)),
+    }))
+    engine.load("/audio/1", 1, "raw")
+    const el = audioInstances.at(-1)!
+    el.duration = 100
+    await engine.play()
+    const signal = vi.mocked(fetch).mock.calls[0][1]?.signal
+
+    el.buffered = new MockTimeRanges([[0, 100]])
+    el.emit("progress")
+
+    expect(signal?.aborted).toBe(true)
+    expect(createObjectURL).not.toHaveBeenCalled()
+  })
+})
+
 describe("AudioEngine.setMediaSession()", () => {
   let metadataArgs: MediaMetadataInit | undefined
   const setActionHandler = vi.fn()

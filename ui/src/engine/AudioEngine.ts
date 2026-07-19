@@ -1,4 +1,5 @@
 import type { TrackSummary } from "@/api/types"
+import { playerLog } from "@/lib/playerLogger"
 
 export type PlaybackState = "idle" | "loading" | "playing" | "paused" | "error"
 export interface BufferedRange {
@@ -20,7 +21,10 @@ class AudioEngine {
   private callbacks: AudioEngineCallbacks | null = null
   private activeTrackId: number | null = null
   private activeProfileKey = "raw"
+  private activeNetworkUrl: string | null = null
   private activeObjectUrl: string | null = null
+  private activeCacheController: AbortController | null = null
+  private activeCacheTarget: { trackId: number; profileKey: string; url: string } | null = null
   private fullyBufferedReported = false
   private prefetched: { trackId: number; profileKey: string; objectUrl: string } | null = null
   private prefetchController: AbortController | null = null
@@ -40,6 +44,7 @@ class AudioEngine {
     profileKey = "raw",
     fullyAvailable = false,
   ) {
+    this.cancelActiveCache()
     // Явно освобождаем буфер старого элемента — src='' надёжнее removeAttribute
     const prev = this.el
     prev.pause()
@@ -59,6 +64,7 @@ class AudioEngine {
     this.el.load()
     this.activeTrackId = trackId
     this.activeProfileKey = profileKey
+    this.activeNetworkUrl = fullyAvailable || url.startsWith("blob:") ? null : url
     this.fullyBufferedReported = false
 
     // Reset immediately — otherwise the buffered indicator briefly shows
@@ -117,6 +123,11 @@ class AudioEngine {
 
   async play(): Promise<void> {
     await this.el.play()
+    // `preload=auto` is only a browser hint and commonly stalls around 90%.
+    // Once playback has actually started, explicitly consume the complete
+    // response into a Blob. Native playback remains uninterrupted; the Blob
+    // guarantees that all bytes are present before the next prefetch begins.
+    this.cacheActiveTrack()
   }
 
   pause() {
@@ -131,8 +142,10 @@ class AudioEngine {
     prev.load()
     this.cancelPrefetch()
     this.clearPrefetched()
+    this.cancelActiveCache()
     if (this.activeObjectUrl) URL.revokeObjectURL(this.activeObjectUrl)
     this.activeObjectUrl = null
+    this.activeNetworkUrl = null
     this.activeTrackId = null
     this.fullyBufferedReported = false
 
@@ -242,11 +255,16 @@ class AudioEngine {
 
   private attachListeners(el: HTMLAudioElement) {
     el.addEventListener("timeupdate", () => {
+      if (el !== this.el) return
       this.callbacks?.onTimeUpdate(el.currentTime, el.duration || 0)
     })
 
     const reportBuffered = () => {
       if (el !== this.el) return
+      if (this.fullyBufferedReported) {
+        this.callbacks?.onBufferUpdate([{ start: 0, end: 1 }])
+        return
+      }
       if (!Number.isFinite(el.duration) || el.duration <= 0) return
       // A media element may retain several disjoint ranges after seeking.
       // Preserve every segment so the UI never paints an unloaded gap as
@@ -269,19 +287,23 @@ class AudioEngine {
     el.addEventListener("canplaythrough", reportBuffered)
 
     el.addEventListener("play", () => {
+      if (el !== this.el) return
       this.callbacks?.onPlaybackStateChange("playing")
     })
 
     // "playing" fires after buffering resumes — fixes spinner stuck after "waiting"
     el.addEventListener("playing", () => {
+      if (el !== this.el) return
       this.callbacks?.onPlaybackStateChange("playing")
     })
 
     el.addEventListener("pause", () => {
+      if (el !== this.el) return
       if (!el.ended) this.callbacks?.onPlaybackStateChange("paused")
     })
 
     el.addEventListener("waiting", () => {
+      if (el !== this.el) return
       this.callbacks?.onPlaybackStateChange("loading")
     })
 
@@ -290,10 +312,12 @@ class AudioEngine {
     })
 
     el.addEventListener("ended", () => {
+      if (el !== this.el) return
       this.callbacks?.onEnded()
     })
 
     el.addEventListener("error", () => {
+      if (el !== this.el) return
       const err = el.error
       const msg = err ? `Media error ${err.code}: ${err.message}` : "Unknown audio error"
       this.callbacks?.onPlaybackStateChange("error")
@@ -318,7 +342,108 @@ class AudioEngine {
   private reportFullyBuffered() {
     if (this.fullyBufferedReported || this.activeTrackId === null) return
     this.fullyBufferedReported = true
+    this.cancelActiveCache()
+    this.callbacks?.onBufferUpdate([{ start: 0, end: 1 }])
     this.callbacks?.onFullyBuffered?.(this.activeTrackId, this.activeProfileKey)
+  }
+
+  private cacheActiveTrack() {
+    const trackId = this.activeTrackId
+    const profileKey = this.activeProfileKey
+    const url = this.activeNetworkUrl
+    if (trackId === null || !url || this.fullyBufferedReported) return
+    if (
+      this.activeCacheTarget?.trackId === trackId
+      && this.activeCacheTarget.profileKey === profileKey
+      && this.activeCacheTarget.url === url
+    ) return
+
+    this.cancelActiveCache()
+    const controller = new AbortController()
+    const target = { trackId, profileKey, url }
+    this.activeCacheController = controller
+    this.activeCacheTarget = target
+    playerLog("buffer", "force-cache current", { trackId, profile: profileKey })
+
+    void this.fetchAudioBlob(url, controller.signal)
+      .then((blob) => {
+        if (controller.signal.aborted || this.activeCacheTarget !== target) return
+        if (
+          this.activeTrackId !== trackId
+          || this.activeProfileKey !== profileKey
+          || this.activeNetworkUrl !== url
+        ) return
+
+        if (this.activeObjectUrl) URL.revokeObjectURL(this.activeObjectUrl)
+        this.activeObjectUrl = URL.createObjectURL(blob)
+        this.activeNetworkUrl = null
+        this.activeCacheController = null
+        this.activeCacheTarget = null
+        this.activateCachedSource(this.activeObjectUrl)
+        playerLog("buffer", "current Blob ready", { trackId, profile: profileKey })
+        this.reportFullyBuffered()
+      })
+      // Native media playback remains the fallback. A later play attempt may
+      // retry the explicit cache without turning the player into error.
+      .catch((error: Error) => {
+        if (error.name !== "AbortError") {
+          playerLog("buffer", "force-cache failed", {
+            trackId,
+            profile: profileKey,
+            message: error.message,
+          })
+        }
+      })
+      .finally(() => {
+        if (this.activeCacheController === controller) this.activeCacheController = null
+        if (this.activeCacheTarget === target) this.activeCacheTarget = null
+      })
+  }
+
+  private cancelActiveCache() {
+    this.activeCacheController?.abort()
+    this.activeCacheController = null
+    this.activeCacheTarget = null
+  }
+
+  private async fetchAudioBlob(url: string, signal: AbortSignal): Promise<Blob> {
+    const response = await fetch(url, {
+      credentials: "same-origin",
+      signal,
+    })
+    if (!response.ok) throw new Error(`Active audio cache failed: HTTP ${response.status}`)
+    return response.blob()
+  }
+
+  private activateCachedSource(objectUrl: string) {
+    const prev = this.el
+    const position = prev.currentTime
+    const shouldResume = !prev.paused
+    const next = this.createElement()
+    next.volume = prev.volume
+    next.muted = prev.muted
+    next.src = objectUrl
+
+    // Make stale element events inert before unloading it. The replacement is
+    // local, so metadata/seek do not require another network request.
+    this.el = next
+    prev.pause()
+    prev.src = ""
+    prev.load()
+
+    const resume = () => {
+      next.removeEventListener("loadedmetadata", resume)
+      if (next !== this.el) return
+      next.currentTime = Math.min(position, next.duration || position)
+      if (shouldResume) {
+        void next.play().catch((error: Error) => {
+          this.callbacks?.onPlaybackStateChange("error")
+          this.callbacks?.onError(error.message)
+        })
+      }
+    }
+    next.addEventListener("loadedmetadata", resume)
+    next.load()
   }
 }
 
