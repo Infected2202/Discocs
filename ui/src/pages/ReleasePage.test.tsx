@@ -11,12 +11,18 @@ const useRelease = vi.fn()
 const useReleaseTracks = vi.fn()
 const useReleaseRelated = vi.fn()
 const useReleaseRecommendations = vi.fn()
+const useShareCapabilities = vi.fn()
 
 vi.mock("@/api/hooks/useRelease", () => ({
   useRelease: (...args: unknown[]) => useRelease(...args),
   useReleaseTracks: (...args: unknown[]) => useReleaseTracks(...args),
   useReleaseRelated: (...args: unknown[]) => useReleaseRelated(...args),
   useReleaseRecommendations: (...args: unknown[]) => useReleaseRecommendations(...args),
+}))
+
+vi.mock("@/api/shares", () => ({
+  useShareCapabilities: () => useShareCapabilities(),
+  createShare: vi.fn(),
 }))
 
 vi.mock("@/store/playerStore", () => ({
@@ -104,6 +110,7 @@ describe("ReleasePage — шелф рекомендаций без битого 
     useReleaseTracks.mockReturnValue({ data: makeTracksData(), isLoading: false })
     useReleaseRelated.mockReturnValue({ data: makeRelatedData() })
     useReleaseRecommendations.mockReturnValue({ data: makeRecsData() })
+    useShareCapabilities.mockReturnValue({ data: { enabled: true, can_create: true } })
   })
 
   it("рендерит рекомендованные альбомы без кнопки More (у release_recommendations нет dashboard-шелфа)", async () => {
@@ -114,7 +121,7 @@ describe("ReleasePage — шелф рекомендаций без битого 
     expect(screen.queryByRole("button", { name: "More" })).toBeNull()
   })
 
-  it("показывает скачивание иконкой перед завершающим лайком", () => {
+  it("показывает download и share иконками перед завершающим лайком", () => {
     useReleaseTracks.mockReturnValue({
       data: {
         ...makeTracksData(),
@@ -126,6 +133,7 @@ describe("ReleasePage — шелф рекомендаций без битого 
     renderPage()
 
     const download = screen.getByRole("link", { name: "Download" })
+    const share = screen.getByRole("button", { name: "Share" })
     const like = screen.getByRole("button", { name: "Like" })
 
     expect(download).toHaveAttribute(
@@ -133,6 +141,11 @@ describe("ReleasePage — шелф рекомендаций без битого 
       "/api/v1/releases/5/download",
     )
     expect(download).not.toHaveTextContent("Download")
+    expect(share).toHaveAttribute("data-size", "icon-sm")
+    expect(share).not.toHaveTextContent("Share")
+    expect(share.querySelector("svg.lucide-share-2")).toBeTruthy()
+    expect(download.compareDocumentPosition(share)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(share.compareDocumentPosition(like)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(download.compareDocumentPosition(like)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 

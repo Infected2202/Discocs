@@ -69,8 +69,8 @@
 9. Публичный плеер имеет локальное клиентское состояние и не создаёт строки в
    `playback_sessions`, `queue_items` или `playback_events`.
 10. Sharing выключен по умолчанию и включается владельцем сервиса отдельно.
-11. Право создавать публичные ссылки выдаётся явному allowlist пользователей;
-    один лишь успешный вход через Navidrome такого права не даёт.
+11. Право создавать публичные ссылки есть у любого обычного пользователя
+    с валидной сессией; service principal этого права не имеет.
 12. Отозванная, истёкшая и несуществующая ссылка снаружи выглядят одинаково.
 
 ## Модель данных
@@ -167,7 +167,6 @@ SQLite-транзакции. Management-методы всегда фильтру
 | Переменная | Default | Назначение |
 |---|---:|---|
 | `DISCOCS_SHARING_ENABLED` | `false` | Полностью включает публичный sharing |
-| `DISCOCS_SHARING_ALLOWED_USERS` | пусто | CSV allowlist Navidrome username |
 | `DISCOCS_SHARE_DEFAULT_TTL_HOURS` | `168` | Default 7 дней |
 | `DISCOCS_SHARE_MAX_TTL_HOURS` | `8760` | Максимальный срок 1 год |
 
@@ -181,8 +180,8 @@ backend должен делать это конфигурационно, а не
 - публичные ссылки отвечают одинаковым `404 Share unavailable`;
 - frontend не показывает действия Share.
 
-Проверка allowlist выполняется на backend по `request.state.principal`; UI
-лишь скрывает недоступные действия. Service principal создавать share не может.
+Любой обычный авторизованный пользователь может создавать share. UI
+скрывает действия при выключенном sharing; service principal создавать share не может.
 
 ## Авторизованный management API
 
@@ -452,8 +451,8 @@ logout/login, восстанавливать чужую playback-сессию и
 - Create → показать URL → Copy;
 - после закрытия полный URL повторно не показывается.
 
-Действия скрыты, если feature выключен или пользователь не входит в allowlist.
-Backend всё равно повторно проверяет оба условия.
+Действия скрыты, если feature выключен. Backend повторно проверяет
+feature flag и наличие обычной пользовательской сессии.
 
 ### Управление ссылками
 
@@ -511,7 +510,7 @@ preview route позже; он должен применять те же про�
 
 - auth требуется для create/list/patch/delete;
 - service token не может создать share;
-- пользователь вне allowlist получает отказ;
+- любой обычный авторизованный пользователь может создать share;
 - sharing disabled закрывает management и public routes;
 - разрешены только точные публичные GET/HEAD routes;
 - POST/PUT/PATCH/DELETE на public path не обходят middleware;
@@ -539,7 +538,7 @@ preview route позже; он должен применять те же про�
 - guest page не рендерит like, dislike, download, save и закрытые ссылки;
 - адаптивные player/queue tabs;
 - Create Share dialog: presets, explicit no-expiry confirmation, copy state;
-- feature/permission скрывают Share action;
+- feature flag скрывает Share action;
 - management list и revoke confirmation;
 - рефакторинг общих player-компонентов не меняет обычный ExpandedPlayer.
 
@@ -558,7 +557,7 @@ preview route позже; он должен применять те же про�
 При реализации добавить `docs/sharing.md`:
 
 - модель capability URL и ограничения;
-- конфигурация и allowlist;
+- конфигурация и модель доступа;
 - создание, срок и отзыв;
 - публичные маршруты и reverse proxy;
 - что отсутствие Download не предотвращает сохранение аудио;
@@ -591,11 +590,11 @@ preview route позже; он должен применять те же про�
 
 - schemas и serializers;
 - create/list/get/patch/revoke;
-- feature flag и creator allowlist;
+- feature flag и проверка обычной user session;
 - построение canonical URL;
 - API/security tests.
 
-Критерий: авторизованный разрешённый пользователь может создать и отозвать
+Критерий: авторизованный пользователь может создать и отозвать
 ссылку; другой пользователь не видит её.
 
 ### Этап 3. Публичный metadata/cover/audio API
@@ -648,7 +647,7 @@ preview route позже; он должен применять те же про�
 
 ## Definition of Done
 
-- Пользователь из allowlist создаёт отдельную отзывную ссылку на трек или релиз.
+- Авторизованный пользователь создаёт отдельную отзывную ссылку на трек или релиз.
 - В SQLite отсутствует полный секретный token.
 - Гость без cookie слушает только элементы конкретной активной ссылки.
 - Релиз отображается и воспроизводится как стабильный упорядоченный плейлист.

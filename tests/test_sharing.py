@@ -23,7 +23,6 @@ def _init_store(tmp_path: Path, monkeypatch) -> Store:
     monkeypatch.setenv("DISCOCS_MODEL_DIR", str(tmp_path / "models"))
     monkeypatch.setenv("DISCOCS_AUTH_ENABLED", "true")
     monkeypatch.setenv("DISCOCS_SHARING_ENABLED", "true")
-    monkeypatch.setenv("DISCOCS_SHARING_ALLOWED_USERS", "alice")
     store = Store(db_path)
     store.init()
     return store
@@ -302,13 +301,36 @@ def test_management_api_creates_lists_and_revokes_share(tmp_path, monkeypatch):
     assert client.get(f"/api/v1/shares/{share_id}").json()["status"] == "revoked"
 
 
-def test_management_api_requires_creator_allowlist(tmp_path, monkeypatch):
+def test_management_api_allows_any_authenticated_user(tmp_path, monkeypatch):
     store = _init_store(tmp_path, monkeypatch)
-    track_id = _track(store, tmp_path / "denied.flac", title="Denied")
+    track_id = _track(store, tmp_path / "shared.flac", title="Shared")
     client = _session_client(store, "bob")
 
+    assert client.get("/api/v1/shares/capabilities").json() == {
+        "enabled": True,
+        "can_create": True,
+    }
     response = client.post(
         "/api/v1/shares",
         json={"source_type": "track", "source_id": track_id},
     )
-    assert response.status_code == 403
+    assert response.status_code == 201
+
+
+def test_management_api_rejects_service_principal(tmp_path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    track_id = _track(store, tmp_path / "service.flac", title="Service")
+    monkeypatch.setenv("DISCOCS_SERVICE_TOKEN", "service-secret")
+    client = TestClient(app)
+    headers = {"x-discocs-service-token": "service-secret"}
+
+    assert client.get("/api/v1/shares/capabilities", headers=headers).json() == {
+        "enabled": True,
+        "can_create": False,
+    }
+    response = client.post(
+        "/api/v1/shares",
+        json={"source_type": "track", "source_id": track_id},
+        headers=headers,
+    )
+    assert response.status_code == 401

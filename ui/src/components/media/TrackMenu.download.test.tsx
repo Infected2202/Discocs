@@ -23,7 +23,7 @@ vi.mock("@/store/playerStore", () => ({
 }))
 
 vi.mock("@/api/shares", () => ({
-  useShareCapabilities: () => ({ data: { enabled: false, can_create: false } }),
+  useShareCapabilities: () => ({ data: { enabled: true, can_create: true } }),
   createShare: vi.fn(),
 }))
 
@@ -55,5 +55,12 @@ describe("TrackMenu download", () => {
       "href",
       "/api/v1/tracks/42/download",
     )
+  })
+
+  it("shows the share action with an icon for authenticated creators", () => {
+    render(<MemoryRouter><TrackMenu track={track} /></MemoryRouter>)
+
+    const share = screen.getByText("Share").closest("div")
+    expect(share?.querySelector("svg.lucide-share-2")).toBeTruthy()
   })
 })

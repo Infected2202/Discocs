@@ -22,11 +22,10 @@ snapshot-набору треков этой ссылки. Токен генер�
 
 ## Конфигурация
 
-Sharing выключен и creator-denied по умолчанию:
+Sharing выключен по умолчанию:
 
 ```text
 DISCOCS_SHARING_ENABLED=true
-DISCOCS_SHARING_ALLOWED_USERS=infected2202,alice
 DISCOCS_SHARE_DEFAULT_TTL_HOURS=168
 DISCOCS_SHARE_MAX_TTL_HOURS=8760
 DISCOCS_SHARE_MAX_STREAMS_PER_CLIENT=3
@@ -34,8 +33,9 @@ DISCOCS_SHARE_MAX_STREAMS=16
 DISCOCS_PUBLIC_URL=https://music.example.com
 ```
 
-- `DISCOCS_SHARING_ALLOWED_USERS` — case-insensitive CSV allowlist Navidrome
-  username. Обычной валидной учётной записи недостаточно для публикации.
+- После включения sharing ссылки может создавать любой обычный
+  авторизованный пользователь. Анонимный и service principal не могут
+  управлять ссылками.
 - `DISCOCS_PUBLIC_URL` задаёт canonical origin генерируемого URL. Если он пуст,
   backend использует browser-visible request origin через frontend proxy.
 - Лимиты потоков действуют в памяти одного backend process. При горизонтальном
@@ -106,7 +106,7 @@ metadata, а не персональная playback-аналитика и не �
 
 Если ссылка не работает, проверить по порядку:
 
-1. включён ли feature flag и находится ли creator в allowlist;
+1. включён ли feature flag;
 2. не истёк и не отозван ли share;
 3. остались ли snapshot-треки в каталоге и не помечены ли они missing;
 4. доступны ли local mount или service credentials Navidrome;

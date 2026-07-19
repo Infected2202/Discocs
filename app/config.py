@@ -117,20 +117,13 @@ class AuthSettings:
 @dataclass(frozen=True)
 class SharingSettings:
     enabled: bool = False
-    allowed_users: frozenset[str] = frozenset()
     default_ttl_hours: int = 168
     max_ttl_hours: int = 8760
 
     @classmethod
     def from_env(cls) -> "SharingSettings":
-        allowed = frozenset(
-            value.strip().casefold()
-            for value in os.getenv("DISCOCS_SHARING_ALLOWED_USERS", "").split(",")
-            if value.strip()
-        )
         return cls(
             enabled=_env_flag("DISCOCS_SHARING_ENABLED", False),
-            allowed_users=allowed,
             default_ttl_hours=_positive_int(
                 os.getenv("DISCOCS_SHARE_DEFAULT_TTL_HOURS"), 168
             ),

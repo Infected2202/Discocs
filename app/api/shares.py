@@ -141,8 +141,6 @@ def _require_creator(request: Request, settings: object) -> None:
     user_id = getattr(request.state, "user_id", None)
     if principal == "service" or not isinstance(user_id, int):
         raise HTTPException(status_code=401, detail="User session required")
-    if principal.casefold() not in sharing.allowed_users:
-        raise HTTPException(status_code=403, detail="Sharing is not allowed for this user")
 
 
 def _normalize_expiration(value: datetime | None, settings: object) -> str | None:
@@ -258,7 +256,6 @@ def share_capabilities(request: Request) -> dict[str, bool]:
             settings.sharing.enabled
             and principal != "service"
             and isinstance(getattr(request.state, "user_id", None), int)
-            and principal.casefold() in settings.sharing.allowed_users
         ),
     }
 
