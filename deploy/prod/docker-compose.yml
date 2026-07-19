@@ -66,6 +66,12 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # Бот не имеет прямого доступа наружу (сеть площадки режет исходящий трафик до Telegram
   # API) — весь его сетевой стек проксируется через туннель awg (см. ниже).

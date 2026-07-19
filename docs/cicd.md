@@ -29,6 +29,7 @@ push в Gitea ──webhook──> Jenkins
    │                 полный отчёт → HTML-вкладка (publishHTML) → блокирующий гейт
    └─ Deploy        [post/success, только main] по SSH на TARGET_SERVER:
                        scp compose в TARGET_DIR → docker compose pull && up -d --force-recreate
+                       backend и frontend должны пройти healthcheck;
                        (.env на хосте CI не трогает — заводится и правится вручную)
 ```
 

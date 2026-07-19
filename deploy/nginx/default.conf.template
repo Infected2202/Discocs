@@ -137,7 +137,7 @@ server {
         proxy_read_timeout 300s;
     }
 
-    location ~ ^/share/(?<discocs_share_token>[A-Za-z0-9_-]{40,64})/?$ {
+    location ~ "^/share/(?<discocs_share_token>[A-Za-z0-9_-]{40,64})/?$" {
         if ($discocs_link_preview_crawler) {
             rewrite ^ /api/v1/public/shares/$discocs_share_token/preview last;
         }
