@@ -13,6 +13,11 @@ vi.mock("@/api/playback", async (importOriginal) => {
   return { ...actual, postEvent: (...args: unknown[]) => postEvent(...args) }
 })
 
+vi.mock("@/api/shares", () => ({
+  useShareCapabilities: () => ({ data: { enabled: false, can_create: false } }),
+  createShare: vi.fn(),
+}))
+
 function makeTrack(id: number, title: string): TrackSummary {
   return {
     id,

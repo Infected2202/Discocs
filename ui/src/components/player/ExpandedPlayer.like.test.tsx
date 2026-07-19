@@ -10,6 +10,11 @@ vi.mock("@/components/player/QueueItem", () => ({
   default: () => <div data-testid="queue-item" />,
 }))
 
+vi.mock("@/api/shares", () => ({
+  useShareCapabilities: () => ({ data: { enabled: false, can_create: false } }),
+  createShare: vi.fn(),
+}))
+
 const postEvent = vi.fn().mockResolvedValue({ accepted: true, duplicate: false, event_id: "e1", preference_delta: {} })
 
 vi.mock("@/api/playback", async (importOriginal) => {
