@@ -19,6 +19,7 @@ export default function SharedPlayerPage() {
   const { token = "" } = useParams<{ token: string }>()
   const audioRef = useRef<HTMLAudioElement>(null)
   const autoplayNextRef = useRef(false)
+  const durationRef = useRef(0)
   const [share, setShare] = useState<PublicShare | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -43,8 +44,9 @@ export default function SharedPlayerPage() {
 
   const commitSeek = (fraction: number) => {
     const audio = audioRef.current
-    if (audio && duration > 0) {
-      const nextTime = fraction * duration
+    const knownDuration = durationRef.current
+    if (audio && knownDuration > 0) {
+      const nextTime = fraction * knownDuration
       audio.currentTime = nextTime
       setCurrentTime(nextTime)
     }
@@ -97,7 +99,8 @@ export default function SharedPlayerPage() {
     audio.load()
     setPlaying(false)
     setCurrentTime(0)
-    setDuration(item.duration ?? 0)
+    durationRef.current = item.duration ?? 0
+    setDuration(durationRef.current)
     setDragProgress(null)
     if ("mediaSession" in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({
@@ -227,7 +230,10 @@ export default function SharedPlayerPage() {
         onWaiting={() => setBuffering(true)}
         onPlaying={() => setBuffering(false)}
         onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
-        onDurationChange={(event) => setDuration(event.currentTarget.duration || item?.duration || 0)}
+        onDurationChange={(event) => {
+          durationRef.current = event.currentTarget.duration || item?.duration || 0
+          setDuration(durationRef.current)
+        }}
         onEnded={handleEnded}
         onError={() => setBuffering(false)}
       />
