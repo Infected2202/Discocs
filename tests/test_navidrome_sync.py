@@ -130,7 +130,14 @@ def test_sync_navidrome_catalog_imports_all_songs(tmp_path):
     assert release.cover_art_id == "cover-1"
 
 
-def test_sync_navidrome_catalog_imports_play_history_and_starred(tmp_path):
+def test_sync_navidrome_catalog_imports_play_history_but_not_likes(tmp_path):
+    """The catalog sync owns play state; likes belong to the starred sync.
+
+    It used to read `starred` into `liked`, which could only ever add a like:
+    a song that lost its star simply arrived with `starred=None` and the flag
+    stayed set forever. Likes now come from the starred sync, which replaces
+    the whole set. See plans/likes-unification-plan.md.
+    """
     store = Store(tmp_path / "app.db")
     store.init()
 
@@ -155,7 +162,7 @@ def test_sync_navidrome_catalog_imports_play_history_and_starred(tmp_path):
     assert pref is not None
     assert pref.play_count == 4
     assert pref.last_played_at == "2026-06-01T10:00:00Z"
-    assert pref.liked is True
+    assert pref.liked is False
 
     sync_navidrome_catalog(
         store,
@@ -174,7 +181,26 @@ def test_sync_navidrome_catalog_imports_play_history_and_starred(tmp_path):
     assert refreshed is not None
     assert refreshed.play_count == 6
     assert refreshed.last_played_at == "2026-06-03T10:00:00Z"
-    assert refreshed.liked is True
+
+
+def test_catalog_sync_does_not_clear_a_real_like(tmp_path):
+    """A catalog pass must leave the starred sync's work alone, either way."""
+    store = Store(tmp_path / "app.db")
+    store.init()
+    sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([song("song-1", "One")]),  # type: ignore[arg-type]
+    )
+    track = store.get_track_by_external_id(NAVIDROME_PROVIDER, "song-1")
+    assert track is not None
+    store.set_track_liked(track.id, True)
+
+    sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([song("song-1", "One", play_count=2)]),  # type: ignore[arg-type]
+    )
+
+    assert store.get_track_preference(track.id).liked is True
 
 
 def test_sync_navidrome_catalog_is_idempotent_and_updates_metadata(tmp_path):
