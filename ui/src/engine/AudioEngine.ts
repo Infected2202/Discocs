@@ -1,11 +1,15 @@
 import type { TrackSummary } from "@/api/types"
 
 export type PlaybackState = "idle" | "loading" | "playing" | "paused" | "error"
+export interface BufferedRange {
+  start: number
+  end: number
+}
 
 interface AudioEngineCallbacks {
   onTimeUpdate(currentTime: number, duration: number): void
   onPlaybackStateChange(state: PlaybackState): void
-  onBufferUpdate(fraction: number): void
+  onBufferUpdate(ranges: BufferedRange[]): void
   onFullyBuffered?(trackId: number, profileKey: string): void
   onEnded(): void
   onError(message: string): void
@@ -58,8 +62,8 @@ class AudioEngine {
     this.fullyBufferedReported = false
 
     // Reset immediately — otherwise the buffered indicator briefly shows
-    // the previous track's fully-downloaded range on the new one.
-    this.callbacks?.onBufferUpdate(0)
+    // the previous track's ranges. A prepared Blob is already fully local.
+    this.callbacks?.onBufferUpdate(fullyAvailable ? [{ start: 0, end: 1 }] : [])
     if (fullyAvailable && trackId !== null) this.reportFullyBuffered()
   }
 
@@ -137,7 +141,7 @@ class AudioEngine {
     this.el.muted = muted
 
     this.callbacks?.onTimeUpdate(0, 0)
-    this.callbacks?.onBufferUpdate(0)
+    this.callbacks?.onBufferUpdate([])
     this.callbacks?.onPlaybackStateChange("idle")
 
     if ("mediaSession" in navigator) {
@@ -244,16 +248,18 @@ class AudioEngine {
     const reportBuffered = () => {
       if (el !== this.el) return
       if (!Number.isFinite(el.duration) || el.duration <= 0) return
-      // `buffered` can have gaps after a seek — use the range that covers
-      // (or is closest ahead of) currentTime, not just the last one.
-      const { buffered, currentTime } = el
-      let end = 0
+      // A media element may retain several disjoint ranges after seeking.
+      // Preserve every segment so the UI never paints an unloaded gap as
+      // downloaded content.
+      const ranges: BufferedRange[] = []
+      const { buffered } = el
       for (let i = 0; i < buffered.length; i++) {
-        if (buffered.start(i) <= currentTime && buffered.end(i) > end) {
-          end = buffered.end(i)
-        }
+        ranges.push({
+          start: Math.max(0, Math.min(1, buffered.start(i) / el.duration)),
+          end: Math.max(0, Math.min(1, buffered.end(i) / el.duration)),
+        })
       }
-      this.callbacks?.onBufferUpdate(Math.min(1, end / el.duration))
+      this.callbacks?.onBufferUpdate(ranges)
       if (this.bufferCoversDuration(el.buffered, el.duration)) this.reportFullyBuffered()
     }
 

@@ -237,7 +237,7 @@ export default function PlayerBar() {
     }
   }, [currentTrack, currentTrackId])
 
-  const { trackRef: seekBarRef, handleMouseDown: handleSeekMouseDown } = useDragSlider({
+  const { trackRef: seekBarRef, handlePointerDown: handleSeekPointerDown } = useDragSlider({
     onChange: setDragProgress,
     onCommit: (v) => {
       seek(v)
@@ -261,8 +261,8 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
           — centered on the box — has room to render without being clipped by
           the player's outer `overflow-hidden`. */}
       <div
-        className="relative z-10 h-3 w-full cursor-pointer group/seek shrink-0"
-        onMouseDown={handleSeekMouseDown}
+        className="relative z-10 h-3 w-full cursor-pointer touch-none group/seek shrink-0"
+        onPointerDown={handleSeekPointerDown}
         ref={seekBarRef}
       >
         <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-1 bg-muted/75" />

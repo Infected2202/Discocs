@@ -26,7 +26,7 @@ interface SeekIndicatorsProps {
 
 /**
  * Renders the seek bar buffered fill, playback fill (width) and thumb (left).
- * Self-subscribes to currentTime/duration/buffered; while dragging, the
+ * Self-subscribes to currentTime/duration/bufferedRanges; while dragging, the
  * parent passes `override` so the indicators follow the pointer instead of
  * playback.
  */
@@ -39,15 +39,23 @@ export function SeekIndicators({
 }: SeekIndicatorsProps) {
   const currentTime = usePlayerStore((s) => s.currentTime)
   const duration = usePlayerStore((s) => s.duration)
-  const buffered = usePlayerStore((s) => s.buffered)
+  const bufferedRanges = usePlayerStore((s) => s.bufferedRanges)
   const progress = override ?? (duration > 0 ? currentTime / duration : 0)
   const pct = progress * 100
 
   return (
     <>
-      {bufferedClassName && (
-        <div className={bufferedClassName} style={{ width: `${buffered * 100}%` }} />
-      )}
+      {bufferedClassName && bufferedRanges.map((range, index) => (
+        <div
+          className={bufferedClassName}
+          data-buffered-range
+          key={`${range.start}-${range.end}-${index}`}
+          style={{
+            left: `${range.start * 100}%`,
+            width: `${Math.max(0, range.end - range.start) * 100}%`,
+          }}
+        />
+      ))}
       <div className={fillClassName} style={{ ...fillStyle, width: `${pct}%` }} />
       <div className={thumbClassName} style={{ left: `calc(${pct}% - 6px)` }} />
     </>

@@ -15,9 +15,9 @@ function setTime(currentTime: number, duration: number) {
   })
 }
 
-function setBuffered(fraction: number) {
+function setBuffered(ranges: Array<{ start: number; end: number }>) {
   act(() => {
-    usePlayerStore.getState()._setBuffered(fraction)
+    usePlayerStore.getState()._setBuffered(ranges)
   })
 }
 
@@ -81,16 +81,16 @@ describe("SeekIndicators", () => {
   })
 
   it("без bufferedClassName полоска буфера не рендерится", () => {
-    setBuffered(0.6)
+    setBuffered([{ start: 0, end: 0.6 }])
     const { container } = render(
       <SeekIndicators fillClassName="fill" thumbClassName="thumb" />
     )
     expect(container.querySelector(".buffered")).not.toBeInTheDocument()
   })
 
-  it("ширина буфера = buffered из стора, независимо от override", () => {
+  it("рисует каждый диапазон буфера без закрашивания разрывов", () => {
     setTime(50, 200) // 25% живого прогресса
-    setBuffered(0.6)
+    setBuffered([{ start: 0, end: 0.2 }, { start: 0.7, end: 0.9 }])
     const { container } = render(
       <SeekIndicators
         fillClassName="fill"
@@ -99,9 +99,13 @@ describe("SeekIndicators", () => {
         override={0.8}
       />
     )
-    const buffered = container.querySelector(".buffered") as HTMLElement
+    const buffered = [...container.querySelectorAll<HTMLElement>(".buffered")]
     const fill = container.querySelector(".fill") as HTMLElement
-    expect(buffered.style.width).toBe("60%")
+    expect(buffered).toHaveLength(2)
+    expect(buffered[0].style.left).toBe("0%")
+    expect(buffered[0].style.width).toBe("20%")
+    expect(buffered[1].style.left).toBe("70%")
+    expect(Number.parseFloat(buffered[1].style.width)).toBeCloseTo(20)
     expect(fill.style.width).toBe("80%")
   })
 })

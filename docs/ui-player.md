@@ -72,6 +72,10 @@ user gesture after a reload.
 
 `AudioEngine` uses `preload="auto"` for the active track and reports full
 buffering only when `TimeRanges` continuously cover the complete duration.
+The seek bar renders every browser `TimeRanges` segment separately, so a gap
+created by an unbuffered seek is not shown as downloaded. Dragging uses Pointer
+Events and pointer capture, giving mouse, touch, and pen the same commit path;
+`pointercancel` never seeks to a bogus fallback position.
 After that signal, `playerStore` fetches the next queue item as a `Blob`.
 A completed Blob is consumed through a local `blob:` URL at transition time;
 an unfinished or stale prefetch is aborted and playback falls back immediately

@@ -61,7 +61,7 @@ export default function ExpandedPlayer() {
   const autoplay   = session?.autoplay_enabled ?? false
   const effective  = muted ? 0 : volume
 
-  const { trackRef: seekBarRef, handleMouseDown: handleSeekMouseDown } = useDragSlider({
+  const { trackRef: seekBarRef, handlePointerDown: handleSeekPointerDown } = useDragSlider({
     onChange: setDragProgress,
     onCommit: (v) => {
       seek(v)
@@ -69,7 +69,7 @@ export default function ExpandedPlayer() {
     },
   })
 
-  const { trackRef: volumeBarRef, handleMouseDown: handleVolumeMouseDown } = useDragSlider({
+  const { trackRef: volumeBarRef, handlePointerDown: handleVolumePointerDown } = useDragSlider({
     onChange: setVolume,
   })
 
@@ -214,8 +214,8 @@ export default function ExpandedPlayer() {
             {/* Seek bar — outer div is an oversized hit area, same pattern as PlayerBar */}
             <div className="w-full max-w-sm mx-auto space-y-1">
               <div
-                className="h-4 w-full cursor-pointer group/seek relative"
-                onMouseDown={handleSeekMouseDown}
+                className="h-4 w-full cursor-pointer touch-none group/seek relative"
+                onPointerDown={handleSeekPointerDown}
                 onClick={(e) => e.stopPropagation()}
                 ref={seekBarRef}
               >
@@ -266,8 +266,8 @@ export default function ExpandedPlayer() {
                   {effective === 0 ? <VolumeX size={16} /> : effective < 0.5 ? <Volume1 size={16} /> : <Volume2 size={16} />}
                 </button>
                 <div
-                  className="flex-1 h-4 cursor-pointer relative group/vol"
-                  onMouseDown={handleVolumeMouseDown}
+                  className="flex-1 h-4 cursor-pointer touch-none relative group/vol"
+                  onPointerDown={handleVolumePointerDown}
                   onClick={(e) => e.stopPropagation()}
                   ref={volumeBarRef}
                 >

@@ -128,7 +128,7 @@ describe("AudioEngine.load()", () => {
     expect(onStateChange).toHaveBeenCalledWith("playing")
   })
 
-  it("сбрасывает buffered в 0 сразу при load(), до того как новый элемент что-то скачал", async () => {
+  it("сбрасывает buffered ranges сразу при load(), до того как новый элемент что-то скачал", async () => {
     const engine = await makeEngine()
     const onBufferUpdate = vi.fn()
     engine.init({
@@ -141,7 +141,23 @@ describe("AudioEngine.load()", () => {
 
     engine.load("http://example.com/track1.flac")
 
-    expect(onBufferUpdate).toHaveBeenCalledWith(0)
+    expect(onBufferUpdate).toHaveBeenCalledWith([])
+  })
+
+  it("сразу показывает полный буфер для подготовленного Blob", async () => {
+    const engine = await makeEngine()
+    const onBufferUpdate = vi.fn()
+    engine.init({
+      onTimeUpdate: vi.fn(),
+      onBufferUpdate,
+      onPlaybackStateChange: vi.fn(),
+      onEnded: vi.fn(),
+      onError: vi.fn(),
+    })
+
+    engine.load("blob:prepared", 7, "mp3-192", true)
+
+    expect(onBufferUpdate).toHaveBeenCalledWith([{ start: 0, end: 1 }])
   })
 })
 
@@ -207,7 +223,7 @@ describe("AudioEngine — buffered reporting", () => {
     expect(audioInstances.at(-1)?.preload).toBe("auto")
   })
 
-  it("вычисляет buffered как долю duration из диапазона, покрывающего currentTime", async () => {
+  it("переводит buffered TimeRanges в доли duration", async () => {
     const engine = await makeEngine()
     const onBufferUpdate = vi.fn()
     engine.init({
@@ -226,10 +242,10 @@ describe("AudioEngine — buffered reporting", () => {
 
     el.emit("progress")
 
-    expect(onBufferUpdate).toHaveBeenCalledWith(0.25) // 50 / 200
+    expect(onBufferUpdate).toHaveBeenCalledWith([{ start: 0, end: 0.25 }])
   })
 
-  it("игнорирует диапазоны, не покрывающие currentTime (пропуск после перемотки)", async () => {
+  it("сохраняет раздельные диапазоны после перемотки", async () => {
     const engine = await makeEngine()
     const onBufferUpdate = vi.fn()
     engine.init({
@@ -244,13 +260,14 @@ describe("AudioEngine — buffered reporting", () => {
     const el = audioInstances[audioInstances.length - 1]
     el.duration = 100
     el.currentTime = 80
-    // Первый кусок (0-20) — до перемотки, не должен учитываться;
-    // второй (70-90) — покрывает currentTime=80.
     el.buffered = new MockTimeRanges([[0, 20], [70, 90]])
 
     el.emit("progress")
 
-    expect(onBufferUpdate).toHaveBeenCalledWith(0.9) // 90 / 100
+    expect(onBufferUpdate).toHaveBeenCalledWith([
+      { start: 0, end: 0.2 },
+      { start: 0.7, end: 0.9 },
+    ])
   })
 
   it("не вызывает onBufferUpdate пока duration неизвестна (NaN)", async () => {
@@ -416,7 +433,7 @@ describe("AudioEngine.clear()", () => {
     expect(active.load).toHaveBeenCalled()
     expect(audioInstances).toHaveLength(3)
     expect(onTimeUpdate).toHaveBeenCalledWith(0, 0)
-    expect(onBufferUpdate).toHaveBeenCalledWith(0)
+    expect(onBufferUpdate).toHaveBeenCalledWith([])
     expect(onPlaybackStateChange).toHaveBeenCalledWith("idle")
   })
 })

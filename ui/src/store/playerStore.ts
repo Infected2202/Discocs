@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import { audioEngine, type PlaybackState } from "@/engine/AudioEngine"
+import { audioEngine, type BufferedRange, type PlaybackState } from "@/engine/AudioEngine"
 import {
   createSession,
   fetchQueue,
@@ -73,8 +73,8 @@ interface PlayerState {
   playbackState: PlaybackState
   currentTime: number
   duration: number
-  /** Furthest downloaded position ahead of currentTime, as a 0-1 fraction of duration. */
-  buffered: number
+  /** Downloaded segments as 0-1 fractions of duration (gaps are preserved). */
+  bufferedRanges: BufferedRange[]
   volume: number
   muted: boolean
   error: string | null
@@ -112,7 +112,7 @@ interface PlayerState {
 
   // Internal — called by AudioEngine callbacks
   _setTime(currentTime: number, duration: number): void
-  _setBuffered(fraction: number): void
+  _setBuffered(ranges: BufferedRange[]): void
   _setPlaybackState(state: PlaybackState): void
   _setError(message: string): void
 }
@@ -201,7 +201,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         throttledPersistPosition(session.id, currentQueueItemId, currentTrackId, currentTime)
       }
     },
-    onBufferUpdate: (fraction) => get()._setBuffered(fraction),
+    onBufferUpdate: (ranges) => get()._setBuffered(ranges),
     onFullyBuffered: (trackId, profileKey) => {
       fullyBufferedSource = { trackId, profileKey }
       playerLog("buffer", "current fully buffered", { trackId, profile: profileKey })
@@ -341,7 +341,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     playbackState: "idle",
     currentTime: 0,
     duration: 0,
-    buffered: 0,
+    bufferedRanges: [],
     volume: initVolume,
     muted: initMuted,
     error: null,
@@ -806,7 +806,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         playbackState: "idle",
         currentTime: 0,
         duration: 0,
-        buffered: 0,
+        bufferedRanges: [],
         error: null,
         expanded: false,
       })
@@ -820,8 +820,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     _setTime(currentTime, duration) {
       set({ currentTime, duration })
     },
-    _setBuffered(fraction) {
-      set({ buffered: fraction })
+    _setBuffered(ranges) {
+      set({ bufferedRanges: ranges })
     },
     _setPlaybackState(state) {
       set({ playbackState: state })

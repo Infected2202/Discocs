@@ -15,15 +15,16 @@ interface UseDragSliderOptions {
 }
 
 /**
- * Shared mousedown → mousemove → mouseup drag tracking for horizontal
- * sliders (seek bar, volume bar), used by both PlayerBar and ExpandedPlayer.
+ * Shared pointerdown → pointermove → pointerup drag tracking for
+ * horizontal sliders. Pointer events cover mouse, touch and pen uniformly.
  */
 export function useDragSlider({ onChange, onCommit }: UseDragSliderOptions) {
   const trackRef = useRef<HTMLDivElement>(null)
 
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.stopPropagation()
+    const pointerId = e.pointerId
 
     function valueFromClientX(clientX: number): number | null {
       const rect = trackRef.current?.getBoundingClientRect()
@@ -33,22 +34,36 @@ export function useDragSlider({ onChange, onCommit }: UseDragSliderOptions) {
 
     const initial = valueFromClientX(e.clientX)
     if (initial !== null) onChange(initial)
+    e.currentTarget.setPointerCapture?.(pointerId)
 
-    function onMove(ev: MouseEvent) {
+    function onMove(ev: PointerEvent) {
+      if (ev.pointerId !== pointerId) return
       const v = valueFromClientX(ev.clientX)
       if (v !== null) onChange(v)
     }
 
-    function onUp(ev: MouseEvent) {
+    function finish(ev: PointerEvent) {
+      if (ev.pointerId !== pointerId) return
       const v = valueFromClientX(ev.clientX)
       if (v !== null) onCommit?.(v)
-      globalThis.removeEventListener("mousemove", onMove)
-      globalThis.removeEventListener("mouseup", onUp)
+      cleanup()
     }
 
-    globalThis.addEventListener("mousemove", onMove)
-    globalThis.addEventListener("mouseup", onUp)
+    function cancel(ev: PointerEvent) {
+      if (ev.pointerId !== pointerId) return
+      cleanup()
+    }
+
+    function cleanup() {
+      globalThis.removeEventListener("pointermove", onMove)
+      globalThis.removeEventListener("pointerup", finish)
+      globalThis.removeEventListener("pointercancel", cancel)
+    }
+
+    globalThis.addEventListener("pointermove", onMove)
+    globalThis.addEventListener("pointerup", finish)
+    globalThis.addEventListener("pointercancel", cancel)
   }, [onChange, onCommit])
 
-  return { trackRef, handleMouseDown }
+  return { trackRef, handlePointerDown }
 }
