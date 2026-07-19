@@ -59,6 +59,11 @@ def add_track(
 
 
 def mark_positive(store: Store, track_id: int, event_type: str = "completed") -> None:
+    if event_type == "liked":
+        # A like is a Navidrome star plus a behavioural event — the UI always
+        # sends both, and only the star writes the `liked` flag.
+        # See plans/likes-unification-plan.md.
+        store.set_track_liked(track_id, True)
     store.record_playback_event(
         playback_event(
             event_type,
