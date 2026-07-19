@@ -4,9 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import SharedPlayerPage from "./SharedPlayerPage"
 
 const fetchPublicShare = vi.fn()
+const useArtworkTheme = vi.fn()
 
 vi.mock("@/api/shares", () => ({
   fetchPublicShare: (...args: unknown[]) => fetchPublicShare(...args),
+}))
+
+vi.mock("@/hooks/useArtworkTheme", () => ({
+  useArtworkTheme: (artworkUrl: string | null) => useArtworkTheme(artworkUrl),
 }))
 
 function renderPage() {
@@ -21,6 +26,7 @@ describe("SharedPlayerPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     fetchPublicShare.mockReset()
+    useArtworkTheme.mockReset()
     vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined)
     vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined)
     vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined)
@@ -42,7 +48,10 @@ describe("SharedPlayerPage", () => {
 
     expect(await screen.findByRole("heading", { name: "First" })).toBeInTheDocument()
     expect(fetchPublicShare).toHaveBeenCalledWith("test-token")
-    expect(screen.getByText("Shared album")).toBeInTheDocument()
+    await waitFor(() => expect(useArtworkTheme).toHaveBeenLastCalledWith("/cover"))
+    expect(screen.getByRole("link", { name: "Discocs" })).toHaveAttribute("href", "/")
+    expect(screen.queryByText("Shared listening")).not.toBeInTheDocument()
+    expect(screen.queryByText("Shared album")).not.toBeInTheDocument()
     expect(screen.queryByText("Like")).not.toBeInTheDocument()
     expect(screen.queryByText("Download")).not.toBeInTheDocument()
     expect(screen.queryByText("Add to playlist")).not.toBeInTheDocument()
@@ -51,6 +60,8 @@ describe("SharedPlayerPage", () => {
   it("uses the shared release as an ordered local queue", async () => {
     renderPage()
     await screen.findByRole("heading", { name: "First" })
+
+    expect(screen.getByRole("img", { name: "Second" })).toHaveAttribute("src", "/cover")
 
     fireEvent.click(screen.getByRole("button", { name: /Second/ }))
 

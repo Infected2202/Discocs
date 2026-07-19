@@ -28,8 +28,9 @@ function applyPalette(
   )
 }
 
-export function useArtworkTheme() {
-  const artworkUrl = usePlayerStore((state) => state.currentTrack?.artwork?.url)
+export function useArtworkTheme(artworkUrlOverride?: string | null) {
+  const playerArtworkUrl = usePlayerStore((state) => state.currentTrack?.artwork?.url)
+  const artworkUrl = artworkUrlOverride === undefined ? playerArtworkUrl : artworkUrlOverride
   const requestId = useRef(0)
 
   useEffect(() => {

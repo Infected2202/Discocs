@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Loader2, Pause, Play, Repeat1, RotateCcw, SkipBack, SkipForward, Volume2, VolumeX } from "lucide-react"
 import { useTranslation } from "react-i18next"
-import { useParams } from "react-router"
+import { Link, useParams } from "react-router"
 import { fetchPublicShare, type PublicShare } from "@/api/shares"
 import ArtworkImage from "@/components/media/ArtworkImage"
+import { useArtworkTheme } from "@/hooks/useArtworkTheme"
 import { cn } from "@/lib/utils"
 
 function formatTime(seconds: number): string {
@@ -29,6 +30,8 @@ export default function SharedPlayerPage() {
   const [muted, setMuted] = useState(false)
   const [repeatOne, setRepeatOne] = useState(false)
   const [mobileQueue, setMobileQueue] = useState(false)
+
+  useArtworkTheme(share?.artwork_url ?? null)
 
   const item = share?.items[index]
   const availableIndexes = useMemo(
@@ -190,6 +193,10 @@ export default function SharedPlayerPage() {
       {share.artwork_url && (
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
           <img src={share.artwork_url} alt="" className="h-full w-full scale-110 object-cover opacity-35 blur-2xl" />
+          <div
+            className="absolute inset-0 opacity-70"
+            style={{ background: "radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--track-accent) 38%, transparent), transparent 62%)" }}
+          />
           <div className="absolute inset-0 bg-gradient-to-b from-background/45 via-background/80 to-background" />
         </div>
       )}
@@ -209,10 +216,14 @@ export default function SharedPlayerPage() {
       <div className="relative z-10 flex min-h-dvh flex-col md:flex-row">
         <section className={cn("flex min-w-0 flex-1 flex-col", mobileQueue && "hidden md:flex")}>
           <header className="flex items-center justify-between px-5 py-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{t("sharedListening")}</p>
-              <h1 className="max-w-[70vw] truncate text-sm font-semibold">{share.title}</h1>
-            </div>
+            <Link
+              to="/"
+              aria-label="Discocs"
+              className="text-lg font-bold tracking-tight text-primary transition-colors hover:text-primary/80"
+              style={{ fontFamily: "'Onest Variable', sans-serif" }}
+            >
+              discocs
+            </Link>
             {share.items.length > 1 && <button className="rounded-md bg-muted px-3 py-1.5 text-sm md:hidden" onClick={() => setMobileQueue(true)}>{t("queue")}</button>}
           </header>
 
@@ -279,6 +290,12 @@ export default function SharedPlayerPage() {
                   className={cn("flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-muted disabled:opacity-35", position === index && "bg-muted")}
                 >
                   <span className="w-6 text-center text-xs tabular-nums text-muted-foreground">{position === index && playing ? "▶" : position + 1}</span>
+                  <ArtworkImage
+                    src={share.artwork_url}
+                    alt={entry.title}
+                    fallbackLetter={entry.title[0]}
+                    className="h-11 w-11 rounded-md"
+                  />
                   <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{entry.title}</span><span className="block truncate text-xs text-muted-foreground">{entry.artist}</span></span>
                   <span className="text-xs tabular-nums text-muted-foreground">{formatTime(entry.duration ?? 0)}</span>
                 </button>

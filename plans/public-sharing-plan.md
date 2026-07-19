@@ -401,6 +401,7 @@ requests и социальные preview-fetcher'ы.
 зависимости от Zustand store и закрытых API, например:
 
 - artwork/backdrop;
+- динамический цветовой акцент из обложки;
 - информация о текущем треке;
 - progress/seek;
 - playback controls;
@@ -416,6 +417,7 @@ actions/state. Рефакторинг должен сохранить повед
 - громкость/mute;
 - previous/next;
 - выбор трека в очереди;
+- мини-обложки треков в очереди;
 - repeat one;
 - опциональный локальный shuffle для релиза;
 - Media Session metadata и media keys;
