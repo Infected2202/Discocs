@@ -29,7 +29,12 @@ async def add_security_headers(request: Request, call_next):
     if request.url.path.startswith("/api/v1/public/shares/"):
         response.headers.setdefault("Cache-Control", "private, no-store")
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers.setdefault("X-Robots-Tag", "noindex, nofollow, noarchive")
+        is_unfurl_resource = request.url.path.endswith("/preview") or (
+            request.url.path.endswith("/cover")
+            and request.query_params.get("preview") == "1"
+        )
+        if not is_unfurl_resource:
+            response.headers.setdefault("X-Robots-Tag", "noindex, nofollow, noarchive")
     return response
 
 

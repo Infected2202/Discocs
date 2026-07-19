@@ -226,16 +226,18 @@ def test_public_preview_exposes_universal_metadata_without_audio(tmp_path, monke
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
-    assert response.headers["cache-control"] == "private, no-cache"
+    assert response.headers["cache-control"] == "public, max-age=300"
+    assert "x-robots-tag" not in response.headers
     assert 'property="og:type" content="music.song"' in response.text
     assert 'property="og:title" content="Visible &lt;track&gt; &amp; &quot;friends&quot;"' in response.text
     assert 'property="og:description" content="Preview Artist · Album · 2:03"' in response.text
     assert f'property="og:url" content="https://music.example/share/{token}"' in response.text
-    assert f'property="og:image" content="https://music.example/api/v1/public/shares/{token}/cover"' in response.text
+    assert f'property="og:image" content="https://music.example/api/v1/public/shares/{token}/cover?preview=1"' in response.text
     assert 'name="twitter:card" content="summary_large_image"' in response.text
     assert 'property="music:duration" content="123"' in response.text
     assert "og:audio" not in response.text
     assert "<audio" not in response.text
+    assert 'name="robots"' not in response.text
     assert scoped.get_user_share(share.id).access_count == 0
 
     head = TestClient(app, base_url="http://backend:7752").head(
@@ -248,6 +250,8 @@ def test_public_preview_exposes_universal_metadata_without_audio(tmp_path, monke
     assert head.status_code == 200
     assert head.content == b""
     assert head.headers["content-type"].startswith("text/html")
+    assert head.headers["cache-control"] == "public, max-age=300"
+    assert "x-robots-tag" not in head.headers
 
 
 def test_public_release_preview_contains_album_metadata(tmp_path, monkeypatch):
@@ -296,14 +300,24 @@ def test_public_cover_and_audio_are_privately_cacheable(tmp_path, monkeypatch):
 
     cover = client.get(f"/api/v1/public/shares/{token}/cover")
     cover_head = client.head(f"/api/v1/public/shares/{token}/cover")
+    preview_cover = client.get(f"/api/v1/public/shares/{token}/cover?preview=1")
+    preview_cover_head = client.head(f"/api/v1/public/shares/{token}/cover?preview=1")
     audio = client.get(f"/api/v1/public/shares/{token}/items/0/audio")
 
     assert cover.status_code == 200
     assert cover.headers["cache-control"] == "private, max-age=3600"
+    assert cover.headers["x-robots-tag"] == "noindex, nofollow, noarchive"
     assert cover_head.status_code == 200
     assert cover_head.content == b""
     assert cover_head.headers["content-type"] == "image/jpeg"
     assert cover_head.headers["cache-control"] == "private, max-age=3600"
+    assert preview_cover.status_code == 200
+    assert preview_cover.headers["cache-control"] == "public, max-age=3600"
+    assert "x-robots-tag" not in preview_cover.headers
+    assert preview_cover_head.status_code == 200
+    assert preview_cover_head.content == b""
+    assert preview_cover_head.headers["cache-control"] == "public, max-age=3600"
+    assert "x-robots-tag" not in preview_cover_head.headers
     assert audio.status_code == 200
     assert audio.headers["cache-control"] == "private, max-age=3600"
 

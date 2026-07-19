@@ -28,6 +28,8 @@ _TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{40,64}$")
 _UNAVAILABLE = "Share unavailable"
 _METADATA_CACHE_CONTROL = "private, no-cache"
 _MEDIA_CACHE_CONTROL = "private, max-age=3600"
+_PREVIEW_CACHE_CONTROL = "public, max-age=300"
+_PREVIEW_MEDIA_CACHE_CONTROL = "public, max-age=3600"
 _PUBLIC_TRANSCODING_PARAMS = {
     "format": "mp3",
     "maxBitRate": 320,
@@ -136,10 +138,12 @@ def _share_headers(
     response: Response,
     *,
     cache_control: str = _METADATA_CACHE_CONTROL,
+    robots: bool = True,
 ) -> Response:
     response.headers["Cache-Control"] = cache_control
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    if robots:
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
     response.headers["X-Content-Type-Options"] = "nosniff"
     return response
 
@@ -459,7 +463,7 @@ def public_share_preview(token: str, request: Request) -> Response:
         return _unavailable()
     title, description, duration = values
     share_url = _public_url(request, token)
-    cover_url = _public_asset_url(request, token, "cover")
+    cover_url = f'{_public_asset_url(request, token, "cover")}?preview=1'
     escaped_title = escape(title, quote=True)
     escaped_description = escape(description, quote=True)
     escaped_share_url = escape(share_url, quote=True)
@@ -475,7 +479,6 @@ def public_share_preview(token: str, request: Request) -> Response:
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="robots" content="noindex,nofollow,noarchive">
     <meta name="referrer" content="no-referrer">
     <title>{escaped_title}</title>
     <meta name="description" content="{escaped_description}">
@@ -495,7 +498,11 @@ def public_share_preview(token: str, request: Request) -> Response:
   <body></body>
 </html>
 """
-    return _share_headers(HTMLResponse(document))
+    return _share_headers(
+        HTMLResponse(document),
+        cache_control=_PREVIEW_CACHE_CONTROL,
+        robots=False,
+    )
 
 
 def _cover_art_id(store: object, share: Share) -> str | None:
@@ -535,9 +542,13 @@ def public_share_cover(token: str, request: Request) -> Response:
         cover = NavidromeClient(settings.navidrome).get_cover_art(cover_art_id, size=1000)
     except Exception:
         return _unavailable()
+    is_preview_asset = request.query_params.get("preview") == "1"
     return _share_headers(
         Response(content=cover.payload, media_type=cover.content_type),
-        cache_control=_MEDIA_CACHE_CONTROL,
+        cache_control=(
+            _PREVIEW_MEDIA_CACHE_CONTROL if is_preview_asset else _MEDIA_CACHE_CONTROL
+        ),
+        robots=not is_preview_asset,
     )
 
 
