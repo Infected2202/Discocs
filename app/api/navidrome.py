@@ -20,11 +20,10 @@ from app.api.deps import (
 )
 from app.models import InstantMixRequestParams, InstantMixRequestRecord
 from app.logging_config import get_navidrome_plugin_logger
-from app.navidrome import parse_song
 from app.navidrome_starred import (
     build_starred_catalog,
-    build_starred_track_ids_from_songs,
     ready_tracks_from_starred_catalog,
+    sync_likes_from_starred_payload,
 )
 from app.recommender import Recommender
 from app.schemas.requests import NavidromeStarRequest
@@ -93,42 +92,15 @@ def get_navidrome_starred_ids() -> dict[str, object]:
     client, username = _navidrome_user_client(settings)
     try:
         starred_full = client.get_starred_full()
-        songs = [parse_song(raw) for raw in starred_full["songs"]]
-        data = build_starred_track_ids_from_songs(
-            store,
-            songs,
-            user=username,
-        )
-        store.sync_track_liked_from_navidrome(data["track_ids"])
-
-        album_external_ids = [a.get("id", "") for a in starred_full["albums"] if a.get("id")]
-        artist_external_ids = [a.get("id", "") for a in starred_full["artists"] if a.get("id")]
-
-        album_ids: list[int] = []
-        for ext_id in album_external_ids:
-            entity_id = store.entity_id_for_external_id("navidrome", "release", ext_id)
-            if entity_id is not None:
-                album_ids.append(entity_id)
-
-        artist_ids: list[int] = []
-        for ext_id in artist_external_ids:
-            entity_id = store.entity_id_for_external_id("navidrome", "artist", ext_id)
-            if entity_id is not None:
-                artist_ids.append(entity_id)
-
-        data["album_ids"] = album_ids
-        data["artist_ids"] = artist_ids
-
-        store.sync_artist_liked_from_navidrome(artist_ids)
-
+        data = sync_likes_from_starred_payload(store, starred_full, user=username)
         navidrome_logger.info(
             "Navidrome starred ids user=%s count=%s mapped_count=%s track_ids=%s album_ids=%s artist_ids=%s",
             data.get("user"),
             data.get("count"),
             data.get("mapped_count"),
             data.get("track_ids"),
-            album_ids,
-            artist_ids,
+            data.get("album_ids"),
+            data.get("artist_ids"),
         )
         return data
     except Exception as exc:
@@ -160,6 +132,7 @@ def set_release_navidrome_star(release_id: int, request: NavidromeStarRequest) -
             release_id, item_id, request.starred, exc,
         )
         raise HTTPException(status_code=502, detail=f"Navidrome star update failed: {exc}") from exc
+    store.set_release_liked(release_id, request.starred)
     navidrome_logger.info(
         "Navidrome album star update ok release_id=%s item_id=%s starred=%s",
         release_id, item_id, request.starred,
@@ -236,14 +209,7 @@ def set_track_navidrome_star(track_id: int, request: NavidromeStarRequest) -> di
         item_id,
         request.starred,
     )
-    if request.starred:
-        store.import_external_track_play_state(track_id, liked=True)
-    else:
-        with store.connect() as conn:
-            conn.execute(
-                "UPDATE user_track_preferences SET liked = 0 WHERE user_id = discocs_user_id() AND track_id = ?",
-                (track_id,),
-            )
+    store.set_track_liked(track_id, request.starred)
     return {
         "track_id": track_id,
         "item_id": item_id,

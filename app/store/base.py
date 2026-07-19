@@ -85,6 +85,10 @@ INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
 _INT_NOT_NULL_DEFAULT_0 = "INTEGER NOT NULL DEFAULT 0"
 
+# PRAGMA user_version marks which one-shot data migrations already ran. Bump by
+# one per new migration and gate it in _run_one_shot_migrations.
+_SCHEMA_DATA_VERSION_INHERITED_LIKES_CLEARED = 1
+
 # Default identity for legacy single-user callers that construct Store without
 # an explicit user_id. Request-scoped multiuser API code never uses this path.
 OWNER_USER_ENV = "DISCOCS_OWNER_USER"
@@ -899,6 +903,12 @@ class StoreBase:
             self._ensure_column(conn, "flow_profiles", "user_id", "INTEGER")
             self._ensure_column(conn, "generated_mixes", "user_id", "INTEGER")
             self._ensure_column(conn, "playlists", "user_id", "INTEGER")
+            # Explicit-like timestamp, kept separate from updated_at: the latter
+            # is bumped by every playback event, so ordering "favourites" by it
+            # yields last-played order rather than last-liked order.
+            self._ensure_column(conn, "user_track_preferences", "liked_at", "TEXT")
+            self._ensure_column(conn, "user_release_preferences", "liked_at", "TEXT")
+            self._ensure_column(conn, "user_artist_preferences", "liked_at", "TEXT")
             conn.execute("DROP INDEX IF EXISTS idx_playback_events_client_event_id")
             conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_playback_events_user_client_event "
@@ -930,8 +940,18 @@ class StoreBase:
                 "CREATE INDEX IF NOT EXISTS idx_playlists_user "
                 "ON playlists(user_id)"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_artist_prefs_liked "
+                "ON user_artist_preferences(user_id, liked, liked_at DESC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_release_prefs_liked "
+                "ON user_release_preferences(user_id, liked, liked_at DESC)"
+            )
             self._validate_current_multiuser_schema(conn)
             self._backfill_added_timestamps(conn)
+            self._run_one_shot_migrations(conn)
+            self._backfill_liked_at(conn)
 
     def _ensure_column(
         self,
@@ -977,6 +997,54 @@ class StoreBase:
                 "Unsupported legacy database schema after retirement of the "
                 f"one-time multiuser migration: {detail}. Restore this backup "
                 "with a pre-retirement release and migrate it before upgrading."
+            )
+
+    def _run_one_shot_migrations(self, conn: sqlite3.Connection) -> None:
+        """Apply pending one-shot data migrations, gated by PRAGMA user_version.
+
+        Unlike the idempotent schema steps above, these rewrite user data and
+        must run exactly once. `user_version` is bumped in the same transaction
+        as the migration itself, so a crash mid-way replays the whole step
+        rather than half of it.
+        """
+        current = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        if current >= _SCHEMA_DATA_VERSION_INHERITED_LIKES_CLEARED:
+            return
+        self._clear_inherited_entity_likes(conn)
+        # PRAGMA does not accept bound parameters; the value is our own constant.
+        conn.execute(f"PRAGMA user_version = {_SCHEMA_DATA_VERSION_INHERITED_LIKES_CLEARED}")
+
+    def _clear_inherited_entity_likes(self, conn: sqlite3.Connection) -> None:
+        """Drop release/artist "likes" that were inherited from track stars.
+
+        Until the likes unification, starring a track in Navidrome also set
+        `liked = 1` on that track's release and artists, so those tables mixed
+        real likes with derived ones and there is no way to tell them apart
+        after the fact. Clearing both columns is safe because Navidrome is the
+        source of truth: the next `/navidrome/starred/ids` call restores the
+        real stars. Track likes are left alone — they were always explicit.
+
+        RETIREMENT: delete this method, its `_run_one_shot_migrations` call and
+        the version constant once production has migrated. Precedent:
+        `_validate_current_multiuser_schema` kept only the guard after the
+        one-time multiuser migrations were retired.
+        """
+        for table in ("user_release_preferences", "user_artist_preferences"):
+            conn.execute(f"UPDATE {table} SET liked = 0, liked_at = NULL WHERE liked = 1")
+
+    def _backfill_liked_at(self, conn: sqlite3.Connection) -> None:
+        """Seed liked_at for pre-existing likes so shelf ordering has a key.
+
+        updated_at is the best available approximation of "when this was liked"
+        for rows that predate the column. Idempotent: only fills NULLs.
+        """
+        for table in (
+            "user_track_preferences",
+            "user_release_preferences",
+            "user_artist_preferences",
+        ):
+            conn.execute(
+                f"UPDATE {table} SET liked_at = updated_at WHERE liked = 1 AND liked_at IS NULL"
             )
 
     def _backfill_added_timestamps(self, conn: sqlite3.Connection) -> None:

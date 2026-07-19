@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import json
 import sqlite3
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 try:
     from datetime import UTC
@@ -115,6 +115,27 @@ logger = logging.getLogger(__name__)
 INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
 _TOUCH_PLAYBACK_SESSION = "UPDATE playback_sessions SET updated_at = ? WHERE id = ?"
+
+
+@dataclass(frozen=True)
+class _LikeTarget:
+    """Where an explicit like lives for one entity type.
+
+    Table and column names are module constants, never caller input — they are
+    interpolated into SQL because SQLite cannot bind identifiers.
+    """
+
+    table: str
+    column: str
+    has_disliked: bool = False
+
+
+_TRACK_LIKE_TARGET = _LikeTarget("user_track_preferences", "track_id", has_disliked=True)
+_RELEASE_LIKE_TARGET = _LikeTarget("user_release_preferences", "release_id")
+_ARTIST_LIKE_TARGET = _LikeTarget("user_artist_preferences", "artist_id")
+# A star floors the score so an explicit like always outweighs casual listening.
+_LIKE_SCORE_FLOOR = 5.0
+
 
 class PlaybackStoreMixin:
     def create_playback_session(
@@ -712,10 +733,10 @@ class PlaybackStoreMixin:
             after = self._get_track_preference_row(conn, track_id)
             delta["track"] = _preference_delta_dict(before, after)
         if release_id is not None:
-            self._apply_release_preference_event(conn, row, release_id, track_id is None)
+            self._apply_release_preference_event(conn, row, release_id)
             delta["release_id"] = release_id
         for artist_id in artist_ids:
-            self._apply_artist_preference_event(conn, row, artist_id, track_id is None)
+            self._apply_artist_preference_event(conn, row, artist_id)
         if artist_ids:
             delta["artist_ids"] = artist_ids
         return delta
@@ -855,7 +876,6 @@ class PlaybackStoreMixin:
         conn: sqlite3.Connection,
         row: sqlite3.Row,
         release_id: int,
-        explicit_entity_event: bool,
     ) -> None:
         event_type = str(row["event_type"])
         created_at = str(row["created_at"])
@@ -901,15 +921,17 @@ class PlaybackStoreMixin:
                 (score_delta * 0.25, created_at, release_id),
             )
         elif event_type in {"liked", "saved_to_playlist"}:
+            # Behavioural signal only. The `liked` flag mirrors Navidrome and is
+            # written exclusively by the star endpoints and the starred sync —
+            # see plans/likes-unification-plan.md.
             conn.execute(
                 """
                 UPDATE user_release_preferences
-                SET liked = CASE WHEN ? THEN 1 ELSE liked END,
-                    score = score + CASE WHEN ? THEN 5.0 ELSE 1.0 END,
+                SET score = score + CASE WHEN ? THEN 5.0 ELSE 1.0 END,
                     updated_at = ?
                 WHERE user_id = discocs_user_id() AND release_id = ?
                 """,
-                (1 if explicit_entity_event and event_type == "liked" else 0, 1 if event_type == "liked" else 0, created_at, release_id),
+                (1 if event_type == "liked" else 0, created_at, release_id),
             )
 
     def _apply_artist_preference_event(
@@ -917,7 +939,6 @@ class PlaybackStoreMixin:
         conn: sqlite3.Connection,
         row: sqlite3.Row,
         artist_id: int,
-        explicit_entity_event: bool,
     ) -> None:
         event_type = str(row["event_type"])
         created_at = str(row["created_at"])
@@ -963,15 +984,15 @@ class PlaybackStoreMixin:
                 (score_delta * 0.25, created_at, artist_id),
             )
         elif event_type in {"liked", "saved_to_playlist"}:
+            # Behavioural signal only — see _apply_release_preference_event.
             conn.execute(
                 """
                 UPDATE user_artist_preferences
-                SET liked = CASE WHEN ? THEN 1 ELSE liked END,
-                    score = score + CASE WHEN ? THEN 5.0 ELSE 1.0 END,
+                SET score = score + CASE WHEN ? THEN 5.0 ELSE 1.0 END,
                     updated_at = ?
                 WHERE user_id = discocs_user_id() AND artist_id = ?
                 """,
-                (1 if explicit_entity_event and event_type == "liked" else 0, 1 if event_type == "liked" else 0, created_at, artist_id),
+                (1 if event_type == "liked" else 0, created_at, artist_id),
             )
 
     def _ensure_track_preference(
@@ -1057,7 +1078,6 @@ class PlaybackStoreMixin:
         *,
         play_count: int | None = None,
         last_played_at: str | None = None,
-        liked: bool | None = None,
     ) -> UserTrackPreference | None:
         with self.connect() as conn:
             self._import_external_track_play_state(
@@ -1065,7 +1085,6 @@ class PlaybackStoreMixin:
                 track_id,
                 play_count=play_count,
                 last_played_at=last_played_at,
-                liked=liked,
             )
             row = self._get_track_preference_row(conn, track_id)
         return row_to_user_track_preference(row) if row else None
@@ -1077,9 +1096,13 @@ class PlaybackStoreMixin:
         *,
         play_count: int | None = None,
         last_played_at: str | None = None,
-        liked: bool | None = None,
     ) -> None:
-        if play_count is None and last_played_at is None and liked is None:
+        """Import externally observed play state. Deliberately cannot set likes.
+
+        Likes belong to the star endpoints and the starred sync — see
+        plans/likes-unification-plan.md.
+        """
+        if play_count is None and last_played_at is None:
             return
         now = utc_now()
         self._ensure_track_preference(conn, track_id, now)
@@ -1098,9 +1121,7 @@ class PlaybackStoreMixin:
                     WHEN last_played_at IS NULL OR ? > last_played_at THEN ?
                     ELSE last_played_at
                 END,
-                liked = CASE WHEN ? IS NULL THEN liked WHEN ? THEN 1 ELSE liked END,
-                disliked = CASE WHEN ? THEN 0 ELSE disliked END,
-                score = MAX(score, ? + CASE WHEN ? THEN 5.0 ELSE 0 END),
+                score = MAX(score, ?),
                 updated_at = ?
             WHERE user_id = discocs_user_id() AND track_id = ?
             """,
@@ -1111,15 +1132,14 @@ class PlaybackStoreMixin:
                 last_played_at,
                 last_played_at,
                 last_played_at,
-                liked,
-                1 if liked else 0,
-                1 if liked else 0,
                 play_score,
-                1 if liked else 0,
                 now,
                 track_id,
             ),
         )
+        # A track's star says nothing about its release or artists: propagating
+        # `liked` upwards is what filled the favourites shelves with entities the
+        # user never liked. Play state still rolls up — that is behavioural.
         release_id = _release_id_for_track(conn, track_id)
         if release_id is not None:
             self._ensure_release_preference(conn, release_id, now)
@@ -1136,8 +1156,7 @@ class PlaybackStoreMixin:
                         WHEN last_played_at IS NULL OR ? > last_played_at THEN ?
                         ELSE last_played_at
                     END,
-                    liked = CASE WHEN ? THEN 1 ELSE liked END,
-                    score = MAX(score, ? + CASE WHEN ? THEN 5.0 ELSE 0 END),
+                    score = MAX(score, ?),
                     updated_at = ?
                 WHERE user_id = discocs_user_id() AND release_id = ?
                 """,
@@ -1148,9 +1167,7 @@ class PlaybackStoreMixin:
                     last_played_at,
                     last_played_at,
                     last_played_at,
-                    1 if liked else 0,
                     play_score,
-                    1 if liked else 0,
                     now,
                     release_id,
                 ),
@@ -1170,8 +1187,7 @@ class PlaybackStoreMixin:
                         WHEN last_played_at IS NULL OR ? > last_played_at THEN ?
                         ELSE last_played_at
                     END,
-                    liked = CASE WHEN ? THEN 1 ELSE liked END,
-                    score = MAX(score, ? + CASE WHEN ? THEN 5.0 ELSE 0 END),
+                    score = MAX(score, ?),
                     updated_at = ?
                 WHERE user_id = discocs_user_id() AND artist_id = ?
                 """,
@@ -1182,9 +1198,7 @@ class PlaybackStoreMixin:
                     last_played_at,
                     last_played_at,
                     last_played_at,
-                    1 if liked else 0,
                     play_score,
-                    1 if liked else 0,
                     now,
                     artist_id,
                 ),
@@ -1206,47 +1220,93 @@ class PlaybackStoreMixin:
             ).fetchone()
         return row_to_user_artist_preference(row) if row else None
 
+    # ------------------------------------------------------------------
+    # Explicit likes.
+    #
+    # `liked` mirrors Navidrome stars and nothing else: it is written only here,
+    # either from a successful star request or from a starred sync. It is never
+    # derived from another entity's like or from playback behaviour — that is
+    # what `score` / `play_count` are for. See plans/likes-unification-plan.md.
+    # ------------------------------------------------------------------
+
+    def set_track_liked(self, track_id: int, liked: bool) -> None:
+        with self.connect() as conn:
+            self._set_entity_liked(conn, _TRACK_LIKE_TARGET, track_id, liked)
+
+    def set_release_liked(self, release_id: int, liked: bool) -> None:
+        with self.connect() as conn:
+            self._set_entity_liked(conn, _RELEASE_LIKE_TARGET, release_id, liked)
+
     def set_artist_liked(self, artist_id: int, liked: bool) -> None:
+        with self.connect() as conn:
+            self._set_entity_liked(conn, _ARTIST_LIKE_TARGET, artist_id, liked)
+
+    def sync_likes_from_navidrome(
+        self,
+        *,
+        track_ids: list[int],
+        release_ids: list[int],
+        artist_ids: list[int],
+    ) -> None:
+        """Replace this user's local likes with their Navidrome stars.
+
+        All three entity types are replaced in a single transaction: each sync
+        clears before it sets, so a partial run would leave the user with fewer
+        likes than they actually have. Callers must pass the ids from one
+        complete, successful Navidrome response — never a partial one.
+        """
         now = utc_now()
         with self.connect() as conn:
+            self._sync_entity_likes(conn, _TRACK_LIKE_TARGET, track_ids, now)
+            self._sync_entity_likes(conn, _RELEASE_LIKE_TARGET, release_ids, now)
+            self._sync_entity_likes(conn, _ARTIST_LIKE_TARGET, artist_ids, now)
+
+    def _set_entity_liked(
+        self,
+        conn: sqlite3.Connection,
+        target: "_LikeTarget",
+        entity_id: int,
+        liked: bool,
+        now: str | None = None,
+    ) -> None:
+        now = now or utc_now()
+        conn.execute(
+            f"INSERT OR IGNORE INTO {target.table} (user_id, {target.column}, updated_at) "
+            "VALUES (discocs_user_id(), ?, ?)",
+            (entity_id, now),
+        )
+        if liked:
+            # A star is a strong positive: clear any dislike and floor the score,
+            # mirroring what the old play-state import did for starred tracks.
+            extra = ", disliked = 0" if target.has_disliked else ""
             conn.execute(
-                "INSERT OR IGNORE INTO user_artist_preferences (user_id, artist_id, updated_at) VALUES (discocs_user_id(), ?, ?)",
-                (artist_id, now),
+                f"UPDATE {target.table} "
+                f"SET liked = 1, liked_at = ?, score = MAX(score, ?), updated_at = ?{extra} "
+                f"WHERE user_id = discocs_user_id() AND {target.column} = ?",
+                (now, _LIKE_SCORE_FLOOR, now, entity_id),
             )
+        else:
+            # Unliking clears the flag but keeps the accumulated score: the user
+            # did listen to it, and recommendations should not forget that.
             conn.execute(
-                "UPDATE user_artist_preferences SET liked = ?, updated_at = ? WHERE user_id = discocs_user_id() AND artist_id = ?",
-                (1 if liked else 0, now, artist_id),
+                f"UPDATE {target.table} SET liked = 0, liked_at = NULL, updated_at = ? "
+                f"WHERE user_id = discocs_user_id() AND {target.column} = ?",
+                (now, entity_id),
             )
 
-    def sync_artist_liked_from_navidrome(self, artist_ids: list[int]) -> None:
-        now = utc_now()
-        with self.connect() as conn:
-            conn.execute("UPDATE user_artist_preferences SET liked = 0 WHERE user_id = discocs_user_id() AND liked = 1")
-            for artist_id in artist_ids:
-                conn.execute(
-                    "INSERT OR IGNORE INTO user_artist_preferences (user_id, artist_id, updated_at) VALUES (discocs_user_id(), ?, ?)",
-                    (artist_id, now),
-                )
-                conn.execute(
-                    "UPDATE user_artist_preferences SET liked = 1, updated_at = ? WHERE user_id = discocs_user_id() AND artist_id = ?",
-                    (now, artist_id),
-                )
-
-    def sync_track_liked_from_navidrome(self, track_ids: list[int]) -> None:
-        """Replace this user's local liked flags with their Navidrome stars."""
-        with self.connect() as conn:
-            conn.execute(
-                "UPDATE user_track_preferences SET liked = 0 "
-                "WHERE user_id = discocs_user_id() AND liked = 1"
-            )
-            for track_id in dict.fromkeys(track_ids):
-                self._import_external_track_play_state(
-                    conn,
-                    track_id,
-                    play_count=None,
-                    last_played_at=None,
-                    liked=True,
-                )
+    def _sync_entity_likes(
+        self,
+        conn: sqlite3.Connection,
+        target: "_LikeTarget",
+        entity_ids: list[int],
+        now: str,
+    ) -> None:
+        conn.execute(
+            f"UPDATE {target.table} SET liked = 0, liked_at = NULL "
+            "WHERE user_id = discocs_user_id() AND liked = 1",
+        )
+        for entity_id in dict.fromkeys(entity_ids):
+            self._set_entity_liked(conn, target, entity_id, True, now)
 
     def list_playback_events(self, session_id: str | None = None) -> list[PlaybackEvent]:
         self.require_user_id()

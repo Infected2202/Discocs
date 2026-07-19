@@ -268,8 +268,9 @@ def test_login_star_sync_is_bound_to_authenticated_user():
     )
 
     root.for_user.assert_called_once_with(42)
-    scoped.sync_track_liked_from_navidrome.assert_called_once_with([7])
-    scoped.sync_artist_liked_from_navidrome.assert_called_once_with([9])
+    scoped.sync_likes_from_navidrome.assert_called_once_with(
+        track_ids=[7], release_ids=[], artist_ids=[9]
+    )
 
 
 # ---------------------------------------------------------------------------

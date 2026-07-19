@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.navidrome import NavidromeClient, NavidromeSong
+from app.navidrome import NavidromeClient, NavidromeSong, parse_song
 from app.store import Store, Track
 
 NAVIDROME_PROVIDER = "navidrome"
@@ -78,17 +78,48 @@ def ready_tracks_from_starred_catalog(catalog: dict[str, Any], store: Store, mod
     return tracks
 
 
-def build_starred_track_ids(
+def map_starred_entity_ids(
     store: Store,
-    client: NavidromeClient,
-    *,
-    user: str,
-) -> dict[str, Any]:
-    return build_starred_track_ids_from_songs(
-        store,
-        client.get_starred_songs(),
-        user=user,
+    raw_items: list[dict[str, Any]],
+    entity_kind: str,
+) -> list[int]:
+    """Map a starred album/artist payload to local entity ids, dropping unknowns.
+
+    Navidrome may star things this library has not imported; those simply have
+    no local counterpart and are skipped rather than treated as an error.
+    """
+    entity_ids: list[int] = []
+    for raw in raw_items:
+        external_id = raw.get("id")
+        if not external_id:
+            continue
+        entity_id = store.entity_id_for_external_id(
+            NAVIDROME_PROVIDER, entity_kind, str(external_id)
+        )
+        if entity_id is not None:
+            entity_ids.append(entity_id)
+    return entity_ids
+
+
+def sync_likes_from_starred_payload(store: Store, starred_full: dict[str, Any], *, user: str) -> dict[str, Any]:
+    """Mirror one complete Navidrome starred response into local likes.
+
+    Single entry point for every caller that has a full `getStarred2` payload:
+    tracks, albums and artists are replaced together so the three like stores
+    cannot drift apart. See plans/likes-unification-plan.md.
+    """
+    songs = [parse_song(raw) for raw in starred_full["songs"]]
+    data = build_starred_track_ids_from_songs(store, songs, user=user)
+    release_ids = map_starred_entity_ids(store, starred_full["albums"], "release")
+    artist_ids = map_starred_entity_ids(store, starred_full["artists"], "artist")
+    data["album_ids"] = release_ids
+    data["artist_ids"] = artist_ids
+    store.sync_likes_from_navidrome(
+        track_ids=data["track_ids"],
+        release_ids=release_ids,
+        artist_ids=artist_ids,
     )
+    return data
 
 
 def build_starred_track_ids_from_songs(

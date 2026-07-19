@@ -92,10 +92,10 @@ def test_recompute_preferences_cannot_delete_another_users_rows(tmp_path: Path):
 
 def test_navidrome_star_sync_only_replaces_current_users_likes(tmp_path: Path):
     alice, bob, track_id = _stores(tmp_path)
-    alice.import_external_track_play_state(track_id, liked=True)
-    bob.import_external_track_play_state(track_id, liked=True)
+    alice.set_track_liked(track_id, True)
+    bob.set_track_liked(track_id, True)
 
-    alice.sync_track_liked_from_navidrome([])
+    alice.sync_likes_from_navidrome(track_ids=[], release_ids=[], artist_ids=[])
 
     assert alice.get_track_preference(track_id).liked is False
     assert bob.get_track_preference(track_id).liked is True

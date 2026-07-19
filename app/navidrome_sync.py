@@ -77,12 +77,14 @@ def refresh_navidrome_play_state(
             if mapping is None or mapping["track_id"] is None:
                 unmapped += 1
                 continue
+            # Play state only. Stars are mirrored by the starred sync, which
+            # can also *remove* a like; inferring likes here could only ever add
+            # them, so the flag drifted one way. See plans/likes-unification-plan.md.
             store._import_external_track_play_state(
                 conn,
                 int(mapping["track_id"]),
                 play_count=song.play_count,
                 last_played_at=song.last_played_at,
-                liked=True if song.starred_at else None,
             )
             updated += 1
     result = NavidromePlayStateRefreshResult(
@@ -219,12 +221,12 @@ def _sync_song_play_state(
     track_id: int,
     song: NavidromeSong,
 ) -> None:
+    # Play state only — see refresh_navidrome_play_state.
     store._import_external_track_play_state(
         conn,
         track_id,
         play_count=song.play_count,
         last_played_at=song.last_played_at,
-        liked=True if song.starred_at else None,
     )
 
 

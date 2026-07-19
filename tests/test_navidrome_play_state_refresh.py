@@ -72,6 +72,31 @@ def test_refresh_does_not_lower_play_count(tmp_path):
     assert pref.play_count == 10
 
 
+def test_refresh_never_touches_likes(tmp_path):
+    """Play state and likes are separate stores.
+
+    The refresh used to infer `liked` from `starred`, which could only ever add
+    a like — an unstar in Navidrome was never mirrored back. Likes now come
+    exclusively from the starred sync, which replaces rather than accumulates.
+    See plans/likes-unification-plan.md.
+    """
+    store = Store(tmp_path / "app.db")
+    store.init()
+    _seed_catalog(store)
+    track = store.get_track_by_external_id(NAVIDROME_PROVIDER, "song-1")
+    assert track is not None
+
+    client = FakeRecentClient(
+        [song("song-1", "One", play_count=5, starred="2026-06-30T12:00:00Z")]
+    )
+    refresh_navidrome_play_state(store, client)  # type: ignore[arg-type]
+
+    pref = store.get_track_preference(track.id)
+    assert pref is not None
+    assert pref.play_count == 5
+    assert pref.liked is False
+
+
 def test_refresh_skips_unmapped_songs(tmp_path):
     store = Store(tmp_path / "app.db")
     store.init()

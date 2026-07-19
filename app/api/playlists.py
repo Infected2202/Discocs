@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from app.api.deps import _navidrome_user_client, api_error, context, playback_session_settings
 from app.mix_covers import refresh_playlist_cover
-from app.navidrome_starred import build_starred_track_ids
+from app.navidrome_starred import sync_likes_from_starred_payload
 from app.schemas.requests import (
     PlaylistCreateRequest,
     PlaylistTracksRequest,
@@ -29,8 +29,9 @@ def _liked_track_ids(store, settings) -> list[int]:
     """Return local track IDs for Navidrome-starred tracks, preserving Navidrome order."""
     try:
         client, username = _navidrome_user_client(settings)
-        data = build_starred_track_ids(store, client, user=username)
-        store.sync_track_liked_from_navidrome(data["track_ids"])
+        # Full starred payload, not just songs: syncing tracks alone used to
+        # leave album/artist likes stale on every visit to this playlist.
+        data = sync_likes_from_starred_payload(store, client.get_starred_full(), user=username)
         return data["track_ids"]
     except HTTPException:
         raise

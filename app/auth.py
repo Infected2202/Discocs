@@ -21,8 +21,8 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 
 from app.config import Settings
-from app.navidrome import NavidromeClient, parse_song
-from app.navidrome_starred import build_starred_track_ids_from_songs
+from app.navidrome import NavidromeClient
+from app.navidrome_starred import sync_likes_from_starred_payload
 from app.models import utc_now
 from app.session_crypto import decrypt_nav_secret, encrypt_nav_secret
 from app.store import Store
@@ -175,20 +175,7 @@ def sync_navidrome_starred_for_user(
     nav = replace(settings.navidrome, user=username, password=password, auth_mode="token")
     starred = client_factory(nav).get_starred_full()
     scoped = store.for_user(user_id)
-    songs = [parse_song(raw) for raw in starred["songs"]]
-    mapped = build_starred_track_ids_from_songs(scoped, songs, user=username)
-    scoped.sync_track_liked_from_navidrome(mapped["track_ids"])
-    artist_ids = []
-    for raw in starred["artists"]:
-        external_id = raw.get("id")
-        if not external_id:
-            continue
-        artist_id = scoped.entity_id_for_external_id(
-            "navidrome", "artist", str(external_id)
-        )
-        if artist_id is not None:
-            artist_ids.append(artist_id)
-    scoped.sync_artist_liked_from_navidrome(artist_ids)
+    sync_likes_from_starred_payload(scoped, starred, user=username)
 
 
 def _iso_plus_hours(iso_now: str, hours: int) -> str:

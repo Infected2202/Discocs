@@ -64,7 +64,6 @@ from app.mixes import (
 from app.navidrome import NavidromeClient, artist_info_bio, artist_info_image_url
 from app.navidrome_starred import (
     build_starred_catalog,
-    build_starred_track_ids,
     ready_tracks_from_starred_catalog,
 )
 from app.navidrome_sync import sync_navidrome_catalog
