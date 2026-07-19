@@ -257,6 +257,15 @@ def test_public_release_preview_contains_album_metadata(tmp_path, monkeypatch):
 def test_public_cover_and_audio_are_privately_cacheable(tmp_path, monkeypatch):
     from app.navidrome import CoverArt
 
+    class FakeNavidromeClient:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def get_cover_art(self, cover_art_id, *, size):
+            assert cover_art_id == "cached-cover"
+            assert size == 1000
+            return CoverArt(b"cover", "image/jpeg")
+
     store = _init_store(tmp_path, monkeypatch)
     track_id = _track(store, tmp_path / "cache.flac", title="Cached")
     scoped = _user_store(store)
@@ -267,10 +276,7 @@ def test_public_cover_and_audio_are_privately_cacheable(tmp_path, monkeypatch):
         "app.api.shares._cover_art_id",
         lambda store, share: "cached-cover",
     )
-    monkeypatch.setattr(
-        "app.api.shares.NavidromeClient.get_cover_art",
-        lambda self, cover_art_id, size: CoverArt(b"cover", "image/jpeg"),
-    )
+    monkeypatch.setattr("app.api.shares.NavidromeClient", FakeNavidromeClient)
     client = TestClient(app)
 
     cover = client.get(f"/api/v1/public/shares/{token}/cover")
