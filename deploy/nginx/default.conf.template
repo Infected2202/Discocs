@@ -4,11 +4,35 @@ map $http_x_forwarded_proto $discocs_public_scheme {
     https https;
 }
 
+map $uri $discocs_log_uri {
+    default $uri;
+    ~^/share/[A-Za-z0-9_-]+ /share/[redacted];
+    ~^/api/v1/public/shares/[A-Za-z0-9_-]+ /api/v1/public/shares/[redacted];
+}
+
+map $uri $discocs_referrer_policy {
+    default strict-origin-when-cross-origin;
+    ~^/share/[A-Za-z0-9_-]+ no-referrer;
+    ~^/api/v1/public/shares/[A-Za-z0-9_-]+ no-referrer;
+}
+
+map $uri $discocs_robots_policy {
+    default "";
+    ~^/share/[A-Za-z0-9_-]+ "noindex, nofollow, noarchive";
+    ~^/api/v1/public/shares/[A-Za-z0-9_-]+ "noindex, nofollow, noarchive";
+}
+
+log_format discocs_masked '$remote_addr - $remote_user [$time_local] '
+    '"$request_method $discocs_log_uri $server_protocol" $status $body_bytes_sent '
+    '"$http_referer" "$http_user_agent"';
+
 server {
     listen 8080;
+    access_log /var/log/nginx/access.log discocs_masked;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Referrer-Policy $discocs_referrer_policy always;
+    add_header X-Robots-Tag $discocs_robots_policy always;
     add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
     add_header Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'" always;
 

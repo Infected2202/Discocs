@@ -21,6 +21,7 @@ from app.store.map_atlas import MapAtlasStoreMixin
 from app.store.sessions import SessionsStoreMixin
 from app.store.users import UsersStoreMixin
 from app.store.settings import SettingsStoreMixin
+from app.store.shares import SharesStoreMixin
 from app.store._helpers import (
     playback_event_is_completion,
     playback_event_is_early_skip,
@@ -39,6 +40,8 @@ from app.store._helpers import (
     row_to_playlist_item,
     row_to_queue_item,
     row_to_release,
+    row_to_share,
+    row_to_share_item,
     row_to_track,
     row_to_user_artist_preference,
     row_to_user_release_preference,
@@ -81,6 +84,8 @@ from app.models import (  # noqa: F401
     ReleaseAggregate,
     ReleaseSummaryRow,
     ReleaseTrackRow,
+    Share,
+    ShareItem,
     SimilarTrack,
     Track,
     TrackFeature,
@@ -109,5 +114,6 @@ class Store(
     SessionsStoreMixin,
     UsersStoreMixin,
     SettingsStoreMixin,
+    SharesStoreMixin,
 ):
     """Assembled Store — all domain mixins composed into one class."""

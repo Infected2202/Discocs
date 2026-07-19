@@ -11,6 +11,7 @@
     "instantMix": "Мгновенный микс",
     "addToPlaylist": "Добавить в плейлист",
     "download": "Скачать",
+    "share": "Поделиться",
     "goTo": "Перейти к «{{name}}»",
     "removeFromQueue": "Убрать из очереди"
   },

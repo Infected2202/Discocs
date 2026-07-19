@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -13,6 +14,27 @@ DEFAULT_LOG_BACKUP_COUNT = 5
 ANALYSIS_LOGGER_NAME = "discocs.analysis"
 NAVIDROME_PLUGIN_LOGGER_NAME = "discocs.navidrome.plugin"
 _CONFIGURED = False
+_SHARE_TOKEN_SEGMENT = re.compile(
+    r"(/(?:api/v1/public/shares|share)/)[A-Za-z0-9_-]{40,64}"
+)
+
+
+class ShareTokenRedactionFilter(logging.Filter):
+    """Keep capability secrets out of application and Uvicorn access logs."""
+
+    @staticmethod
+    def redact(value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        return _SHARE_TOKEN_SEGMENT.sub(r"\1[redacted]", value)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = self.redact(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(self.redact(value) for value in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {key: self.redact(value) for key, value in record.args.items()}
+        return True
 
 
 def configure_logging(settings: Settings | None = None) -> None:
@@ -71,6 +93,7 @@ def configure_logging(settings: Settings | None = None) -> None:
         backup_count,
         "discocs-navidrome-plugin-file",
     )
+    _install_share_token_redaction()
     _CONFIGURED = True
 
 
@@ -107,6 +130,14 @@ def _add_rotating_handler(
     handler.setFormatter(formatter)
     handler._discocs_marker = marker  # type: ignore[attr-defined]
     logger.addHandler(handler)
+
+
+def _install_share_token_redaction() -> None:
+    for logger in (logging.getLogger(), logging.getLogger("uvicorn.access")):
+        for handler in logger.handlers:
+            if any(isinstance(item, ShareTokenRedactionFilter) for item in handler.filters):
+                continue
+            handler.addFilter(ShareTokenRedactionFilter())
 
 
 def _log_level(value: str) -> int:

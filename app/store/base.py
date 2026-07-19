@@ -823,6 +823,43 @@ class StoreBase:
                     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 );
 
+                -- Public capability links. Only a SHA-256 token hash is
+                -- persisted; share_items freezes membership/order at creation.
+                CREATE TABLE IF NOT EXISTS shares (
+                    id TEXT PRIMARY KEY,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    token_prefix TEXT NOT NULL,
+                    owner_user_id INTEGER NOT NULL,
+                    source_type TEXT NOT NULL,
+                    source_id INTEGER NOT NULL,
+                    title TEXT,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT,
+                    revoked_at TEXT,
+                    last_accessed_at TEXT,
+                    access_count INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_shares_owner_created
+                    ON shares(owner_user_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_shares_expires
+                    ON shares(expires_at);
+
+                CREATE TABLE IF NOT EXISTS share_items (
+                    share_id TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    track_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (share_id, position),
+                    UNIQUE (share_id, track_id),
+                    FOREIGN KEY (share_id) REFERENCES shares(id) ON DELETE CASCADE,
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_share_items_track
+                    ON share_items(track_id);
+
                 -- Collection map / embedding atlas. A projection is a persisted
                 -- snapshot of 2D coordinates for one embedding model; multiple
                 -- projections per model are allowed. This is a diagnostic view

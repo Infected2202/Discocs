@@ -10,9 +10,12 @@ import MixPage from "@/pages/MixPage"
 import SettingsPage from "@/pages/SettingsPage"
 import ShelfPage from "@/pages/ShelfPage"
 import PlaylistPage from "@/pages/PlaylistPage"
+import SharedPlayerPage from "@/pages/SharedPlayerPage"
+import SharedLinksPage from "@/pages/SharedLinksPage"
 
 export const router = createBrowserRouter([
   { path: "/login", Component: LoginPage },
+  { path: "/share/:token", Component: SharedPlayerPage },
   {
     Component: RequireAuth,
     children: [
@@ -27,6 +30,7 @@ export const router = createBrowserRouter([
           { path: "settings", Component: SettingsPage },
           { path: "shelf/:key", Component: ShelfPage },
           { path: "playlists/:id", Component: PlaylistPage },
+          { path: "shared-links", Component: SharedLinksPage },
         ],
       },
     ],

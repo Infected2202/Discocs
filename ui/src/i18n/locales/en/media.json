@@ -11,6 +11,7 @@
     "instantMix": "Instant mix",
     "addToPlaylist": "Add to playlist",
     "download": "Download",
+    "share": "Share",
     "goTo": "Go to {{name}}",
     "removeFromQueue": "Remove from queue"
   },

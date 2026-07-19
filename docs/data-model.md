@@ -1,5 +1,16 @@
 # Data Model
 
+## Public shares
+
+`shares` хранит отзывные capability-ссылки: внутренний UUID, SHA-256 секретного
+токена, безопасный prefix, `owner_user_id`, источник (`track|release`), TTL,
+revoke и диагностические счётчики доступа. Полного URL-токена в БД нет.
+
+`share_items` фиксирует snapshot членства и порядка при создании ссылки:
+`(share_id, position, track_id)`. Публичная выдача трека всегда проверяет эту
+связь; source ID сам по себе доступ не даёт. Удаление share или owner каскадно
+удаляет snapshot, удаление Track удаляет только соответствующий элемент.
+
 This document describes the current backend data model: entities, relationships,
 and storage decisions. It reflects `app/store/base.py` (schema) and
 `app/models.py` (dataclasses).

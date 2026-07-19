@@ -79,6 +79,17 @@ def test_public_nginx_preserves_external_origin_for_backend_csrf_checks():
     )
 
 
+def test_public_nginx_masks_share_tokens_and_hardens_share_pages():
+    config = NGINX_TEMPLATE.read_text(encoding="utf-8")
+
+    assert "/share/[redacted]" in config
+    assert "/api/v1/public/shares/[redacted]" in config
+    assert "access_log /var/log/nginx/access.log discocs_masked;" in config
+    assert "~^/share/[A-Za-z0-9_-]+ no-referrer;" in config
+    assert '"noindex, nofollow, noarchive"' in config
+    assert 'proxy_set_header X-Discocs-Service-Token "";' in config
+
+
 def test_local_worker_receives_service_token_from_environment():
     config = WORKER_COMPOSE.read_text(encoding="utf-8")
 

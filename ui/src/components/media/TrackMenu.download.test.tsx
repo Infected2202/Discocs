@@ -22,6 +22,11 @@ vi.mock("@/store/playerStore", () => ({
   }),
 }))
 
+vi.mock("@/api/shares", () => ({
+  useShareCapabilities: () => ({ data: { enabled: false, can_create: false } }),
+  createShare: vi.fn(),
+}))
+
 const track: TrackSummary = {
   id: 42,
   title: "Download me",

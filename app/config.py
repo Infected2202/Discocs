@@ -115,6 +115,32 @@ class AuthSettings:
 
 
 @dataclass(frozen=True)
+class SharingSettings:
+    enabled: bool = False
+    allowed_users: frozenset[str] = frozenset()
+    default_ttl_hours: int = 168
+    max_ttl_hours: int = 8760
+
+    @classmethod
+    def from_env(cls) -> "SharingSettings":
+        allowed = frozenset(
+            value.strip().casefold()
+            for value in os.getenv("DISCOCS_SHARING_ALLOWED_USERS", "").split(",")
+            if value.strip()
+        )
+        return cls(
+            enabled=_env_flag("DISCOCS_SHARING_ENABLED", False),
+            allowed_users=allowed,
+            default_ttl_hours=_positive_int(
+                os.getenv("DISCOCS_SHARE_DEFAULT_TTL_HOURS"), 168
+            ),
+            max_ttl_hours=_positive_int(
+                os.getenv("DISCOCS_SHARE_MAX_TTL_HOURS"), 8760
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class Settings:
     data_dir: Path
     db_path: Path
@@ -123,6 +149,7 @@ class Settings:
     default_model: str = "discogs_multi"
     navidrome: NavidromeSettings = field(default_factory=NavidromeSettings)
     auth: AuthSettings = field(default_factory=AuthSettings)
+    sharing: SharingSettings = field(default_factory=SharingSettings)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -139,6 +166,7 @@ class Settings:
             default_model=default_model,
             navidrome=NavidromeSettings.from_env(data_dir),
             auth=AuthSettings.from_env(),
+            sharing=SharingSettings.from_env(),
         )
 
     def model_path(self, model_name: str | None = None) -> Path:

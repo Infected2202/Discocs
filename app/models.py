@@ -596,6 +596,34 @@ class PlaylistItem:
 
 
 # ---------------------------------------------------------------------------
+# Public shares
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Share:
+    id: str
+    token_hash: str
+    token_prefix: str
+    owner_user_id: int
+    source_type: str
+    source_id: int
+    title: str | None
+    created_at: str
+    expires_at: str | None
+    revoked_at: str | None
+    last_accessed_at: str | None
+    access_count: int
+
+
+@dataclass(frozen=True)
+class ShareItem:
+    share_id: str
+    position: int
+    track_id: int
+    created_at: str
+
+
+# ---------------------------------------------------------------------------
 # Utility
 # ---------------------------------------------------------------------------
 
@@ -626,6 +654,7 @@ QUEUE_STATUSES = {"queued", "playing", "played", "skipped", "removed"}
 GENERATED_MIX_TYPES = {"taste_region", "supermix", "forgotten", "discovery", "manual_seed", "debug"}
 GENERATED_MIX_STATUSES = {"active", "stale", "saved", "archived"}
 PLAYLIST_KINDS = {"manual", "saved_mix"}
+SHARE_SOURCE_TYPES = {"track", "release"}
 PLAYBACK_EVENT_TYPES = {
     "track_started",
     "progress",

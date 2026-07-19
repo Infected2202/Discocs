@@ -38,6 +38,15 @@
 
 Иначе — `401`.
 
+### Узкое исключение для публичного шаринга
+
+При отдельно включённом `DISCOCS_SHARING_ENABLED` middleware пропускает без
+session cookie только точные `GET|HEAD` маршруты
+`/api/v1/public/shares/{token}[...]`. Management API `/api/v1/shares` остаётся
+под обычной сессией, а создание дополнительно ограничено explicit username
+allowlist. Wildcard `/api/v1/public/*` не используется. Полная модель, TTL,
+revoke и reverse-proxy требования описаны в `docs/sharing.md`.
+
 ### Почему нужен service-token, а не «доверие подсети»
 
 В compose весь браузерный трафик приходит на бэкенд от frontend-nginx (docker-IP),

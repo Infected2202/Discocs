@@ -1,7 +1,8 @@
+import { useState } from "react"
 import { Link, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import type { TFunction } from "i18next"
-import { Download, Play, Shuffle } from "lucide-react"
+import { Download, Play, Share2, Shuffle } from "lucide-react"
 import { useRelease, useReleaseTracks, useReleaseRelated, useReleaseRecommendations } from "@/api/hooks/useRelease"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -12,6 +13,8 @@ import VirtualTrackList from "@/components/media/VirtualTrackList"
 import Shelf from "@/components/media/Shelf"
 import { usePlayerStore } from "@/store/playerStore"
 import type { ReleaseSummary } from "@/api/types"
+import CreateShareDialog from "@/components/share/CreateShareDialog"
+import { useShareCapabilities } from "@/api/shares"
 
 function formatDuration(seconds: number | null | undefined, t: TFunction<"release">): string {
   if (!seconds) return ""
@@ -56,6 +59,8 @@ export default function ReleasePage() {
   const playSource = usePlayerStore((s) => s.playSource)
   const patchSession = usePlayerStore((s) => s.toggleShuffle)
   const isLoading = relLoading || tracksLoading
+  const [shareOpen, setShareOpen] = useState(false)
+  const { data: shareCapabilities } = useShareCapabilities()
 
   if (isLoading) return <ReleasePageSkeleton />
   if (error || !releaseData) {
@@ -135,9 +140,27 @@ export default function ReleasePage() {
                 </a>
               </Button>
             )}
+            {shareCapabilities?.can_create && tracks.length > 0 && (
+              <Button
+                size="icon-sm"
+                variant="outline"
+                aria-label={t("share", { ns: "share" })}
+                title={t("share", { ns: "share" })}
+                onClick={() => setShareOpen(true)}
+              >
+                <Share2 size={14} />
+              </Button>
+            )}
             <LikeButton entity="album" id={releaseId} variant="control" size={18} />
           </>
         }
+      />
+      <CreateShareDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        sourceType="release"
+        sourceId={releaseId}
+        sourceTitle={release.title}
       />
 
       {/* Tracks */}

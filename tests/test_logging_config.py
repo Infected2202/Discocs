@@ -75,3 +75,20 @@ def test_analysis_logger_writes_analysis_log(tmp_path, monkeypatch):
 
     assert "analysis failure marker" in (tmp_path / "logs" / "analysis.log").read_text()
     reset_discocs_logging()
+
+
+def test_share_capability_token_is_redacted_from_uvicorn_arguments():
+    token = "A" * 43
+    record = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1", "GET", f"/api/v1/public/shares/{token}/items/0/audio", "1.1", 200),
+        None,
+    )
+
+    assert logging_config.ShareTokenRedactionFilter().filter(record) is True
+    assert token not in record.getMessage()
+    assert "/api/v1/public/shares/[redacted]/items/0/audio" in record.getMessage()

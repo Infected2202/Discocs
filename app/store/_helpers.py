@@ -72,6 +72,8 @@ from app.models import (
     Release,
     ReleaseSummaryRow,
     ReleaseTrackRow,
+    Share,
+    ShareItem,
     SimilarTrack,
     Track,
     TrackFeature,
@@ -297,6 +299,32 @@ def row_to_playlist(row: sqlite3.Row) -> Playlist:
 def row_to_playlist_item(row: sqlite3.Row) -> PlaylistItem:
     return PlaylistItem(
         playlist_id=int(row["playlist_id"]),
+        position=int(row["position"]),
+        track_id=int(row["track_id"]),
+        created_at=str(row["created_at"]),
+    )
+
+
+def row_to_share(row: sqlite3.Row) -> Share:
+    return Share(
+        id=str(row["id"]),
+        token_hash=str(row["token_hash"]),
+        token_prefix=str(row["token_prefix"]),
+        owner_user_id=int(row["owner_user_id"]),
+        source_type=str(row["source_type"]),
+        source_id=int(row["source_id"]),
+        title=row["title"],
+        created_at=str(row["created_at"]),
+        expires_at=row["expires_at"],
+        revoked_at=row["revoked_at"],
+        last_accessed_at=row["last_accessed_at"],
+        access_count=int(row["access_count"]),
+    )
+
+
+def row_to_share_item(row: sqlite3.Row) -> ShareItem:
+    return ShareItem(
+        share_id=str(row["share_id"]),
         position=int(row["position"]),
         track_id=int(row["track_id"]),
         created_at=str(row["created_at"]),

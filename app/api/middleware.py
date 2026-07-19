@@ -26,6 +26,10 @@ async def add_security_headers(request: Request, call_next):
         response.headers.setdefault(name, value)
     if request.url.path.startswith("/api/v1/auth/"):
         response.headers.setdefault("Cache-Control", "no-store")
+    if request.url.path.startswith("/api/v1/public/shares/"):
+        response.headers.setdefault("Cache-Control", "private, no-store")
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers.setdefault("X-Robots-Tag", "noindex, nofollow, noarchive")
     return response
 
 

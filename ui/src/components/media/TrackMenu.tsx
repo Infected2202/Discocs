@@ -1,6 +1,7 @@
+import { useState } from "react"
 import { useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
-import { MoreHorizontal, Play, ListEnd, ListPlus, ListX, User, Disc3, Radio, Download } from "lucide-react"
+import { MoreHorizontal, Play, ListEnd, ListPlus, ListX, User, Disc3, Radio, Download, Share2 } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,6 +15,8 @@ import { usePlayerStore } from "@/store/playerStore"
 import { cn } from "@/lib/utils"
 import { useUIStore } from "@/store/uiStore"
 import type { PlaybackEnvelope, TrackSummary, ReleaseTrackItem } from "@/api/types"
+import CreateShareDialog from "@/components/share/CreateShareDialog"
+import { useShareCapabilities } from "@/api/shares"
 
 interface TrackMenuProps {
   readonly track: TrackSummary | ReleaseTrackItem
@@ -42,6 +45,8 @@ export default function TrackMenu({
   const playNext       = usePlayerStore((s) => s.playNext)
   const openAddToPlaylist = useUIStore((s) => s.openAddToPlaylist)
   const release = track.release
+  const [shareOpen, setShareOpen] = useState(false)
+  const { data: shareCapabilities } = useShareCapabilities()
 
   async function handlePlay() {
     if (onPlayTrack) {
@@ -66,6 +71,7 @@ export default function TrackMenu({
   }
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
@@ -109,6 +115,13 @@ export default function TrackMenu({
           </a>
         </DropdownMenuItem>
 
+        {shareCapabilities?.can_create && (
+          <DropdownMenuItem onSelect={() => setShareOpen(true)}>
+            <Share2 size={14} className="mr-2" />
+            {t("trackMenu.share")}
+          </DropdownMenuItem>
+        )}
+
         {track.artists.length > 0 && (
           <>
             <DropdownMenuSeparator />
@@ -142,5 +155,13 @@ export default function TrackMenu({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+    <CreateShareDialog
+      open={shareOpen}
+      onOpenChange={setShareOpen}
+      sourceType="track"
+      sourceId={track.id}
+      sourceTitle={track.title}
+    />
+    </>
   )
 }

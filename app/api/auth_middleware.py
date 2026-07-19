@@ -15,6 +15,7 @@ Otherwise it is rejected with 401. See docs/auth.md.
 from __future__ import annotations
 
 import os
+import re
 
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
@@ -55,6 +56,21 @@ PUBLIC_PATHS = frozenset(
 
 
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+_PUBLIC_SHARE_PATH = re.compile(
+    r"^/api/v1/public/shares/[A-Za-z0-9_-]{40,64}"
+    r"(?:/cover|/items/[0-9]+/audio)?$"
+)
+
+
+def is_public_share_request(request: Request) -> bool:
+    if os.getenv("DISCOCS_SHARING_ENABLED", "").strip().lower() not in {
+        "1", "true", "yes", "on",
+    }:
+        return False
+    if request.method not in {"GET", "HEAD"}:
+        return False
+    return _PUBLIC_SHARE_PATH.fullmatch(request.url.path) is not None
 
 
 def _request_origin(request: Request) -> str:
@@ -114,6 +130,17 @@ async def auth_gate(request: Request, call_next):
 
     if request.url.path in PUBLIC_PATHS:
         return await call_next(request)
+
+    if is_public_share_request(request):
+        request.state.principal = "share"
+        request.state.user_id = None
+        token_context = set_current_user_id(None)
+        nav_context = set_current_navidrome_credentials(None)
+        try:
+            return await call_next(request)
+        finally:
+            reset_current_navidrome_credentials(nav_context)
+            reset_current_user_id(token_context)
 
     settings = Settings.from_env()
     # Default: no identity. A service principal has no user_id, so personal
