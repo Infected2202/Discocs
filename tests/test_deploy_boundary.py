@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 NGINX_TEMPLATE = ROOT / "deploy" / "nginx" / "default.conf.template"
 JENKINSFILE = ROOT / "Jenkinsfile"
 WORKER_COMPOSE = ROOT / "docker-compose.worker.yml"
+PRODUCTION_COMPOSE = ROOT / "deploy" / "prod" / "docker-compose.yml"
 BACKEND_DOCKERFILE = ROOT / "deploy" / "backend" / "Dockerfile"
 BOT_DOCKERFILE = ROOT / "deploy" / "bot" / "Dockerfile"
 
@@ -94,6 +95,12 @@ def test_local_worker_receives_service_token_from_environment():
     config = WORKER_COMPOSE.read_text(encoding="utf-8")
 
     assert "DISCOCS_SERVICE_TOKEN: ${DISCOCS_SERVICE_TOKEN:-}" in config
+
+
+def test_production_sharing_is_enabled_unless_explicitly_disabled():
+    config = PRODUCTION_COMPOSE.read_text(encoding="utf-8")
+
+    assert "DISCOCS_SHARING_ENABLED: ${DISCOCS_SHARING_ENABLED:-true}" in config
 
 
 def test_automated_deploy_ignores_stale_rollback_tag():

@@ -116,14 +116,14 @@ class AuthSettings:
 
 @dataclass(frozen=True)
 class SharingSettings:
-    enabled: bool = False
+    enabled: bool = True
     default_ttl_hours: int = 168
     max_ttl_hours: int = 8760
 
     @classmethod
     def from_env(cls) -> "SharingSettings":
         return cls(
-            enabled=_env_flag("DISCOCS_SHARING_ENABLED", False),
+            enabled=_env_flag("DISCOCS_SHARING_ENABLED", True),
             default_ttl_hours=_positive_int(
                 os.getenv("DISCOCS_SHARE_DEFAULT_TTL_HOURS"), 168
             ),

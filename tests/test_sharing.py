@@ -5,13 +5,36 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from app import auth
-from app.config import Settings
+from app.api.auth_middleware import is_public_share_request
+from app.config import Settings, SharingSettings
 from app.main import app
 from app.models import utc_now
 from app.store import INITIALIZED_DB_PATHS, Store
 from app.store.shares import share_token_hash
+
+
+def test_sharing_is_enabled_by_default_and_supports_explicit_opt_out(monkeypatch):
+    token = "A" * 43
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": f"/api/v1/public/shares/{token}",
+            "headers": [],
+        }
+    )
+
+    monkeypatch.delenv("DISCOCS_SHARING_ENABLED", raising=False)
+    assert SharingSettings().enabled is True
+    assert Settings.from_env().sharing.enabled is True
+    assert is_public_share_request(request) is True
+
+    monkeypatch.setenv("DISCOCS_SHARING_ENABLED", "false")
+    assert Settings.from_env().sharing.enabled is False
+    assert is_public_share_request(request) is False
 
 
 def _init_store(tmp_path: Path, monkeypatch) -> Store:

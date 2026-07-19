@@ -40,7 +40,7 @@
 
 ### Узкое исключение для публичного шаринга
 
-При отдельно включённом `DISCOCS_SHARING_ENABLED` middleware пропускает без
+При включённом по умолчанию `DISCOCS_SHARING_ENABLED` middleware пропускает без
 session cookie только точные `GET|HEAD` маршруты
 `/api/v1/public/shares/{token}[...]`. Management API `/api/v1/shares` остаётся
 под обычной сессией; service principal создавать ссылки не может.

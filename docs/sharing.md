@@ -22,10 +22,10 @@ snapshot-набору треков этой ссылки. Токен генер�
 
 ## Конфигурация
 
-Sharing выключен по умолчанию:
+Sharing включён по умолчанию. Для явного отключения:
 
 ```text
-DISCOCS_SHARING_ENABLED=true
+DISCOCS_SHARING_ENABLED=false
 DISCOCS_SHARE_DEFAULT_TTL_HOURS=168
 DISCOCS_SHARE_MAX_TTL_HOURS=8760
 DISCOCS_SHARE_MAX_STREAMS_PER_CLIENT=3
@@ -33,7 +33,7 @@ DISCOCS_SHARE_MAX_STREAMS=16
 DISCOCS_PUBLIC_URL=https://music.example.com
 ```
 
-- После включения sharing ссылки может создавать любой обычный
+- При включённом sharing ссылки может создавать любой обычный
   авторизованный пользователь. Анонимный и service principal не могут
   управлять ссылками.
 - `DISCOCS_PUBLIC_URL` задаёт canonical origin генерируемого URL. Если он пуст,
@@ -41,8 +41,8 @@ DISCOCS_PUBLIC_URL=https://music.example.com
 - Лимиты потоков действуют в памяти одного backend process. При горизонтальном
   масштабировании нужен общий distributed limiter.
 
-Production `.env` хранится на сервере и не обновляется Jenkins. После доставки
-кода новые переменные включаются владельцем вручную, затем пересоздаётся backend.
+Production `.env` хранится на сервере и не обновляется Jenkins.
+Если `DISCOCS_SHARING_ENABLED` в нём не задан, compose передаёт backend значение `true`.
 
 ## API
 

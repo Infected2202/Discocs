@@ -41,8 +41,8 @@ services:
       # Only Docker-side frontend proxies may supply client identity headers.
       # Direct LAN callers on :8711 are always keyed by their socket address.
       DISCOCS_TRUSTED_PROXY_CIDRS: ${DISCOCS_TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
-      # Revocable public capability links. Disabled by default.
-      DISCOCS_SHARING_ENABLED: ${DISCOCS_SHARING_ENABLED:-false}
+      # Revocable public capability links. Set false explicitly to disable.
+      DISCOCS_SHARING_ENABLED: ${DISCOCS_SHARING_ENABLED:-true}
       DISCOCS_SHARE_DEFAULT_TTL_HOURS: ${DISCOCS_SHARE_DEFAULT_TTL_HOURS:-168}
       DISCOCS_SHARE_MAX_TTL_HOURS: ${DISCOCS_SHARE_MAX_TTL_HOURS:-8760}
       DISCOCS_SHARE_MAX_STREAMS_PER_CLIENT: ${DISCOCS_SHARE_MAX_STREAMS_PER_CLIENT:-3}

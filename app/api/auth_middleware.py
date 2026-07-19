@@ -64,7 +64,8 @@ _PUBLIC_SHARE_PATH = re.compile(
 
 
 def is_public_share_request(request: Request) -> bool:
-    if os.getenv("DISCOCS_SHARING_ENABLED", "").strip().lower() not in {
+    configured = os.getenv("DISCOCS_SHARING_ENABLED")
+    if configured is not None and configured.strip().lower() not in {
         "1", "true", "yes", "on",
     }:
         return False
