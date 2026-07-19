@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import { Link, useParams } from "react-router"
 import { fetchPublicShare, type PublicShare } from "@/api/shares"
 import ArtworkImage from "@/components/media/ArtworkImage"
+import { useDragSlider } from "@/components/player/useDragSlider"
 import { useArtworkTheme } from "@/hooks/useArtworkTheme"
 import { cn } from "@/lib/utils"
 
@@ -26,6 +27,7 @@ export default function SharedPlayerPage() {
   const [buffering, setBuffering] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  const [dragProgress, setDragProgress] = useState<number | null>(null)
   const [volume, setVolume] = useState(1)
   const [muted, setMuted] = useState(false)
   const [repeatOne, setRepeatOne] = useState(false)
@@ -38,6 +40,20 @@ export default function SharedPlayerPage() {
     () => share?.items.map((entry, position) => entry.available ? position : -1).filter((position) => position >= 0) ?? [],
     [share],
   )
+
+  const commitSeek = (fraction: number) => {
+    const audio = audioRef.current
+    if (audio && duration > 0) {
+      const nextTime = fraction * duration
+      audio.currentTime = nextTime
+      setCurrentTime(nextTime)
+    }
+    setDragProgress(null)
+  }
+  const { trackRef: seekBarRef, handlePointerDown: handleSeekPointerDown } = useDragSlider({
+    onChange: setDragProgress,
+    onCommit: commitSeek,
+  })
 
   useEffect(() => {
     const referrer = document.createElement("meta")
@@ -82,6 +98,7 @@ export default function SharedPlayerPage() {
     setPlaying(false)
     setCurrentTime(0)
     setDuration(item.duration ?? 0)
+    setDragProgress(null)
     if ("mediaSession" in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: item.title,
@@ -186,7 +203,9 @@ export default function SharedPlayerPage() {
 
   const previous = nextAvailable(-1)
   const next = nextAvailable(1)
-  const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0
+  const progressFraction = duration > 0 ? Math.min(1, currentTime / duration) : 0
+  const displayedProgress = dragProgress ?? progressFraction
+  const displayedTime = dragProgress === null ? currentTime : dragProgress * duration
 
   return (
     <main className="relative min-h-dvh overflow-hidden bg-background text-foreground">
@@ -240,20 +259,33 @@ export default function SharedPlayerPage() {
                 <p className="truncate text-sm text-muted-foreground">{item?.artist ?? share.subtitle}</p>
               </div>
               <div className="space-y-1.5">
-                <input
+                <div
                   aria-label={t("seek")}
-                  type="range"
-                  min={0}
-                  max={1000}
-                  value={Math.round(progress * 10)}
-                  onChange={(event) => {
-                    const audio = audioRef.current
-                    if (audio && duration > 0) audio.currentTime = Number(event.target.value) / 1000 * duration
+                  aria-valuemin={0}
+                  aria-valuemax={Math.round(duration)}
+                  aria-valuenow={Math.round(displayedTime)}
+                  aria-valuetext={`${formatTime(displayedTime)} / ${formatTime(duration)}`}
+                  role="slider"
+                  tabIndex={0}
+                  ref={seekBarRef}
+                  onPointerDown={handleSeekPointerDown}
+                  onKeyDown={(event) => {
+                    let nextTime = currentTime
+                    if (event.key === "ArrowLeft") nextTime = Math.max(0, currentTime - 5)
+                    else if (event.key === "ArrowRight") nextTime = Math.min(duration, currentTime + 5)
+                    else if (event.key === "Home") nextTime = 0
+                    else if (event.key === "End") nextTime = duration
+                    else return
+                    event.preventDefault()
+                    commitSeek(duration > 0 ? nextTime / duration : 0)
                   }}
-                  className="share-range w-full"
-                  style={{ "--share-range-progress": `${progress}%` } as CSSProperties}
-                />
-                <div className="flex justify-between text-xs tabular-nums text-muted-foreground"><span>{formatTime(currentTime)}</span><span>{formatTime(duration)}</span></div>
+                  className="group/seek relative h-4 w-full cursor-pointer touch-none"
+                >
+                  <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded bg-muted" />
+                  <div className="absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded bg-primary" style={{ width: `${displayedProgress * 100}%` }} />
+                  <div className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary opacity-0 shadow transition-opacity group-hover/seek:opacity-100 group-focus-visible/seek:opacity-100" style={{ left: `${displayedProgress * 100}%` }} />
+                </div>
+                <div className="flex justify-between text-xs tabular-nums text-muted-foreground"><span>{formatTime(displayedTime)}</span><span>{formatTime(duration)}</span></div>
               </div>
               <div className="relative flex items-center justify-center gap-5">
                 <button aria-label={t("previous")} disabled={previous === null} className="disabled:opacity-30" onClick={() => previous !== null && void playAt(previous)}><SkipBack size={26} /></button>

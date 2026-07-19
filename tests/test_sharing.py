@@ -238,6 +238,17 @@ def test_public_preview_exposes_universal_metadata_without_audio(tmp_path, monke
     assert "<audio" not in response.text
     assert scoped.get_user_share(share.id).access_count == 0
 
+    head = TestClient(app, base_url="http://backend:7752").head(
+        f"/api/v1/public/shares/{token}/preview",
+        headers={
+            "x-forwarded-proto": "https",
+            "x-forwarded-host": "music.example",
+        },
+    )
+    assert head.status_code == 200
+    assert head.content == b""
+    assert head.headers["content-type"].startswith("text/html")
+
 
 def test_public_release_preview_contains_album_metadata(tmp_path, monkeypatch):
     store = _init_store(tmp_path, monkeypatch)
@@ -284,10 +295,15 @@ def test_public_cover_and_audio_are_privately_cacheable(tmp_path, monkeypatch):
     client = TestClient(app)
 
     cover = client.get(f"/api/v1/public/shares/{token}/cover")
+    cover_head = client.head(f"/api/v1/public/shares/{token}/cover")
     audio = client.get(f"/api/v1/public/shares/{token}/items/0/audio")
 
     assert cover.status_code == 200
     assert cover.headers["cache-control"] == "private, max-age=3600"
+    assert cover_head.status_code == 200
+    assert cover_head.content == b""
+    assert cover_head.headers["content-type"] == "image/jpeg"
+    assert cover_head.headers["cache-control"] == "private, max-age=3600"
     assert audio.status_code == 200
     assert audio.headers["cache-control"] == "private, max-age=3600"
 

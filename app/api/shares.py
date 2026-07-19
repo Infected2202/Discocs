@@ -442,6 +442,7 @@ def public_share_metadata(token: str, request: Request) -> Response:
     return _share_headers(response)
 
 
+@router.head("/public/shares/{token}/preview", response_model=None)
 @router.get("/public/shares/{token}/preview", response_model=None)
 def public_share_preview(token: str, request: Request) -> Response:
     """Server-rendered metadata for link-preview crawlers; never exposes audio."""
@@ -516,6 +517,7 @@ def _cover_art_id(store: object, share: Share) -> str | None:
     return str(raw.get("coverArt")) if isinstance(raw, dict) and raw.get("coverArt") else None
 
 
+@router.head("/public/shares/{token}/cover", response_model=None)
 @router.get("/public/shares/{token}/cover", response_model=None)
 def public_share_cover(token: str, request: Request) -> Response:
     if not _request_limiter.allow(

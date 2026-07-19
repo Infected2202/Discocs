@@ -74,11 +74,34 @@ describe("SharedPlayerPage", () => {
 
     const seek = screen.getByRole("slider", { name: "Playback position" })
     const volume = screen.getByRole("slider", { name: "Volume" })
-    expect(seek).toHaveClass("share-range")
+    expect(seek).toHaveClass("touch-none")
     expect(volume).toHaveClass("share-range")
-    expect(seek).not.toHaveClass("accent-primary")
     expect(volume).not.toHaveClass("accent-primary")
     expect(volume).toHaveStyle({ "--share-range-progress": "100%" })
+  })
+
+  it("previews a dragged position and seeks only when the pointer is released", async () => {
+    const { container } = renderPage()
+    await screen.findByRole("heading", { name: "First" })
+
+    const seek = screen.getByRole("slider", { name: "Playback position" })
+    const audio = container.querySelector("audio") as HTMLAudioElement
+    vi.spyOn(seek, "getBoundingClientRect").mockReturnValue({
+      left: 100, width: 200, right: 300, top: 0, bottom: 16,
+      height: 16, x: 100, y: 0, toJSON: () => ({}),
+    })
+    seek.setPointerCapture = vi.fn()
+
+    fireEvent.pointerDown(seek, { pointerId: 4, clientX: 140 })
+    fireEvent.pointerMove(window, { pointerId: 4, clientX: 200 })
+
+    expect(audio.currentTime).toBe(0)
+    expect(seek).toHaveAttribute("aria-valuenow", "30")
+
+    fireEvent.pointerUp(window, { pointerId: 4, clientX: 260 })
+
+    expect(audio.currentTime).toBe(48)
+    expect(seek).toHaveAttribute("aria-valuenow", "48")
   })
 
   it("shows one generic unavailable state for a rejected token", async () => {

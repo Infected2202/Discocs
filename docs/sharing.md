@@ -66,7 +66,9 @@ DELETE /api/v1/shares/{id}
 ```text
 GET  /api/v1/public/shares/{token}
 GET  /api/v1/public/shares/{token}/preview
+HEAD /api/v1/public/shares/{token}/preview
 GET  /api/v1/public/shares/{token}/cover
+HEAD /api/v1/public/shares/{token}/cover
 GET  /api/v1/public/shares/{token}/items/{position}/audio
 HEAD /api/v1/public/shares/{token}/items/{position}/audio
 ```
@@ -113,6 +115,10 @@ Telegram и подходит также для Steam Chat, Discord, Slack и д�
 - отдаёт share page с `Referrer-Policy: no-referrer` и запретом индексации.
 - распознаёт link-preview crawler по User-Agent и отдаёт ему только безопасные
   серверные метаданные без аудиопотока.
+
+Публичный seek использует тот же drag-механизм, что основной плеер: во время
+перетаскивания интерфейс показывает выбранную позицию, а запрос на перемотку
+выполняется один раз при отпускании указателя.
 
 Не публикуйте backend-порт `8711` напрямую в интернет. Внешний TLS proxy должен
 передавать исходный Host и HTTPS scheme, не логируя capability URL целиком.
