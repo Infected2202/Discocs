@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from fastapi import Response
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -260,23 +259,17 @@ def test_public_cover_and_audio_are_privately_cacheable(tmp_path, monkeypatch):
 
     store = _init_store(tmp_path, monkeypatch)
     track_id = _track(store, tmp_path / "cache.flac", title="Cached")
-    store.upsert_external_track(
-        "navidrome",
-        "cached-song",
-        track_id,
-        raw_json='{"coverArt":"cached-cover"}',
-    )
     scoped = _user_store(store)
     _share, token = scoped.create_share(
         source_type="track", source_id=track_id, expires_at=_future()
     )
     monkeypatch.setattr(
-        "app.api.shares.NavidromeClient.get_cover_art",
-        lambda self, cover_art_id, size: CoverArt(b"cover", "image/jpeg"),
+        "app.api.shares._cover_art_id",
+        lambda store, share: "cached-cover",
     )
     monkeypatch.setattr(
-        "app.api.shares.navidrome_audio_stream_response",
-        lambda *args, **kwargs: Response(b"audio", media_type="audio/mpeg"),
+        "app.api.shares.NavidromeClient.get_cover_art",
+        lambda self, cover_art_id, size: CoverArt(b"cover", "image/jpeg"),
     )
     client = TestClient(app)
 
