@@ -135,8 +135,68 @@ def test_production_images_refresh_system_security_updates():
 
 def test_trivy_blocks_only_fixable_high_or_critical_findings():
     pipeline = JENKINSFILE.read_text(encoding="utf-8")
-    assert "aquasec/trivy image --ignore-unfixed" in pipeline
+    gate = "aquasec/trivy image --skip-db-update --ignore-unfixed"
+    assert gate in pipeline
     assert "--severity HIGH,CRITICAL --exit-code 1" in pipeline
-    assert pipeline.index("reportName: 'Trivy: bot'") < pipeline.index(
-        "aquasec/trivy image --ignore-unfixed"
-    )
+    # HTML-вкладка публикуется до блокирующего гейта — иначе падение на
+    # HIGH/CRITICAL оставило бы билд без отчёта, в котором видны находки.
+    assert pipeline.index('reportName: "Trivy: ${svc}"') < pipeline.index(gate)
+
+
+def test_independent_checks_run_in_one_parallel_stage():
+    pipeline = JENKINSFILE.read_text(encoding="utf-8")
+
+    checks = pipeline.index("stage('Checks')")
+    analyze = pipeline.index("stage('Analyze & Build')")
+    scan = pipeline.index("stage('Security Scan')")
+    assert checks < analyze < scan
+
+    # Тесты трёх частей и скан зависимостей не связаны друг с другом: если их
+    # снова растащить по последовательным стадиям, стадия начнёт стоить сумму,
+    # а не максимум.
+    assert pipeline.index("parallel {", checks) < analyze
+    for branch in (
+        "stage('Tests: backend')",
+        "stage('Tests: bot')",
+        "stage('Tests: ui')",
+        "stage('Deps CVE')",
+    ):
+        assert checks < pipeline.index(branch) < analyze
+
+    # trivy fs читает только lock-файлы — ждать сборки образов ему незачем.
+    assert checks < pipeline.index("deploy/ci/Dockerfile.trivy-fs") < analyze
+
+    # failFast обрывал бы соседние ветки на первом падении, и junit/coverage
+    # почти доехавших наборов снова терялись бы (см. билд #53).
+    assert "failFast" not in pipeline[checks:analyze]
+
+    # Каждая ветка публикует свой junit сама — общий `junit 'junit-*.xml'`
+    # после параллельной стадии подхватил бы отчёты только полностью успешного прогона.
+    for report in ("junit-backend.xml", "junit-bot.xml", "junit-ui.xml"):
+        assert f"junit '{report}'" in pipeline
+
+
+def test_sonar_runs_alongside_image_build():
+    pipeline = JENKINSFILE.read_text(encoding="utf-8")
+
+    analyze = pipeline.index("stage('Analyze & Build')")
+    scan = pipeline.index("stage('Security Scan')")
+
+    # Сканеру нужны только coverage-отчёты из Checks, сборке — только исходники.
+    assert pipeline.index("parallel {", analyze) < scan
+    for branch in ("stage('Sonar')", "stage('Build & Push')", "stage('Docker Login')"):
+        assert analyze < pipeline.index(branch) < scan
+
+
+def test_image_scans_share_one_vulnerability_db_refresh():
+    pipeline = JENKINSFILE.read_text(encoding="utf-8")
+
+    warmup = pipeline.index("aquasec/trivy image --download-db-only")
+    fan_out = pipeline.index("['backend', 'frontend', 'bot'].collectEntries")
+
+    # Три ветки на общем volume trivy-db-cache качали бы и распаковывали БД
+    # конкурентно в один каталог, поэтому обновление — один раз до fan-out,
+    # а сами сканы идут с --skip-db-update.
+    assert warmup < fan_out
+    assert pipeline.count("--download-db-only") == 1
+    assert pipeline.count("aquasec/trivy image --skip-db-update") == 3

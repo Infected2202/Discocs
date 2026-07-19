@@ -5,24 +5,36 @@ Nexus, Gitea, целевой хост) — одна машина `.41`.
 
 ## Поток
 
+Стадии выстроены так, чтобы всё независимое шло параллельно, а последовательными
+оставались только настоящие зависимости: Sonar ждёт coverage из тестов, `trivy image` —
+собранных образов, деплой — общего успеха.
+
 ```
 push в Gitea ──webhook──> Jenkins
-   └─ Test         три отдельных образа, каждый BuildKit + --mount=type=cache:
-   │                 backend — pytest -n auto (deploy/ci/Dockerfile.test)
-   │                 бот     — pytest (deploy/ci/Dockerfile.bot-test)
-   │                 фронт   — vitest run --coverage (deploy/ci/Dockerfile.ui-test)
-   │                 coverage- и junit-отчёты каждого достаются docker cp'ом,
-   │                 junit публикуется через встроенный шаг `junit` (Test Result Trend)
-   └─ Sonar        sonar-scanner — отчёт в SonarQube, без Quality Gate (билд не блокируется)
-   └─ Build&Push   сборка backend/frontend/bot → Nexus (docker-dev @ :5000)
-   │                 теги:  :<git-sha>  (всегда)   +  :latest  (только с main)
-   └─ Security Scan Trivy — CVE в зависимостях + в собранных образах, report-only
-   │                 находки образов также публикуются как HTML-вкладки на билде
-   │                 (Trivy: backend/frontend/bot, через publishHTML)
+   └─ Checks        4 ветки parallel, стадия стоит максимум из них, а не сумму:
+   │                 backend  — pytest -n auto (deploy/ci/Dockerfile.test)
+   │                 бот      — pytest (deploy/ci/Dockerfile.bot-test)
+   │                 фронт    — vitest run --coverage (deploy/ci/Dockerfile.ui-test)
+   │                 Deps CVE — trivy fs по uv.lock/pnpm-lock (Dockerfile.trivy-fs)
+   │                 каждый тестовый образ — BuildKit + --mount=type=cache;
+   │                 coverage- и junit-отчёты достаются docker cp'ом, junit
+   │                 публикуется в своей же ветке (Test Result Trend)
+   └─ Analyze&Build 2 ветки parallel (сборка от Sonar не зависит и наоборот):
+   │                 Sonar      — отчёт в SonarQube, без Quality Gate (билд не блокируется)
+   │                 Build&Push — Docker Login, затем сборка backend/frontend/bot
+   │                              (ещё 3 вложенные ветки) → Nexus (docker-dev @ :5000),
+   │                              теги: :<git-sha> (всегда) + :latest (только с main)
+   └─ Security Scan одно обновление БД Trivy, затем 3 ветки parallel по образам:
+   │                 полный отчёт → HTML-вкладка (publishHTML) → блокирующий гейт
    └─ Deploy        [post/success, только main] по SSH на TARGET_SERVER:
                        scp compose в TARGET_DIR → docker compose pull && up -d --force-recreate
                        (.env на хосте CI не трогает — заводится и правится вручную)
 ```
+
+Все параллельные ветки делят один воркспейс агента (`agent any` наследуется, отдельных
+`node` нет) — поэтому `coverage.xml`/`lcov.info`, извлечённые в ветках `Checks`, видны
+сканеру в следующей стадии ровно как раньше. `failFast` нигде не включён: упавшая
+ветка не обрывает соседние, иначе почти доехавшие junit/coverage снова терялись бы.
 
 Файлы:
 
@@ -159,7 +171,8 @@ frontend поднимаются без него. Образ бота при эт
 
 ## SonarQube
 
-Стадия `Sonar` в `Jenkinsfile` — после `Test`, перед `Build & Push`. Гоняет
+Стадия `Sonar` в `Jenkinsfile` — ветка параллельной стадии `Analyze & Build`
+(вторая ветка — `Build & Push`), идёт после `Checks`, откуда берёт coverage. Гоняет
 `sonar-scanner` (см. `sonar-project.properties`) против сервера
 `http://192.168.1.41:9077` под токеном `sonar_token`. Это только отчёт —
 `waitForQualityGate` не используется, результат анализа не может завалить
@@ -193,8 +206,8 @@ Docker/IaC превысил стандартный heap scanner JRE и заве�
 TS/JS-анализатора) — обновлять сканер вместе с сервером, версия и ссылка на
 скачивание — https://docs.sonarsource.com/sonarqube-server/analyzing-source-code/scanners/sonarscanner.
 
-Coverage подключён для всех трёх частей — стадия `Test` собирает три образа
-и достаёт из каждого свой отчёт через `docker cp` (агент — docker-outside-of-docker,
+Coverage подключён для всех трёх частей — ветки стадии `Checks` собирают по образу
+и достают из каждого свой отчёт через `docker cp` (агент — docker-outside-of-docker,
 bind-mount воркспейса недоступен хостовому демону):
 
 - backend (`discocs-test`) — `pytest --cov=app --cov-report=xml` → `coverage.xml`
@@ -219,20 +232,24 @@ production sources исключаются через `sonar.exclusions`.
 
 Каждый из трёх тестовых прогонов пишет ещё и JUnit XML — `pytest --junitxml=`
 (backend/бот) и `vitest`'ный встроенный `junit`-репортер (фронт, настроен в
-`ui/vite.config.ts`: `reporters: ["default", "junit"]`). Все три (`junit-backend.xml`,
-`junit-bot.xml`, `junit-ui.xml`) достаются `docker cp`'ом и публикуются одним
-встроенным шагом `junit 'junit-*.xml'` (ядро Jenkins, отдельный плагин не нужен) —
-даёт нативный **Test Result Trend** на странице джобы и список конкретно
-упавших тестов, без грепа консоли.
+`ui/vite.config.ts`: `reporters: ["default", "junit"]`). Каждый из трёх отчётов
+(`junit-backend.xml`, `junit-bot.xml`, `junit-ui.xml`) достаётся `docker cp`'ом и
+публикуется встроенным шагом `junit` (ядро Jenkins, отдельный плагин не нужен)
+прямо в своей ветке `Checks` — даёт нативный **Test Result Trend** на странице
+джобы и список конкретно упавших тестов, без грепа консоли. Публикация именно
+поветочная, а не общим `junit 'junit-*.xml'` после стадии: параллельные ветки
+падают независимо, и общий шаг после стадии подхватил бы отчёты только
+полностью зелёного прогона.
 
 Важно: скрипт извлечения coverage/junit специально не использует `set -e` —
 раньше (см. историю, билд #53) первый же упавший набор тестов обрывал весь
 скрипт до `docker cp`, и при реальном падении тестов не оставалось вообще
 никакого отчёта (ни coverage, ни junit) — приходилось лезть в консоль руками.
-Теперь код выхода каждого `docker start -a` трекается вручную (`FAILED`),
-`docker cp` всегда выполняется, а стадия `Test` фейлится по итоговому `exit
-$FAILED` уже после того, как все отчёты извлечены; `junit` публикуется в
-`post { always { ... } }` стадии, а не только при успехе.
+Теперь код выхода `docker start -a` трекается вручную (`RC`), `docker cp` всегда
+выполняется, а ветка фейлится по `exit $RC` уже после того, как отчёты извлечены;
+`junit` публикуется в `post { always { ... } }` ветки, а не только при успехе.
+По той же причине у параллельных стадий не включён `failFast`: упавший backend
+не должен обрывать бота и фронт на полпути.
 
 ## Python-зависимости (uv)
 
@@ -265,18 +282,27 @@ CI их не регенерирует и не проверяет свежест�
 по-прежнему обновляется независимо через кэш Trivy. Версию самого сканера
 обновляем явно отдельным коммитом после просмотра release notes.
 
-Стадия `Security Scan` в `Jenkinsfile` запускается после `Build & Push`.
-Сначала она всегда формирует полные HTML-отчёты, включая уязвимости без
-доступного исправления. После публикации отчётов отдельный gate повторяет
-скан с `--ignore-unfixed --severity HIGH,CRITICAL --exit-code 1`: сборка и
-деплой останавливаются только на HIGH/CRITICAL, для которых upstream уже
-выпустил исправленную версию. Один инструмент закрывает то, что Sonar
-Community не умеет бесплатно (SCA — уязвимости в зависимостях):
+Trivy разнесён по двум стадиям — по тому, что именно ему нужно на вход:
 
 - `trivy fs` — CVE в `pnpm-lock.yaml` (фронтенд) и в `uv.lock`/`discocs_bot/uv.lock`
-  (backend/бот — точный резолвинг версий, см. ниже);
+  (backend/бот — точный резолвинг версий, см. ниже). Читает только воркспейс,
+  поэтому живёт веткой `Deps CVE` в параллельной стадии `Checks`, вместе с тестами;
 - `trivy image` — CVE в уже собранных образах `backend`/`frontend`/`bot`, через
-  `docker.sock` (не bind-mount воркспейса — тут монтируется только сокет, это работает).
+  `docker.sock` (не bind-mount воркспейса — тут монтируется только сокет, это
+  работает). Стадия `Security Scan`, после `Analyze & Build`: ветка на сервис,
+  внутри ветки — полный отчёт, `publishHTML`, затем гейт.
+
+В каждой ветке `Security Scan` сначала всегда формируется полный HTML-отчёт,
+включая уязвимости без доступного исправления. После публикации отчёта
+отдельный gate повторяет скан с `--ignore-unfixed --severity HIGH,CRITICAL
+--exit-code 1`: сборка и деплой останавливаются только на HIGH/CRITICAL, для
+которых upstream уже выпустил исправленную версию. Один инструмент закрывает то,
+что Sonar Community не умеет бесплатно (SCA — уязвимости в зависимостях).
+
+БД уязвимостей обновляется ровно один раз, отдельным `trivy image
+--download-db-only` до разветвления, а сами сканы идут с `--skip-db-update`:
+три параллельные ветки на общем volume `trivy-db-cache` иначе полезли бы качать
+и распаковывать ~150+ МБ конкурентно в один и тот же каталог.
 
 Прод-образы собираются с `docker build --pull`. Все три сервиса получают
 `SECURITY_REFRESH=${GIT_SHA}`, который дополнительно инвалидирует слой

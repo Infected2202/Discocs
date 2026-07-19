@@ -1,5 +1,9 @@
 .git
 .pytest_cache
+# Рабочий каталог sonar-scanner: он пишется прямо во время сборки образов —
+# Sonar и Build & Push теперь ветки одной параллельной стадии (см. Jenkinsfile),
+# и меняющиеся под руками файлы в контексте докеру ни к чему.
+.scannerwork
 .venv
 __pycache__
 *.py[cod]
