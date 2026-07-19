@@ -8,10 +8,11 @@ import threading
 import time
 from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
+from html import escape
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import api_error, context
@@ -25,6 +26,13 @@ router = APIRouter(prefix="/api/v1")
 
 _TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{40,64}$")
 _UNAVAILABLE = "Share unavailable"
+_METADATA_CACHE_CONTROL = "private, no-cache"
+_MEDIA_CACHE_CONTROL = "private, max-age=3600"
+_PUBLIC_TRANSCODING_PARAMS = {
+    "format": "mp3",
+    "maxBitRate": 320,
+    "estimateContentLength": "true",
+}
 
 
 class ShareCreateRequest(BaseModel):
@@ -118,11 +126,18 @@ def _client_key(request: Request) -> str:
 def _rate_limited() -> JSONResponse:
     response = api_error(429, "share_rate_limited", "Too many share requests")
     response.headers["Retry-After"] = "60"
-    return _share_headers(response)  # type: ignore[return-value]
+    return _share_headers(
+        response,
+        cache_control="private, no-store",
+    )  # type: ignore[return-value]
 
 
-def _share_headers(response: Response) -> Response:
-    response.headers["Cache-Control"] = "private, no-store"
+def _share_headers(
+    response: Response,
+    *,
+    cache_control: str = _METADATA_CACHE_CONTROL,
+) -> Response:
+    response.headers["Cache-Control"] = cache_control
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -130,7 +145,10 @@ def _share_headers(response: Response) -> Response:
 
 
 def _unavailable() -> JSONResponse:
-    return _share_headers(api_error(404, "share_unavailable", _UNAVAILABLE))  # type: ignore[return-value]
+    return _share_headers(
+        api_error(404, "share_unavailable", _UNAVAILABLE),
+        cache_control="private, no-store",
+    )  # type: ignore[return-value]
 
 
 def _require_creator(request: Request, settings: object) -> None:
@@ -210,6 +228,62 @@ def _public_url(request: Request, token: str) -> str:
     configured = os.getenv("DISCOCS_PUBLIC_URL", "").strip().rstrip("/")
     base = configured or str(request.base_url).rstrip("/")
     return f"{base}/share/{token}"
+
+
+def _public_asset_url(request: Request, token: str, suffix: str) -> str:
+    share_url = _public_url(request, token)
+    origin = share_url.rsplit("/share/", 1)[0]
+    return f"{origin}/api/v1/public/shares/{token}/{suffix.lstrip('/')}"
+
+
+def _formatted_duration(seconds: float | None) -> str | None:
+    if seconds is None or seconds < 0:
+        return None
+    total = int(seconds)
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+
+def _preview_values(store: object, share: Share) -> tuple[str, str, float | None] | None:
+    items = store.list_share_items(share.id)  # type: ignore[attr-defined]
+    tracks = [store.get_track(item.track_id) for item in items]  # type: ignore[attr-defined]
+    valid_tracks = [track for track in tracks if track is not None]
+    if not valid_tracks:
+        return None
+    if share.source_type == "track":
+        track = valid_tracks[0]
+        description = " · ".join(
+            value
+            for value in (
+                track.artist,
+                track.album,
+                _formatted_duration(track.duration),
+            )
+            if value
+        )
+        return track.title or "Shared track", description, track.duration
+
+    release = store.get_release(share.source_id)  # type: ignore[attr-defined]
+    title = release.release.title if release else valid_tracks[0].album or "Shared release"
+    artists = (
+        ", ".join(artist.name for artist in release.artists)
+        if release and release.artists
+        else ", ".join(dict.fromkeys(track.artist for track in valid_tracks if track.artist))
+    )
+    year = str(release.release.release_year) if release and release.release.release_year else None
+    total_duration = sum(track.duration or 0 for track in valid_tracks) or None
+    description = " · ".join(
+        value
+        for value in (
+            artists or None,
+            year,
+            f"{len(valid_tracks)} tracks",
+            _formatted_duration(total_duration),
+        )
+        if value
+    )
+    return title, description, None
 
 
 @router.post("/shares", status_code=201, response_model=None)
@@ -355,6 +429,61 @@ def public_share_metadata(token: str, request: Request) -> Response:
     return _share_headers(response)
 
 
+@router.get("/public/shares/{token}/preview", response_model=None)
+def public_share_preview(token: str, request: Request) -> Response:
+    """Server-rendered metadata for link-preview crawlers; never exposes audio."""
+    if not _request_limiter.allow(
+        f"preview:{_client_key(request)}", limit=120, window_seconds=60
+    ):
+        return _rate_limited()
+    resolved = _resolved_public_share(token)
+    if resolved is None:
+        return _unavailable()
+    store, _settings, share = resolved
+    values = _preview_values(store, share)
+    if values is None:
+        return _unavailable()
+    title, description, duration = values
+    share_url = _public_url(request, token)
+    cover_url = _public_asset_url(request, token, "cover")
+    escaped_title = escape(title, quote=True)
+    escaped_description = escape(description, quote=True)
+    escaped_share_url = escape(share_url, quote=True)
+    escaped_cover_url = escape(cover_url, quote=True)
+    object_type = "music.song" if share.source_type == "track" else "music.album"
+    duration_meta = (
+        f'    <meta property="music:duration" content="{int(duration)}">\n'
+        if duration is not None
+        else ""
+    )
+    document = f"""<!doctype html>
+<html lang="en" prefix="og: https://ogp.me/ns# music: https://ogp.me/ns/music#">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow,noarchive">
+    <meta name="referrer" content="no-referrer">
+    <title>{escaped_title}</title>
+    <meta name="description" content="{escaped_description}">
+    <link rel="canonical" href="{escaped_share_url}">
+    <meta property="og:type" content="{object_type}">
+    <meta property="og:site_name" content="discocs">
+    <meta property="og:title" content="{escaped_title}">
+    <meta property="og:description" content="{escaped_description}">
+    <meta property="og:url" content="{escaped_share_url}">
+    <meta property="og:image" content="{escaped_cover_url}">
+    <meta property="og:image:alt" content="{escaped_title}">
+{duration_meta}    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{escaped_title}">
+    <meta name="twitter:description" content="{escaped_description}">
+    <meta name="twitter:image" content="{escaped_cover_url}">
+  </head>
+  <body></body>
+</html>
+"""
+    return _share_headers(HTMLResponse(document))
+
+
 def _cover_art_id(store: object, share: Share) -> str | None:
     if share.source_type == "release":
         release = store.get_release(share.source_id)  # type: ignore[attr-defined]
@@ -391,7 +520,10 @@ def public_share_cover(token: str, request: Request) -> Response:
         cover = NavidromeClient(settings.navidrome).get_cover_art(cover_art_id, size=1000)
     except Exception:
         return _unavailable()
-    return _share_headers(Response(content=cover.payload, media_type=cover.content_type))
+    return _share_headers(
+        Response(content=cover.payload, media_type=cover.content_type),
+        cache_control=_MEDIA_CACHE_CONTROL,
+    )
 
 
 @router.head("/public/shares/{token}/items/{position}/audio", response_model=None)
@@ -420,6 +552,7 @@ def public_share_audio(token: str, position: int, request: Request) -> Response:
                 item_id,
                 range_header=request.headers.get("range"),
                 method=request.method,
+                stream_params=_PUBLIC_TRANSCODING_PARAMS,
             )
         else:
             path = Path(track.path)
@@ -433,4 +566,7 @@ def public_share_audio(token: str, position: int, request: Request) -> Response:
     except Exception:
         _stream_slots.release(slot_key)
         return _unavailable()
-    return _StreamSlotResponse(_share_headers(response), slot_key)
+    return _StreamSlotResponse(
+        _share_headers(response, cache_control=_MEDIA_CACHE_CONTROL),
+        slot_key,
+    )

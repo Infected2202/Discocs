@@ -59,7 +59,7 @@ UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 _PUBLIC_SHARE_PATH = re.compile(
     r"^/api/v1/public/shares/[A-Za-z0-9_-]{40,64}"
-    r"(?:/cover|/items/[0-9]+/audio)?$"
+    r"(?:/cover|/preview|/items/[0-9]+/audio)?$"
 )
 
 

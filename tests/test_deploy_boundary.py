@@ -91,6 +91,16 @@ def test_public_nginx_masks_share_tokens_and_hardens_share_pages():
     assert 'proxy_set_header X-Discocs-Service-Token "";' in config
 
 
+def test_public_nginx_serves_universal_link_preview_metadata_to_crawlers():
+    config = NGINX_TEMPLATE.read_text(encoding="utf-8")
+
+    assert "map $http_user_agent $discocs_link_preview_crawler" in config
+    assert "TelegramBot" in config
+    assert "Valve/Steam\\ HTTP\\ Client" in config
+    assert "Discordbot" in config
+    assert "/api/v1/public/shares/$discocs_share_token/preview" in config
+
+
 def test_local_worker_receives_service_token_from_environment():
     config = WORKER_COMPOSE.read_text(encoding="utf-8")
 

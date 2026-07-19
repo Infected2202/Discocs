@@ -147,6 +147,68 @@
   display: none; /* Chromium / WebKit */
 }
 
+/* Public player range controls use the artwork accent without the native
+   bevel/border that Chromium and Firefox otherwise draw around range inputs. */
+.share-range {
+  --share-range-progress: 0%;
+  appearance: none;
+  -webkit-appearance: none;
+  height: 4px;
+  border: 0;
+  border-radius: 999px;
+  outline: 0;
+  background: linear-gradient(
+    to right,
+    var(--track-accent) 0 var(--share-range-progress),
+    color-mix(in srgb, var(--foreground) 24%, transparent) var(--share-range-progress) 100%
+  );
+  box-shadow: none;
+  cursor: pointer;
+}
+.share-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+}
+.share-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--track-accent);
+  box-shadow: 0 1px 5px rgb(0 0 0 / 45%);
+}
+.share-range::-moz-range-track {
+  height: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+}
+.share-range::-moz-range-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--track-accent);
+}
+.share-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--track-accent);
+  box-shadow: 0 1px 5px rgb(0 0 0 / 45%);
+}
+.share-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--track-accent) 32%, transparent);
+}
+.share-range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--track-accent) 32%, transparent);
+}
+
 /* Touchscreens have no persistent hover state, so row actions must remain
    discoverable. Pointer devices can keep the quieter hover-only treatment. */
 .track-menu-trigger {

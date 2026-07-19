@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from fastapi import Response
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -173,12 +174,14 @@ def test_public_share_is_only_narrow_anonymous_auth_exception(tmp_path, monkeypa
     protected = client.get(f"/api/v1/tracks/{track_id}")
     unsafe = client.post(f"/api/v1/public/shares/{token}")
     neighbor = client.get(f"/api/v1/public/sharesx/{token}")
+    preview_neighbor = client.get(f"/api/v1/public/shares/{token}/preview/extra")
 
     assert public.status_code == 200
     assert protected.status_code == 401
     assert unsafe.status_code == 401
     assert neighbor.status_code == 401
-    assert public.headers["cache-control"] == "private, no-store"
+    assert preview_neighbor.status_code == 401
+    assert public.headers["cache-control"] == "private, no-cache"
     assert public.headers["referrer-policy"] == "no-referrer"
     assert public.headers["x-robots-tag"] == "noindex, nofollow, noarchive"
 
@@ -199,6 +202,91 @@ def test_public_metadata_exposes_no_internal_identifiers(tmp_path, monkeypatch):
     assert "owner" not in serialized
     assert "secret-path.flac" not in serialized
     assert "navidrome" not in serialized
+
+
+def test_public_preview_exposes_universal_metadata_without_audio(tmp_path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    track_id = _track(
+        store,
+        tmp_path / "preview.flac",
+        title='Visible <track> & "friends"',
+        artist="Preview Artist",
+    )
+    scoped = _user_store(store)
+    share, token = scoped.create_share(
+        source_type="track", source_id=track_id, expires_at=_future()
+    )
+
+    response = TestClient(app, base_url="https://music.example").get(
+        f"/api/v1/public/shares/{token}/preview"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert response.headers["cache-control"] == "private, no-cache"
+    assert 'property="og:type" content="music.song"' in response.text
+    assert 'property="og:title" content="Visible &lt;track&gt; &amp; &quot;friends&quot;"' in response.text
+    assert 'property="og:description" content="Preview Artist · Album · 2:03"' in response.text
+    assert f'property="og:url" content="https://music.example/share/{token}"' in response.text
+    assert f'property="og:image" content="https://music.example/api/v1/public/shares/{token}/cover"' in response.text
+    assert 'name="twitter:card" content="summary_large_image"' in response.text
+    assert 'property="music:duration" content="123"' in response.text
+    assert "og:audio" not in response.text
+    assert "<audio" not in response.text
+    assert scoped.get_user_share(share.id).access_count == 0
+
+
+def test_public_release_preview_contains_album_metadata(tmp_path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    first = _track(store, tmp_path / "first.flac", title="First", artist="Album Artist")
+    second = _track(store, tmp_path / "second.flac", title="Second", artist="Album Artist")
+    release_id = _release(store, [first, second], title="Album Title")
+    scoped = _user_store(store)
+    _share, token = scoped.create_share(
+        source_type="release", source_id=release_id, expires_at=_future()
+    )
+
+    response = TestClient(app).get(f"/api/v1/public/shares/{token}/preview")
+
+    assert response.status_code == 200
+    assert 'property="og:type" content="music.album"' in response.text
+    assert 'property="og:title" content="Album Title"' in response.text
+    assert 'property="og:description" content="Album Artist · 2 tracks · 4:06"' in response.text
+    assert "music:duration" not in response.text
+
+
+def test_public_cover_and_audio_are_privately_cacheable(tmp_path, monkeypatch):
+    from app.navidrome import CoverArt
+
+    store = _init_store(tmp_path, monkeypatch)
+    track_id = _track(store, tmp_path / "cache.flac", title="Cached")
+    store.upsert_external_track(
+        "navidrome",
+        "cached-song",
+        track_id,
+        raw_json='{"coverArt":"cached-cover"}',
+    )
+    scoped = _user_store(store)
+    _share, token = scoped.create_share(
+        source_type="track", source_id=track_id, expires_at=_future()
+    )
+    monkeypatch.setattr(
+        "app.api.shares.NavidromeClient.get_cover_art",
+        lambda self, cover_art_id, size: CoverArt(b"cover", "image/jpeg"),
+    )
+    monkeypatch.setattr(
+        "app.api.shares.navidrome_audio_stream_response",
+        lambda *args, **kwargs: Response(b"audio", media_type="audio/mpeg"),
+    )
+    client = TestClient(app)
+
+    cover = client.get(f"/api/v1/public/shares/{token}/cover")
+    audio = client.get(f"/api/v1/public/shares/{token}/items/0/audio")
+
+    assert cover.status_code == 200
+    assert cover.headers["cache-control"] == "private, max-age=3600"
+    assert audio.status_code == 200
+    assert audio.headers["cache-control"] == "private, max-age=3600"
 
 
 def test_public_audio_resolves_only_member_position(tmp_path, monkeypatch):
@@ -294,6 +382,9 @@ def test_public_navidrome_audio_uses_service_account_not_creator_secret(tmp_path
     assert response.content == b"audio"
     query = parse_qs(urlparse(seen["url"]).query)
     assert query["u"] == ["share-service"]
+    assert query["format"] == ["mp3"]
+    assert query["maxBitRate"] == ["320"]
+    assert query["estimateContentLength"] == ["true"]
     assert "alice" not in seen["url"]
 
 

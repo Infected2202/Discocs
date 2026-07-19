@@ -1,6 +1,6 @@
 # План: публичный шаринг треков и релизов
 
-Статус: **согласован, к реализации** (2026-07-19)
+Статус: **реализован, ожидает итоговой проверки Jenkins** (2026-07-19)
 
 ## Цель
 
@@ -25,8 +25,6 @@
 - публичные комментарии, лайки, дизлайки и scrobbling;
 - запись гостевого прослушивания в предпочтения владельца;
 - гарантированный запрет скачивания аудио;
-- серверный транскодинг специально для публичных ссылок;
-- Open Graph-превью с динамическими метатегами;
 - одноразовые ссылки или лимит по числу прослушиваний.
 
 Запрет скачивания не является достижимой границей безопасности: если браузер
@@ -247,6 +245,7 @@ DELETE /api/v1/shares/{share_id}   # идемпотентный revoke
 
 ```text
 GET  /api/v1/public/shares/{token}
+GET  /api/v1/public/shares/{token}/preview
 GET  /api/v1/public/shares/{token}/cover
 GET  /api/v1/public/shares/{token}/items/{position}/audio
 HEAD /api/v1/public/shares/{token}/items/{position}/audio
@@ -328,10 +327,10 @@ POST /api/v1/public/shares/{token}
 8. не менять `missing_at` и другие глобальные данные на основании единичного
    подозрительного публичного запроса без подтверждённой ошибки источника.
 
-Ответы metadata, cover и audio получают:
+Ответы metadata и preview получают `Cache-Control: private, no-cache`.
+Cover и audio кешируются приватно на один час. Все публичные ответы получают:
 
 ```text
-Cache-Control: private, no-store
 X-Content-Type-Options: nosniff
 Referrer-Policy: no-referrer
 X-Robots-Tag: noindex, nofollow, noarchive
@@ -340,10 +339,9 @@ X-Robots-Tag: noindex, nofollow, noarchive
 Существующий `Range`, `Content-Range`, `Accept-Ranges`, `Content-Length`, ETag и
 HEAD-контракт обычного плеера не должны регрессировать.
 
-Первая версия отдаёт оригинальный формат. План транскодинга и браузерного
-prefetch из `plans/browser-audio-buffering-transcoding-plan.md` не должен
-автоматически применять персональные настройки владельца к гостю. Отдельный
-фиксированный public playback profile можно добавить позднее.
+Публичный Navidrome playback profile фиксирован на MP3 320 кбит/с и не зависит
+от персональных настроек владельца. Локальный fallback остаётся в исходном
+формате.
 
 ## Rate limiting и защита ресурсов
 
@@ -483,10 +481,10 @@ feature flag и наличие обычной пользовательской �
 - Не добавлять wildcard CORS.
 - Не менять закрытие `/admin`, `/api/map`, workers, settings и jobs.
 
-Динамические Open Graph-теги не работают через единый статический `index.html`.
-Если preview в мессенджерах понадобится, добавить отдельный server-rendered
-preview route позже; он должен применять те же проверки токена и не встраивать
-секрет в внешние URL ресурсов.
+Для link-preview crawler nginx направляет share URL на отдельный server-rendered
+endpoint со стандартными Open Graph и Twitter Card метатегами. Обычный браузер
+по тому же URL продолжает получать SPA. Preview проходит те же проверки токена,
+не содержит аудио и не увеличивает пользовательский `access_count`.
 
 ## Тестовый план
 

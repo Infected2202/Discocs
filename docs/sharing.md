@@ -65,6 +65,7 @@ DELETE /api/v1/shares/{id}
 
 ```text
 GET  /api/v1/public/shares/{token}
+GET  /api/v1/public/shares/{token}/preview
 GET  /api/v1/public/shares/{token}/cover
 GET  /api/v1/public/shares/{token}/items/{position}/audio
 HEAD /api/v1/public/shares/{token}/items/{position}/audio
@@ -74,8 +75,12 @@ Audio endpoint принимает позицию snapshot-элемента, не
 Backend проверяет `(token_hash, position)` до чтения файла или обращения в
 Navidrome. Локальный путь, owner ID и Navidrome ID в публичный JSON не попадают.
 
-Ответы используют `private, no-store`, `no-referrer`, `nosniff` и
-`noindex,nofollow,noarchive`. CORS для share не включается.
+Metadata и preview требуют revalidation (`private, no-cache`), а обложка и
+аудио кешируются только в браузере получателя на один час
+(`private, max-age=3600`). Ошибки не кешируются. Все ответы также используют
+`no-referrer`, `nosniff` и `noindex,nofollow,noarchive`; CORS для share не
+включается. Revoke немедленно закрывает новые запросы к origin, но не может
+отозвать уже полученные или сохранённые браузером байты.
 
 ## Аудио
 
@@ -83,8 +88,19 @@ Navidrome. Локальный путь, owner ID и Navidrome ID в публич
 Navidrome-треки проксируются серверным service account: credentials владельца
 не сохраняются в share и не выдаются гостю. Поддерживаются HEAD, Range и seek.
 
-Первая версия отдаёт оригинальный формат (`format=raw` для Navidrome). Личные
-настройки транскодинга создателя к гостю не применяются.
+Публичный Navidrome-поток всегда транскодируется в MP3 320 кбит/с независимо от
+личных настроек создателя. Локальный fallback-файл отдаётся в исходном формате,
+поскольку встроенного локального транскодера у backend нет.
+
+## Карточки ссылок
+
+Для preview-клиентов nginx направляет `/share/{token}` в серверный HTML endpoint.
+Он отдаёт стандартные Open Graph и Twitter Card метатеги: название трека или
+релиза, исполнителя, альбом/год, длительность, число треков и абсолютный URL
+обложки. Рекламного текста и `og:audio` в карточке нет. Формат не привязан к
+Telegram и подходит также для Steam Chat, Discord, Slack и других клиентов,
+которые поддерживают обычный link unfurl. Обычный браузер по тому же URL получает
+интерактивный SPA-плеер.
 
 ## Reverse proxy
 
@@ -95,6 +111,8 @@ Navidrome-треки проксируются серверным service account
 - не открывает admin/workers/settings/jobs;
 - маскирует секретные части `/share/{token}` и public API в access log;
 - отдаёт share page с `Referrer-Policy: no-referrer` и запретом индексации.
+- распознаёт link-preview crawler по User-Agent и отдаёт ему только безопасные
+  серверные метаданные без аудиопотока.
 
 Не публикуйте backend-порт `8711` напрямую в интернет. Внешний TLS proxy должен
 передавать исходный Host и HTTPS scheme, не логируя capability URL целиком.

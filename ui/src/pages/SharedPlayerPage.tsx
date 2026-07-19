@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { Loader2, Pause, Play, Repeat1, RotateCcw, SkipBack, SkipForward, Volume2, VolumeX } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Link, useParams } from "react-router"
@@ -250,7 +250,8 @@ export default function SharedPlayerPage() {
                     const audio = audioRef.current
                     if (audio && duration > 0) audio.currentTime = Number(event.target.value) / 1000 * duration
                   }}
-                  className="w-full accent-primary"
+                  className="share-range w-full"
+                  style={{ "--share-range-progress": `${progress}%` } as CSSProperties}
                 />
                 <div className="flex justify-between text-xs tabular-nums text-muted-foreground"><span>{formatTime(currentTime)}</span><span>{formatTime(duration)}</span></div>
               </div>
@@ -272,7 +273,10 @@ export default function SharedPlayerPage() {
                   const nextVolume = Number(event.target.value)
                   setVolume(nextVolume)
                   if (audioRef.current) audioRef.current.volume = nextVolume
-                }} className="w-full accent-primary" />
+                }}
+                  className="share-range w-full"
+                  style={{ "--share-range-progress": `${volume * 100}%` } as CSSProperties}
+                />
               </div>
             </div>
           </div>

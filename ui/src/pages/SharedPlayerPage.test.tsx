@@ -68,6 +68,19 @@ describe("SharedPlayerPage", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Second" })).toBeInTheDocument())
   })
 
+  it("renders borderless artwork-colored seek and volume controls", async () => {
+    renderPage()
+    await screen.findByRole("heading", { name: "First" })
+
+    const seek = screen.getByRole("slider", { name: "Playback position" })
+    const volume = screen.getByRole("slider", { name: "Volume" })
+    expect(seek).toHaveClass("share-range")
+    expect(volume).toHaveClass("share-range")
+    expect(seek).not.toHaveClass("accent-primary")
+    expect(volume).not.toHaveClass("accent-primary")
+    expect(volume).toHaveStyle({ "--share-range-progress": "100%" })
+  })
+
   it("shows one generic unavailable state for a rejected token", async () => {
     fetchPublicShare.mockRejectedValueOnce(new Error("404"))
     renderPage()
