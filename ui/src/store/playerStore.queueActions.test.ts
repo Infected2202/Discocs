@@ -13,6 +13,10 @@ vi.mock("@/engine/AudioEngine", () => ({
     setMuted: vi.fn(),
     setMediaSession: vi.fn(),
     registerMediaSessionHandlers: vi.fn(),
+    consumePrefetched: vi.fn().mockReturnValue(null),
+    prefetch: vi.fn().mockResolvedValue(undefined),
+    cancelPrefetch: vi.fn(),
+    clearPrefetched: vi.fn(),
   },
 }))
 
@@ -74,6 +78,8 @@ function makeEnvelope(
   } as unknown as PlaybackEnvelope
 }
 
+const audioCallbacks = vi.mocked(audioEngine.init).mock.calls[0][0]
+
 describe("player queue actions", () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -89,6 +95,7 @@ describe("player queue actions", () => {
       currentTime: 0,
       duration: 0,
       error: null,
+      playbackProfile: { transcodingEnabled: false, bitrateKbps: 192, key: "raw" },
     })
   })
 
@@ -153,5 +160,33 @@ describe("player queue actions", () => {
       position: 1,
     })
     expect(usePlayerStore.getState().queue?.items.map((item) => item.track_id)).toEqual([10, 30, 20])
+  })
+
+  it("prefetches the next queue item only after the current track is fully buffered", () => {
+    const current = makeItem("current", 10)
+    const next = makeItem("next", 20)
+    const envelope = makeEnvelope("session", [current, next], current.id)
+    usePlayerStore.setState({
+      session: envelope.session,
+      queue: envelope.queue,
+      currentTrackId: 10,
+      currentQueueItemId: current.id,
+      playbackProfile: { transcodingEnabled: false, bitrateKbps: 192, key: "raw" },
+    })
+    audioCallbacks.onFullyBuffered?.(10, "raw")
+
+    expect(audioEngine.prefetch).toHaveBeenCalledWith(20, "/audio/20", "raw")
+  })
+
+  it("plays a matching prefetched Blob without requesting a new network source", async () => {
+    vi.mocked(audioEngine.consumePrefetched).mockReturnValueOnce("blob:track-20")
+    usePlayerStore.setState({
+      currentTrack: makeTrack(20),
+      playbackProfile: { transcodingEnabled: true, bitrateKbps: 128, key: "mp3-128" },
+    })
+
+    await usePlayerStore.getState().playTrack(20, { queueItemId: "next", recordStarted: false })
+
+    expect(audioEngine.load).toHaveBeenCalledWith("blob:track-20", 20, "mp3-128", true)
   })
 })

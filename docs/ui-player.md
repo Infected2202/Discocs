@@ -57,9 +57,8 @@ two-layered (`ui/src/store/sessionPersistence.ts`):
   `timeupdate` and flushed immediately on `visibilitychange`→hidden /
   `pagehide`. On restore, if the persisted track matches the session's current
   queue item, `AudioEngine.resumeAtSeconds` seeks there — deferred until
-  `loadedmetadata`, because with `preload="none"` an immediate `currentTime`
-  write would be dropped; in practice the seek applies when the user presses
-  play.
+  `loadedmetadata`, because an immediate `currentTime` write is dropped while
+  duration is still unknown.
 
 `PlasmaFBM` destroys its WebGL context while the document is hidden and builds
 a fresh canvas when it becomes visible. This cannot prohibit mobile browsers
@@ -68,6 +67,25 @@ more likely discard candidate.
 
 Autoplay is intentionally not resumed — browsers block `play()` without a
 user gesture after a reload.
+
+## Browser audio prefetch
+
+`AudioEngine` uses `preload="auto"` for the active track and reports full
+buffering only when `TimeRanges` continuously cover the complete duration.
+After that signal, `playerStore` fetches the next queue item as a `Blob`.
+A completed Blob is consumed through a local `blob:` URL at transition time;
+an unfinished or stale prefetch is aborted and playback falls back immediately
+to the normal `/api/v1/tracks/{id}/audio` URL.
+
+The browser retains at most the active prepared Blob and one upcoming Blob.
+Object URLs are revoked after use, on profile/source changes, and on logout.
+This is intentionally an in-memory transition buffer, not offline storage.
+
+The per-user playback settings page can request MP3 transcoding at
+96/128/192/256/320 Kbit/s. The profile key is included in the audio URL and
+the backend validates it against the saved settings before forwarding
+`format`/`maxBitRate` to Navidrome. A quality change cancels buffered audio
+from the old profile.
 
 ## Flow vs autoplay refill routing
 

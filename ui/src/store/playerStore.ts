@@ -26,6 +26,7 @@ import { playerLog } from "@/lib/playerLogger"
 import { hiresArtworkUrl } from "@/lib/artworkUrl"
 import { throttle } from "@/lib/throttle"
 import type { PlaybackEnvelope, PlaybackSession, PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
+import type { PlaybackProfile } from "@/api/settings"
 
 const STORAGE_KEY = "discocs.playerState.v1"
 const REFILL_TRIGGER_EVENTS = new Set(["completed", "skipped", "liked", "disliked"])
@@ -77,6 +78,7 @@ interface PlayerState {
   volume: number
   muted: boolean
   error: string | null
+  playbackProfile: PlaybackProfile
 
   // UI state
   expanded: boolean
@@ -95,6 +97,7 @@ interface PlayerState {
   toggleAutoplay(): Promise<void>
   setAutoplayChip(chip: string): Promise<void>
   setVolume(v: number): void
+  setPlaybackProfile(profile: PlaybackProfile): void
   toggleMute(): void
   refreshQueue(): Promise<void>
   recordEvent(eventType: string, extra?: Record<string, unknown>): Promise<void>
@@ -121,6 +124,36 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
   // purpose, it's a transient in-flight flag, not something a subscriber
   // should ever render off of.
   let refillInFlight = false
+  let fullyBufferedSource: { trackId: number; profileKey: string } | null = null
+
+  function scheduleNextPrefetch() {
+    const { queue, currentQueueItemId, currentTrackId, session, playbackProfile } = get()
+    if (
+      !queue || !currentQueueItemId || currentTrackId === null
+      || session?.repeat_mode === "one"
+      || fullyBufferedSource?.trackId !== currentTrackId
+      || fullyBufferedSource.profileKey !== playbackProfile.key
+    ) return
+    const currentIndex = queue.items.findIndex((item) => item.id === currentQueueItemId)
+    const next = currentIndex >= 0 ? queue.items[currentIndex + 1] : undefined
+    if (!next) {
+      audioEngine.cancelPrefetch()
+      audioEngine.clearPrefetched()
+      return
+    }
+    const url = trackAudioUrl(next.track_id, playbackProfile.key)
+    playerLog("buffer", "prefetch next", { trackId: next.track_id, profile: playbackProfile.key })
+    void audioEngine.prefetch(next.track_id, url, playbackProfile.key)
+      .then(() => playerLog("buffer", "prefetch complete", {
+        trackId: next.track_id,
+        profile: playbackProfile.key,
+      }))
+      .catch((error: Error) => {
+        if (error.name !== "AbortError") {
+          playerLog("buffer", "prefetch failed", { trackId: next.track_id, message: error.message })
+        }
+      })
+  }
 
   // Кап записи времени в стор до ~4/сек. Chrome и так шлёт timeupdate ~4/сек,
   // но Firefox/Safari — заметно чаще; троттл делает частоту записи одинаковой
@@ -169,6 +202,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       }
     },
     onBufferUpdate: (fraction) => get()._setBuffered(fraction),
+    onFullyBuffered: (trackId, profileKey) => {
+      fullyBufferedSource = { trackId, profileKey }
+      playerLog("buffer", "current fully buffered", { trackId, profile: profileKey })
+      scheduleNextPrefetch()
+    },
     onPlaybackStateChange: (state) => get()._setPlaybackState(state),
     onEnded: () => get().handleTrackEnded(),
     onError: (message) => get()._setError(message),
@@ -210,6 +248,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       currentQueueItemId: currentItem?.id ?? null,
       currentTrack: currentItem?.track ?? null,
     })
+    scheduleNextPrefetch()
     return { session, queue, currentItem }
   }
 
@@ -306,6 +345,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     volume: initVolume,
     muted: initMuted,
     error: null,
+    playbackProfile: { transcodingEnabled: false, bitrateKbps: 192, key: "raw" },
     expanded: false,
 
     // --- Playback actions ---
@@ -345,8 +385,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       // an older position for the same track can never leak into this queue item.
       resetCurrentPosition()
 
-      const url = trackAudioUrl(trackId)
-      audioEngine.load(url)
+      const profile = get().playbackProfile
+      const prefetchedUrl = audioEngine.consumePrefetched(trackId, profile.key)
+      audioEngine.cancelPrefetch()
+      if (!prefetchedUrl) audioEngine.clearPrefetched()
+      fullyBufferedSource = null
+      const url = prefetchedUrl ?? trackAudioUrl(trackId, profile.key)
+      playerLog("buffer", prefetchedUrl ? "prefetched blob consumed" : "network source fallback", {
+        trackId,
+        profile: profile.key,
+      })
+      audioEngine.load(url, trackId, profile.key, prefetchedUrl !== null)
       audioEngine.setVolume(get().volume)
       audioEngine.setMuted(get().muted)
 
@@ -526,6 +575,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       persistVolume(clamped, get().muted)
     },
 
+    setPlaybackProfile(profile) {
+      if (profile.key === get().playbackProfile.key) return
+      fullyBufferedSource = null
+      audioEngine.cancelPrefetch()
+      audioEngine.clearPrefetched()
+      set({ playbackProfile: profile })
+      playerLog("buffer", "playback profile changed", { profile: profile.key })
+    },
+
     toggleMute() {
       const muted = !get().muted
       playerLog("volume", "toggleMute", { muted, volume: get().volume })
@@ -690,7 +748,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         applyEnvelope(envelope)
         const { currentTrackId, currentTrack } = get()
         if (currentTrackId) {
-          audioEngine.load(trackAudioUrl(currentTrackId))
+          const profile = get().playbackProfile
+          audioEngine.load(
+            trackAudioUrl(currentTrackId, profile.key),
+            currentTrackId,
+            profile.key,
+          )
           audioEngine.setVolume(get().volume)
           audioEngine.setMuted(get().muted)
           // Вернуть сохранённую позицию — сработает, когда пользователь
@@ -731,6 +794,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       throttledSetTime.cancel()
       throttledPersistPosition.cancel()
       refillInFlight = false
+      fullyBufferedSource = null
       audioEngine.clear()
       set({
         session: null,

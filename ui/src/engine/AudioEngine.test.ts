@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import type { TrackSummary } from "@/api/types"
 
 // Minimal TimeRanges mock — enough for AudioEngine's buffered-range scan
@@ -157,7 +157,7 @@ describe("AudioEngine.resumeAtSeconds()", () => {
     expect(el.currentTime).toBe(42)
   })
 
-  it("откладывает перемотку до loadedmetadata при preload='none'", async () => {
+  it("откладывает перемотку до loadedmetadata, пока duration неизвестна", async () => {
     const engine = await makeEngine()
     engine.load("http://example.com/track1.flac")
     const el = audioInstances[audioInstances.length - 1]
@@ -200,6 +200,13 @@ describe("AudioEngine.resumeAtSeconds()", () => {
 })
 
 describe("AudioEngine — buffered reporting", () => {
+  it("использует preload=auto для активной буферизации", async () => {
+    const engine = await makeEngine()
+    engine.load("http://example.com/track1.flac")
+
+    expect(audioInstances.at(-1)?.preload).toBe("auto")
+  })
+
   it("вычисляет buffered как долю duration из диапазона, покрывающего currentTime", async () => {
     const engine = await makeEngine()
     const onBufferUpdate = vi.fn()
@@ -265,6 +272,65 @@ describe("AudioEngine — buffered reporting", () => {
     el.emit("progress")
 
     expect(onBufferUpdate).not.toHaveBeenCalled()
+  })
+
+  it("один раз сообщает о полном покрытии duration с допуском", async () => {
+    const engine = await makeEngine()
+    const onFullyBuffered = vi.fn()
+    engine.init({
+      onTimeUpdate: vi.fn(), onBufferUpdate: vi.fn(), onFullyBuffered,
+      onPlaybackStateChange: vi.fn(), onEnded: vi.fn(), onError: vi.fn(),
+    })
+    engine.load("http://example.com/track1.flac", 7, "mp3-192")
+    const el = audioInstances.at(-1)!
+    el.duration = 100
+    el.buffered = new MockTimeRanges([[0, 99.8]])
+
+    el.emit("progress")
+    el.emit("canplaythrough")
+
+    expect(onFullyBuffered).toHaveBeenCalledTimes(1)
+    expect(onFullyBuffered).toHaveBeenCalledWith(7, "mp3-192")
+  })
+
+  it("не считает буфер полным при разрыве TimeRanges", async () => {
+    const engine = await makeEngine()
+    const onFullyBuffered = vi.fn()
+    engine.init({
+      onTimeUpdate: vi.fn(), onBufferUpdate: vi.fn(), onFullyBuffered,
+      onPlaybackStateChange: vi.fn(), onEnded: vi.fn(), onError: vi.fn(),
+    })
+    engine.load("http://example.com/track1.flac", 7, "raw")
+    const el = audioInstances.at(-1)!
+    el.duration = 100
+    el.buffered = new MockTimeRanges([[0, 50], [60, 100]])
+
+    el.emit("progress")
+
+    expect(onFullyBuffered).not.toHaveBeenCalled()
+  })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+describe("AudioEngine — Blob prefetch", () => {
+  it("загружает следующий трек один раз и отдаёт object URL только совпадающему профилю", async () => {
+    const engine = await makeEngine()
+    const createObjectURL = vi.fn().mockReturnValue("blob:next")
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      blob: vi.fn().mockResolvedValue(new Blob(["audio"])),
+    }))
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL: vi.fn() })
+
+    await engine.prefetch(2, "/audio/2", "mp3-192")
+    await engine.prefetch(2, "/audio/2", "mp3-192")
+
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(engine.consumePrefetched(2, "raw")).toBeNull()
+    expect(engine.consumePrefetched(2, "mp3-192")).toBe("blob:next")
   })
 })
 

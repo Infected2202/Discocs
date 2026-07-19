@@ -14,6 +14,10 @@ vi.mock("@/engine/AudioEngine", () => ({
     setMediaSession: vi.fn(),
     registerMediaSessionHandlers: vi.fn(),
     resumeAtSeconds: vi.fn(),
+    consumePrefetched: vi.fn().mockReturnValue(null),
+    prefetch: vi.fn().mockResolvedValue(undefined),
+    cancelPrefetch: vi.fn(),
+    clearPrefetched: vi.fn(),
   },
 }))
 

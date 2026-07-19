@@ -193,6 +193,32 @@ Implementation files: `app/api/playback.py`, `app/store/playback.py`,
 `app/store/_helpers.py`, `app/serializers/playback.py`, `app/models.py`
 (session/queue/event dataclasses and enums).
 
+### Browser audio buffering and transcoding
+
+The web player keeps buffering on the client device. The active
+`HTMLAudioElement` uses `preload="auto"`; once its `TimeRanges` cover the full
+duration, `playerStore` explicitly fetches the next queue item's `/audio`
+response as a `Blob`. A completed Blob is played through a local `blob:` URL,
+so the track transition does not wait for a new mobile-network request. Only
+the active prepared Blob and one next Blob are retained. Queue/profile changes
+abort stale fetches, and object URLs are revoked after use or logout. An early
+skip never waits for prefetch and falls back to the ordinary network URL.
+
+Playback settings are per-user keys in `user_settings`:
+
+- `transcoding_enabled` (default `false`);
+- `transcoding_bitrate_kbps` (`96`, `128`, `192`, `256`, or `320`; default
+  `192`).
+
+Raw playback sends `format=raw` to Navidrome. Enabled transcoding sends
+`format=mp3`, `maxBitRate=<quality>`, and `estimateContentLength=true` using
+the active user's Navidrome credentials. Navidrome must have an applicable MP3
+transcoding profile. The browser keeps no persistent/offline audio cache.
+
+Implementation files: `ui/src/engine/AudioEngine.ts`,
+`ui/src/store/playerStore.ts`, `ui/src/pages/SettingsPage.tsx`,
+`app/api/tracks.py`, `app/api/settings.py`, and `app/store/settings.py`.
+
 ## Autoplay
 
 Continues whatever source is currently playing (release, artist, track,

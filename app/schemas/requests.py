@@ -4,6 +4,8 @@ Extracted from app/main.py.
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR
@@ -221,6 +223,8 @@ class UserSettingsPatchRequest(BaseModel):
     """Partial update for per-user settings; unset fields are left untouched."""
 
     language: str | None = Field(default=None, pattern="^(en|ru)$")
+    transcoding_enabled: bool | None = None
+    transcoding_bitrate_kbps: Literal[96, 128, 192, 256, 320] | None = None
 
     model_config = ConfigDict(extra="forbid")
 

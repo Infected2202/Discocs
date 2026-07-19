@@ -13,6 +13,7 @@ import { useArtworkTheme } from "@/hooks/useArtworkTheme"
 import { useNavidromeStore } from "@/store/navidromeStore"
 import { usePlayerStore } from "@/store/playerStore"
 import { useUserSettings } from "@/api/hooks/useUserSettings"
+import { playbackProfile } from "@/api/settings"
 import PlasmaFBM from "@/components/player/PlasmaFBM"
 import { ScrollContext } from "@/contexts/ScrollContext"
 
@@ -20,7 +21,7 @@ export default function AppShell() {
   useKeyboardShortcuts()
   useTrackTitle()
   useArtworkTheme()
-  useUserSettings()
+  const { data: userSettings } = useUserSettings()
 
   const mainRef = useRef<HTMLElement>(null)
 
@@ -38,7 +39,17 @@ export default function AppShell() {
   }, [fetchLikedIds])
 
   const restoreSession = usePlayerStore((s) => s.restoreSession)
-  useEffect(() => { void restoreSession() }, [restoreSession])
+  const setPlaybackProfile = usePlayerStore((s) => s.setPlaybackProfile)
+  const restoredSession = useRef(false)
+  useEffect(() => {
+    if (userSettings) setPlaybackProfile(playbackProfile(userSettings))
+  }, [setPlaybackProfile, userSettings])
+  useEffect(() => {
+    if (userSettings && !restoredSession.current) {
+      restoredSession.current = true
+      void restoreSession()
+    }
+  }, [restoreSession, userSettings])
 
   const [plasmaAccent, setPlasmaAccent] = useState(
     () => document.documentElement.dataset.trackAccentColor ?? "#3b6bff"

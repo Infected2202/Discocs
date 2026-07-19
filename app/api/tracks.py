@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from app.api.deps import context, text_search_embedder
 from app.audio_source import navidrome_item_id_for_track
-from app.config import MUQ_MULAN_MODEL
+from app.config import MUQ_MULAN_MODEL, NavidromeSettings
 from app.navidrome import NavidromeClient
 from app.recommender import Recommender
 from app.schemas.requests import (
@@ -44,6 +44,7 @@ from app.services.cover import (
 )
 from app.state import COVER_TIMEOUT_SECONDS, MAX_MIX_SEEDS
 from app.store import track_dict
+from app.user_context import current_navidrome_credentials
 from app.models import Track
 
 logger = logging.getLogger(__name__)
@@ -342,7 +343,11 @@ _TRACK_AUDIO_RESPONSES = {
 
 @router.head("/tracks/{track_id}/audio", responses=_TRACK_AUDIO_RESPONSES)
 @router.get("/tracks/{track_id}/audio", responses=_TRACK_AUDIO_RESPONSES)
-def get_track_audio(track_id: int, request: Request) -> Response:
+def get_track_audio(
+    track_id: int,
+    request: Request,
+    profile: Annotated[str | None, Query()] = None,
+) -> Response:
     store, settings = context()
     track = store.get_track(track_id)
     if track is None:
@@ -350,12 +355,18 @@ def get_track_audio(track_id: int, request: Request) -> Response:
         raise HTTPException(status_code=404, detail=_TRACK_NOT_FOUND)
     item_id = navidrome_item_id_for_track(store, track)
     if item_id is not None:
+        stream_params, profile_key = playback_stream_profile(store)
+        if profile is not None and profile != profile_key:
+            raise HTTPException(status_code=409, detail="Playback profile changed")
+        navidrome_settings = active_user_navidrome_settings(settings)
         try:
             response = navidrome_audio_stream_response(
                 settings,
                 item_id,
                 range_header=request.headers.get("range"),
                 method=request.method,
+                navidrome_settings=navidrome_settings,
+                stream_params=stream_params,
             )
         except Exception as exc:
             logger.warning(
@@ -631,15 +642,22 @@ def navidrome_audio_stream_response(
     *,
     range_header: str | None = None,
     method: str = "GET",
+    navidrome_settings: NavidromeSettings | None = None,
+    stream_params: dict[str, object] | None = None,
 ) -> StreamingResponse:
-    client = NavidromeClient(settings.navidrome)  # type: ignore[attr-defined]
+    navidrome_settings = navidrome_settings or settings.navidrome  # type: ignore[attr-defined]
+    client = NavidromeClient(navidrome_settings)
     headers = {"Accept": "*/*"}
     if range_header:
         headers["Range"] = range_header
     method = "HEAD" if method.upper() == "HEAD" else "GET"
-    request = UrlRequest(client.url("stream", {"id": item_id}), headers=headers, method=method)
+    request = UrlRequest(
+        client.url("stream", {"id": item_id, **(stream_params or {})}),
+        headers=headers,
+        method=method,
+    )
     try:
-        upstream = urlopen(request, timeout=float(settings.navidrome.timeout_seconds))  # type: ignore[attr-defined]
+        upstream = urlopen(request, timeout=float(navidrome_settings.timeout_seconds))
     except HTTPError as exc:
         raise HTTPException(
             status_code=exc.code,
@@ -676,6 +694,42 @@ def navidrome_audio_stream_response(
         media_type=content_type,
         headers=response_headers,
     )
+
+
+def playback_stream_profile(store: object) -> tuple[dict[str, object], str]:
+    user_settings = store.get_user_settings()  # type: ignore[attr-defined]
+    enabled = bool(user_settings.get("transcoding_enabled", False))
+    if not enabled:
+        return {"format": "raw"}, "raw"
+    bitrate = int(user_settings.get("transcoding_bitrate_kbps", 192))
+    if bitrate not in {96, 128, 192, 256, 320}:
+        bitrate = 192
+    return (
+        {
+            "format": "mp3",
+            "maxBitRate": bitrate,
+            "estimateContentLength": "true",
+        },
+        f"mp3-{bitrate}",
+    )
+
+
+def active_user_navidrome_settings(settings: object) -> NavidromeSettings:
+    navidrome_settings = settings.navidrome  # type: ignore[attr-defined]
+    credentials = current_navidrome_credentials()
+    if credentials is not None:
+        return replace(
+            navidrome_settings,
+            user=credentials.username,
+            password=credentials.password,
+            auth_mode="token",
+        )
+    if settings.auth.enabled:  # type: ignore[attr-defined]
+        raise HTTPException(
+            status_code=401,
+            detail="Active user Navidrome credentials are required; sign in again",
+        )
+    return navidrome_settings
 
 
 def navidrome_stream_headers(headers: object) -> dict[str, str]:

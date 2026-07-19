@@ -6,6 +6,7 @@ interface AudioEngineCallbacks {
   onTimeUpdate(currentTime: number, duration: number): void
   onPlaybackStateChange(state: PlaybackState): void
   onBufferUpdate(fraction: number): void
+  onFullyBuffered?(trackId: number, profileKey: string): void
   onEnded(): void
   onError(message: string): void
 }
@@ -13,6 +14,13 @@ interface AudioEngineCallbacks {
 class AudioEngine {
   private el: HTMLAudioElement
   private callbacks: AudioEngineCallbacks | null = null
+  private activeTrackId: number | null = null
+  private activeProfileKey = "raw"
+  private activeObjectUrl: string | null = null
+  private fullyBufferedReported = false
+  private prefetched: { trackId: number; profileKey: string; objectUrl: string } | null = null
+  private prefetchController: AbortController | null = null
+  private prefetchTarget: { trackId: number; profileKey: string } | null = null
 
   constructor() {
     this.el = this.createElement()
@@ -22,12 +30,21 @@ class AudioEngine {
     this.callbacks = callbacks
   }
 
-  load(url: string) {
+  load(
+    url: string,
+    trackId: number | null = null,
+    profileKey = "raw",
+    fullyAvailable = false,
+  ) {
     // Явно освобождаем буфер старого элемента — src='' надёжнее removeAttribute
     const prev = this.el
     prev.pause()
     prev.src = ""
     prev.load()
+    if (this.activeObjectUrl && this.activeObjectUrl !== url) {
+      URL.revokeObjectURL(this.activeObjectUrl)
+      this.activeObjectUrl = null
+    }
 
     // Новый элемент — Chrome гарантированно освобождает нативный PCM буфер
     // когда старый элемент теряет все ссылки и GC его собирает
@@ -36,10 +53,62 @@ class AudioEngine {
     this.el.muted = prev.muted
     this.el.src = url
     this.el.load()
+    this.activeTrackId = trackId
+    this.activeProfileKey = profileKey
+    this.fullyBufferedReported = false
 
     // Reset immediately — otherwise the buffered indicator briefly shows
     // the previous track's fully-downloaded range on the new one.
     this.callbacks?.onBufferUpdate(0)
+    if (fullyAvailable && trackId !== null) this.reportFullyBuffered()
+  }
+
+  async prefetch(trackId: number, url: string, profileKey: string): Promise<void> {
+    if (this.prefetched?.trackId === trackId && this.prefetched.profileKey === profileKey) return
+    if (this.prefetchTarget?.trackId === trackId && this.prefetchTarget.profileKey === profileKey) return
+    this.cancelPrefetch()
+    this.clearPrefetched()
+    const controller = new AbortController()
+    this.prefetchController = controller
+    this.prefetchTarget = { trackId, profileKey }
+    try {
+      const response = await fetch(url, {
+        credentials: "same-origin",
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error(`Audio prefetch failed: HTTP ${response.status}`)
+      const blob = await response.blob()
+      if (controller.signal.aborted) return
+      if (this.prefetchTarget?.trackId !== trackId || this.prefetchTarget.profileKey !== profileKey) return
+      this.prefetched = { trackId, profileKey, objectUrl: URL.createObjectURL(blob) }
+    } finally {
+      if (this.prefetchController === controller) {
+        this.prefetchController = null
+        this.prefetchTarget = null
+      }
+    }
+  }
+
+  consumePrefetched(trackId: number, profileKey: string): string | null {
+    if (this.prefetched?.trackId !== trackId || this.prefetched.profileKey !== profileKey) return null
+    const objectUrl = this.prefetched.objectUrl
+    this.prefetched = null
+    if (this.activeObjectUrl && this.activeObjectUrl !== objectUrl) {
+      URL.revokeObjectURL(this.activeObjectUrl)
+    }
+    this.activeObjectUrl = objectUrl
+    return objectUrl
+  }
+
+  cancelPrefetch() {
+    this.prefetchController?.abort()
+    this.prefetchController = null
+    this.prefetchTarget = null
+  }
+
+  clearPrefetched() {
+    if (this.prefetched) URL.revokeObjectURL(this.prefetched.objectUrl)
+    this.prefetched = null
   }
 
   async play(): Promise<void> {
@@ -56,6 +125,12 @@ class AudioEngine {
     prev.pause()
     prev.src = ""
     prev.load()
+    this.cancelPrefetch()
+    this.clearPrefetched()
+    if (this.activeObjectUrl) URL.revokeObjectURL(this.activeObjectUrl)
+    this.activeObjectUrl = null
+    this.activeTrackId = null
+    this.fullyBufferedReported = false
 
     this.el = this.createElement()
     this.el.volume = volume
@@ -88,7 +163,7 @@ class AudioEngine {
 
   /**
    * Seek as soon as the track's metadata is available. Usable right after
-   * load(): with preload="none" duration is unknown until playback starts,
+   * load(): duration can remain unknown until metadata arrives,
    * so an immediate currentTime write would be silently dropped.
    */
   resumeAtSeconds(seconds: number) {
@@ -156,7 +231,7 @@ class AudioEngine {
 
   private createElement(): HTMLAudioElement {
     const el = new Audio()
-    el.preload = "none"
+    el.preload = "auto"
     this.attachListeners(el)
     return el
   }
@@ -167,6 +242,7 @@ class AudioEngine {
     })
 
     const reportBuffered = () => {
+      if (el !== this.el) return
       if (!Number.isFinite(el.duration) || el.duration <= 0) return
       // `buffered` can have gaps after a seek — use the range that covers
       // (or is closest ahead of) currentTime, not just the last one.
@@ -178,10 +254,12 @@ class AudioEngine {
         }
       }
       this.callbacks?.onBufferUpdate(Math.min(1, end / el.duration))
+      if (this.bufferCoversDuration(el.buffered, el.duration)) this.reportFullyBuffered()
     }
 
     el.addEventListener("progress", reportBuffered)
     el.addEventListener("loadedmetadata", reportBuffered)
+    el.addEventListener("durationchange", reportBuffered)
     el.addEventListener("canplaythrough", reportBuffered)
 
     el.addEventListener("play", () => {
@@ -215,6 +293,26 @@ class AudioEngine {
       this.callbacks?.onPlaybackStateChange("error")
       this.callbacks?.onError(msg)
     })
+  }
+
+  private bufferCoversDuration(buffered: TimeRanges, duration: number): boolean {
+    if (!Number.isFinite(duration) || duration <= 0 || buffered.length === 0) return false
+    const tolerance = 0.25
+    let coveredEnd = 0
+    for (let i = 0; i < buffered.length; i++) {
+      const start = buffered.start(i)
+      const end = buffered.end(i)
+      if (start > coveredEnd + tolerance) return false
+      coveredEnd = Math.max(coveredEnd, end)
+      if (coveredEnd >= duration - tolerance) return true
+    }
+    return false
+  }
+
+  private reportFullyBuffered() {
+    if (this.fullyBufferedReported || this.activeTrackId === null) return
+    this.fullyBufferedReported = true
+    this.callbacks?.onFullyBuffered?.(this.activeTrackId, this.activeProfileKey)
   }
 }
 

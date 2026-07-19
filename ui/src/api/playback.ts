@@ -106,6 +106,6 @@ export function refillAutoplay(params: RefillParams): Promise<AutoplayRefillResp
   })
 }
 
-export function trackAudioUrl(trackId: number): string {
-  return `/api/v1/tracks/${trackId}/audio`
+export function trackAudioUrl(trackId: number, profileKey = "raw"): string {
+  return `/api/v1/tracks/${trackId}/audio?profile=${encodeURIComponent(profileKey)}`
 }

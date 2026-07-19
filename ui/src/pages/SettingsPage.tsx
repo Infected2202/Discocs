@@ -3,6 +3,68 @@ import { useTranslation } from "react-i18next"
 import { CheckCircle2, XCircle, Loader2, Radio, Activity } from "lucide-react"
 import { apiFetch, apiUrl } from "@/api/client"
 import { Button } from "@/components/ui/button"
+import { useUserSettings, useUpdateUserSettings } from "@/api/hooks/useUserSettings"
+import type { TranscodingBitrate } from "@/api/settings"
+
+const TRANSCODING_BITRATES: TranscodingBitrate[] = [96, 128, 192, 256, 320]
+
+function PlaybackSection() {
+  const { t } = useTranslation("settings")
+  const { data: settings, isLoading } = useUserSettings()
+  const update = useUpdateUserSettings()
+
+  if (isLoading || !settings) {
+    return <Loader2 size={14} className="animate-spin text-muted-foreground" />
+  }
+
+  const enabled = settings.transcoding_enabled
+  return (
+    <section className="space-y-5">
+      <div>
+        <h2 className="text-base font-semibold">{t("playback.heading")}</h2>
+        <p className="text-sm text-muted-foreground mt-0.5">{t("playback.description")}</p>
+      </div>
+      <div className="space-y-4 rounded-md bg-muted px-4 py-3">
+        <div className="flex items-center justify-between gap-4">
+          <label htmlFor="transcoding-enabled" className="text-sm font-medium">
+            {t("playback.transcoding")}
+          </label>
+          <button
+            id="transcoding-enabled"
+            type="button"
+            role="switch"
+            aria-checked={enabled}
+            disabled={update.isPending}
+            onClick={() => update.mutate({ transcoding_enabled: !enabled })}
+            className={`relative h-6 w-11 rounded-full transition-colors ${enabled ? "bg-primary" : "bg-foreground/20"}`}
+          >
+            <span className={`absolute top-1 h-4 w-4 rounded-full bg-white transition-transform ${enabled ? "left-6" : "left-1"}`} />
+          </button>
+        </div>
+        <div className="space-y-1.5">
+          <label htmlFor="transcoding-quality" className="text-sm font-medium">
+            {t("playback.quality")}
+          </label>
+          <select
+            id="transcoding-quality"
+            value={settings.transcoding_bitrate_kbps}
+            disabled={!enabled || update.isPending}
+            onChange={(event) => update.mutate({
+              transcoding_bitrate_kbps: Number(event.target.value) as TranscodingBitrate,
+            })}
+            className="h-9 w-full rounded-md border border-foreground/15 bg-background px-3 text-sm disabled:opacity-50"
+          >
+            {TRANSCODING_BITRATES.map((bitrate) => (
+              <option key={bitrate} value={bitrate}>{bitrate} {t("playback.kbps")}</option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground">{t("playback.qualityHint")}</p>
+        </div>
+        {update.isError && <p className="text-xs text-destructive">{t("playback.saveError")}</p>}
+      </div>
+    </section>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Flow Profile section
@@ -137,6 +199,7 @@ export default function SettingsPage() {
         </p>
       </div>
 
+      <PlaybackSection />
       <FlowProfileSection />
     </div>
   )

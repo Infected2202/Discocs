@@ -14,7 +14,11 @@ def test_store_get_user_settings_defaults(tmp_path: Path):
     store = Store(tmp_path / "app.db")
     store.init()
 
-    assert store.get_user_settings() == {"language": "en"}
+    assert store.get_user_settings() == {
+        "language": "en",
+        "transcoding_enabled": False,
+        "transcoding_bitrate_kbps": 192,
+    }
 
 
 def test_store_set_user_settings_round_trip(tmp_path: Path):
@@ -23,8 +27,8 @@ def test_store_set_user_settings_round_trip(tmp_path: Path):
 
     result = store.set_user_settings({"language": "ru"})
 
-    assert result == {"language": "ru"}
-    assert store.get_user_settings() == {"language": "ru"}
+    assert result["language"] == "ru"
+    assert store.get_user_settings()["language"] == "ru"
 
 
 def test_store_set_user_settings_overwrites_existing_key(tmp_path: Path):
@@ -34,7 +38,7 @@ def test_store_set_user_settings_overwrites_existing_key(tmp_path: Path):
     store.set_user_settings({"language": "ru"})
     result = store.set_user_settings({"language": "en"})
 
-    assert result == {"language": "en"}
+    assert result["language"] == "en"
 
 
 def _init_api_store(tmp_path: Path, monkeypatch) -> Store:
@@ -57,7 +61,11 @@ def test_api_get_user_settings_defaults(tmp_path: Path, monkeypatch):
     response = client.get("/api/v1/me/settings")
 
     assert response.status_code == 200
-    assert response.json() == {"language": "en"}
+    assert response.json() == {
+        "language": "en",
+        "transcoding_enabled": False,
+        "transcoding_bitrate_kbps": 192,
+    }
 
 
 def test_api_patch_user_settings_updates_language(tmp_path: Path, monkeypatch):
@@ -67,8 +75,37 @@ def test_api_patch_user_settings_updates_language(tmp_path: Path, monkeypatch):
     response = client.patch("/api/v1/me/settings", json={"language": "ru"})
 
     assert response.status_code == 200
-    assert response.json() == {"language": "ru"}
-    assert client.get("/api/v1/me/settings").json() == {"language": "ru"}
+    assert response.json()["language"] == "ru"
+    assert client.get("/api/v1/me/settings").json()["language"] == "ru"
+
+
+def test_api_patch_user_settings_updates_transcoding_partially(tmp_path: Path, monkeypatch):
+    _init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    enabled = client.patch("/api/v1/me/settings", json={"transcoding_enabled": True})
+    quality = client.patch(
+        "/api/v1/me/settings",
+        json={"transcoding_bitrate_kbps": 128},
+    )
+
+    assert enabled.json()["transcoding_enabled"] is True
+    assert enabled.json()["transcoding_bitrate_kbps"] == 192
+    assert quality.json()["transcoding_enabled"] is True
+    assert quality.json()["transcoding_bitrate_kbps"] == 128
+
+
+def test_api_patch_user_settings_rejects_unknown_bitrate(tmp_path: Path, monkeypatch):
+    _init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.patch(
+        "/api/v1/me/settings",
+        json={"transcoding_bitrate_kbps": 144},
+    )
+
+    assert response.status_code == 422
+    assert client.get("/api/v1/me/settings").json()["transcoding_bitrate_kbps"] == 192
 
 
 def test_api_patch_user_settings_rejects_unknown_language(tmp_path: Path, monkeypatch):
@@ -78,7 +115,7 @@ def test_api_patch_user_settings_rejects_unknown_language(tmp_path: Path, monkey
     response = client.patch("/api/v1/me/settings", json={"language": "fr"})
 
     assert response.status_code == 422
-    assert client.get("/api/v1/me/settings").json() == {"language": "en"}
+    assert client.get("/api/v1/me/settings").json()["language"] == "en"
 
 
 def test_api_patch_user_settings_rejects_unknown_field(tmp_path: Path, monkeypatch):
@@ -97,7 +134,7 @@ def test_api_patch_user_settings_empty_body_is_a_noop(tmp_path: Path, monkeypatc
     response = client.patch("/api/v1/me/settings", json={})
 
     assert response.status_code == 200
-    assert response.json() == {"language": "en"}
+    assert response.json()["language"] == "en"
 
 
 def _init_multiuser_store(tmp_path: Path, monkeypatch) -> Store:
@@ -140,9 +177,14 @@ def test_user_settings_are_isolated_per_account(tmp_path: Path, monkeypatch):
     alice = _login("alice")
     bob = _login("bob")
 
-    alice_patch = alice.patch("/api/v1/me/settings", json={"language": "ru"})
+    alice_patch = alice.patch(
+        "/api/v1/me/settings",
+        json={"language": "ru", "transcoding_enabled": True},
+    )
     assert alice_patch.status_code == 200
-    assert alice_patch.json() == {"language": "ru"}
+    assert alice_patch.json()["language"] == "ru"
 
-    assert bob.get("/api/v1/me/settings").json() == {"language": "en"}
-    assert alice.get("/api/v1/me/settings").json() == {"language": "ru"}
+    assert bob.get("/api/v1/me/settings").json()["language"] == "en"
+    assert alice.get("/api/v1/me/settings").json()["language"] == "ru"
+    assert bob.get("/api/v1/me/settings").json()["transcoding_enabled"] is False
+    assert alice.get("/api/v1/me/settings").json()["transcoding_enabled"] is True

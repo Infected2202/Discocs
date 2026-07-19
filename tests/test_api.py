@@ -34,6 +34,11 @@ from app.navidrome import DownloadedTrack
 from app.navidrome import NavidromeSong
 from app.scanner import ScannedTrack
 from app.store import INITIALIZED_DB_PATHS, PlaybackEventCreate, Store, Track, TrackFeature, TrackPrediction
+from app.user_context import (
+    NavidromeCredentials,
+    reset_current_navidrome_credentials,
+    set_current_navidrome_credentials,
+)
 
 
 def playback_event(event_type: str, **kwargs) -> PlaybackEventCreate:
@@ -2686,6 +2691,9 @@ def test_track_audio_uses_navidrome_mapping_for_local_path(tmp_path: Path, monke
     monkeypatch.setenv("DISCOCS_NAVIDROME_AUTH_MODE", "plain")
     track_id = add_track(store, tmp_path / "missing.flac")
     store.upsert_external_track("navidrome", "song-1", track_id)
+    store.set_user_settings(
+        {"transcoding_enabled": True, "transcoding_bitrate_kbps": 128}
+    )
     seen = {}
 
     class FakeStreamResponse:
@@ -2729,12 +2737,57 @@ def test_track_audio_uses_navidrome_mapping_for_local_path(tmp_path: Path, monke
     assert response.content == b"navidrome-audio"
     assert seen["path"] == "/rest/stream.view"
     assert seen["query"]["id"] == ["song-1"]
+    assert seen["query"]["format"] == ["mp3"]
+    assert seen["query"]["maxBitRate"] == ["128"]
+    assert seen["query"]["estimateContentLength"] == ["true"]
     assert seen["query"]["u"] == ["tester"]
     assert seen["query"]["p"] == ["secret"]
     assert seen["range"] == "bytes=0-14"
     assert seen["closed"] is True
     assert store.get_track(track_id).missing_at is None
     assert not (tmp_path / "tmp" / "navidrome").exists()
+
+
+def test_track_audio_profile_defaults_to_raw(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+
+    params, key = api_tracks_module.playback_stream_profile(store)
+
+    assert key == "raw"
+    assert params == {"format": "raw"}
+
+
+def test_track_audio_uses_active_user_navidrome_credentials(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("DISCOCS_NAVIDROME_USER", "service-user")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_PASSWORD", "service-secret")
+    settings = Settings.from_env()
+    token = set_current_navidrome_credentials(
+        NavidromeCredentials(username="alice", password="alice-secret")
+    )
+    try:
+        nav = api_tracks_module.active_user_navidrome_settings(settings)
+    finally:
+        reset_current_navidrome_credentials(token)
+
+    assert nav.user == "alice"
+    assert nav.password == "alice-secret"
+    assert nav.auth_mode == "token"
+
+
+def test_track_audio_rejects_stale_browser_profile(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    track_id = add_track(store, tmp_path / "missing.flac")
+    store.upsert_external_track("navidrome", "song-1", track_id)
+    store.set_user_settings(
+        {"transcoding_enabled": True, "transcoding_bitrate_kbps": 192}
+    )
+    client = TestClient(app)
+
+    response = client.get(f"/api/v1/tracks/{track_id}/audio?profile=raw")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Playback profile changed"
 
 
 def test_track_audio_head_proxies_navidrome_stream_headers(tmp_path: Path, monkeypatch):

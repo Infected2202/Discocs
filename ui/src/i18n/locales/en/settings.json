@@ -1,7 +1,16 @@
 {
   "page": {
     "heading": "Settings",
-    "description": "Manage your personal recommendation profile."
+    "description": "Manage playback and your personal recommendation profile."
+  },
+  "playback": {
+    "heading": "Playback",
+    "description": "Prepare upcoming audio in the browser and control mobile data usage.",
+    "transcoding": "Transcoding",
+    "quality": "Streaming quality",
+    "kbps": "kbps",
+    "qualityHint": "Lower quality uses less mobile data and lets the next track buffer faster.",
+    "saveError": "Could not save playback settings."
   },
   "flowProfile": {
     "heading": "Flow Profile",
