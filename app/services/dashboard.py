@@ -313,7 +313,7 @@ def _dashboard_liked_artists(
             FROM user_artist_preferences p
             JOIN artists a ON a.id = p.artist_id
             WHERE p.user_id = discocs_user_id() AND p.liked = 1
-            ORDER BY p.updated_at DESC
+            ORDER BY COALESCE(p.liked_at, p.updated_at) DESC
             LIMIT ? OFFSET ?
             """,
             (limit, offset),
@@ -351,7 +351,7 @@ def _dashboard_liked_releases(
             FROM user_release_preferences p
             JOIN releases r ON r.id = p.release_id
             WHERE p.user_id = discocs_user_id() AND p.liked = 1
-            ORDER BY p.updated_at DESC
+            ORDER BY COALESCE(p.liked_at, p.updated_at) DESC
             LIMIT ? OFFSET ?
             """,
             (limit, offset),

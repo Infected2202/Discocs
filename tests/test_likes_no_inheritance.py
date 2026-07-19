@@ -181,3 +181,76 @@ def test_sync_deduplicates_repeated_ids(tmp_path: Path):
     )
 
     assert store.get_track_preference(track_id).liked is True
+
+
+def test_liked_playback_event_does_not_set_the_like_flag(tmp_path: Path):
+    """The star endpoint owns `liked`; the event is only a behavioural signal."""
+    store, track_id, _release_id, _artist_id = _store_with_track(tmp_path)
+
+    store.record_playback_event(
+        PlaybackEventCreate(event_type="liked", track_id=track_id)
+    )
+
+    pref = store.get_track_preference(track_id)
+    assert pref.liked is False
+    assert pref.score > 0
+
+
+def test_dislike_event_does_not_clear_a_navidrome_backed_like(tmp_path: Path):
+    """A local dislike must not fight the mirror — the next sync would undo it."""
+    store, track_id, _release_id, _artist_id = _store_with_track(tmp_path)
+    store.set_track_liked(track_id, True)
+
+    store.record_playback_event(
+        PlaybackEventCreate(event_type="disliked", track_id=track_id)
+    )
+
+    pref = store.get_track_preference(track_id)
+    assert pref.disliked is True
+    assert pref.liked is True
+
+
+def test_recompute_preserves_likes_it_cannot_rebuild(tmp_path: Path):
+    """Replaying events cannot reconstruct likes — they must be carried across."""
+    store, track_id, release_id, artist_id = _store_with_track(tmp_path)
+    store.set_track_liked(track_id, True)
+    store.set_release_liked(release_id, True)
+    store.set_artist_liked(artist_id, True)
+    store.record_playback_event(
+        PlaybackEventCreate(event_type="play_threshold_reached", track_id=track_id)
+    )
+
+    store.recompute_user_preferences()
+
+    assert _liked(store, track_id, release_id, artist_id) == (True, True, True)
+
+
+def test_recompute_keeps_the_original_liked_at(tmp_path: Path):
+    store, _track_id, _release_id, artist_id = _store_with_track(tmp_path)
+    store.set_artist_liked(artist_id, True)
+    with store.connect() as conn:
+        before = conn.execute(
+            "SELECT liked_at FROM user_artist_preferences WHERE artist_id = ?",
+            (artist_id,),
+        ).fetchone()["liked_at"]
+
+    store.recompute_user_preferences()
+
+    with store.connect() as conn:
+        after = conn.execute(
+            "SELECT liked_at FROM user_artist_preferences WHERE artist_id = ?",
+            (artist_id,),
+        ).fetchone()["liked_at"]
+    assert after == before
+
+
+def test_recompute_drops_behavioural_state_of_unliked_rows(tmp_path: Path):
+    """The carry-over must not resurrect rows that were never liked."""
+    store, track_id, _release_id, artist_id = _store_with_track(tmp_path)
+    store.record_playback_event(
+        PlaybackEventCreate(event_type="play_threshold_reached", track_id=track_id)
+    )
+
+    store.recompute_user_preferences()
+
+    assert store.get_artist_preference(artist_id).liked is False

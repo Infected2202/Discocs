@@ -377,9 +377,16 @@ Additional shelves beyond the original plan, all backed by
   preference row (no dislike, no plays), randomized.
 - `new_releases` — releases ordered by `release_year` desc then `added_at`
   desc (year must be set and `<= 2030`).
-- `liked_artists` / `liked_releases` — straightforward "liked" listings from
-  `user_artist_preferences` / `user_release_preferences`, ordered by
-  `updated_at` desc.
+- `liked_artists` / `liked_releases` — listings from
+  `user_artist_preferences` / `user_release_preferences` where `liked = 1`,
+  ordered by `COALESCE(liked_at, updated_at)` desc so the newest like is first
+  (`updated_at` alone would sort by last played). Those flags mirror Navidrome
+  stars — see `docs/data-model.md`. Because the shelves read that mirror while
+  `/api/v1/navidrome/starred/ids` is what *writes* it, the frontend invalidates
+  `["dashboard"]` and the two shelf keys after every like toggle **and** after
+  `fetchLikedIds()`; otherwise the initial dashboard fetch can win the race
+  against the sync, come back empty, and the shelf hides itself
+  (`Shelf.tsx` renders nothing for an empty list).
 
 There is no dedicated shelf settings UI yet (enable/disable, reordering,
 per-shelf windows) — the shelf set and item count are effectively

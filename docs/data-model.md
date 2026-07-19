@@ -205,13 +205,27 @@ are derived from it and can be rebuilt via `recompute_user_preferences`.
 
 ## User Preferences
 
-Explicit and implicit signals are merged into one current-state row per
-entity, computed from `playback_events`:
+Each row holds two kinds of state that must not be confused:
 
-- `user_track_preferences` (`(user_id, track_id)` PK): `liked`, `disliked`,
-  `play_count`, `completion_count`, `skip_count`, `early_skip_count`,
-  `replay_count`, `last_played_at`, `last_completed_at`, `last_skipped_at`,
-  `score`.
+- **Mirrored** — `liked` / `liked_at`. These mirror a Navidrome star and are
+  written only by the star endpoints (`PUT /api/v1/{tracks,releases,artists}/
+  {id}/navidrome-star`) and by `Store.sync_likes_from_navidrome`. A like is
+  never derived from another entity's like, and never from playback behaviour.
+  `liked_at` exists because `updated_at` is bumped by every playback event, so
+  it cannot order "favourites" by when they were liked.
+- **Behavioural** — everything else, recomputed from `playback_events`.
+
+`liked` is deliberately not rebuildable from the event log: no event carries
+it, so `recompute_user_preferences` carries the mirrored columns across the
+rebuild rather than replaying them. A local `disliked` does not clear `liked`
+either — Navidrome has no dislike, and the next sync would undo it.
+
+Columns:
+
+- `user_track_preferences` (`(user_id, track_id)` PK): `liked`, `liked_at`,
+  `disliked`, `play_count`, `completion_count`, `skip_count`,
+  `early_skip_count`, `replay_count`, `last_played_at`, `last_completed_at`,
+  `last_skipped_at`, `score`.
 - `user_release_preferences` (`(user_id, release_id)` PK): same shape minus
   `disliked`/`early_skip_count`/`replay_count`.
 - `user_artist_preferences` (`(user_id, artist_id)` PK): same shape, further reduced

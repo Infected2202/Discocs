@@ -814,31 +814,35 @@ class PlaybackStoreMixin:
                 (1 if early else 0, created_at, score_delta, created_at, track_id),
             )
         elif event_type == "liked":
+            # `liked` itself belongs to the star endpoint, which floors the score
+            # to the same value; the event only carries the behavioural signal.
             conn.execute(
                 """
                 UPDATE user_track_preferences
-                SET liked = 1, disliked = 0, score = score + CASE WHEN liked = 0 THEN 5.0 ELSE 0 END
-                    + CASE WHEN disliked = 1 THEN 5.0 ELSE 0 END, updated_at = ?
+                SET disliked = 0, score = MAX(score, ?), updated_at = ?
                 WHERE user_id = discocs_user_id() AND track_id = ?
                 """,
-                (created_at, track_id),
+                (_LIKE_SCORE_FLOOR, created_at, track_id),
             )
         elif event_type == "unliked":
+            # Unstarring keeps the accumulated score — the user did listen to it.
             conn.execute(
                 """
                 UPDATE user_track_preferences
-                SET liked = 0, score = score - CASE WHEN liked = 1 THEN 5.0 ELSE 0 END,
-                    updated_at = ?
+                SET updated_at = ?
                 WHERE user_id = discocs_user_id() AND track_id = ?
                 """,
                 (created_at, track_id),
             )
         elif event_type == "disliked":
+            # A dislike is local-only (Navidrome has no such concept), so it is
+            # recorded here — but it must not clear `liked`, which mirrors a star
+            # and would be restored by the next sync anyway.
             conn.execute(
                 """
                 UPDATE user_track_preferences
-                SET disliked = 1, liked = 0, score = score - CASE WHEN disliked = 0 THEN 5.0 ELSE 0 END
-                    - CASE WHEN liked = 1 THEN 5.0 ELSE 0 END, updated_at = ?
+                SET disliked = 1, score = score - CASE WHEN disliked = 0 THEN 5.0 ELSE 0 END,
+                    updated_at = ?
                 WHERE user_id = discocs_user_id() AND track_id = ?
                 """,
                 (created_at, track_id),

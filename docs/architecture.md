@@ -155,8 +155,10 @@ Key tables:
   `disliked`, `replayed`, `removed_from_queue`, `saved_to_playlist`,
   `autoplay_toggled`, etc.), deduplicated by `client_event_id`.
 - `user_track_preferences`, `user_release_preferences`,
-  `user_artist_preferences` — aggregate counters (play/skip/completion/like
-  counts, running `score`) recomputed synchronously as events land.
+  `user_artist_preferences` — aggregate counters (play/skip/completion counts,
+  running `score`) recomputed synchronously as events land, plus the `liked` /
+  `liked_at` mirror of Navidrome stars, which events never write. See
+  `docs/data-model.md` for why the two are kept apart.
 
 Event interpretation (early/mid/late skip, meaningful listen, completion
 thresholds, like/dislike mutual exclusion) lives in `app/store/_helpers.py`

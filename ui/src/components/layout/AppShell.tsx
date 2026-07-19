@@ -25,7 +25,17 @@ export default function AppShell() {
   const mainRef = useRef<HTMLElement>(null)
 
   const fetchLikedIds = useNavidromeStore((s) => s.fetchLikedIds)
-  useEffect(() => { fetchLikedIds() }, [fetchLikedIds])
+  useEffect(() => {
+    fetchLikedIds()
+    // Stars can also be set outside discocs — in Navidrome itself, or from
+    // another client. Re-reading them when the tab comes back is one cheap
+    // getStarred2 call and keeps the hearts and shelves honest.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void fetchLikedIds()
+    }
+    document.addEventListener("visibilitychange", onVisible)
+    return () => document.removeEventListener("visibilitychange", onVisible)
+  }, [fetchLikedIds])
 
   const restoreSession = usePlayerStore((s) => s.restoreSession)
   useEffect(() => { void restoreSession() }, [restoreSession])

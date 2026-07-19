@@ -102,6 +102,14 @@ from app.scanner import ScannedTrack
 logger = logging.getLogger(__name__)
 INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
+# (table, entity column) for the three per-user preference tables. Names are
+# module constants, never caller input — they are interpolated into SQL because
+# SQLite cannot bind identifiers.
+_PREFERENCE_TABLES: tuple[tuple[str, str], ...] = (
+    ("user_track_preferences", "track_id"),
+    ("user_release_preferences", "release_id"),
+    ("user_artist_preferences", "artist_id"),
+)
 _SELECT_GENERATED_MIX_BY_ID = (
     "SELECT * FROM generated_mixes WHERE id = ? AND user_id = discocs_user_id()"
 )
@@ -688,10 +696,20 @@ class MixesStoreMixin:
             return int(cursor.rowcount)
 
     def recompute_user_preferences(self) -> None:
+        """Rebuild behavioural preference state by replaying playback events.
+
+        Likes are not rebuildable this way: they mirror Navidrome stars and no
+        playback event carries them, so a plain replay would silently drop every
+        like until the next starred sync. They are carried across the rebuild
+        instead. See plans/likes-unification-plan.md.
+        """
         with self.connect() as conn:
-            conn.execute("DELETE FROM user_track_preferences WHERE user_id = discocs_user_id()")
-            conn.execute("DELETE FROM user_release_preferences WHERE user_id = discocs_user_id()")
-            conn.execute("DELETE FROM user_artist_preferences WHERE user_id = discocs_user_id()")
+            carried = [
+                (table, column, self._snapshot_likes(conn, table, column))
+                for table, column in _PREFERENCE_TABLES
+            ]
+            for table, _column in _PREFERENCE_TABLES:
+                conn.execute(f"DELETE FROM {table} WHERE user_id = discocs_user_id()")
             rows = conn.execute(
                 """
                 SELECT * FROM playback_events
@@ -701,6 +719,43 @@ class MixesStoreMixin:
             ).fetchall()
             for row in rows:
                 self._apply_playback_event_preferences(conn, row)
+            for table, column, likes in carried:
+                self._restore_likes(conn, table, column, likes)
+
+    def _snapshot_likes(
+        self,
+        conn: sqlite3.Connection,
+        table: str,
+        column: str,
+    ) -> list[tuple[int, str | None]]:
+        """Table and column are module-local constants, never caller input."""
+        return [
+            (int(row[column]), row["liked_at"])
+            for row in conn.execute(
+                f"SELECT {column}, liked_at FROM {table} "
+                "WHERE user_id = discocs_user_id() AND liked = 1"
+            )
+        ]
+
+    def _restore_likes(
+        self,
+        conn: sqlite3.Connection,
+        table: str,
+        column: str,
+        likes: list[tuple[int, str | None]],
+    ) -> None:
+        now = utc_now()
+        for entity_id, liked_at in likes:
+            conn.execute(
+                f"INSERT OR IGNORE INTO {table} (user_id, {column}, updated_at) "
+                "VALUES (discocs_user_id(), ?, ?)",
+                (entity_id, now),
+            )
+            conn.execute(
+                f"UPDATE {table} SET liked = 1, liked_at = ? "
+                f"WHERE user_id = discocs_user_id() AND {column} = ?",
+                (liked_at or now, entity_id),
+            )
 
     def record_instant_mix_request(self, record: InstantMixRequestRecord) -> InstantMixRequest:
         created_at = record.created_at or utc_now()

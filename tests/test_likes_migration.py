@@ -1,8 +1,9 @@
-"""Phase 1 of the likes unification: liked_at column and the one-shot cleanup.
+"""Schema contract for `liked_at`.
 
-See plans/likes-unification-plan.md. The cleanup drops release/artist likes that
-were inherited from track stars; Navidrome restores the real ones on the next
-starred/ids call.
+The one-shot cleanup of inherited release/artist likes was retired after
+production migrated; the starred sync now replaces all three like sets, so even
+an old polluted backup is corrected by the first sync. See
+plans/likes-unification-plan.md.
 """
 from __future__ import annotations
 
@@ -30,37 +31,11 @@ def _reinit(db_path: Path) -> Store:
     return store
 
 
-def _seed_likes(store: Store, *, liked_at: str | None = None) -> None:
-    now = utc_now()
-    user_id = store.user_id
-    with store.connect() as conn:
-        conn.execute(
-            "INSERT INTO user_track_preferences (user_id, track_id, liked, liked_at, updated_at) "
-            "VALUES (?, 1, 1, ?, ?)",
-            (user_id, liked_at, now),
-        )
-        conn.execute(
-            "INSERT INTO user_release_preferences (user_id, release_id, liked, liked_at, updated_at) "
-            "VALUES (?, 10, 1, ?, ?)",
-            (user_id, liked_at, now),
-        )
-        conn.execute(
-            "INSERT INTO user_artist_preferences (user_id, artist_id, liked, liked_at, updated_at) "
-            "VALUES (?, 100, 1, ?, ?)",
-            (user_id, liked_at, now),
-        )
-
-
-def _liked_flags(store: Store) -> dict[str, int]:
-    with store.connect() as conn:
-        return {
-            table: conn.execute(f"SELECT COUNT(*) FROM {table} WHERE liked = 1").fetchone()[0]
-            for table in (
-                "user_track_preferences",
-                "user_release_preferences",
-                "user_artist_preferences",
-            )
-        }
+PREFERENCE_TABLES = (
+    "user_track_preferences",
+    "user_release_preferences",
+    "user_artist_preferences",
+)
 
 
 def test_liked_at_column_exists_on_all_preference_tables(tmp_path, monkeypatch):
@@ -69,73 +44,21 @@ def test_liked_at_column_exists_on_all_preference_tables(tmp_path, monkeypatch):
     store.init()
 
     with store.connect() as conn:
-        for table in (
-            "user_track_preferences",
-            "user_release_preferences",
-            "user_artist_preferences",
-        ):
+        for table in PREFERENCE_TABLES:
             columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
             assert "liked_at" in columns, table
-
-
-def test_cleanup_clears_inherited_entity_likes_but_keeps_track_likes(tmp_path, monkeypatch):
-    db_path = _configure_store(tmp_path, monkeypatch)
-    store = Store(db_path)
-    store.init()
-    _seed_likes(store)
-    # Rewind the gate so the seeded rows look like a pre-migration database.
-    with store.connect() as conn:
-        conn.execute("PRAGMA user_version = 0")
-
-    migrated = _reinit(db_path)
-
-    assert _liked_flags(migrated) == {
-        "user_track_preferences": 1,
-        "user_release_preferences": 0,
-        "user_artist_preferences": 0,
-    }
-
-
-def test_cleanup_also_clears_liked_at_of_dropped_likes(tmp_path, monkeypatch):
-    db_path = _configure_store(tmp_path, monkeypatch)
-    store = Store(db_path)
-    store.init()
-    _seed_likes(store, liked_at=utc_now())
-    with store.connect() as conn:
-        conn.execute("PRAGMA user_version = 0")
-
-    migrated = _reinit(db_path)
-
-    with migrated.connect() as conn:
-        for table in ("user_release_preferences", "user_artist_preferences"):
-            stale = conn.execute(
-                f"SELECT COUNT(*) FROM {table} WHERE liked_at IS NOT NULL"
-            ).fetchone()[0]
-            assert stale == 0, table
-
-
-def test_cleanup_does_not_run_twice_and_spares_later_likes(tmp_path, monkeypatch):
-    """The gate is the whole point: a second start must not wipe real likes."""
-    db_path = _configure_store(tmp_path, monkeypatch)
-    store = Store(db_path)
-    store.init()
-    # First init already advanced user_version; these are post-migration likes.
-    _seed_likes(store)
-
-    migrated = _reinit(db_path)
-
-    assert _liked_flags(migrated) == {
-        "user_track_preferences": 1,
-        "user_release_preferences": 1,
-        "user_artist_preferences": 1,
-    }
 
 
 def test_liked_at_backfilled_from_updated_at_for_existing_likes(tmp_path, monkeypatch):
     db_path = _configure_store(tmp_path, monkeypatch)
     store = Store(db_path)
     store.init()
-    _seed_likes(store)
+    with store.connect() as conn:
+        conn.execute(
+            "INSERT INTO user_track_preferences (user_id, track_id, liked, updated_at) "
+            "VALUES (?, 1, 1, ?)",
+            (store.user_id, utc_now()),
+        )
 
     migrated = _reinit(db_path)
 
@@ -171,7 +94,12 @@ def test_backfill_preserves_an_explicit_liked_at(tmp_path, monkeypatch):
     store = Store(db_path)
     store.init()
     explicit = "2020-01-01T00:00:00+00:00"
-    _seed_likes(store, liked_at=explicit)
+    with store.connect() as conn:
+        conn.execute(
+            "INSERT INTO user_track_preferences (user_id, track_id, liked, liked_at, updated_at) "
+            "VALUES (?, 1, 1, ?, ?)",
+            (store.user_id, explicit, utc_now()),
+        )
 
     migrated = _reinit(db_path)
 
@@ -180,3 +108,24 @@ def test_backfill_preserves_an_explicit_liked_at(tmp_path, monkeypatch):
             "SELECT liked_at FROM user_track_preferences WHERE track_id = 1"
         ).fetchone()["liked_at"]
     assert liked_at == explicit
+
+
+def test_existing_entity_likes_survive_a_restart(tmp_path, monkeypatch):
+    """Nothing clears likes at startup any more — only the starred sync does."""
+    db_path = _configure_store(tmp_path, monkeypatch)
+    store = Store(db_path)
+    store.init()
+    with store.connect() as conn:
+        conn.execute(
+            "INSERT INTO user_artist_preferences (user_id, artist_id, liked, updated_at) "
+            "VALUES (?, 100, 1, ?)",
+            (store.user_id, utc_now()),
+        )
+
+    migrated = _reinit(db_path)
+
+    with migrated.connect() as conn:
+        liked = conn.execute(
+            "SELECT liked FROM user_artist_preferences WHERE artist_id = 100"
+        ).fetchone()["liked"]
+    assert liked == 1

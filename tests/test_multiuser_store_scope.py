@@ -50,7 +50,8 @@ def test_playback_and_preferences_are_user_scoped(tmp_path: Path):
     )
 
     assert alice.get_playback_session(session.id) is not None
-    assert alice.get_track_preference(track_id).liked is True
+    # The event carries the behavioural signal; `liked` itself is Navidrome's.
+    assert alice.get_track_preference(track_id).score > 0
     assert len(alice.list_playback_events(session.id)) == 1
     assert bob.get_playback_session(session.id) is None
     assert bob.get_track_preference(track_id) is None
@@ -80,9 +81,7 @@ def test_dashboard_history_does_not_leak_between_users(tmp_path: Path):
 def test_recompute_preferences_cannot_delete_another_users_rows(tmp_path: Path):
     alice, bob, track_id = _stores(tmp_path)
     for store in (alice, bob):
-        store.record_playback_event(
-            PlaybackEventCreate(event_type="liked", track_id=track_id)
-        )
+        store.set_track_liked(track_id, True)
 
     alice.recompute_user_preferences()
 
