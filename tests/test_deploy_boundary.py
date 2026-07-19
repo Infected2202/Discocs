@@ -9,6 +9,8 @@ WORKER_COMPOSE = ROOT / "docker-compose.worker.yml"
 PRODUCTION_COMPOSE = ROOT / "deploy" / "prod" / "docker-compose.yml"
 BACKEND_DOCKERFILE = ROOT / "deploy" / "backend" / "Dockerfile"
 BOT_DOCKERFILE = ROOT / "deploy" / "bot" / "Dockerfile"
+BACKEND_TEST_DOCKERFILE = ROOT / "deploy" / "ci" / "Dockerfile.test"
+BOT_TEST_DOCKERFILE = ROOT / "deploy" / "ci" / "Dockerfile.bot-test"
 
 
 def _location_body(config: str, selector: str) -> str:
@@ -136,7 +138,14 @@ def test_automated_deploy_ignores_stale_rollback_tag():
 def test_production_images_refresh_system_security_updates():
     pipeline = JENKINSFILE.read_text(encoding="utf-8")
     assert "docker build --pull ${refreshArg}" in pipeline
-    assert "--build-arg SECURITY_REFRESH=${GIT_SHA}" in pipeline
+
+    # Ключ инвалидации — сутки, а не коммит: на ${GIT_SHA} слой apt-upgrade
+    # пересобирался в каждом билде и тянул за собой весь зависимый стек
+    # (69.6с у backend, 50.1с у бота на билде #239), хотя системные пакеты
+    # между коммитами обычно не меняются.
+    assert "env.SECURITY_REFRESH = sh(script: 'date -u +%Y-%m-%d'" in pipeline
+    assert "--build-arg SECURITY_REFRESH=${SECURITY_REFRESH}" in pipeline
+    assert "--build-arg SECURITY_REFRESH=${GIT_SHA}" not in pipeline
 
     for dockerfile_path in (BACKEND_DOCKERFILE, BOT_DOCKERFILE):
         dockerfile = dockerfile_path.read_text(encoding="utf-8")
@@ -144,17 +153,52 @@ def test_production_images_refresh_system_security_updates():
         assert "apt-get upgrade -y" in dockerfile
 
 
+def test_python_images_install_dependencies_before_copying_sources():
+    """Тяжёлый слой зависимостей не должен инвалидироваться правкой кода."""
+    cases = (
+        (BACKEND_DOCKERFILE, "COPY app ./app"),
+        (BOT_DOCKERFILE, "COPY discocs_bot/bot ./bot"),
+        (BACKEND_TEST_DOCKERFILE, "COPY app ./app"),
+        (BOT_TEST_DOCKERFILE, "COPY discocs_bot/bot ./bot"),
+    )
+
+    for dockerfile_path, copy_sources in cases:
+        dockerfile = dockerfile_path.read_text(encoding="utf-8")
+        deps = dockerfile.index("uv sync --frozen --no-install-project")
+        assert deps < dockerfile.index(copy_sources), dockerfile_path.name
+
+    # umap/numpy ставятся мимо uv.lock, поэтому финальный sync обязан быть
+    # --inexact: обычный sync приводит venv в точное соответствие локу и снёс
+    # бы их (карта коллекции упала бы на ленивом импорте уже в проде).
+    backend = BACKEND_DOCKERFILE.read_text(encoding="utf-8")
+    assert "umap-learn" in backend
+    assert backend.index("umap-learn") < backend.index("uv sync --frozen --inexact")
+
+
 def test_trivy_blocks_only_fixable_high_or_critical_findings():
     pipeline = JENKINSFILE.read_text(encoding="utf-8")
     gate = (
-        "aquasec/trivy image --skip-db-update --cache-backend memory "
-        "--ignore-unfixed"
+        "aquasec/trivy convert --ignore-unfixed "
+        "--severity HIGH,CRITICAL --exit-code 1 /report.json"
     )
     assert gate in pipeline
-    assert "--severity HIGH,CRITICAL --exit-code 1" in pipeline
     # HTML-вкладка публикуется до блокирующего гейта — иначе падение на
     # HIGH/CRITICAL оставило бы билд без отчёта, в котором видны находки.
     assert pipeline.index('reportName: "Trivy: ${svc}"') < pipeline.index(gate)
+
+
+def test_each_image_is_analyzed_only_once():
+    """Гейт и отчёты переиспользуют один JSON, а не пересканируют образ."""
+    pipeline = JENKINSFILE.read_text(encoding="utf-8")
+
+    # Ровно один реальный разбор слоёв на ветку. Раньше их было три (таблица,
+    # HTML, гейт), и с --cache-backend memory каждый начинал с нуля: только
+    # backend стоил 30.6+24.0+22.7с на билде #239.
+    assert pipeline.count("trivy image --skip-db-update") == 1
+    assert pipeline.count("--format json -o /report.json") == 1
+
+    # Таблица в консоль, HTML-вкладка и гейт — три `convert` над этим JSON.
+    assert pipeline.count("trivy convert") == 3
 
 
 def test_independent_checks_run_in_one_parallel_stage():
@@ -213,6 +257,10 @@ def test_image_scans_share_one_vulnerability_db_refresh():
     # а сами сканы идут с --skip-db-update.
     assert warmup < fan_out
     assert pipeline.count("--download-db-only") == 1
+    # --cache-backend memory развязывает ветки по scan-кэшу: общий fs-кэш на
+    # трёх параллельных сканах давал "Failed to acquire cache or database lock"
+    # (билд #238). БД при этом по-прежнему читается из общего volume.
+    assert "--cache-backend memory" in pipeline
     assert pipeline.count("aquasec/trivy image --skip-db-update") == 3
     # Image branches share the read-only vulnerability DB, but their mutable
     # layer scan cache must be process-local: filesystem cache uses a BoltDB

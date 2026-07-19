@@ -44,7 +44,16 @@ pipeline {
           env.GIT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
           // main для одиночного Pipeline-job (BRANCH_NAME пуст) или ветка main в multibranch
           env.IS_MAIN = (env.BRANCH_NAME == null || env.BRANCH_NAME == 'main') ? 'true' : 'false'
-          echo "commit=${env.GIT_SHA} branch=${env.BRANCH_NAME ?: 'n/a'} deploy=${env.IS_MAIN}"
+          // Ключ инвалидации слоя системных обновлений — сутки, а не коммит.
+          // На GIT_SHA слой `apt-get update && apt-get upgrade` пересобирался
+          // в каждом билде и тянул за собой всё, что ниже (uv sync с essentia,
+          // umap): замерено на билде #239 — 69.6с у backend и 50.1с у бота,
+          // при том что в системных пакетах между коммитами обычно ничего
+          // не меняется. Свежесть при этом не теряется: гейт Trivy по-прежнему
+          // валит фиксабельные HIGH/CRITICAL, просто новый пакет приезжает
+          // с первым билдом суток, а не с первым билдом после коммита.
+          env.SECURITY_REFRESH = sh(script: 'date -u +%Y-%m-%d', returnStdout: true).trim()
+          echo "commit=${env.GIT_SHA} branch=${env.BRANCH_NAME ?: 'n/a'} deploy=${env.IS_MAIN} security_refresh=${env.SECURITY_REFRESH}"
         }
       }
     }
@@ -184,7 +193,8 @@ pipeline {
                       // слой обновления системных пакетов даже когда Dockerfile не менялся:
                       // apt-get upgrade у backend/bot, apk upgrade у frontend (иначе Trivy
                       // валит фиксабельные HIGH в curl/libcurl базового nginx-образа).
-                      def refreshArg = svc.refresh ? "--build-arg SECURITY_REFRESH=${GIT_SHA}" : ""
+                      // Ключ — дата, а не коммит (см. Prepare).
+                      def refreshArg = svc.refresh ? "--build-arg SECURITY_REFRESH=${SECURITY_REFRESH}" : ""
                       sh "DOCKER_BUILDKIT=1 docker build --pull ${refreshArg} -f ${svc.df} -t ${img}:${GIT_SHA} ."
                       sh "docker push ${img}:${GIT_SHA}"             // :<git-sha> — неизменяемый, для отката
                       if (env.IS_MAIN == 'true') {
@@ -214,25 +224,30 @@ pipeline {
           // volume, иначе полезли бы качать/распаковывать БД конкурентно в один
           // и тот же каталог.
           sh 'docker run --rm -v trivy-db-cache:/root/.cache/trivy aquasec/trivy image --download-db-only'
-          // Ветка на сервис: раньше шесть сканов (обычный + HTML на каждый из
-          // трёх образов) выполнялись подряд одним циклом.
+          // Ветка на сервис. Образ разбирается РОВНО ОДИН РАЗ — в JSON, а
+          // человекочитаемая таблица, HTML-вкладка и блокирующий гейт получаются
+          // из этого JSON через `trivy convert` (переформатирование готового
+          // отчёта, без повторного чтения слоёв и без обращения к БД).
+          // Раньше на каждый образ приходилось три полных скана, и с
+          // --cache-backend memory (он нужен: общий fs-кэш на трёх параллельных
+          // ветках даёт "Failed to acquire cache or database lock", билд #238)
+          // каждый из них начинал с нуля — только backend стоил 30.6+24.0+22.7с
+          // на билде #239.
           def mounts = '-v /var/run/docker.sock:/var/run/docker.sock -v trivy-db-cache:/root/.cache/trivy'
           parallel(['backend', 'frontend', 'bot'].collectEntries { svc ->
             [(svc): {
               def img = "${REGISTRY}/${IMAGE_NS}/${svc}:${GIT_SHA}"
-              // Trivy всегда публикует полный отчёт, затем валит билд только при
-              // исправимых HIGH/CRITICAL (--ignore-unfixed оставляет видимыми CVE,
-              // для которых upstream пока не выпустил обновление).
-              sh "docker run --rm ${mounts} aquasec/trivy image --skip-db-update --cache-backend memory --exit-code 0 ${img}"
-              // HTML-версия того же скана — для вкладки на билде (publishHTML ниже),
-              // чтобы не искать находки по консоли. create+cp вместо `docker run
-              // -v <файл>`: воркспейс агента недоступен хостовому демону как путь
-              // (docker-outside-of-docker, та же причина, что везде в этом файле).
+              def scan = "trivy image --skip-db-update --cache-backend memory --format json -o /report.json ${img}"
+              def html = 'trivy convert --format template --template "@contrib/html.tpl" -o /report.html /report.json'
+              // create+cp вместо `docker run -v <файл>`: воркспейс агента
+              // недоступен хостовому демону как путь (docker-outside-of-docker,
+              // та же причина, что везде в этом файле).
               sh """
                 set -e
-                CID=\$(docker create ${mounts} aquasec/trivy image --skip-db-update --cache-backend memory --exit-code 0 --format template --template "@contrib/html.tpl" -o "/trivy-${svc}.html" ${img})
+                CID=\$(docker create ${mounts} --entrypoint sh aquasec/trivy -c '${scan} && ${html} && trivy convert /report.json')
                 docker start -a "\$CID"
-                docker cp "\$CID:/trivy-${svc}.html" "trivy-${svc}.html"
+                docker cp "\$CID:/report.json" "trivy-${svc}.json"
+                docker cp "\$CID:/report.html" "trivy-${svc}.html"
                 docker rm -f "\$CID"
               """
               publishHTML(target: [
@@ -244,8 +259,20 @@ pipeline {
                 reportName: "Trivy: ${svc}",
               ])
               // Гейт — строго после публикации отчёта: падение на HIGH/CRITICAL
-              // не должно лишать нас HTML-вкладки с находками.
-              sh "docker run --rm ${mounts} aquasec/trivy image --skip-db-update --cache-backend memory --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 ${img}"
+              // не должно лишать нас HTML-вкладки с находками. Фильтры severity
+              // применяет `convert` к тому же JSON, поэтому гейт видит ровно те
+              // находки, что и опубликованный отчёт, и стоит доли секунды.
+              // Ни сокет, ни БД ему не нужны — на входе только готовый JSON.
+              sh """
+                set -e
+                CID=\$(docker create aquasec/trivy convert --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 /report.json)
+                docker cp "trivy-${svc}.json" "\$CID:/report.json"
+                set +e
+                docker start -a "\$CID"
+                RC=\$?
+                docker rm -f "\$CID"
+                exit \$RC
+              """
             }]
           })
         }

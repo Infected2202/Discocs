@@ -12,12 +12,16 @@ WORKDIR /app
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# app меняется почти в каждом коммите, поэтому слой ниже всё равно
-# инвалидируется каждый раз — кэш uv монтируется отдельно (переживает
-# инвалидацию слоя), иначе каждый билд заново качает все зависимости по сети.
+# Зависимости — отдельным слоем до `COPY app`: app меняется почти в каждом
+# коммите, и при обратном порядке каждая правка кода переустанавливала весь
+# dev-стек. Кэш uv монтируется вдобавок (переживает инвалидацию слоя), иначе
+# при смене uv.lock билд заново качает всё по сети.
 # --frozen — ставим строго из uv.lock, без пересчёта резолвера (тот же lock,
 # что использует Trivy для точного резолвинга версий зависимостей).
 COPY pyproject.toml uv.lock README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --extra dev
+
 COPY app ./app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --extra dev
@@ -27,6 +31,9 @@ COPY tests ./tests
 COPY deploy/nginx/default.conf.template ./deploy/nginx/default.conf.template
 COPY deploy/backend/Dockerfile ./deploy/backend/Dockerfile
 COPY deploy/bot/Dockerfile ./deploy/bot/Dockerfile
+# tests/test_deploy_boundary.py проверяет и порядок слоёв самих CI-образов
+COPY deploy/ci/Dockerfile.test ./deploy/ci/Dockerfile.test
+COPY deploy/ci/Dockerfile.bot-test ./deploy/ci/Dockerfile.bot-test
 COPY deploy/prod/docker-compose.yml ./deploy/prod/docker-compose.yml
 COPY Jenkinsfile ./Jenkinsfile
 COPY docker-compose.worker.yml ./docker-compose.worker.yml

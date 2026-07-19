@@ -14,7 +14,12 @@ WORKDIR /app
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# Зависимости — до COPY исходников (см. deploy/backend/Dockerfile): слой
+# инвалидируется только по uv.lock, а не по каждой правке в bot/.
 COPY discocs_bot/pyproject.toml discocs_bot/uv.lock discocs_bot/README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project
+
 COPY discocs_bot/bot ./bot
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen
