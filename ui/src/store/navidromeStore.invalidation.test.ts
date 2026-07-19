@@ -13,6 +13,8 @@ describe("navidromeStore like invalidation", () => {
     vi.restoreAllMocks()
   })
 
+  type InvalidateSpy = { mock: { calls: unknown[][] } }
+
   async function setup(response: unknown) {
     vi.doMock("@/api/client", () => ({
       apiFetch: vi.fn().mockResolvedValue(response),
@@ -23,10 +25,11 @@ describe("navidromeStore like invalidation", () => {
     return { useNavidromeStore, invalidate }
   }
 
-  function invalidatedKeys(invalidate: ReturnType<typeof vi.spyOn>): string[] {
-    return invalidate.mock.calls.map(([arg]) =>
-      JSON.stringify((arg as { queryKey: unknown[] }).queryKey),
-    )
+  function invalidatedKeys(invalidate: InvalidateSpy): string[] {
+    return invalidate.mock.calls.map((call) => {
+      const filters = call[0] as { queryKey?: unknown[] } | undefined
+      return JSON.stringify(filters?.queryKey)
+    })
   }
 
   it("refreshes the shelves after fetching liked ids", async () => {
