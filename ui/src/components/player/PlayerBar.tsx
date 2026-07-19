@@ -97,7 +97,7 @@ function VolumeControl({
   const [hovered, setHovered] = useState(false)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const effective = muted ? 0 : volume
-  const { trackRef: sliderRef, handleMouseDown } = useDragSlider({ onChange: onVolumeChange })
+  const { trackRef: sliderRef, handlePointerDown } = useDragSlider({ onChange: onVolumeChange })
 
   function handleEnter() {
     if (hideTimer.current) clearTimeout(hideTimer.current)
@@ -128,7 +128,7 @@ function VolumeControl({
         <div
           ref={sliderRef}
           className="w-20 h-4 flex items-center cursor-pointer relative group/vol"
-          onMouseDown={handleMouseDown}
+          onPointerDown={handlePointerDown}
         >
           <div className="w-full h-1 bg-muted rounded relative">
             <div className="h-full bg-foreground rounded" style={{ width: `${effective * 100}%` }} />

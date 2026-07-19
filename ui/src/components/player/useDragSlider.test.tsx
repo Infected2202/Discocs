@@ -30,8 +30,8 @@ describe("useDragSlider", () => {
     slider.setPointerCapture = vi.fn()
 
     fireEvent.pointerDown(slider, { pointerId: 7, pointerType: "touch", clientX: 140 })
-    fireEvent.pointerMove(globalThis, { pointerId: 7, pointerType: "touch", clientX: 220 })
-    fireEvent.pointerUp(globalThis, { pointerId: 7, pointerType: "touch", clientX: 260 })
+    fireEvent.pointerMove(window, { pointerId: 7, pointerType: "touch", clientX: 220 })
+    fireEvent.pointerUp(window, { pointerId: 7, pointerType: "touch", clientX: 260 })
 
     expect(slider.setPointerCapture).toHaveBeenCalledWith(7)
     expect(onChange).toHaveBeenNthCalledWith(1, 0.2)
@@ -51,7 +51,7 @@ describe("useDragSlider", () => {
     slider.setPointerCapture = vi.fn()
 
     fireEvent.pointerDown(slider, { pointerId: 9, clientX: 50 })
-    fireEvent.pointerCancel(globalThis, { pointerId: 9, clientX: 0 })
+    fireEvent.pointerCancel(window, { pointerId: 9, clientX: 0 })
 
     expect(onCommit).not.toHaveBeenCalled()
   })
