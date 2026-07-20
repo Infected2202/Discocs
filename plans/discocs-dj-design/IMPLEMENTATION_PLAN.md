@@ -1,6 +1,6 @@
 # Discocs DJ implementation plan
 
-**Status:** Phase 0 in progress; Slices 0.1 and 0.2 complete
+**Status:** Phase 0 in progress; Slices 0.1 through 0.3 complete
 **Delivery rule:** one complete logical slice includes code, meaningful tests, affected docs, one commit and pushes to both configured remotes; Jenkins is the verification environment.
 
 ## 1. Readiness
@@ -53,7 +53,7 @@ Exit:
 
 ### Slice 0.2 — PixiJS waveform renderer spike
 
-**Implementation:** complete; Jenkins verification pending. The renderer contract,
+**Implementation:** complete; Jenkins verified in build #257. The renderer contract,
 measurements and per-deck application decision are recorded in
 `SLICE_0_2_BROWSER_RESULTS.md`.
 
@@ -79,6 +79,10 @@ Exit:
 - freeze renderer input contract without requiring backend data yet.
 
 ### Slice 0.3 — Signalsmith integration spike
+
+**Implementation:** complete; Jenkins verification pending. Package/asset validation,
+latency measurements and the `DeckSource` feasibility decision are recorded in
+`SLICE_0_3_BROWSER_RESULTS.md`.
 
 Work:
 

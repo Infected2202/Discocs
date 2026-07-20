@@ -486,3 +486,16 @@ still provides at least one source bucket per horizontal pixel. Pointer coordina
 clamped and translated to seconds before transport code receives them. The Phase 0 evidence
 and memory/frame measurements are in
 `plans/discocs-dj-design/SLICE_0_2_BROWSER_RESULTS.md`.
+
+### Signalsmith tempo adapter foundation
+
+`ui/src/engine/playback/signalsmith/` validates the future pitch-preserving tempo source
+behind `DeckSource`. Signalsmith Stretch 1.3.2 is loaded dynamically; Vite emits its official
+ESM file as the same-origin AudioWorklet URL, while that file carries its WASM payload inline.
+The adapter transfers bounded decoded channel chunks to the worklet, supports incremental
+drop, and schedules transport/rate/loop changes using runtime-reported latency plus a small
+lead margin. It never requires a whole-track PCM copy on the main thread.
+
+The package is MIT licensed. Browser measurements, configuration comparison and the Phase 6
+feasibility decision are recorded in
+`plans/discocs-dj-design/SLICE_0_3_BROWSER_RESULTS.md`.
