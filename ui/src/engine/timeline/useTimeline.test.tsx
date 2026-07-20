@@ -14,7 +14,10 @@ describe("useTimeline", () => {
   beforeEach(() => loadTimeline.mockReset())
 
   it("loads an enabled track and returns to idle when disabled", async () => {
-    const ready: TimelineLoadState = { status: "ready", timeline: { durationSeconds: 1, levels: [] } }
+    const ready: TimelineLoadState = { status: "ready", timeline: {
+      durationSeconds: 1, levels: [], bpm: 120, beatConfidence: 0.8, rhythmCoverageSeconds: 1,
+      beats: new Float32Array(), localTempo: new Float32Array(),
+    } }
     loadTimeline.mockResolvedValue(ready)
     const { result, rerender } = renderHook(({ trackId, enabled }) => useTimeline(trackId, enabled), {
       initialProps: { trackId: 7 as number | null, enabled: true },
@@ -39,7 +42,10 @@ describe("useTimeline", () => {
 
   it("polls queued analysis until the admin job publishes a ready artifact", async () => {
     vi.useFakeTimers()
-    const ready: TimelineLoadState = { status: "ready", timeline: { durationSeconds: 1, levels: [] } }
+    const ready: TimelineLoadState = { status: "ready", timeline: {
+      durationSeconds: 1, levels: [], bpm: 120, beatConfidence: 0.8, rhythmCoverageSeconds: 1,
+      beats: new Float32Array(), localTempo: new Float32Array(),
+    } }
     loadTimeline
       .mockResolvedValueOnce({ status: "queued" } satisfies TimelineLoadState)
       .mockResolvedValueOnce(ready)

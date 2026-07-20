@@ -2,7 +2,7 @@ import type {
   DecodedTimeline,
   TimelineArrayDescriptor,
   TimelineDtype,
-  TimelineManifestV1,
+  TimelineManifestV2,
   TimelineWaveformLevelManifest,
 } from "./types"
 
@@ -69,11 +69,34 @@ function parseLevel(value: unknown, payloadLength: number): TimelineWaveformLeve
   }
 }
 
-function parseManifest(value: unknown, payloadLength: number): TimelineManifestV1 {
+function parseRhythm(value: unknown, payloadLength: number, durationSeconds: number): TimelineManifestV2["rhythm"] {
+  if (!isRecord(value) || !isRecord(value.arrays)) {
+    throw new TimelineDecodeError("missing rhythm series")
+  }
+  const beats = parseDescriptor(value.arrays.beats, payloadLength)
+  const localTempo = parseDescriptor(value.arrays.local_tempo, payloadLength)
+  const scalarLayoutValid = (
+    typeof value.bpm === "number" && Number.isFinite(value.bpm) && value.bpm >= 0 &&
+    typeof value.confidence === "number" && Number.isFinite(value.confidence) &&
+    typeof value.coverage_seconds === "number" && Number.isFinite(value.coverage_seconds) &&
+    value.coverage_seconds > 0 && value.coverage_seconds <= durationSeconds
+  )
+  if (beats.dtype !== "float32" || localTempo.dtype !== "float32" || beats.length !== localTempo.length || !scalarLayoutValid) {
+    throw new TimelineDecodeError("invalid rhythm series")
+  }
+  return {
+    bpm: value.bpm as number,
+    confidence: value.confidence as number,
+    coverage_seconds: value.coverage_seconds as number,
+    arrays: { beats, local_tempo: localTempo },
+  }
+}
+
+function parseManifest(value: unknown, payloadLength: number): TimelineManifestV2 {
   if (!isRecord(value) || value.schema_version !== SCHEMA_VERSION) {
     throw new TimelineDecodeError("unsupported timeline schema version")
   }
-  if (value.pack_name !== "timeline_foundation" || value.extractor !== "timeline_foundation_v1") {
+  if (value.pack_name !== "timeline_foundation" || value.extractor !== "timeline_foundation_v2") {
     throw new TimelineDecodeError("unsupported timeline pack or extractor")
   }
   if (!isRecord(value.payload) || value.payload.byte_length !== payloadLength) {
@@ -96,10 +119,11 @@ function parseManifest(value: unknown, payloadLength: number): TimelineManifestV
   ) {
     throw new TimelineDecodeError("invalid timeline dimensions")
   }
+  const rhythm = parseRhythm(value.rhythm, payloadLength, value.duration_seconds)
   return {
     schema_version: 1,
     pack_name: "timeline_foundation",
-    extractor: "timeline_foundation_v1",
+    extractor: "timeline_foundation_v2",
     duration_seconds: value.duration_seconds,
     waveform: {
       sample_rate: value.waveform.sample_rate,
@@ -107,6 +131,7 @@ function parseManifest(value: unknown, payloadLength: number): TimelineManifestV
       pyramid_factor: 4,
       levels: value.waveform.levels.map((level) => parseLevel(level, payloadLength)),
     },
+    rhythm,
     payload: {
       byte_length: payloadLength,
       sha256: value.payload.sha256,
@@ -116,10 +141,22 @@ function parseManifest(value: unknown, payloadLength: number): TimelineManifestV
   }
 }
 
-function typedView(descriptor: TimelineArrayDescriptor, payload: ArrayBuffer): Int16Array | Uint16Array {
+function typedView(descriptor: TimelineArrayDescriptor, payload: ArrayBuffer): Int16Array | Uint16Array | Float32Array {
   if (descriptor.dtype === "int16") return new Int16Array(payload, descriptor.offset, descriptor.length)
   if (descriptor.dtype === "uint16") return new Uint16Array(payload, descriptor.offset, descriptor.length)
-  throw new TimelineDecodeError(`waveform array cannot use ${descriptor.dtype}`)
+  if (descriptor.dtype === "float32") return new Float32Array(payload, descriptor.offset, descriptor.length)
+  throw new TimelineDecodeError(`timeline array cannot use ${descriptor.dtype}`)
+}
+
+function validateRhythmPayload(beats: Float32Array, localTempo: Float32Array, durationSeconds: number): void {
+  for (let index = 0; index < beats.length; index += 1) {
+    const beat = beats[index]!
+    const tempo = localTempo[index]!
+    const ordered = index === 0 || beat >= beats[index - 1]!
+    if (!Number.isFinite(beat) || beat < 0 || beat > durationSeconds || !ordered || !Number.isFinite(tempo) || tempo <= 0) {
+      throw new TimelineDecodeError("invalid rhythm payload")
+    }
+  }
 }
 
 export async function decodeTimeline(
@@ -131,6 +168,9 @@ export async function decodeTimeline(
   if (await checksum(payload) !== manifest.payload.sha256) {
     throw new TimelineDecodeError("payload checksum mismatch")
   }
+  const beats = typedView(manifest.rhythm.arrays.beats, payload) as Float32Array
+  const localTempo = typedView(manifest.rhythm.arrays.local_tempo, payload) as Float32Array
+  validateRhythmPayload(beats, localTempo, manifest.duration_seconds)
   return {
     durationSeconds: manifest.duration_seconds,
     levels: manifest.waveform.levels.map((level) => ({
@@ -141,5 +181,10 @@ export async function decodeTimeline(
       mid: typedView(level.arrays.mid, payload) as Uint16Array,
       high: typedView(level.arrays.high, payload) as Uint16Array,
     })),
+    bpm: manifest.rhythm.bpm,
+    beatConfidence: manifest.rhythm.confidence,
+    rhythmCoverageSeconds: manifest.rhythm.coverage_seconds,
+    beats,
+    localTempo,
   }
 }

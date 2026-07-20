@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 
@@ -19,6 +20,15 @@ ESSENTIA_RHYTHM_SAMPLE_RATE = 44100
 # representative prefix is enough — cap the input instead of failing the task.
 RHYTHM_MAX_DURATION_SECONDS = 1800
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RhythmAnalysis:
+    bpm: float
+    beats: np.ndarray
+    confidence: float
+    estimates: np.ndarray
+    intervals: np.ndarray
 
 
 class AudioFeatureAnalyzer:
@@ -73,24 +83,36 @@ class AudioFeatureAnalyzer:
 
 
 def extract_rhythm_features(audio: np.ndarray) -> list[TrackFeature]:
+    rhythm = analyze_rhythm(audio)
+    return [
+        TrackFeature(
+            name="bpm",
+            value=rhythm.bpm,
+            unit="bpm",
+            confidence=rhythm.confidence,
+            extractor=AUDIO_FEATURE_EXTRACTOR,
+        ),
+    ]
+
+
+def analyze_rhythm(audio: np.ndarray) -> RhythmAnalysis:
+    """Return scalar and timeline rhythm observations from one Essentia call."""
     try:
         from essentia.standard import RhythmExtractor2013
     except ImportError as exc:
         raise RuntimeError("essentia-tensorflow is required for rhythm extraction") from exc
     max_samples = RHYTHM_MAX_DURATION_SECONDS * ESSENTIA_RHYTHM_SAMPLE_RATE
     rhythm_audio = audio[:max_samples] if audio.size > max_samples else audio
-    bpm, _beats, beats_confidence, _estimates, _intervals = RhythmExtractor2013(
+    bpm, beats, beats_confidence, estimates, intervals = RhythmExtractor2013(
         method="multifeature"
     )(rhythm_audio)
-    return [
-        TrackFeature(
-            name="bpm",
-            value=float(bpm),
-            unit="bpm",
-            confidence=float(beats_confidence),
-            extractor=AUDIO_FEATURE_EXTRACTOR,
-        ),
-    ]
+    return RhythmAnalysis(
+        bpm=float(bpm),
+        beats=np.asarray(beats, dtype=np.float32),
+        confidence=float(beats_confidence),
+        estimates=np.asarray(estimates, dtype=np.float32),
+        intervals=np.asarray(intervals, dtype=np.float32),
+    )
 
 
 def extract_key_features(audio: np.ndarray) -> list[TrackFeature]:

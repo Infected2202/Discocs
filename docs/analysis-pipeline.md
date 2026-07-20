@@ -127,6 +127,12 @@ Main API/UI action:
 POST /api/v1/jobs/analyze-audio-features
 ```
 
+`RhythmExtractor2013` is also shared by the explicit `/admin` DJ-waveform job.
+That job publishes `timeline_foundation_v2` with beat timestamps, global rhythm
+confidence, rhythm coverage and interval-derived local tempo. It does not run
+when the DJ interface opens and it reuses the same FFmpeg decode that produces
+the waveform and frequency-colour buckets.
+
 Stored data lives in `track_features`:
 
 ```text

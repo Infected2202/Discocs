@@ -155,13 +155,13 @@ class AnalyzeTimelineRequest(BaseModel):
     track_ids: list[int] | None = Field(default=None, max_length=500)
     limit: int | None = Field(default=None, ge=1, le=500)
     reset: bool = False
-    extractor: str = "timeline_foundation_v1"
+    extractor: str = "timeline_foundation_v2"
 
 
 class TimelineStatusRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     track_ids: list[int] = Field(min_length=1, max_length=100)
-    extractor: str = "timeline_foundation_v1"
+    extractor: str = "timeline_foundation_v2"
 
 
 class DeleteTracksRequest(BaseModel):

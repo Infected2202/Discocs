@@ -28,7 +28,7 @@ Artifact identity includes:
 
 - track id;
 - pack name (`timeline_foundation`);
-- extractor id, initially `timeline_foundation_v1`;
+- extractor id, currently `timeline_foundation_v2` (`v1` remains the waveform-only historical contract);
 - schema version, initially `1`;
 - source path;
 - source mtime;
@@ -73,7 +73,7 @@ Illustrative schema:
 {
   "schema_version": 1,
   "pack_name": "timeline_foundation",
-  "extractor": "timeline_foundation_v1",
+  "extractor": "timeline_foundation_v2",
   "track_id": 123,
   "duration_seconds": 412.34,
   "source": {
@@ -85,6 +85,15 @@ Illustrative schema:
     "sample_rate": 44100,
     "base_bucket_samples": 512,
     "levels": []
+  },
+  "rhythm": {
+    "bpm": 128.0,
+    "confidence": 0.8,
+    "coverage_seconds": 412.34,
+    "arrays": {
+      "beats": {"offset": 0, "length": 1000, "dtype": "float32", "scale": 1.0, "unit": "seconds"},
+      "local_tempo": {"offset": 4000, "length": 1000, "dtype": "float32", "scale": 1.0, "unit": "bpm"}
+    }
   },
   "series": {},
   "payload": {
@@ -142,8 +151,10 @@ Pixi selects the coarsest level that still supplies at least one bucket per hori
 
 The minimal Phase 5 extension adds:
 
-- beat timestamps (`float32` seconds) and confidence (`uint8` normalized);
-- local tempo sampled on a documented regular grid;
+- beat timestamps (`float32` seconds) and the extractor's global confidence
+  scalar;
+- interval-derived local tempo (`float32` BPM) aligned one-to-one with beat
+  timestamps;
 
 `audio_features_v1` already invokes `RhythmExtractor2013`, but currently stores
 only global BPM/confidence and discards its beat timestamps and intervals. The
@@ -158,7 +169,9 @@ indices and meter require a separate detector and quality gate. Onset strength,
 short-term loudness and structural novelty remain reserved descriptors until a
 concrete DJ feature consumes them.
 
-Regular curves share a 100 ms grid unless an extractor requires a separately declared step. Each descriptor declares `start_seconds`, `step_seconds`, unit, scale and missing-value policy. Event series use timestamp arrays rather than a regular grid.
+Future regular curves declare `start_seconds`, `step_seconds`, unit, scale and
+missing-value policy. Beat events and their local-tempo observations use
+aligned event arrays rather than inventing a resampled grid.
 
 The pack stores observations only. It must not include recommended cue points, loops, transition-safe segments, manoeuvre names or suitability scores.
 

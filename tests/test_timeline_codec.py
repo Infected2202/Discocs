@@ -5,6 +5,8 @@ import pytest
 from app.timeline.codec import (
     DESCRIPTOR_ALIGNMENT,
     ENERGY_SCALE,
+    EXTRACTOR,
+    EXTRACTOR_V1,
     PEAK_SCALE,
     TimelineFormatError,
     decode_timeline,
@@ -28,6 +30,7 @@ def _artifact():
         base_bucket_samples=512,
         base=base,
         source={"path": "/music/fixture.wav", "mtime": 123.5, "file_size": 4_096},
+        extractor=EXTRACTOR_V1,
     )
 
 
@@ -55,6 +58,30 @@ def test_timeline_descriptors_are_aligned_and_round_trip_dtype_scale():
     assert decoded["high"] == pytest.approx((0.0, 0.25, 0.5, 0.75, 1.0), abs=ENERGY_SCALE)
 
 
+def test_v2_rhythm_events_and_local_tempo_round_trip():
+    manifest, payload = encode_timeline(
+        track_id=17,
+        duration_seconds=2.0,
+        sample_rate=2_560,
+        base_bucket_samples=512,
+        base={
+            "minimum": [-0.1], "maximum": [0.1],
+            "low": [0.2], "mid": [0.3], "high": [0.5],
+        },
+        source={"path": "/music/fixture.wav", "mtime": 123.5, "file_size": 4_096},
+        extractor=EXTRACTOR,
+        rhythm={"bpm": 120.0, "confidence": 0.8, "beats": [0.5, 1.0], "local_tempo": [120.0, 121.0]},
+    )
+
+    decoded = decode_timeline(manifest, payload)["rhythm"]
+
+    assert manifest["extractor"] == EXTRACTOR
+    assert decoded["bpm"] == 120.0
+    assert decoded["confidence"] == 0.8
+    assert decoded["beats"] == pytest.approx((0.5, 1.0))
+    assert decoded["local_tempo"] == pytest.approx((120.0, 121.0))
+
+
 def test_waveform_pyramid_preserves_peak_and_energy_extrema():
     bucket_count = 2_049
     base = {
@@ -74,6 +101,7 @@ def test_waveform_pyramid_preserves_peak_and_energy_extrema():
         base_bucket_samples=512,
         base=base,
         source={"path": "/fixture", "mtime": 1, "file_size": 1},
+        extractor=EXTRACTOR_V1,
     )
 
     decoded_levels = decode_timeline(manifest, payload)["levels"]

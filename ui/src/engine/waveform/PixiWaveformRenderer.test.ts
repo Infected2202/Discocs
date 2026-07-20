@@ -10,6 +10,7 @@ const tickerAdd = vi.fn()
 const tickerRemove = vi.fn()
 const stageAdd = vi.fn()
 const graphicsClear = vi.fn()
+const graphicsStroke = vi.fn()
 
 class ApplicationStub {
   canvas = document.createElement("canvas")
@@ -27,7 +28,7 @@ class GraphicsStub {
   clear = graphicsClear.mockReturnThis()
   moveTo = vi.fn().mockReturnThis()
   lineTo = vi.fn().mockReturnThis()
-  stroke = vi.fn().mockReturnThis()
+  stroke = graphicsStroke.mockReturnThis()
 }
 
 class ResizeObserverStub {
@@ -46,7 +47,7 @@ function input(): WaveformRendererInput {
     high: new Uint16Array(20).fill(30),
   }
   return {
-    timeline: { durationSeconds: 2, levels: [level] },
+    timeline: { durationSeconds: 2, levels: [level], beats: new Float32Array([0.5, 1.5]) },
     viewport: {
       width: 800,
       height: 160,
@@ -123,5 +124,15 @@ describe("PixiWaveformRenderer lifecycle", () => {
     expect(ResizeObserverStub.disconnect).toHaveBeenCalledTimes(1)
     expect(destroy).toHaveBeenCalledTimes(1)
     expect(destroy).toHaveBeenCalledWith(true, { children: true, texture: true, textureSource: true })
+  })
+
+  it("draws beat events from the offline timeline artifact", async () => {
+    const app = new ApplicationStub()
+    const renderer = new PixiWaveformRenderer(document.createElement("div"), input(), loader(app))
+
+    await renderer.mount()
+
+    expect(graphicsStroke).toHaveBeenCalledWith({ color: 0xffffff, width: 1, alpha: 0.2 })
+    renderer.destroy()
   })
 })

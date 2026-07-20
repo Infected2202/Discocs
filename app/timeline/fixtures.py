@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from app.timeline.codec import encode_timeline, manifest_json_bytes
+from app.timeline.codec import EXTRACTOR_V1, encode_timeline, manifest_json_bytes
 
 FIXTURE_DURATIONS = {"short": 30.0, "typical": 360.0, "long": 3_600.0}
 SAMPLE_RATE = 44_100
@@ -34,6 +34,7 @@ def build_fixture(name: str, duration_seconds: float) -> tuple[dict[str, Any], b
         base_bucket_samples=BASE_BUCKET_SAMPLES,
         base=synthetic_base(duration_seconds),
         source={"path": f"/fixtures/{name}.wav", "mtime": 1_720_000_000.0, "file_size": 0},
+        extractor=EXTRACTOR_V1,
     )
 
 

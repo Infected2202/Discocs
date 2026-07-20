@@ -19,7 +19,13 @@ class TimelineStoreMixin:
                         a.source_path = t.path AND
                         a.source_mtime = t.mtime AND
                         a.source_file_size = t.file_size
-                    THEN 1 ELSE 0 END), 0) AS ready
+                    THEN 1 ELSE 0 END), 0) AS ready,
+                    COALESCE(SUM(CASE WHEN
+                        a.track_id IS NOT NULL AND
+                        a.source_path = t.path AND
+                        a.source_mtime = t.mtime AND
+                        a.source_file_size = t.file_size
+                    THEN a.payload_bytes ELSE 0 END), 0) AS storage_bytes
                 FROM tracks t
                 LEFT JOIN track_timeline_artifacts a
                   ON a.track_id=t.id AND a.pack_name=? AND a.extractor=?
@@ -29,7 +35,12 @@ class TimelineStoreMixin:
             ).fetchone()
         total = int(row["total"])
         ready = int(row["ready"])
-        return {"ready": ready, "missing": total - ready, "total": total}
+        return {
+            "ready": ready,
+            "missing": total - ready,
+            "total": total,
+            "storage_bytes": int(row["storage_bytes"]),
+        }
 
     def upsert_timeline_artifact(self, metadata: dict[str, object]) -> None:
         with self.connect() as conn:

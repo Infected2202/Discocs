@@ -10,11 +10,23 @@ interface PixiModule {
 export type PixiLoader = () => Promise<PixiModule>
 
 const loadPixi: PixiLoader = async () => import("pixi.js")
+const EMPTY_EVENTS = new Float32Array()
 
 function energyColour(input: WaveformRendererInput, low: number, mid: number, high: number): number {
   if (low >= mid && low >= high) return input.palette.low
   if (mid >= high) return input.palette.mid
   return input.palette.high
+}
+
+function firstEventAtOrAfter(events: Float32Array, seconds: number): number {
+  let low = 0
+  let high = events.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (events[middle]! < seconds) low = middle + 1
+    else high = middle
+  }
+  return low
 }
 
 export class PixiWaveformRenderer {
@@ -113,6 +125,14 @@ export class PixiWaveformRenderer {
     const lastBucket = Math.min(level.maximum.length - 1, Math.ceil(viewport.endSeconds / level.bucketDurationSeconds))
 
     graphics.clear()
+    const beats = timeline.beats ?? EMPTY_EVENTS
+    for (let index = firstEventAtOrAfter(beats, viewport.startSeconds); index < beats.length; index += 1) {
+      const beat = beats[index]!
+      if (beat > viewport.endSeconds) break
+      const x = ((beat - viewport.startSeconds) / visibleSeconds) * width
+      graphics.moveTo(x, 0).lineTo(x, height)
+        .stroke({ color: this.input.palette.beat ?? 0xffffff, width: 1, alpha: 0.2 })
+    }
     for (let index = firstBucket; index <= lastBucket; index += 1) {
       const x = ((index * level.bucketDurationSeconds - viewport.startSeconds) / visibleSeconds) * width
       const top = centre - (level.maximum[index] / 32_767) * centre

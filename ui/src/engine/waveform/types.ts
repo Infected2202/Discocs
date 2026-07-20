@@ -10,6 +10,7 @@ export interface WaveformLevel {
 export interface WaveformTimeline {
   readonly durationSeconds: number
   readonly levels: readonly WaveformLevel[]
+  readonly beats?: Float32Array
 }
 
 export interface WaveformViewport {
@@ -25,6 +26,7 @@ export interface WaveformPalette {
   readonly mid: number
   readonly high: number
   readonly playhead: number
+  readonly beat?: number
 }
 
 export interface WaveformRendererInput {

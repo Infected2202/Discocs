@@ -15,16 +15,22 @@ export interface TimelineWaveformLevelManifest {
   readonly arrays: Readonly<Record<"minimum" | "maximum" | "low" | "mid" | "high", TimelineArrayDescriptor>>
 }
 
-export interface TimelineManifestV1 {
+export interface TimelineManifestV2 {
   readonly schema_version: 1
   readonly pack_name: "timeline_foundation"
-  readonly extractor: "timeline_foundation_v1"
+  readonly extractor: "timeline_foundation_v2"
   readonly duration_seconds: number
   readonly waveform: {
     readonly sample_rate: number
     readonly base_bucket_samples: number
     readonly pyramid_factor: 4
     readonly levels: readonly TimelineWaveformLevelManifest[]
+  }
+  readonly rhythm: {
+    readonly bpm: number
+    readonly confidence: number
+    readonly coverage_seconds: number
+    readonly arrays: Readonly<Record<"beats" | "local_tempo", TimelineArrayDescriptor>>
   }
   readonly payload: {
     readonly byte_length: number
@@ -46,4 +52,9 @@ export interface DecodedTimelineLevel {
 export interface DecodedTimeline {
   readonly durationSeconds: number
   readonly levels: readonly DecodedTimelineLevel[]
+  readonly bpm: number
+  readonly beatConfidence: number
+  readonly rhythmCoverageSeconds: number
+  readonly beats: Float32Array
+  readonly localTempo: Float32Array
 }

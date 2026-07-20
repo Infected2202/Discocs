@@ -15,7 +15,8 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 PACK_NAME = "timeline_foundation"
-EXTRACTOR = "timeline_foundation_v1"
+EXTRACTOR_V1 = "timeline_foundation_v1"
+EXTRACTOR = "timeline_foundation_v2"
 ENDIANNESS = "little"
 DESCRIPTOR_ALIGNMENT = 4
 PYRAMID_FACTOR = 4
@@ -90,6 +91,41 @@ def _build_pyramid(base: Mapping[str, Sequence[float]]) -> list[dict[str, list[f
     return levels
 
 
+def _encode_rhythm(payload: bytearray, rhythm: Mapping[str, Any], duration_seconds: float) -> dict[str, Any]:
+    beats = rhythm.get("beats")
+    local_tempo = rhythm.get("local_tempo")
+    if not isinstance(beats, Sequence) or not isinstance(local_tempo, Sequence) or len(beats) != len(local_tempo):
+        raise TimelineFormatError("rhythm arrays must have one shared length")
+    if any(not math.isfinite(float(value)) for value in [*beats, *local_tempo]):
+        raise TimelineFormatError("rhythm arrays contain a non-finite value")
+    beat_values = [float(value) for value in beats]
+    tempo_values = [float(value) for value in local_tempo]
+    if any(value < 0 or value > duration_seconds for value in beat_values) or beat_values != sorted(beat_values):
+        raise TimelineFormatError("beat timestamps must be ordered within the track")
+    if any(value <= 0 for value in tempo_values):
+        raise TimelineFormatError("local tempo must be positive")
+    try:
+        bpm = float(rhythm.get("bpm", 0.0))
+        confidence = float(rhythm.get("confidence", 0.0))
+        coverage_seconds = float(rhythm.get("coverage_seconds", duration_seconds))
+    except (TypeError, ValueError) as exc:
+        raise TimelineFormatError("invalid rhythm scalars") from exc
+    if (
+        not math.isfinite(bpm) or bpm < 0 or not math.isfinite(confidence) or
+        not math.isfinite(coverage_seconds) or coverage_seconds <= 0 or coverage_seconds > duration_seconds
+    ):
+        raise TimelineFormatError("invalid rhythm scalars")
+    arrays = {}
+    for name, values, unit in (("beats", beat_values, "seconds"), ("local_tempo", tempo_values, "bpm")):
+        aligned_offset = _align(len(payload))
+        payload.extend(b"\0" * (aligned_offset - len(payload)))
+        payload.extend(struct.pack(f"<{len(values)}f", *values))
+        arrays[name] = {
+            "offset": aligned_offset, "length": len(values), "dtype": "float32", "scale": 1.0, "unit": unit,
+        }
+    return {"bpm": bpm, "confidence": confidence, "coverage_seconds": coverage_seconds, "arrays": arrays}
+
+
 def encode_timeline(
     *,
     track_id: int,
@@ -98,8 +134,10 @@ def encode_timeline(
     base_bucket_samples: int,
     base: Mapping[str, Sequence[float]],
     source: Mapping[str, Any],
+    rhythm: Mapping[str, Any] | None = None,
+    extractor: str = EXTRACTOR,
 ) -> tuple[dict[str, Any], bytes]:
-    """Encode normalized waveform buckets into a deterministic v1 artifact."""
+    """Encode normalized waveform buckets and optional v2 rhythm observations."""
     if track_id <= 0 or duration_seconds <= 0 or sample_rate <= 0 or base_bucket_samples <= 0:
         raise TimelineFormatError("track, duration, sample rate and bucket size must be positive")
 
@@ -129,11 +167,19 @@ def encode_timeline(
             }
         )
 
+    rhythm_manifest = None
+    if extractor == EXTRACTOR:
+        if rhythm is None:
+            raise TimelineFormatError("missing rhythm series")
+        rhythm_manifest = _encode_rhythm(payload, rhythm, duration_seconds)
+    elif extractor != EXTRACTOR_V1:
+        raise TimelineFormatError("unsupported timeline extractor")
+
     payload_bytes = bytes(payload)
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "pack_name": PACK_NAME,
-        "extractor": EXTRACTOR,
+        "extractor": extractor,
         "track_id": track_id,
         "duration_seconds": float(duration_seconds),
         "source": {
@@ -155,6 +201,8 @@ def encode_timeline(
             "descriptor_alignment": DESCRIPTOR_ALIGNMENT,
         },
     }
+    if rhythm_manifest is not None:
+        manifest["rhythm"] = rhythm_manifest
     return manifest, payload_bytes
 
 
@@ -216,9 +264,43 @@ def _validate_payload(manifest: Mapping[str, Any], payload: bytes) -> None:
 def validate_timeline(manifest: Mapping[str, Any], payload: bytes) -> None:
     """Validate v1 metadata and payload without materializing decoded arrays."""
     _validate_payload(manifest, payload)
-    if manifest.get("pack_name") != PACK_NAME or manifest.get("extractor") != EXTRACTOR:
+    extractor = manifest.get("extractor")
+    if manifest.get("pack_name") != PACK_NAME or extractor not in {EXTRACTOR_V1, EXTRACTOR}:
         raise TimelineFormatError("unsupported timeline pack or extractor")
     _validate_waveform_manifest(manifest.get("waveform"), len(payload))
+    if extractor == EXTRACTOR:
+        _validate_rhythm_manifest(manifest.get("rhythm"), len(payload), manifest.get("duration_seconds"))
+
+
+def _validate_rhythm_manifest(rhythm: object, payload_length: int, duration_seconds: object) -> None:
+    if not isinstance(rhythm, Mapping) or not isinstance(rhythm.get("arrays"), Mapping):
+        raise TimelineFormatError("missing rhythm series")
+    bpm = rhythm.get("bpm")
+    confidence = rhythm.get("confidence")
+    coverage_seconds = rhythm.get("coverage_seconds")
+    if not isinstance(bpm, (int, float)) or not math.isfinite(float(bpm)) or float(bpm) < 0:
+        raise TimelineFormatError("invalid rhythm bpm")
+    if not isinstance(confidence, (int, float)) or not math.isfinite(float(confidence)):
+        raise TimelineFormatError("invalid rhythm confidence")
+    if (
+        not isinstance(coverage_seconds, (int, float)) or not math.isfinite(float(coverage_seconds)) or
+        float(coverage_seconds) <= 0 or not isinstance(duration_seconds, (int, float)) or
+        float(coverage_seconds) > float(duration_seconds)
+    ):
+        raise TimelineFormatError("invalid rhythm coverage")
+    arrays = rhythm["arrays"]
+    if set(arrays) != {"beats", "local_tempo"}:
+        raise TimelineFormatError("rhythm series has unexpected arrays")
+    lengths = set()
+    for descriptor in arrays.values():
+        if not isinstance(descriptor, Mapping):
+            raise TimelineFormatError("invalid rhythm descriptor")
+        _validate_descriptor_layout(descriptor, payload_length)
+        if descriptor.get("dtype") != "float32":
+            raise TimelineFormatError("rhythm arrays must use float32")
+        lengths.add(descriptor.get("length"))
+    if len(lengths) != 1:
+        raise TimelineFormatError("rhythm arrays must have one shared length")
 
 
 def _validate_waveform_manifest(waveform: object, payload_length: int) -> None:
@@ -271,4 +353,14 @@ def decode_timeline(manifest: Mapping[str, Any], payload: bytes) -> dict[str, An
     if not isinstance(waveform, Mapping):
         raise TimelineFormatError(MISSING_WAVEFORM_LEVELS)
     decoded_levels = _decode_waveform_levels(waveform, payload)
-    return {"duration_seconds": manifest.get("duration_seconds"), "levels": decoded_levels}
+    result = {"duration_seconds": manifest.get("duration_seconds"), "levels": decoded_levels}
+    rhythm = manifest.get("rhythm")
+    if isinstance(rhythm, Mapping) and isinstance(rhythm.get("arrays"), Mapping):
+        result["rhythm"] = {
+            "bpm": rhythm.get("bpm"),
+            "confidence": rhythm.get("confidence"),
+            "coverage_seconds": rhythm.get("coverage_seconds"),
+            "beats": _decode_descriptor(rhythm["arrays"]["beats"], payload),
+            "local_tempo": _decode_descriptor(rhythm["arrays"]["local_tempo"], payload),
+        }
+    return result

@@ -285,6 +285,13 @@ The complete waveform vertical slice works for real queue tracks before adding t
 
 ## 7. Phase 5 — full timeline analysis
 
+**Implementation:** minimal production scope complete; Jenkins verification
+pending. `timeline_foundation_v2` adds beat timestamps, global rhythm
+confidence, coverage and interval-derived local tempo from the explicit admin
+job's single FFmpeg decode. The DJ renders a beat grid and never starts
+analysis. Unvalidated downbeat/onset/loudness/structure additions remain
+deferred as described below.
+
 - keep timeline extraction offline and start it only through the explicit
   `/admin` job; the DJ client remains a read-only artifact consumer;
 - refactor the existing `RhythmExtractor2013` boundary so its already computed

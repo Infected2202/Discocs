@@ -5,8 +5,8 @@ import logging
 
 from app.audio_source import track_audio_path
 from app.timeline.artifacts import cleanup_artifact, cleanup_orphan_artifacts, publish_artifact
-from app.timeline.codec import EXTRACTOR, PACK_NAME
-from app.timeline.extractor import extract_waveform
+from app.timeline.codec import EXTRACTOR, EXTRACTOR_V1, PACK_NAME
+from app.timeline.extractor import extract_timeline
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +21,15 @@ def run_timeline_job(store, settings, tracks, *, job_id: str, reset: bool = Fals
             if reset:
                 cleanup_artifact(store, root, track.id, PACK_NAME, EXTRACTOR)
             with track_audio_path(store, settings, track) as audio_path:
-                manifest, payload = extract_waveform(
+                manifest, payload = extract_timeline(
                     audio_path, track_id=track.id, duration=float(track.duration or 0),
                     source={"path": track.path, "mtime": track.mtime, "file_size": track.file_size},
                 )
             publish_artifact(store, root, manifest, payload)
+            try:
+                cleanup_artifact(store, root, track.id, PACK_NAME, EXTRACTOR_V1)
+            except Exception:
+                logger.warning("Could not clean replaced v1 timeline track_id=%s", track.id, exc_info=True)
             store.set_timeline_analysis_status(track.id, PACK_NAME, EXTRACTOR, "ready", job_id=job_id)
             done += 1
         except Exception as exc:

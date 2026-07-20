@@ -5,7 +5,7 @@ import pytest
 from app.scanner import ScannedTrack
 from app.store import Store
 from app.timeline.artifacts import cleanup_artifact, cleanup_orphan_artifacts, load_valid_artifact, publish_artifact
-from app.timeline.codec import EXTRACTOR, PACK_NAME, TimelineFormatError, encode_timeline
+from app.timeline.codec import EXTRACTOR, EXTRACTOR_V1, PACK_NAME, TimelineFormatError, encode_timeline
 from app.timeline.jobs import run_timeline_job
 
 
@@ -21,15 +21,20 @@ def track_fixture(tmp_path: Path):
     return store, store.get_track(track_id)
 
 
-def encoded(track):
+def encoded(track, extractor=EXTRACTOR):
     values = {
         "minimum": [-0.5, -0.25], "maximum": [0.5, 0.25],
         "low": [0.8, 0.1], "mid": [0.1, 0.8], "high": [0.1, 0.1],
     }
+    kwargs = {}
+    if extractor == EXTRACTOR:
+        kwargs["rhythm"] = {"bpm": 120.0, "confidence": 0.8, "beats": [0.5, 1.0], "local_tempo": [120.0, 120.0]}
     return encode_timeline(
         track_id=track.id, duration_seconds=10, sample_rate=44_100,
         base_bucket_samples=512, base=values,
         source={"path": track.path, "mtime": track.mtime, "file_size": track.file_size},
+        extractor=extractor,
+        **kwargs,
     )
 
 
@@ -42,7 +47,9 @@ def test_artifact_publish_round_trip_and_exact_source_invalidation(tmp_path: Pat
     loaded = load_valid_artifact(store, root, track, PACK_NAME, EXTRACTOR)
 
     assert loaded is not None
-    assert store.timeline_artifact_counts(PACK_NAME, EXTRACTOR) == {"ready": 1, "missing": 0, "total": 1}
+    assert store.timeline_artifact_counts(PACK_NAME, EXTRACTOR) == {
+        "ready": 1, "missing": 0, "total": 1, "storage_bytes": len(payload),
+    }
     assert loaded[0]["payload"]["sha256"] == manifest["payload"]["sha256"]
     assert loaded[1] == payload
     changed = ScannedTrack(
@@ -52,7 +59,9 @@ def test_artifact_publish_round_trip_and_exact_source_invalidation(tmp_path: Pat
     store.upsert_track(changed)
     with pytest.raises(TimelineFormatError, match="stale"):
         load_valid_artifact(store, root, store.get_track(track.id), PACK_NAME, EXTRACTOR)
-    assert store.timeline_artifact_counts(PACK_NAME, EXTRACTOR) == {"ready": 0, "missing": 1, "total": 1}
+    assert store.timeline_artifact_counts(PACK_NAME, EXTRACTOR) == {
+        "ready": 0, "missing": 1, "total": 1, "storage_bytes": 0,
+    }
 
 
 def test_publish_rejects_corruption_and_cleanup_cannot_escape_root(tmp_path: Path):
@@ -94,7 +103,7 @@ def test_worker_failure_records_failure_without_publishing_partial_artifact(tmp_
     store, track = track_fixture(tmp_path)
     job = store.create_progress_job("analyze-timeline", EXTRACTOR, total=1)
     settings = type("Settings", (), {"data_dir": tmp_path})()
-    monkeypatch.setattr("app.timeline.jobs.extract_waveform", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("decode failed")))
+    monkeypatch.setattr("app.timeline.jobs.extract_timeline", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("decode failed")))
 
     run_timeline_job(store, settings, [track], job_id=job.id)
 
@@ -108,14 +117,15 @@ def test_worker_failure_records_failure_without_publishing_partial_artifact(tmp_
 def test_worker_success_publishes_and_reset_cleans_previous_artifact(tmp_path: Path, monkeypatch):
     store, track = track_fixture(tmp_path)
     settings = type("Settings", (), {"data_dir": tmp_path})()
-    first_manifest, first_payload = encoded(track)
+    first_manifest, first_payload = encoded(track, EXTRACTOR_V1)
     publish_artifact(store, tmp_path / "timeline", first_manifest, first_payload)
     job = store.create_progress_job("analyze-timeline", EXTRACTOR, total=1)
-    monkeypatch.setattr("app.timeline.jobs.extract_waveform", lambda *args, **kwargs: encoded(track))
+    monkeypatch.setattr("app.timeline.jobs.extract_timeline", lambda *args, **kwargs: encoded(track))
     run_timeline_job(store, settings, [track], job_id=job.id, reset=True)
     state = store.get_timeline_analysis_states([track.id], PACK_NAME, EXTRACTOR)[track.id]
     assert state["status"] == "ready"
     assert load_valid_artifact(store, tmp_path / "timeline", track, PACK_NAME, EXTRACTOR) is not None
+    assert store.get_timeline_artifact(track.id, PACK_NAME, EXTRACTOR_V1) is None
     assert store.get_analysis_job(job.id).status == "completed"
 
 

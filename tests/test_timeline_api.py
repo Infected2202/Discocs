@@ -30,6 +30,8 @@ def publish(store, track, root):
     manifest, payload = encode_timeline(
         track_id=track.id, duration_seconds=5, sample_rate=44_100, base_bucket_samples=512,
         base=base, source={"path": track.path, "mtime": track.mtime, "file_size": track.file_size},
+        extractor=EXTRACTOR,
+        rhythm={"bpm": 120.0, "confidence": 0.8, "beats": [.5], "local_tempo": [120.0]},
     )
     publish_artifact(store, root, manifest, payload)
     return manifest, payload
@@ -75,6 +77,7 @@ def test_missing_invalid_extractor_and_empty_job_paths(tmp_path: Path, monkeypat
     accepted = client.post("/api/v1/jobs/analyze-timeline", json={"track_ids": []})
     assert accepted.status_code == 200
     assert accepted.json()["total"] == 0
+    assert accepted.json()["extractor"] == EXTRACTOR
 
 
 def test_batch_status_reports_durable_failure_and_corrupt_artifact(tmp_path: Path, monkeypatch):

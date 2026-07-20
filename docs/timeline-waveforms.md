@@ -1,7 +1,7 @@
 # Timeline waveform artifacts
 
 Discocs stores versioned waveform analysis outside SQLite under
-`data/timeline/<track-id>/timeline_foundation_v1/`. Each artifact consists of a
+`data/timeline/<track-id>/timeline_foundation_v2/`. Each artifact consists of a
 canonical `manifest.json` and checksummed little-endian `payload.bin`. SQLite
 owns its identity, paths, checksum, byte length and durable analysis state;
 generated files remain uncommitted runtime data.
@@ -21,7 +21,7 @@ only after both final files exist. Cleanup resolves targets under the configured
 - `POST /api/v1/timeline/status` accepts 1–100 track IDs and returns
   `missing`, `queued`, `running`, `ready`, `stale`, or `failed`.
 - `POST /api/v1/jobs/analyze-timeline` accepts optional `track_ids`, `limit`,
-  `reset`, and the frozen `timeline_foundation_v1` extractor.
+  `reset`, and the `timeline_foundation_v2` extractor.
 
 The private `/admin` dashboard exposes this endpoint as the **DJ waveforms**
 analysis task, including ready/missing counts. Waveforms are always generated
@@ -31,6 +31,12 @@ The job uses the shared `track_audio_path` boundary, so local and
 Navidrome-backed tracks follow the same path. FFmpeg decodes mono 44.1 kHz audio
 in bounded chunks. The extractor produces 512-sample extrema and low/mid/high
 spectral-energy buckets before the factor-4 v1 pyramid is published.
+The v2 extractor retains Essentia beat timestamps and interval-derived local
+tempo from the same decoded PCM stream. Existing v1 artifacts remain isolated
+until an explicit admin rebuild publishes their v2 replacements, then the
+replaced v1 files and metadata are removed.
+The rhythm manifest records `coverage_seconds`; tracks longer than Essentia's
+30-minute safe-analysis cap never imply that their later region has a beat grid.
 
 ## Browser lifecycle
 

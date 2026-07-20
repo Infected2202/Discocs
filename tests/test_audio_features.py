@@ -137,7 +137,7 @@ def test_rhythm_extractor_keeps_short_audio_untouched(monkeypatch):
 
         def __call__(self, audio):
             calls.append(audio)
-            return (95.0, [], 0.5, [], [])
+            return (95.0, [0.5, 1.1], 0.5, [95.0], [0.6])
 
     essentia_module = types.ModuleType("essentia")
     standard_module = types.ModuleType("essentia.standard")
@@ -147,9 +147,12 @@ def test_rhythm_extractor_keeps_short_audio_untouched(monkeypatch):
 
     short_audio = np.ones(44100 * 30, dtype=np.float32)
 
-    audio_features.extract_rhythm_features(short_audio)
+    analysis = audio_features.analyze_rhythm(short_audio)
 
     assert calls[0] is short_audio
+    assert analysis.bpm == 95.0
+    np.testing.assert_allclose(analysis.beats, [0.5, 1.1])
+    np.testing.assert_allclose(analysis.intervals, [0.6])
 
 
 def test_dynamic_extractor_uses_essentia_rhythm_sample_rate(monkeypatch):

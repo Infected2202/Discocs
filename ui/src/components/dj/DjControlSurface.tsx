@@ -43,7 +43,7 @@ function trackForDeck(
   return null
 }
 
-const waveformPalette = { low: 0x2ed7ff, mid: 0xc738ff, high: 0xff6b3d, playhead: 0xffffff }
+const waveformPalette = { low: 0x2ed7ff, mid: 0xc738ff, high: 0xff6b3d, beat: 0x94a3b8, playhead: 0xffffff }
 
 function deckPlayhead(deck: DeckSnapshot): number {
   return deck.anchor?.mediaSeconds ?? 0
@@ -53,6 +53,12 @@ function DeckWaveform({ deck, track, open }: { readonly deck: DeckSnapshot; read
   const state = useTimeline(deck.trackId, open)
   const playhead = deckPlayhead(deck)
   const timeline = state.timeline
+  let statusLabel = `Waveform · ${state.status}`
+  if (state.status === "ready" && timeline) {
+    statusLabel = timeline.beats.length > 0
+      ? `${Math.round(timeline.bpm)} BPM · beat grid`
+      : "Waveform ready · no beat grid"
+  }
   const viewport = timeline
     ? { width: 1, height: 1, devicePixelRatio: globalThis.devicePixelRatio || 1, ...resolveFollowWindow(timeline.durationSeconds, playhead, 30) }
     : null
@@ -67,7 +73,7 @@ function DeckWaveform({ deck, track, open }: { readonly deck: DeckSnapshot; read
         />}
         <div className={styles.waveformMessage}>
           <span>{track?.title ?? `Deck ${deck.id}`}</span>
-          <small>{state.status === "ready" ? "30 second follow" : `Waveform · ${state.status}`}</small>
+          <small>{statusLabel}</small>
         </div>
       </div>
     </div>
