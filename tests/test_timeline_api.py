@@ -64,3 +64,28 @@ def test_manifest_reports_stale_identity_and_job_validates_batch(tmp_path: Path,
     status = client.post("/api/v1/timeline/status", json={"track_ids": [track.id]}).json()
     assert status["items"][0]["status"] == "stale"
     assert client.post("/api/v1/jobs/analyze-timeline", json={"track_ids": [999]}).status_code == 404
+
+
+def test_missing_invalid_extractor_and_empty_job_paths(tmp_path: Path, monkeypatch):
+    _store, track = setup_track(tmp_path, monkeypatch)
+    client = TestClient(app)
+    assert client.get(f"/api/v1/tracks/{track.id}/timeline/manifest").status_code == 404
+    assert client.post("/api/v1/timeline/status", json={"track_ids": [track.id], "extractor": "future"}).status_code == 400
+    assert client.post("/api/v1/jobs/analyze-timeline", json={"track_ids": [], "extractor": "future"}).status_code == 400
+    accepted = client.post("/api/v1/jobs/analyze-timeline", json={"track_ids": []})
+    assert accepted.status_code == 200
+    assert accepted.json()["total"] == 0
+
+
+def test_batch_status_reports_durable_failure_and_corrupt_artifact(tmp_path: Path, monkeypatch):
+    store, track = setup_track(tmp_path, monkeypatch)
+    store.set_timeline_analysis_status(track.id, PACK_NAME, EXTRACTOR, "failed", error="worker failed")
+    client = TestClient(app)
+    failed = client.post("/api/v1/timeline/status", json={"track_ids": [track.id]}).json()["items"][0]
+    assert failed == {"track_id": track.id, "status": "failed", "error": "worker failed"}
+    _manifest, _payload = publish(store, track, tmp_path / "timeline")
+    row = store.get_timeline_artifact(track.id, PACK_NAME, EXTRACTOR)
+    Path(row["payload_path"]).write_bytes(b"broken")
+    corrupt = client.post("/api/v1/timeline/status", json={"track_ids": [track.id]}).json()["items"][0]
+    assert corrupt["status"] == "failed"
+    assert "length mismatch" in corrupt["error"]

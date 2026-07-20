@@ -101,3 +101,27 @@ def test_worker_failure_records_failure_without_publishing_partial_artifact(tmp_
     assert state["error"] == "decode failed"
     assert store.get_timeline_artifact(track.id, PACK_NAME, EXTRACTOR) is None
     assert not (tmp_path / "timeline" / str(track.id)).exists()
+
+
+def test_worker_success_publishes_and_reset_cleans_previous_artifact(tmp_path: Path, monkeypatch):
+    store, track = track_fixture(tmp_path)
+    settings = type("Settings", (), {"data_dir": tmp_path})()
+    first_manifest, first_payload = encoded(track)
+    publish_artifact(store, tmp_path / "timeline", first_manifest, first_payload)
+    job = store.create_progress_job("analyze-timeline", EXTRACTOR, total=1)
+    monkeypatch.setattr("app.timeline.jobs.extract_waveform", lambda *args, **kwargs: encoded(track))
+    run_timeline_job(store, settings, [track], job_id=job.id, reset=True)
+    state = store.get_timeline_analysis_states([track.id], PACK_NAME, EXTRACTOR)[track.id]
+    assert state["status"] == "ready"
+    assert load_valid_artifact(store, tmp_path / "timeline", track, PACK_NAME, EXTRACTOR) is not None
+    assert store.get_analysis_job(job.id).status == "completed"
+
+
+def test_publisher_validates_before_creating_files_and_needing_query_resumes(tmp_path: Path):
+    store, track = track_fixture(tmp_path)
+    manifest, payload = encoded(track)
+    manifest["payload"]["sha256"] = "0" * 64
+    with pytest.raises(TimelineFormatError, match="checksum"):
+        publish_artifact(store, tmp_path / "timeline", manifest, payload)
+    assert not (tmp_path / "timeline").exists()
+    assert [item.id for item in store.list_tracks_needing_timeline(PACK_NAME, EXTRACTOR)] == [track.id]

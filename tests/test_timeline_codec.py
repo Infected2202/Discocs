@@ -104,3 +104,18 @@ def test_timeline_decoder_rejects_corrupt_artifacts(corrupt, match):
 
     with pytest.raises(TimelineFormatError, match=match):
         decode_timeline(corrupt_manifest, corrupt_payload)
+
+
+@pytest.mark.parametrize(
+    ("corrupt", "match"),
+    [
+        (lambda manifest: manifest.update(pack_name="future"), "pack or extractor"),
+        (lambda manifest: manifest["waveform"].update(levels=[]), "missing waveform levels"),
+        (lambda manifest: manifest["waveform"]["levels"][0]["arrays"]["low"].update(dtype="int16"), "length or dtype"),
+    ],
+)
+def test_timeline_layout_validation_rejects_incompatible_foundation(corrupt, match):
+    manifest, payload = _artifact()
+    corrupt(manifest)
+    with pytest.raises(TimelineFormatError, match=match):
+        decode_timeline(manifest, payload)

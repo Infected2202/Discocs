@@ -20,6 +20,7 @@ ENDIANNESS = "little"
 DESCRIPTOR_ALIGNMENT = 4
 PYRAMID_FACTOR = 4
 MAX_OVERVIEW_BUCKETS = 2_048
+MISSING_WAVEFORM_LEVELS = "missing waveform levels"
 PEAK_SCALE = 1.0 / 32_767.0
 ENERGY_SCALE = 1.0 / 65_535.0
 
@@ -217,31 +218,38 @@ def validate_timeline(manifest: Mapping[str, Any], payload: bytes) -> None:
     _validate_payload(manifest, payload)
     if manifest.get("pack_name") != PACK_NAME or manifest.get("extractor") != EXTRACTOR:
         raise TimelineFormatError("unsupported timeline pack or extractor")
-    waveform = manifest.get("waveform")
+    _validate_waveform_manifest(manifest.get("waveform"), len(payload))
+
+
+def _validate_waveform_manifest(waveform: object, payload_length: int) -> None:
     if not isinstance(waveform, Mapping) or not isinstance(waveform.get("levels"), list):
-        raise TimelineFormatError("missing waveform levels")
+        raise TimelineFormatError(MISSING_WAVEFORM_LEVELS)
     if not waveform["levels"]:
-        raise TimelineFormatError("missing waveform levels")
+        raise TimelineFormatError(MISSING_WAVEFORM_LEVELS)
     for level in waveform["levels"]:
-        if not isinstance(level, Mapping) or not isinstance(level.get("arrays"), Mapping):
-            raise TimelineFormatError("invalid waveform level")
-        arrays = level["arrays"]
-        if set(arrays) != set(_FIELD_FORMATS):
-            raise TimelineFormatError("waveform level has unexpected arrays")
-        bucket_count = level.get("bucket_count")
-        if not isinstance(bucket_count, int) or bucket_count <= 0:
-            raise TimelineFormatError("invalid waveform bucket count")
-        for field, descriptor in arrays.items():
-            if not isinstance(descriptor, Mapping):
-                raise TimelineFormatError("invalid array descriptor")
-            _validate_descriptor_layout(descriptor, len(payload))
-            if descriptor.get("length") != bucket_count or descriptor.get("dtype") != _FIELD_FORMATS[field][0]:
-                raise TimelineFormatError("waveform array length or dtype mismatch")
+        _validate_level_layout(level, payload_length)
+
+
+def _validate_level_layout(level: object, payload_length: int) -> None:
+    if not isinstance(level, Mapping) or not isinstance(level.get("arrays"), Mapping):
+        raise TimelineFormatError("invalid waveform level")
+    arrays = level["arrays"]
+    if set(arrays) != set(_FIELD_FORMATS):
+        raise TimelineFormatError("waveform level has unexpected arrays")
+    bucket_count = level.get("bucket_count")
+    if not isinstance(bucket_count, int) or bucket_count <= 0:
+        raise TimelineFormatError("invalid waveform bucket count")
+    for field, descriptor in arrays.items():
+        if not isinstance(descriptor, Mapping):
+            raise TimelineFormatError("invalid array descriptor")
+        _validate_descriptor_layout(descriptor, payload_length)
+        if descriptor.get("length") != bucket_count or descriptor.get("dtype") != _FIELD_FORMATS[field][0]:
+            raise TimelineFormatError("waveform array length or dtype mismatch")
 
 
 def _decode_waveform_levels(waveform: Mapping[str, Any], payload: bytes) -> list[dict[str, Any]]:
     if not isinstance(waveform.get("levels"), list):
-        raise TimelineFormatError("missing waveform levels")
+        raise TimelineFormatError(MISSING_WAVEFORM_LEVELS)
     decoded_levels = []
     for level in waveform["levels"]:
         if not isinstance(level, Mapping) or not isinstance(level.get("arrays"), Mapping):
@@ -261,6 +269,6 @@ def decode_timeline(manifest: Mapping[str, Any], payload: bytes) -> dict[str, An
     validate_timeline(manifest, payload)
     waveform = manifest.get("waveform")
     if not isinstance(waveform, Mapping):
-        raise TimelineFormatError("missing waveform levels")
+        raise TimelineFormatError(MISSING_WAVEFORM_LEVELS)
     decoded_levels = _decode_waveform_levels(waveform, payload)
     return {"duration_seconds": manifest.get("duration_seconds"), "levels": decoded_levels}

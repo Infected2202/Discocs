@@ -42,4 +42,14 @@ describe("timeline artifact client", () => {
 
     await expect(loadTimeline(8)).resolves.toEqual({ status: "failed", message: "decode" })
   })
+
+  it("maps stale and transient failures and retries non-ready results", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ detail: "stale" }) })
+      .mockRejectedValueOnce(new Error("offline"))
+    vi.stubGlobal("fetch", fetchMock)
+    await expect(loadTimeline(9)).resolves.toMatchObject({ status: "stale" })
+    await expect(loadTimeline(9)).resolves.toEqual({ status: "failed", message: "offline" })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
 })

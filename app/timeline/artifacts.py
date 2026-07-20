@@ -91,16 +91,21 @@ def cleanup_orphan_artifacts(store, root: Path) -> int:
     removed = 0
     for name in ("manifest.json", "payload.bin"):
         for candidate in root.glob(f"*/*/{name}"):
-            resolved = _inside(root, candidate)
-            if str(resolved) not in referenced:
-                resolved.unlink(missing_ok=True)
-                removed += 1
-                for directory in (resolved.parent, resolved.parent.parent):
-                    try:
-                        directory.rmdir()
-                    except OSError:
-                        break
+            removed += _cleanup_orphan_file(root, candidate, referenced)
     return removed
+
+
+def _cleanup_orphan_file(root: Path, candidate: Path, referenced: set[str]) -> int:
+    resolved = _inside(root, candidate)
+    if str(resolved) in referenced:
+        return 0
+    resolved.unlink(missing_ok=True)
+    for directory in (resolved.parent, resolved.parent.parent):
+        try:
+            directory.rmdir()
+        except OSError:
+            break
+    return 1
 
 
 def _inside(root: Path, path: Path) -> Path:
