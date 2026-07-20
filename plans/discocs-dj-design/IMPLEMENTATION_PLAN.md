@@ -15,7 +15,7 @@
 | 5. Full timeline analysis | after waveform lifecycle | artifact/job foundation |
 | 6. Signalsmith tempo/sync | after beat data and WASM spike | Phases 0 and 5 |
 | 7. Settings/diagnostics | incremental after owners exist | corresponding runtime/backend features |
-| 8. Automation execution | after tempo/sync gate | deterministic engine scheduling |
+| Future Epic B: Auto DJ | not part of this plan | completed foundation and separate product/design work |
 
 There are currently no unresolved product decisions blocking Phase 0 or Phase 1. New approval is required only if a spike forces a user-visible compromise.
 
@@ -198,7 +198,7 @@ AppShell
     ├── Mixer controls
     ├── Deck B controls
     ├── queue/source context
-    └── Auto DJ status/actions
+    └── reserved future Auto DJ integration area
 ```
 
 The surface follows the current Expanded Player open/close transition and focus model. Expanded Player and DJ surface are mutually exclusive presentations; closing either does not change transport.
@@ -211,7 +211,7 @@ The surface follows the current Expanded Player open/close transition and focus 
 - connect controls to real engine commands/snapshots;
 - show physical deck identity, runtime role, preparation/error state and active program deck;
 - show a compact active-mix indicator when the surface is closed;
-- omit or disable unimplemented effects/automation with an honest capability reason.
+- omit unimplemented Auto DJ controls rather than exposing non-functional placeholders.
 
 ### Tests
 
@@ -282,22 +282,24 @@ Integration tests requiring real Essentia are marked `@pytest.mark.integration`;
 
 ### Runtime/session
 
-- Auto DJ enabled/suspended state;
-- current transition and manual ownership;
+- current manual transition state;
+- deck roles and preparation state;
 - short-lived capability/error state.
 
 Typed request schemas remain `extra="forbid"`; settings ownership and defaults are tested.
 
-## 10. Phase 8 — automation execution contract
+## 10. Future Epic B — Auto DJ and automatic mixing
 
-- add typed scheduled batches and immutable observation snapshots;
-- implement audio-time action scheduling and parameter ramps;
-- add ownership cancellation rules from the engine plan;
-- add Take Over, Resume, Cancel transition and Skip now semantics;
-- expose schedule/debug data behind an optional UI panel;
-- build deterministic fake-clock tests capable of executing a transition plan.
+This is explicitly outside the current foundation delivery. Before implementation it receives its own design covering:
 
-This phase does not choose manoeuvres or transition points. It only proves that a later planner can drive the same commands as a user.
+- manoeuvre and transition catalogue;
+- context, candidate and decision model;
+- automation execution and observation;
+- ownership, takeover, cancellation and failure recovery;
+- evaluation corpus, diagnostics and quality scoring;
+- UI explanations and intervention controls.
+
+The only current requirement is architectural compatibility: the future epic must be able to use the same public engine commands and snapshots as manual controls.
 
 ## 11. Cross-cutting definition of done
 

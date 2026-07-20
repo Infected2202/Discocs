@@ -2,10 +2,10 @@
 
 ## Design document and delivery plan
 
-**Status:** accepted product baseline; technical elaboration in progress
+**Status:** foundation plan ready for implementation
 **Purpose:** product and architecture source of truth
-**Scope:** user interface, shared audio runtime, analysis foundation, settings surface, and extension points for future automatic mixing
-**Not in scope:** detailed automatic-DJ algorithms, transition strategy selection, or playlist construction
+**Scope:** user interface, shared two-deck audio runtime, waveform/timeline analysis foundation, tempo/sync and settings surface
+**Not in scope:** Auto DJ execution, automatic-mixing algorithms, transition strategy selection, or playlist construction; these form a separate future epic
 
 ### Document set
 
@@ -168,9 +168,9 @@ The lower area should preserve the Discocs context rather than becoming a separa
 - ability to load or prepare a track on either deck where applicable;
 - existing autoplay remains responsible for extending the queue.
 
-### 4.4 Auto DJ area
+### 4.4 Future Auto DJ integration area
 
-The interface reserves an explicit area for future automation:
+The layout and runtime boundaries must leave room for future automation, but the foundation does not implement or expose a non-functional Auto DJ control surface. The separate Auto DJ epic will define:
 
 - background automatic mixing enable/disable, independent of whether the control surface is open;
 - current automation state;
@@ -179,7 +179,7 @@ The interface reserves an explicit area for future automation:
 - cancel, skip immediately and take-over controls;
 - debug details available behind an optional panel.
 
-During the first stages this area may expose placeholders and runtime state without implementing transition-selection algorithms.
+No placeholder should imply that Auto DJ is available before that epic is implemented.
 
 ---
 
@@ -309,7 +309,7 @@ Handover follows these rules:
 - deck-local transport controls affect only their deck and do not implicitly advance the queue;
 - the handover operation must be idempotent and must update the compact-player projection, Media Session metadata and canonical server-side queue item without reloading the incoming audio source.
 
-The server remains canonical for the playback session, queue and current program queue item. High-frequency deck transport, mixer, automation and crossfader state remain browser-local. Playback events must be extended to distinguish an incoming track starting, handover completion, transition completion or cancellation, and manual takeover; exact event names and payloads are part of the implementation contract.
+The server remains canonical for the playback session, queue and current program queue item. High-frequency deck transport, mixer and crossfader state remain browser-local. Foundation playback events must distinguish an incoming track starting, handover completion and manual transition completion or cancellation; exact event names and payloads are part of the implementation contract.
 
 ### 6.5 Deck preparation state
 
@@ -317,17 +317,11 @@ Each deck exposes an explicit preparation state such as `empty`, `loading`, `rea
 
 The existing playback profile is used initially for both decks. A separate DJ codec or forced transcoding profile is not required for the foundation. Profile changes must not invalidate one side of an active transition; memory and payload-size telemetry should inform any later DJ-specific transcoding policy.
 
-### 6.6 Automation ownership and takeover
+### 6.6 Reserved automation boundary
 
-Every command carries an origin (`manual`, `automation`, or `system`). Manual input always wins immediately.
+Foundation commands may carry an origin (`manual`, future `automation`, or `system`) and the engine publishes stable observations. The foundation does not define the complete ownership, scheduler, cancellation or takeover policy.
 
-- gain, EQ, filter and effect input cancels automation only for the touched parameter until the current transition ends;
-- crossfader, tempo/sync, transport, seek and loop input suspends the active transition plan because it invalidates its timing or structure;
-- Take Over cancels future scheduled actions, preserves current audible values and places Auto DJ in a suspended state;
-- disabling Auto DJ cancels an unstarted transition, but safely completes an already audible transition before preventing new ones;
-- all scheduled audio changes use audio-context time and are visible through engine snapshots.
-
-The detailed command and snapshot fields are defined in `PLAYBACK_ENGINE_TECHNICAL_PLAN.md`.
+The separate Auto DJ epic will decide those behaviours against the working manual engine. Its automation must use the same public commands and may not manipulate React components or private audio nodes.
 
 ---
 
@@ -490,7 +484,7 @@ Development proceeds as gated vertical slices. Each slice must leave the ordinar
 ### Phase 3 — expanded DJ control surface
 
 - add the full-screen layer to `AppShell` using the existing Expanded Player pattern;
-- expose both decks, mixer, queue context, preparation state and Auto DJ status;
+- expose both decks, mixer, queue context and preparation state;
 - connect every implemented control to engine commands and snapshots;
 - keep unavailable future controls visibly disabled or omit them rather than simulating success;
 - add compact-player active-mix indication and entry back into the expanded surface.
@@ -527,20 +521,19 @@ Development proceeds as gated vertical slices. Each slice must leave the ordinar
 
 - place instance-wide feature flags, analysis lifecycle, storage and capability diagnostics in the private admin;
 - place per-user interaction, waveform and playback defaults in the authenticated Settings page;
-- keep transient Auto DJ enabled/suspended state in the playback session/runtime rather than global configuration;
 - expose actionable fallback reasons.
 
 **Gate:** operational and user preferences have one documented owner and are changeable without code edits.
 
-### Phase 8 — automation execution contract
+### Future Epic B — Auto DJ and automatic mixing
 
-- add scheduled action batches using audio-context time;
-- expose action origin, target, timing and current ownership;
-- implement per-control manual override, transition suspension, takeover, cancellation and safe shutdown;
-- show planned and active automation in compact and expanded views;
-- leave manoeuvre generation, selection and scoring to a separate design.
+- design the transition/manoeuvre catalogue and decision model;
+- define the automation execution, observation, conflict and takeover contracts;
+- implement scheduled action batches using audio-context time;
+- expose planned and active automation in compact and expanded views;
+- add evaluation, diagnostics and quality scoring.
 
-**Gate:** a deterministic test plan can drive and interrupt both decks and the mixer without manipulating React components.
+This epic begins only after the foundation phases pass their gates. Its details are deliberately not frozen by the foundation plan because automatic mixing has its own product, DSP and evaluation subtleties.
 
 ---
 
@@ -576,17 +569,17 @@ The foundation is successful when:
 
 1. A user can open the DJ control surface from the ordinary player and immediately recognise the two-deck Traktor-style operating model.
 2. Opening or closing the control surface does not reload, pause or seek the playing track.
-3. Auto DJ can operate in the background independently of control-surface visibility, while the compact player indicates an active mix.
+3. A two-deck manual mix continues while the control surface is closed, and the compact player indicates the active mix.
 4. Two already-buffered tracks can play and overlap entirely in the browser without depending on a backend-rendered mixed stream.
 5. The user can navigate both waveforms smoothly with mouse and touch.
-6. Ordinary playback, manual deck controls and automation operate the shared playback engine rather than separate runtimes or local component state.
+6. Ordinary playback and manual deck controls operate the shared playback engine rather than separate runtimes or local component state.
 7. Preparing the free deck does not advance the queue; an explicit handover changes the program deck and canonical current queue item.
-8. Every future automated action can be represented as a visible engine action and can be interrupted by the user.
+8. The engine exposes stable deck/mixer commands and observations that a separately designed Auto DJ epic can consume without manipulating React components.
 9. Waveform and timeline analysis is precomputed, versioned and reusable by both UI and later algorithms.
-10. The private admin contains a coherent DJ Workspace / Auto DJ settings area.
-11. Automatic-DJ decision algorithms can remain unimplemented without leaving architectural gaps in the UI or audio runtime.
+10. The private admin contains coherent DJ foundation, analysis and capability settings, with future Auto DJ settings reserved for its separate epic.
+11. Auto DJ remains unimplemented and does not block or masquerade as part of the working manual foundation.
 12. Native playback rate is treated as an intermediate implementation; validated Signalsmith tempo and beat sync are completed before automatic transition execution is enabled.
-13. Auto DJ never starts a transition until the incoming deck is fully ready, while manual playback can retain a streaming fallback.
+13. The engine exposes full incoming-deck readiness for the future Auto DJ epic, while manual playback can retain a streaming fallback.
 
 ---
 
@@ -594,6 +587,7 @@ The foundation is successful when:
 
 After this foundation is accepted, prepare separate design work for:
 
+- the complete Auto DJ epic, including execution, observation and manual takeover;
 - automatic transition/manoeuvre catalogue;
 - transition context and decision model;
 - loop and cue opportunity detection;

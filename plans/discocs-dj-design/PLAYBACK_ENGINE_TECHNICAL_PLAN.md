@@ -1,7 +1,7 @@
 # PlaybackEngine technical plan
 
 **Status:** implementation contract draft
-**Applies to:** Phases 0-3, 6 and 8
+**Applies to:** foundation Phases 0-3 and 6
 **Replaces:** direct use of `ui/src/engine/AudioEngine.ts` by player-facing code
 
 ## 1. Objective
@@ -34,7 +34,7 @@ ui/src/engine/playback/
     HtmlMediaDeckSource.ts   Phase 1 implementation
     StretchDeckSource.ts     Phase 6 Signalsmith implementation
   MixerGraph.ts              deck strips, crossfader and master graph
-  AutomationScheduler.ts     Phase 8 action batches and cancellation
+  AutomationScheduler.ts     reserved for the separate Auto DJ epic
   curves.ts                  pure gain/EQ/filter/crossfader mappings
   clock.ts                   audio-time/playhead conversion helpers
 ```
@@ -56,7 +56,6 @@ type CommandOrigin = "manual" | "automation" | "system"
 type DeckRole = "program" | "incoming" | "outgoing" | "prepared" | "free"
 type PreparationState = "empty" | "loading" | "ready" | "streaming" | "unavailable"
 type TransportState = "idle" | "loading" | "paused" | "playing" | "ended" | "error"
-type AutoDjState = "disabled" | "idle" | "preparing" | "scheduled" | "transitioning" | "suspended" | "error"
 ```
 
 The engine snapshot contains:
@@ -106,9 +105,6 @@ interface PlaybackEngine {
   setMasterGain(normalized: number, command?: CommandMeta): void
 
   handover(request: HandoverRequest): Promise<HandoverResult>
-  schedule(batch: AutomationBatch): string
-  cancelAutomation(request: CancelAutomationRequest): void
-  takeOver(): void
   destroy(): Promise<void>
 }
 ```
@@ -239,14 +235,11 @@ Client order:
 
 The server failure state remains visible until reconciled. It does not reverse an already audible transition.
 
-## 11. Automation ownership
+## 11. Reserved Auto DJ boundary
 
-- Manual gain/EQ/filter/effect commands cancel only the target automation lane until transition end.
-- Manual crossfader, tempo, transport, seek or loop commands suspend the transition batch.
-- Take Over cancels every future action, preserves current parameter values and reports `suspended`.
-- Disabling Auto DJ cancels a not-yet-audible batch; an audible transition completes safely unless Take Over is used.
-- Every scheduled action declares target, start/end audio time, interpolation, origin and transition id.
-- AudioParam automation is cancelled with a hold-at-current-value strategy where supported, with a tested equivalent fallback.
+The foundation exposes stable deck/mixer commands, immutable observations and optional command origin metadata. It does not freeze an automation scheduler, ownership policy, takeover semantics or transition state machine.
+
+Those contracts belong to the separate Auto DJ epic and will be designed against the working engine. Auto DJ must consume the same public commands rather than manipulate React or reach into audio-node internals.
 
 ## 12. Capability model and fallback
 
@@ -264,7 +257,7 @@ Levels:
 - `ordinary`: one-deck playback available;
 - `manualMix`: two media-element decks and mixer available;
 - `tempoSync`: validated Signalsmith path and timeline beats available;
-- `autoDj`: tempoSync plus fully prepared incoming deck and automation scheduler.
+- a future Auto DJ capability may build on `tempoSync`, fully prepared incoming decks and a separately designed scheduler.
 
 Loss of an advanced capability disables only the dependent level and provides a concrete reason.
 
@@ -277,7 +270,7 @@ No local self-check commands are run; tests are authored and executed by Jenkins
 - crossfader, gain, EQ and filter mappings;
 - deck-role transitions and idempotent handover reducer;
 - playhead anchor calculations;
-- automation lane cancellation and takeover;
+- command-origin metadata and observation stability required by future integrations;
 - capability-to-feature-level resolution.
 
 ### Engine tests with Web Audio/media fakes
