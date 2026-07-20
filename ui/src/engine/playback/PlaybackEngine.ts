@@ -18,12 +18,12 @@ export class PlaybackEngine {
 
   async ensureReady(): Promise<PlaybackCapabilities> {
     const capabilities = detectPlaybackCapabilities()
-    if (!capabilities.manualMix) return capabilities
-    this.initialize()
-    const context = this.context
-    if (!context) return capabilities
-    if (context.state === "suspended") await context.resume()
-    this.graph?.logContextState()
+    if (capabilities.manualMix) {
+      this.initialize()
+      const context = this.context
+      if (context?.state === "suspended") await context.resume()
+      this.graph?.logContextState()
+    }
     return capabilities
   }
 

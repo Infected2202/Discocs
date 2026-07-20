@@ -181,8 +181,7 @@ def _decode_descriptor(descriptor: Mapping[str, Any], payload: bytes) -> tuple[f
     return tuple(float(value) * float(scale) for value in values)
 
 
-def decode_timeline(manifest: Mapping[str, Any], payload: bytes) -> dict[str, Any]:
-    """Validate and decode a v1 payload for fixture and backend round trips."""
+def _validate_payload(manifest: Mapping[str, Any], payload: bytes) -> None:
     if manifest.get("schema_version") != SCHEMA_VERSION:
         raise TimelineFormatError("unsupported timeline schema version")
     payload_meta = manifest.get("payload")
@@ -197,8 +196,9 @@ def decode_timeline(manifest: Mapping[str, Any], payload: bytes) -> dict[str, An
     if payload_meta.get("sha256") != hashlib.sha256(payload).hexdigest():
         raise TimelineFormatError("payload checksum mismatch")
 
-    waveform = manifest.get("waveform")
-    if not isinstance(waveform, Mapping) or not isinstance(waveform.get("levels"), list):
+
+def _decode_waveform_levels(waveform: Mapping[str, Any], payload: bytes) -> list[dict[str, Any]]:
+    if not isinstance(waveform.get("levels"), list):
         raise TimelineFormatError("missing waveform levels")
     decoded_levels = []
     for level in waveform["levels"]:
@@ -211,4 +211,14 @@ def decode_timeline(manifest: Mapping[str, Any], payload: bytes) -> dict[str, An
         if {len(values) for values in decoded.values()} != {level.get("bucket_count")}:
             raise TimelineFormatError("waveform array length mismatch")
         decoded_levels.append({**level, "arrays": decoded})
+    return decoded_levels
+
+
+def decode_timeline(manifest: Mapping[str, Any], payload: bytes) -> dict[str, Any]:
+    """Validate and decode a v1 payload for fixture and backend round trips."""
+    _validate_payload(manifest, payload)
+    waveform = manifest.get("waveform")
+    if not isinstance(waveform, Mapping):
+        raise TimelineFormatError("missing waveform levels")
+    decoded_levels = _decode_waveform_levels(waveform, payload)
     return {"duration_seconds": manifest.get("duration_seconds"), "levels": decoded_levels}
