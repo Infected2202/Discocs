@@ -577,6 +577,31 @@ class JobsStoreMixin:
             ).fetchone()
         return row_to_analysis_task(row) if row else None
 
+    def latest_track_analysis_states(
+        self,
+        track_ids: list[int],
+        model_name: str,
+    ) -> dict[int, dict[str, object]]:
+        ids = list(dict.fromkeys(int(track_id) for track_id in track_ids))
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT task.* FROM analysis_tasks task
+                WHERE task.track_id IN ({placeholders})
+                  AND task.model_name=?
+                  AND task.updated_at=(
+                      SELECT MAX(latest.updated_at) FROM analysis_tasks latest
+                      WHERE latest.track_id=task.track_id
+                        AND latest.model_name=task.model_name
+                  )
+                """,
+                (*ids, model_name),
+            ).fetchall()
+        return {int(row["track_id"]): dict(row) for row in rows}
+
     def complete_analysis_task(
         self,
         task_id: str,

@@ -136,14 +136,14 @@ def head_pack_status(store: Store, settings: Settings) -> dict[str, object]:
 
 
 def audio_feature_status(store: Store) -> dict[str, object]:
+    from app.timeline.codec import EXTRACTOR as timeline_extractor, PACK_NAME
     tracks = store.count_tracks()
-    complete = store.count_feature_tracks(AUDIO_FEATURE_EXTRACTOR)
-    missing = store.count_tracks_missing_features(AUDIO_FEATURE_EXTRACTOR)
+    bundle = store.audio_bundle_counts(AUDIO_FEATURE_EXTRACTOR, PACK_NAME, timeline_extractor)
     return {
         "extractor": AUDIO_FEATURE_EXTRACTOR,
         "track_count": tracks,
-        "complete_tracks": complete,
-        "missing_tracks": missing,
+        "complete_tracks": bundle["ready"],
+        "missing_tracks": bundle["missing"],
     }
 
 

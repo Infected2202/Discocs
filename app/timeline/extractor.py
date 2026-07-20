@@ -1,12 +1,9 @@
-"""Single-decode waveform and rhythm extraction for timeline foundation v2."""
+"""Timeline encoding from the audio-feature task's shared PCM and rhythm result."""
 from __future__ import annotations
-
-import subprocess
-from pathlib import Path
 
 import numpy as np
 
-from app.audio_features import RHYTHM_MAX_DURATION_SECONDS, RhythmAnalysis, analyze_rhythm
+from app.audio_features import RHYTHM_MAX_DURATION_SECONDS, RhythmAnalysis
 from app.timeline.codec import EXTRACTOR, encode_timeline
 
 SAMPLE_RATE = 44_100
@@ -20,65 +17,36 @@ _BAND_MASKS = (
 )
 
 
-def extract_timeline(path: Path, *, track_id: int, duration: float, source: dict[str, object]):
-    process = subprocess.Popen(
-        ["ffmpeg", "-v", "error", "-i", str(path), "-f", "f32le", "-ac", "1", "-ar", str(SAMPLE_RATE), "pipe:1"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    )
-    if process.stdout is None:
-        raise RuntimeError("ffmpeg audio pipe is unavailable")
-    fields: dict[str, list[float]] = {name: [] for name in ("minimum", "maximum", "low", "mid", "high")}
-    rhythm_chunks: list[np.ndarray] = []
-    rhythm_samples = 0
-    rhythm_limit = RHYTHM_MAX_DURATION_SECONDS * SAMPLE_RATE
-    pending = b""
-    try:
-        while True:
-            chunk = process.stdout.read(BUCKET_SAMPLES * 4 * 64)
-            if not chunk:
-                break
-            pending += chunk
-            usable = len(pending) - (len(pending) % (BUCKET_SAMPLES * 4))
-            if usable:
-                samples = np.frombuffer(pending[:usable], dtype="<f4").reshape(-1, BUCKET_SAMPLES)
-                _append_buckets(fields, samples)
-                rhythm_samples = _append_rhythm_audio(rhythm_chunks, rhythm_samples, rhythm_limit, samples.reshape(-1))
-            pending = pending[usable:]
-        if pending:
-            samples = np.frombuffer(pending[:len(pending) - len(pending) % 4], dtype="<f4")
-            if samples.size:
-                rhythm_samples = _append_rhythm_audio(rhythm_chunks, rhythm_samples, rhythm_limit, samples)
-                padded = np.pad(samples, (0, BUCKET_SAMPLES - samples.size))
-                _append_buckets(fields, padded.reshape(1, BUCKET_SAMPLES))
-        stderr = process.stderr.read().decode(errors="replace") if process.stderr else ""
-        if process.wait() != 0:
-            raise RuntimeError(stderr.strip() or "ffmpeg failed to decode audio")
-    except Exception:
-        process.kill()
-        process.wait()
-        raise
-    if not fields["minimum"]:
+def encode_audio_timeline(
+    audio: np.ndarray,
+    *,
+    track_id: int,
+    source: dict[str, object],
+    rhythm: RhythmAnalysis,
+):
+    """Encode waveform and beat data from the audio-features task's 44.1 kHz decode."""
+    samples = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if not samples.size:
         raise RuntimeError("decoded audio was empty")
-    rhythm_audio = np.concatenate(rhythm_chunks)
-    rhythm = analyze_rhythm(rhythm_audio)
-    decoded_duration = len(fields["minimum"]) * BUCKET_SAMPLES / SAMPLE_RATE
+    fields: dict[str, list[float]] = {name: [] for name in ("minimum", "maximum", "low", "mid", "high")}
+    for start in range(0, samples.size, BUCKET_SAMPLES * 64):
+        chunk = samples[start : start + BUCKET_SAMPLES * 64]
+        remainder = chunk.size % BUCKET_SAMPLES
+        if remainder:
+            chunk = np.pad(chunk, (0, BUCKET_SAMPLES - remainder))
+        _append_buckets(fields, chunk.reshape(-1, BUCKET_SAMPLES))
+    duration = samples.size / SAMPLE_RATE
+    coverage = min(samples.size, RHYTHM_MAX_DURATION_SECONDS * SAMPLE_RATE) / SAMPLE_RATE
     return encode_timeline(
-        track_id=track_id, duration_seconds=max(duration, decoded_duration), sample_rate=SAMPLE_RATE,
-        base_bucket_samples=BUCKET_SAMPLES, base=fields, source=source, extractor=EXTRACTOR,
-        rhythm=_rhythm_series(rhythm, coverage_seconds=rhythm_audio.size / SAMPLE_RATE),
+        track_id=track_id,
+        duration_seconds=duration,
+        sample_rate=SAMPLE_RATE,
+        base_bucket_samples=BUCKET_SAMPLES,
+        base=fields,
+        source=source,
+        extractor=EXTRACTOR,
+        rhythm=_rhythm_series(rhythm, coverage_seconds=coverage),
     )
-
-
-def _append_rhythm_audio(
-    chunks: list[np.ndarray], current_samples: int, limit: int, samples: np.ndarray,
-) -> int:
-    remaining = limit - current_samples
-    if remaining <= 0:
-        return current_samples
-    retained = np.asarray(samples[:remaining], dtype=np.float32)
-    if retained.size:
-        chunks.append(retained.copy())
-    return current_samples + retained.size
 
 
 def _rhythm_series(rhythm: RhythmAnalysis, *, coverage_seconds: float) -> dict[str, object]:

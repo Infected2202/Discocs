@@ -678,7 +678,7 @@
               </select>
             </label>
             <label style="margin-top:0">Extractor
-              <input id="metricsExtractor" value="audio_features_v1" onchange="loadMetricsExplorer()">
+              <input id="metricsExtractor" value="audio_features_v2" onchange="loadMetricsExplorer()">
             </label>
             <div class="search">
               <input id="metricsQuery" placeholder="Search artist, title, album, path">
@@ -980,7 +980,7 @@
         </label>
         <label><span class="label-title">Feature extractor <span class="info" data-tooltip="Audio feature pipeline version stored in track_features. Rescan deletes existing values for this extractor and queues tracks for re-analysis.">(i)</span></span>
           <select id="audioFeaturesExtractor">
-            <option value="audio_features_v1">audio_features_v1</option>
+            <option value="audio_features_v2">audio_features_v2</option>
           </select>
         </label>
         <div class="meta" id="audioFeaturesStatus">Audio feature status not loaded yet.</div>
@@ -1556,7 +1556,7 @@
         "--server", shellQuote(server),
         "--worker-id", shellQuote(workerId),
         "--models", embeddingModels,
-        "--models", "audio_features_v1",
+        "--models", "audio_features_v2",
         "--models", "discogs-effnet-heads",
         "--claim-batch-size", workerSetting("workerClaimBatchSize", "2"),
         "--max-inflight-tasks", workerSetting("workerMaxInflightTasks", "2"),
@@ -3080,11 +3080,10 @@
       const timeline = data.timeline || {};
       const cards = [
         statCard("Tracks", data.tracks, "total tracks", detailLine("Navidrome catalog"), `<button id="navidromeSyncBtn" onclick="startNavidromeSync()"${disabledAttr("navidrome-sync")}>Sync Navidrome</button>`),
-        statCard("DJ waveforms", timeline.missing ?? data.tracks, "need waveform analysis", [
-          detailLine(`${countText(timeline.ready || 0)} ready / ${countText(timeline.total ?? data.tracks)} active`),
-          detailLine(`${formatBytes(timeline.storage_bytes || 0)} v2 artifact payloads`)
-        ].join(""), `<button id="analyzeTimelineBtn" onclick="startAnalyzeTimeline()" title="Analyze missing DJ waveforms"${disabledAttr("analyze-timeline")}>Analyze missing</button><button id="rebuildTimelineBtn" onclick="startAnalyzeTimeline(true)" title="Rebuild DJ waveforms and beat grids">Rebuild</button>`),
-        statCard("Audio features", audio.missing_tracks ?? data.audio_features_missing_tracks, "need audio features", detailLine(`${countText(audio.complete_tracks || 0)} ready / ${countText(data.tracks)} total`), `<button id="analyzeAudioFeaturesBtn" onclick="startAnalyzeAudioFeatures()" title="Analyze audio features"${disabledAttr("analyze-audio-features")}>Analyze missing</button>`),
+        statCard("Audio features + DJ timeline", audio.missing_tracks ?? data.audio_features_missing_tracks, "need unified audio analysis", [
+          detailLine(`${countText(audio.complete_tracks || 0)} ready / ${countText(data.tracks)} total`),
+          detailLine(`${formatBytes(timeline.storage_bytes || 0)} waveform and beat-grid payloads`)
+        ].join(""), `<button id="analyzeAudioFeaturesBtn" onclick="startAnalyzeAudioFeatures()" title="Analyze missing audio features and DJ timelines"${disabledAttr("analyze-audio-features")}>Analyze missing</button><button id="rebuildAudioFeaturesBtn" onclick="startAnalyzeAudioFeatures(true)" title="Rebuild audio features and DJ timelines">Rebuild</button>`),
         statCard("Discogs-EffNet heads", headPack.missing_tracks ?? data.head_pack_missing_tracks, "need head outputs", detailLine(`${countText(headPack.complete_tracks || 0)} ready / ${countText(data.tracks)} total`), `<button id="analyzeHeadsBtn" onclick="startAnalyzeHeads()" title="Analyze Discogs-EffNet heads"${disabledAttr("analyze-heads")}>Analyze missing</button>`),
         statCard("Lost files", data.missing_files, "missing on disk", detailLine("Check unavailable paths"), `<button onclick="routeTo({view: 'lostFiles', model: model()}, {reset: true})">Open</button>`),
         statCard("Errored files", data.analysis_error_count || 0, "analysis errors", detailLine("Latest failed track/model pairs"), `<button onclick="routeTo({view: 'erroredFiles', model: model()}, {reset: true})">Open</button>`),
@@ -4825,19 +4824,6 @@
       });
       await refreshJobs();
     }
-    async function startAnalyzeTimeline(reset = false) {
-      const rawLimit = document.getElementById("limit").value;
-      const parsedLimit = rawLimit ? Number(rawLimit) : null;
-      if (reset && !confirm("Rebuild waveform and beat-grid artifacts for the selected active-track limit?")) return;
-      await json("/api/v1/jobs/analyze-timeline", {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          limit: parsedLimit && parsedLimit > 0 ? Math.min(parsedLimit, 500) : null,
-          reset
-        })
-      });
-      await refreshJobs();
-    }
     async function downloadHeadModels() {
       await json("/api/v1/jobs/download-head-models", {method: "POST"});
       await refreshJobs();
@@ -4856,18 +4842,20 @@
       });
       await refreshJobs();
     }
-    async function startAnalyzeAudioFeatures() {
+    async function startAnalyzeAudioFeatures(reset = false) {
       const rawLimit = document.getElementById("limit").value;
       const rawWorkers = document.getElementById("audioFeatureWorkers").value;
       const executionMode = document.getElementById("analyzeExecutionMode").value;
       const parsedLimit = rawLimit ? Number(rawLimit) : null;
+      if (reset && !confirm("Rebuild audio features, waveforms and beat grids for the selected active-track limit?")) return;
       await json("/api/v1/jobs/analyze-audio-features", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
           limit: parsedLimit && parsedLimit > 0 ? parsedLimit : null,
           workers: rawWorkers ? Number(rawWorkers) : 4,
           execution_mode: executionMode,
-          local_executor_enabled: executionMode !== "remote"
+          local_executor_enabled: executionMode !== "remote",
+          reset_existing: reset
         })
       });
       await refreshJobs();

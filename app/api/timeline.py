@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import hashlib
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
 from app.api.deps import context
-from app.schemas.requests import AnalyzeTimelineRequest, TimelineStatusRequest
+from app.audio_features import AUDIO_FEATURE_EXTRACTOR
+from app.schemas.requests import TimelineStatusRequest
 from app.timeline.artifacts import load_valid_artifact
 from app.timeline.codec import EXTRACTOR, PACK_NAME, TimelineFormatError
-from app.timeline.jobs import run_timeline_job
 
 router = APIRouter(prefix="/api/v1")
 
@@ -56,9 +56,16 @@ def _track_timeline_status(store, settings, track_id: int, state) -> tuple[str, 
     if track is None:
         return "missing", None
     row = store.get_timeline_artifact(track_id, PACK_NAME, EXTRACTOR)
+    task_status = str(state["status"]) if state else ""
+    active_status = {
+        "queued": "queued",
+        "failed_retryable": "queued",
+        "leased": "running",
+        "final_failed": "failed",
+    }.get(task_status)
     if row is None:
-        if state and state["status"] in {"queued", "running", "failed"}:
-            return str(state["status"]), state.get("error")
+        if active_status:
+            return active_status, state.get("error")
         return "missing", None
     identity_matches = (
         row["source_path"] == track.path
@@ -66,6 +73,8 @@ def _track_timeline_status(store, settings, track_id: int, state) -> tuple[str, 
         and int(row["source_file_size"]) == track.file_size
     )
     if not identity_matches:
+        if active_status:
+            return active_status, state.get("error")
         return "stale", None
     try:
         load_valid_artifact(store, settings.data_dir / "timeline", track, PACK_NAME, EXTRACTOR)
@@ -79,40 +88,9 @@ def timeline_status(request: TimelineStatusRequest) -> dict[str, object]:
     if request.extractor != EXTRACTOR:
         raise HTTPException(status_code=400, detail="Unsupported timeline extractor")
     store, settings = context()
-    states = store.get_timeline_analysis_states(request.track_ids, PACK_NAME, EXTRACTOR)
+    states = store.latest_track_analysis_states(request.track_ids, AUDIO_FEATURE_EXTRACTOR)
     items = []
     for track_id in request.track_ids:
         status, error = _track_timeline_status(store, settings, track_id, states.get(track_id))
         items.append({"track_id": track_id, "status": status, "error": error})
     return {"pack_name": PACK_NAME, "extractor": EXTRACTOR, "items": items}
-
-
-@router.post(
-    "/jobs/analyze-timeline",
-    responses={400: {"description": "Unsupported extractor"}, 404: {"description": "Track not found"}},
-)
-def analyze_timeline(request: AnalyzeTimelineRequest, background_tasks: BackgroundTasks) -> dict[str, object]:
-    if request.extractor != EXTRACTOR:
-        raise HTTPException(status_code=400, detail="Unsupported timeline extractor")
-    store, settings = context()
-    if request.track_ids is not None:
-        tracks = []
-        for track_id in dict.fromkeys(request.track_ids):
-            track = store.get_track(track_id)
-            if track is None:
-                raise HTTPException(status_code=404, detail=f"Track {track_id} not found")
-            tracks.append(track)
-        if request.limit is not None:
-            tracks = tracks[:request.limit]
-    elif request.reset:
-        tracks = store.list_active_tracks(limit=request.limit)
-    else:
-        tracks = store.list_tracks_needing_timeline(PACK_NAME, EXTRACTOR, limit=request.limit)
-    job = store.create_progress_job("analyze-timeline", EXTRACTOR, total=len(tracks), message=f"Queued {len(tracks)} waveform tracks")
-    for track in tracks:
-        store.set_timeline_analysis_status(track.id, PACK_NAME, EXTRACTOR, "queued", job_id=job.id)
-    if tracks:
-        background_tasks.add_task(run_timeline_job, store, settings, tracks, job_id=job.id, reset=request.reset)
-    else:
-        store.update_progress_job(job.id, status="completed", message="Waveforms ready 0, failed 0", finished=True)
-    return {"status": "accepted", "job_id": job.id, "total": len(tracks), "extractor": EXTRACTOR}

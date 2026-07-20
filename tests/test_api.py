@@ -26,7 +26,7 @@ import app.maintenance as maintenance_module
 import app.store.jobs as store_jobs_module
 import app.api.tracks as api_tracks_module
 from app.cli import normalize_worker_models, worker_failure_retryable
-from app.audio_features import AUDIO_FEATURE_EXTRACTOR
+from app.audio_features import AUDIO_FEATURE_EXTRACTOR, AudioFeatureAnalysis
 from app.config import Settings
 from app.head_pack import HeadOutput, Prediction
 from app.main import app
@@ -34,6 +34,8 @@ from app.navidrome import DownloadedTrack
 from app.navidrome import NavidromeSong
 from app.scanner import ScannedTrack
 from app.store import INITIALIZED_DB_PATHS, PlaybackEventCreate, Store, Track, TrackFeature, TrackPrediction
+from app.timeline.artifacts import publish_artifact
+from app.timeline.codec import EXTRACTOR as TIMELINE_EXTRACTOR, encode_timeline
 from app.user_context import (
     NavidromeCredentials,
     reset_current_navidrome_credentials,
@@ -101,6 +103,25 @@ def add_track(
         )
     )
     return track_id
+
+
+def publish_test_timeline(store: Store, track_id: int, root: Path):
+    track = store.get_track(track_id)
+    manifest, payload = encode_timeline(
+        track_id=track_id,
+        duration_seconds=float(track.duration or 1),
+        sample_rate=44_100,
+        base_bucket_samples=512,
+        base={
+            "minimum": [-0.5], "maximum": [0.5],
+            "low": [0.2], "mid": [0.5], "high": [0.3],
+        },
+        source={"path": track.path, "mtime": track.mtime, "file_size": track.file_size},
+        extractor=TIMELINE_EXTRACTOR,
+        rhythm={"bpm": 128.0, "confidence": 0.9, "beats": [0.5], "local_tempo": [128.0]},
+    )
+    publish_artifact(store, root / "timeline", manifest, payload)
+    return manifest, payload
 
 
 def add_navidrome_track(
@@ -1324,10 +1345,9 @@ def test_test_ui_loads():
     assert "homeSearchQuery" in response.text
     assert "listenerDashboardShelves" in response.text
     assert "/api/v1/dashboard?limit=8" in response.text
-    assert "DJ waveforms" in response.text
-    assert "startAnalyzeTimeline()" in response.text
-    assert "startAnalyzeTimeline(true)" in response.text
-    assert '\"/api/v1/jobs/analyze-timeline\"' in response.text
+    assert "Audio features + DJ timeline" in response.text
+    assert "startAnalyzeAudioFeatures(true)" in response.text
+    assert '\"/api/v1/jobs/analyze-timeline\"' not in response.text
     assert "listenerSearch" in response.text
     assert "/api/v1/search" in response.text
     assert "artistSurface" in response.text
@@ -1568,6 +1588,7 @@ def test_audio_feature_missing_count_ignores_missing_files(tmp_path: Path, monke
         ready_id,
         [TrackFeature("bpm", value=128.0, unit="bpm", extractor=AUDIO_FEATURE_EXTRACTOR)],
     )
+    publish_test_timeline(store, ready_id, tmp_path)
     store.save_features(
         missing_file_id,
         [TrackFeature("bpm", value=130.0, unit="bpm", extractor=AUDIO_FEATURE_EXTRACTOR)],
@@ -1934,6 +1955,19 @@ def test_worker_submit_audio_feature_result(tmp_path: Path, monkeypatch):
         local_executor_enabled=False,
     )
     task = store.claim_analysis_tasks("gpu-1", [AUDIO_FEATURE_EXTRACTOR], limit=1)[0]
+    manifest, payload = encode_timeline(
+        track_id=track_id,
+        duration_seconds=1,
+        sample_rate=44_100,
+        base_bucket_samples=512,
+        base={
+            "minimum": [-0.5], "maximum": [0.5],
+            "low": [0.2], "mid": [0.5], "high": [0.3],
+        },
+        source={"path": task.path, "mtime": task.mtime, "file_size": task.file_size},
+        extractor=TIMELINE_EXTRACTOR,
+        rhythm={"bpm": 128.0, "confidence": 0.9, "beats": [0.5], "local_tempo": [128.0]},
+    )
     client = TestClient(app)
 
     response = client.post(
@@ -1956,6 +1990,8 @@ def test_worker_submit_audio_feature_result(tmp_path: Path, monkeypatch):
                             "extractor": AUDIO_FEATURE_EXTRACTOR,
                         }
                     ],
+                    "timeline_manifest": manifest,
+                    "timeline_payload_b64": base64.b64encode(payload).decode("ascii"),
                 }
             ],
         },
@@ -1967,7 +2003,57 @@ def test_worker_submit_audio_feature_result(tmp_path: Path, monkeypatch):
     assert len(features) == 1
     assert features[0].name == "bpm"
     assert features[0].value == 128.0
+    assert store.get_timeline_artifact(track_id, "timeline_foundation", TIMELINE_EXTRACTOR) is not None
     assert store.get_analysis_job(job.id).done == 1
+
+
+def test_worker_rejects_timeline_from_a_different_source_identity(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    path = tmp_path / "track.flac"
+    path.write_bytes(b"fake-audio")
+    track_id = add_track(store, path)
+    store.create_analysis_job(
+        AUDIO_FEATURE_EXTRACTOR,
+        None,
+        kind="analyze-audio-features",
+        tracks=store.list_tracks_needing_audio_bundle(
+            AUDIO_FEATURE_EXTRACTOR, "timeline_foundation", TIMELINE_EXTRACTOR,
+        ),
+        local_executor_enabled=False,
+    )
+    task = store.claim_analysis_tasks("gpu-1", [AUDIO_FEATURE_EXTRACTOR], limit=1)[0]
+    manifest, payload = encode_timeline(
+        track_id=track_id,
+        duration_seconds=1,
+        sample_rate=44_100,
+        base_bucket_samples=512,
+        base={"minimum": [-0.5], "maximum": [0.5], "low": [0.2], "mid": [0.5], "high": [0.3]},
+        source={"path": "wrong.flac", "mtime": task.mtime, "file_size": task.file_size},
+        extractor=TIMELINE_EXTRACTOR,
+        rhythm={"bpm": 128.0, "confidence": 0.9, "beats": [0.5], "local_tempo": [128.0]},
+    )
+    response = TestClient(app).post(
+        "/api/v1/workers/results",
+        json={
+            "worker_id": "gpu-1",
+            "feature_results": [{
+                "task_id": task.id,
+                "track_id": track_id,
+                "model_name": AUDIO_FEATURE_EXTRACTOR,
+                "file_size": task.file_size,
+                "mtime": task.mtime,
+                "features": [{"name": "bpm", "value": 128.0, "extractor": AUDIO_FEATURE_EXTRACTOR}],
+                "timeline_manifest": manifest,
+                "timeline_payload_b64": base64.b64encode(payload).decode("ascii"),
+            }],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] == []
+    assert response.json()["rejected"][0]["task_id"] == task.id
+    assert store.load_features(track_id, AUDIO_FEATURE_EXTRACTOR) == []
+    assert store.get_timeline_artifact(track_id, "timeline_foundation", TIMELINE_EXTRACTOR) is None
 
 
 def test_worker_submit_sqlite_lock_returns_retryable_error(tmp_path: Path, monkeypatch):
@@ -2462,7 +2548,7 @@ def test_analyze_audio_features_remote_mode_queues_worker_task(tmp_path: Path, m
     assert job.model_name == AUDIO_FEATURE_EXTRACTOR
     assert job.queued == 1
     jobs = client.get("/api/v1/jobs?detail=true").json()["jobs"]
-    assert "Waiting for worker supporting audio_features_v1" in jobs[0]["status_hint"]
+    assert f"Waiting for worker supporting {AUDIO_FEATURE_EXTRACTOR}" in jobs[0]["status_hint"]
     claim = client.post(
         "/api/v1/workers/claim",
         json={"worker_id": "gpu-1", "models": [AUDIO_FEATURE_EXTRACTOR], "limit": 1},
@@ -3880,20 +3966,23 @@ def test_analyze_audio_features_job_saves_successes_and_counts_failures(tmp_path
     add_track(store, fail_path, title="Fail")
 
     class FakeAudioFeatureAnalyzer:
-        def analyze_track(self, path: Path):
+        def analyze_bundle(self, path: Path, **_kwargs):
             if path.stem == "fail":
                 raise RuntimeError("feature extraction failed")
-            return [
-                TrackFeature(
+            return AudioFeatureAnalysis(
+                features=[TrackFeature(
                     name="bpm",
                     value=128.0,
                     unit="bpm",
                     confidence=0.9,
                     extractor=AUDIO_FEATURE_EXTRACTOR,
-                )
-            ]
+                )],
+                timeline_manifest={},
+                timeline_payload=b"payload",
+            )
 
     monkeypatch.setattr(services_analysis_module, "AudioFeatureAnalyzer", FakeAudioFeatureAnalyzer)
+    monkeypatch.setattr(analysis_jobs_module, "publish_artifact", lambda *_args, **_kwargs: None)
     job_id = main_module.create_job("analyze-audio-features", "test")
 
     analysis_jobs_module._analyze_audio_features_job(job_id, None)
@@ -3930,16 +4019,18 @@ def test_analyze_audio_features_job_saves_successes_with_multiple_workers(tmp_pa
     second_id = add_track(store, second_path, title="Second")
 
     class FakeAudioFeatureAnalyzer:
-        def analyze_track(self, path: Path):
-            return [
-                TrackFeature(
+        def analyze_bundle(self, path: Path, **_kwargs):
+            return AudioFeatureAnalysis(
+                features=[TrackFeature(
                     name="bpm",
                     value=128.0 if path.stem == "first" else 129.0,
                     unit="bpm",
                     confidence=0.9,
                     extractor=AUDIO_FEATURE_EXTRACTOR,
-                )
-            ]
+                )],
+                timeline_manifest={},
+                timeline_payload=b"payload",
+            )
 
     class FakeFuture:
         def __init__(self, result):
@@ -3957,13 +4048,14 @@ def test_analyze_audio_features_job_saves_successes_with_multiple_workers(tmp_pa
             initializer()
             FakeExecutor.max_workers = max_workers
 
-        def submit(self, fn, *args):
-            return FakeFuture(fn(*args))
+        def submit(self, fn, *args, **kwargs):
+            return FakeFuture(fn(*args, **kwargs))
 
         def shutdown(self, wait=True, cancel_futures=False):
             pass
 
     monkeypatch.setattr(services_analysis_module, "AudioFeatureAnalyzer", FakeAudioFeatureAnalyzer)
+    monkeypatch.setattr(analysis_jobs_module, "publish_artifact", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(services_analysis_module, "ProcessPoolExecutor", FakeExecutor)
     monkeypatch.setattr(services_analysis_module, "as_completed", lambda futures: futures)
     job_id = main_module.create_job("analyze-audio-features", "test")

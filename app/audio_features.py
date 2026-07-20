@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from time import perf_counter
 
 import numpy as np
 
@@ -11,7 +10,8 @@ from app.embedder import configure_tensorflow_logging, load_audio_with_ffmpeg
 from app.store import TrackFeature
 
 
-AUDIO_FEATURE_EXTRACTOR = "audio_features_v1"
+AUDIO_FEATURE_EXTRACTOR = "audio_features_v2"
+LEGACY_AUDIO_FEATURE_EXTRACTOR = "audio_features_v1"
 EMBEDDING_SAMPLE_RATE = 16000
 ESSENTIA_RHYTHM_SAMPLE_RATE = 44100
 # RhythmExtractor2013's OnsetDetectionGlobal step has a fixed-size internal
@@ -31,68 +31,48 @@ class RhythmAnalysis:
     intervals: np.ndarray
 
 
+@dataclass(frozen=True)
+class AudioFeatureAnalysis:
+    features: list[TrackFeature]
+    timeline_manifest: dict[str, object]
+    timeline_payload: bytes
+
+
 class AudioFeatureAnalyzer:
-    def analyze_track(self, path: Path) -> list[TrackFeature]:
+    def analyze_bundle(
+        self,
+        path: Path,
+        *,
+        track_id: int,
+        source: dict[str, object],
+    ) -> AudioFeatureAnalysis:
+        """Compute scalar features and the browser timeline in one analysis task."""
+        from app.timeline.extractor import encode_audio_timeline
+
         configure_tensorflow_logging()
-        logger.info("Analyzing audio features path=%s extractor=%s", path, AUDIO_FEATURE_EXTRACTOR)
-        total_started = perf_counter()
-        stage_started = perf_counter()
+        logger.info("Analyzing audio bundle path=%s extractor=%s", path, AUDIO_FEATURE_EXTRACTOR)
         audio = load_audio_with_ffmpeg(path, sample_rate=EMBEDDING_SAMPLE_RATE)
-        decode_16k_seconds = perf_counter() - stage_started
-
-        stage_started = perf_counter()
         rhythm_audio = load_audio_with_ffmpeg(path, sample_rate=ESSENTIA_RHYTHM_SAMPLE_RATE)
-        decode_44k_seconds = perf_counter() - stage_started
-
-        features: list[TrackFeature] = []
-        stage_started = perf_counter()
-        features.extend(extract_rhythm_features(rhythm_audio))
-        rhythm_seconds = perf_counter() - stage_started
-
-        stage_started = perf_counter()
-        features.extend(extract_key_features(audio))
-        key_seconds = perf_counter() - stage_started
-
-        stage_started = perf_counter()
-        features.extend(extract_loudness_features(audio))
-        loudness_seconds = perf_counter() - stage_started
-
-        stage_started = perf_counter()
-        features.extend(extract_dynamic_features(rhythm_audio))
-        dynamic_seconds = perf_counter() - stage_started
-
-        total_seconds = perf_counter() - total_started
-        logger.info(
-            "Audio feature timing path=%s extractor=%s total_seconds=%.3f "
-            "decode_16k_seconds=%.3f decode_44k_seconds=%.3f rhythm_seconds=%.3f "
-            "key_seconds=%.3f loudness_seconds=%.3f dynamic_seconds=%.3f "
-            "audio_16k_samples=%s audio_44k_samples=%s",
-            path,
-            AUDIO_FEATURE_EXTRACTOR,
-            total_seconds,
-            decode_16k_seconds,
-            decode_44k_seconds,
-            rhythm_seconds,
-            key_seconds,
-            loudness_seconds,
-            dynamic_seconds,
-            int(audio.size),
-            int(rhythm_audio.size),
+        rhythm = analyze_rhythm(rhythm_audio)
+        features = [
+            TrackFeature(
+                name="bpm",
+                value=rhythm.bpm,
+                unit="bpm",
+                confidence=rhythm.confidence,
+                extractor=AUDIO_FEATURE_EXTRACTOR,
+            ),
+            *extract_key_features(audio),
+            *extract_loudness_features(audio),
+            *extract_dynamic_features(rhythm_audio),
+        ]
+        manifest, payload = encode_audio_timeline(
+            rhythm_audio,
+            track_id=track_id,
+            source=source,
+            rhythm=rhythm,
         )
-        return features
-
-
-def extract_rhythm_features(audio: np.ndarray) -> list[TrackFeature]:
-    rhythm = analyze_rhythm(audio)
-    return [
-        TrackFeature(
-            name="bpm",
-            value=rhythm.bpm,
-            unit="bpm",
-            confidence=rhythm.confidence,
-            extractor=AUDIO_FEATURE_EXTRACTOR,
-        ),
-    ]
+        return AudioFeatureAnalysis(features=features, timeline_manifest=manifest, timeline_payload=payload)
 
 
 def analyze_rhythm(audio: np.ndarray) -> RhythmAnalysis:

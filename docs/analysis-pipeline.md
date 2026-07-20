@@ -101,7 +101,7 @@ Discogs-EffNet classification heads.
 Current extractor:
 
 ```text
-audio_features_v1
+audio_features_v2
 ```
 
 Current feature families:
@@ -127,13 +127,20 @@ Main API/UI action:
 POST /api/v1/jobs/analyze-audio-features
 ```
 
-`RhythmExtractor2013` is also shared by the explicit `/admin` DJ-waveform job.
-That job publishes `timeline_foundation_v2` with beat timestamps, global rhythm
-confidence, rhythm coverage and interval-derived local tempo. It does not run
-when the DJ interface opens and it reuses the same FFmpeg decode that produces
-the waveform and frequency-colour buckets.
+The same durable audio-feature task also publishes `timeline_foundation_v2`
+with waveform extrema, frequency-colour buckets, beat timestamps, global
+rhythm confidence, coverage and interval-derived local tempo. There is no
+separate timeline-analysis job: local and remote audio-feature executors return
+both projections from one analysis result. The DJ interface remains read-only
+and never starts analysis.
 
-Stored data lives in `track_features`:
+`audio_features_v1` rows are legacy scalar-only results. They do not satisfy
+v2 readiness and are removed per track only after a complete v2 result has
+been accepted. Consequently the first v2 deployment intentionally queues all
+active tracks for one explicit audio-feature rebuild.
+
+Scalar data lives in `track_features`; browser-efficient temporal arrays live
+in the checksummed timeline artifact:
 
 ```text
 track_id

@@ -82,6 +82,8 @@ class AudioFeaturesResult:
     path: str
     status: str
     features: list | None = None
+    timeline_manifest: dict[str, object] | None = None
+    timeline_payload: bytes | None = None
     error: str | None = None
     error_type: str | None = None
     traceback: str | None = None
@@ -173,12 +175,29 @@ def _init_audio_feature_worker() -> None:
     analysis_logger.info("Initialized audio feature worker extractor=%s", AUDIO_FEATURE_EXTRACTOR)
 
 
-def _extract_audio_features_worker(track_id: int, path: str) -> AudioFeaturesResult:
+def _extract_audio_features_worker(
+    track_id: int,
+    path: str,
+    source_path: str,
+    mtime: int,
+    file_size: int,
+) -> AudioFeaturesResult:
     if _WORKER_AUDIO_FEATURE_ANALYZER is None:
         raise RuntimeError("Audio feature worker was not initialized")
     try:
-        features = _WORKER_AUDIO_FEATURE_ANALYZER.analyze_track(Path(path))
-        return AudioFeaturesResult(track_id=track_id, path=path, status="ok", features=features)
+        analysis = _WORKER_AUDIO_FEATURE_ANALYZER.analyze_bundle(
+            Path(path),
+            track_id=track_id,
+            source={"path": source_path, "mtime": mtime, "file_size": file_size},
+        )
+        return AudioFeaturesResult(
+            track_id=track_id,
+            path=source_path,
+            status="ok",
+            features=analysis.features,
+            timeline_manifest=analysis.timeline_manifest,
+            timeline_payload=analysis.timeline_payload,
+        )
     except Exception as exc:
         return AudioFeaturesResult(
             track_id=track_id,
@@ -323,8 +342,19 @@ def _extract_audio_features_local(analyzer, store, settings, track) -> AudioFeat
             stage=failure.stage,
         )
     try:
-        features = analyzer.analyze_track(audio_path)
-        return AudioFeaturesResult(track_id=track.id, path=track.path, status="ok", features=features)
+        analysis = analyzer.analyze_bundle(
+            audio_path,
+            track_id=track.id,
+            source={"path": track.path, "mtime": track.mtime, "file_size": track.file_size},
+        )
+        return AudioFeaturesResult(
+            track_id=track.id,
+            path=track.path,
+            status="ok",
+            features=analysis.features,
+            timeline_manifest=analysis.timeline_manifest,
+            timeline_payload=analysis.timeline_payload,
+        )
     except Exception as exc:
         return AudioFeaturesResult(
             track_id=track.id,
@@ -513,7 +543,14 @@ def _iter_audio_feature_task_results(tasks, store, settings, workers: int):
                 )
                 continue
             audio_managers.append(manager)
-            future = executor.submit(_extract_audio_features_worker, task.track_id, str(audio_path))
+            future = executor.submit(
+                _extract_audio_features_worker,
+                task.track_id,
+                str(audio_path),
+                task.path,
+                task.mtime,
+                task.file_size,
+            )
             future_to_task[future] = task
         for future in as_completed(future_to_task):
             if _state.SHUTDOWN_REQUESTED:

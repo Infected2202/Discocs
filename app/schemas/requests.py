@@ -78,6 +78,8 @@ class WorkerFeatureResultItem(BaseModel):
     file_size: int
     mtime: int
     features: list[WorkerFeatureItem] = Field(default_factory=list)
+    timeline_manifest: dict[str, object]
+    timeline_payload_b64: str
 
 
 class WorkerPredictionItem(BaseModel):
@@ -148,14 +150,6 @@ class AnalyzeAudioFeaturesRequest(BaseModel):
     execution_mode: str = Field(default="both", pattern=_EXECUTION_MODE_PATTERN)
     reset_existing: bool = False
     extractor: str = AUDIO_FEATURE_EXTRACTOR
-
-
-class AnalyzeTimelineRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    track_ids: list[int] | None = Field(default=None, max_length=500)
-    limit: int | None = Field(default=None, ge=1, le=500)
-    reset: bool = False
-    extractor: str = "timeline_foundation_v2"
 
 
 class TimelineStatusRequest(BaseModel):

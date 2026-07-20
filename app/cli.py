@@ -1624,7 +1624,7 @@ class WorkerRuntime:
         task_id = str(task["task_id"])
         model_name = str(task["model_name"])
         try:
-            features = future.result()
+            analysis = future.result()
             if self.draining:
                 return
             self.feature_results.append(
@@ -1643,8 +1643,10 @@ class WorkerRuntime:
                             "confidence": feature.confidence,
                             "extractor": feature.extractor,
                         }
-                        for feature in features
+                        for feature in analysis.features
                     ],
+                    "timeline_manifest": analysis.timeline_manifest,
+                    "timeline_payload_b64": base64.b64encode(analysis.timeline_payload).decode("ascii"),
                 }
             )
             self.completed_task_ids.add(task_id)
@@ -1675,7 +1677,16 @@ class WorkerRuntime:
             if model_name == AUDIO_FEATURE_EXTRACTOR:
                 if self.audio_feature_analyzer is None:
                     raise KeyError(model_name)
-                cpu_future = self.cpu_pool.submit(self.audio_feature_analyzer.analyze_track, audio_path)
+                cpu_future = self.cpu_pool.submit(
+                    self.audio_feature_analyzer.analyze_bundle,
+                    audio_path,
+                    track_id=int(task["track_id"]),
+                    source={
+                        "path": str(task["path"]),
+                        "mtime": int(task["mtime"]),
+                        "file_size": int(task["file_size"]),
+                    },
+                )
                 self.cpu_future_to_task[cpu_future] = (task, audio_path)
                 return
             elif model_name == "discogs-effnet-heads":
@@ -2026,9 +2037,15 @@ def analyze_audio_features(
     limit: Annotated[int | None, typer.Option("--limit")] = None,
 ) -> None:
     """Extract BPM, key, loudness, and dynamics for tracks missing audio features."""
-    store, _settings = get_store_and_settings()
+    store, settings = get_store_and_settings()
     analyzer = AudioFeatureAnalyzer()
-    tracks = store.list_tracks_missing_features(AUDIO_FEATURE_EXTRACTOR, limit=limit)
+    from app.timeline.codec import EXTRACTOR as timeline_extractor, PACK_NAME
+    tracks = store.list_tracks_needing_audio_bundle(
+        AUDIO_FEATURE_EXTRACTOR,
+        PACK_NAME,
+        timeline_extractor,
+        limit=limit,
+    )
     total = len(tracks)
     failed = 0
     analysis_logger.info("Starting CLI analyze-audio-features limit=%s total=%s", limit, total)
@@ -2044,16 +2061,29 @@ def analyze_audio_features(
         typer.echo(f"[{index}/{total}] start track_id={track.id} {label}")
         track_started = perf_counter()
         try:
-            with track_audio_path(store, _settings, track) as audio_path:
-                features = analyzer.analyze_track(audio_path)
-            store.save_features(track.id, features)
+            with track_audio_path(store, settings, track) as audio_path:
+                analysis = analyzer.analyze_bundle(
+                    audio_path,
+                    track_id=track.id,
+                    source={"path": track.path, "mtime": track.mtime, "file_size": track.file_size},
+                )
+            from app.audio_features import LEGACY_AUDIO_FEATURE_EXTRACTOR
+            from app.timeline.artifacts import cleanup_artifact, publish_artifact
+            from app.timeline.codec import EXTRACTOR_V1
+            publish_artifact(store, settings.data_dir / "timeline", analysis.timeline_manifest, analysis.timeline_payload)
+            store.save_features(track.id, analysis.features)
+            store.delete_features_for_tracks([track.id], LEGACY_AUDIO_FEATURE_EXTRACTOR)
+            try:
+                cleanup_artifact(store, settings.data_dir / "timeline", track.id, PACK_NAME, EXTRACTOR_V1)
+            except Exception:
+                analysis_logger.warning("Could not clean legacy timeline track_id=%s", track.id, exc_info=True)
             done += 1
             elapsed = perf_counter() - track_started
             avg = (perf_counter() - started) / max(done + failed, 1)
             remaining = max(total - index, 0) * avg
             typer.echo(
                 f"[{index}/{total}] ok track_id={track.id} "
-                f"seconds={elapsed:.1f} eta_seconds={remaining:.0f} features={len(features)}"
+                f"seconds={elapsed:.1f} eta_seconds={remaining:.0f} features={len(analysis.features)}"
             )
         except Exception as exc:
             failed += 1

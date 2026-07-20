@@ -20,21 +20,21 @@ only after both final files exist. Cleanup resolves targets under the configured
   checksum ETag and private cache headers.
 - `POST /api/v1/timeline/status` accepts 1–100 track IDs and returns
   `missing`, `queued`, `running`, `ready`, `stale`, or `failed`.
-- `POST /api/v1/jobs/analyze-timeline` accepts optional `track_ids`, `limit`,
-  `reset`, and the `timeline_foundation_v2` extractor.
+- `POST /api/v1/jobs/analyze-audio-features` is the only analysis command. Its
+  durable local/remote worker result contains both scalar features and the
+  timeline artifact.
 
-The private `/admin` dashboard exposes this endpoint as the **DJ waveforms**
-analysis task, including ready/missing counts. Waveforms are always generated
-offline by that explicit job; opening the DJ surface never starts analysis.
+The private `/admin` dashboard exposes one **Audio features + DJ timeline**
+task, including combined ready/missing counts. Opening the DJ surface never
+starts analysis.
 
-The job uses the shared `track_audio_path` boundary, so local and
-Navidrome-backed tracks follow the same path. FFmpeg decodes mono 44.1 kHz audio
-in bounded chunks. The extractor produces 512-sample extrema and low/mid/high
-spectral-energy buckets before the factor-4 v1 pyramid is published.
-The v2 extractor retains Essentia beat timestamps and interval-derived local
-tempo from the same decoded PCM stream. Existing v1 artifacts remain isolated
-until an explicit admin rebuild publishes their v2 replacements, then the
-replaced v1 files and metadata are removed.
+The existing durable worker queue and `track_audio_path` boundary handle local
+and Navidrome-backed tracks. The audio-feature analyzer decodes 44.1 kHz PCM
+once for rhythm, dynamics, waveform extrema and low/mid/high spectral energy;
+its already computed beat timestamps and intervals are encoded into the v2
+timeline. A separate 16 kHz decode remains for key and EBU loudness. Existing
+v1 artifacts remain isolated until an audio-feature v2 result publishes their
+replacement, then legacy rows/artifacts are removed.
 The rhythm manifest records `coverage_seconds`; tracks longer than Essentia's
 30-minute safe-analysis cap never imply that their later region has a beat grid.
 
@@ -47,7 +47,9 @@ The detailed view follows a 30-second window and the overview spans the track.
 Pointer seek targets the physical deck shown by the surface.
 
 Timeline errors never stop audio loading or manual transport. The surface shows
-loading/missing/stale/failed state instead of geometry. Reset removes only the
-selected foundation extractor immediately before replacement analysis.
-While an explicitly queued admin job is running, an open DJ surface polls its
-status and loads the artifact as soon as publication completes.
+loading/missing/stale/failed state instead of geometry. Reset queues the
+selected active tracks as `audio_features_v2`; the previous timeline stays
+readable until a complete replacement result is atomically published.
+While an explicitly queued audio-feature task is running, an open DJ surface
+derives queued/running/failed state from that durable task and loads the
+artifact as soon as publication completes.

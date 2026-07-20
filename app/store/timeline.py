@@ -7,6 +7,63 @@ from app.models import utc_now
 
 
 class TimelineStoreMixin:
+    def audio_bundle_counts(
+        self,
+        feature_extractor: str,
+        pack_name: str,
+        timeline_extractor: str,
+    ) -> dict[str, int]:
+        """Count active tracks whose scalar features and current timeline are both ready."""
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN
+                    EXISTS (
+                        SELECT 1 FROM track_features f
+                        WHERE f.track_id=t.id AND f.extractor=?
+                    ) AND a.track_id IS NOT NULL AND
+                    a.source_path=t.path AND a.source_mtime=t.mtime AND
+                    a.source_file_size=t.file_size
+                THEN 1 ELSE 0 END), 0) AS ready
+                FROM tracks t
+                LEFT JOIN track_timeline_artifacts a
+                  ON a.track_id=t.id AND a.pack_name=? AND a.extractor=?
+                WHERE t.missing_at IS NULL
+                """,
+                (feature_extractor, pack_name, timeline_extractor),
+            ).fetchone()
+        total = int(row["total"])
+        ready = int(row["ready"])
+        return {"total": total, "ready": ready, "missing": total - ready}
+
+    def list_tracks_needing_audio_bundle(
+        self,
+        feature_extractor: str,
+        pack_name: str,
+        timeline_extractor: str,
+        *,
+        limit: int | None = None,
+    ):
+        query = """
+            SELECT t.* FROM tracks t
+            LEFT JOIN track_timeline_artifacts a
+              ON a.track_id=t.id AND a.pack_name=? AND a.extractor=?
+            WHERE t.missing_at IS NULL AND (
+                NOT EXISTS (
+                    SELECT 1 FROM track_features f
+                    WHERE f.track_id=t.id AND f.extractor=?
+                ) OR a.track_id IS NULL OR a.source_path != t.path OR
+                a.source_mtime != t.mtime OR a.source_file_size != t.file_size
+            ) ORDER BY t.id
+        """
+        params: list[object] = [pack_name, timeline_extractor, feature_extractor]
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        from app.store._helpers import row_to_track
+        with self.connect() as conn:
+            return [row_to_track(row) for row in conn.execute(query, params).fetchall()]
+
     def timeline_artifact_counts(self, pack_name: str, extractor: str) -> dict[str, int]:
         """Return ready/missing counts for active tracks using exact source identity."""
         with self.connect() as conn:

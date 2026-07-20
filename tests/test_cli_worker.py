@@ -17,9 +17,10 @@ from typer.testing import CliRunner
 from urllib.error import HTTPError
 
 from app import cli as cli_module
+from app.audio_features import AUDIO_FEATURE_EXTRACTOR, AudioFeatureAnalysis
 from app.cli import cli
 from app.config import Settings
-from app.store import Store
+from app.store import Store, TrackFeature
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -225,6 +226,35 @@ def test_claim_more_and_flush_round_trip(tmp_path, monkeypatch):
         r["task_id"] == "t1" for call in result_calls for r in call["results"]
     ), calls
     assert not any(path == "/api/v1/workers/failures" for path, _ in calls)
+
+
+def test_audio_feature_worker_submits_scalar_and_timeline_as_one_result(tmp_path, monkeypatch):
+    class FakeAudioFeatureAnalyzer:
+        def analyze_bundle(self, _path, *, track_id, source):
+            return AudioFeatureAnalysis(
+                features=[TrackFeature(name="bpm", value=128.0, extractor=AUDIO_FEATURE_EXTRACTOR)],
+                timeline_manifest={"track_id": track_id, "source": source},
+                timeline_payload=b"timeline-payload",
+            )
+
+    monkeypatch.setattr(cli_module, "audio_features_available", lambda: True)
+    monkeypatch.setattr(cli_module, "AudioFeatureAnalyzer", FakeAudioFeatureAnalyzer)
+    result, calls = run_worker(
+        monkeypatch,
+        tmp_path,
+        models=[AUDIO_FEATURE_EXTRACTOR],
+        claim_sequence=[[_task_payload("features-1", AUDIO_FEATURE_EXTRACTOR)]],
+    )
+
+    assert result.exit_code == 0, result.output
+    submitted = next(
+        item
+        for path, payload in calls if path == "/api/v1/workers/results"
+        for item in payload["feature_results"]
+    )
+    assert submitted["features"][0]["name"] == "bpm"
+    assert submitted["timeline_manifest"]["source"]["path"] == "features-1.flac"
+    assert submitted["timeline_payload_b64"] == "dGltZWxpbmUtcGF5bG9hZA=="
 
 
 def test_close_inactive_task_via_active_false(tmp_path, monkeypatch):

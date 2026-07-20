@@ -257,7 +257,7 @@ The surface follows the current Expanded Player open/close transition and focus 
 
 **Implementation:** complete; Jenkins verification pending. The frozen v1
 foundation artifact is published atomically for local and Navidrome-backed
-tracks, exposed through authenticated manifest/payload/status/job endpoints,
+tracks, exposed through authenticated manifest/payload/status endpoints,
 and rendered in both DJ deck waveform regions from one shared decoded payload.
 Artifact availability never blocks manual audio transport.
 
@@ -265,8 +265,8 @@ Artifact availability never blocks manual audio transport.
 
 - add `app/store/timeline.py` and schema initialization;
 - add artifact encoder, atomic publisher and safe cleanup;
-- add manifest, payload, batch status and waveform analysis job endpoints;
-- expose ready/missing counts and explicit waveform job launch in `/admin`;
+- add manifest, payload and batch-status endpoints;
+- expose combined audio-feature/timeline readiness and rebuild in `/admin`;
 - integrate existing worker acquisition for local/Navidrome-backed tracks;
 - implement path + mtime + file-size invalidation.
 
@@ -285,19 +285,21 @@ The complete waveform vertical slice works for real queue tracks before adding t
 
 ## 7. Phase 5 — full timeline analysis
 
-**Implementation:** minimal production scope complete; Jenkins verification
-pending. `timeline_foundation_v2` adds beat timestamps, global rhythm
-confidence, coverage and interval-derived local tempo from the explicit admin
-job's single FFmpeg decode. The DJ renders a beat grid and never starts
-analysis. Unvalidated downbeat/onset/loudness/structure additions remain
-deferred as described below.
+**Implementation:** corrected production scope implemented; Jenkins verification
+pending. `audio_features_v2` is one durable local/remote worker task that
+publishes scalar features and `timeline_foundation_v2` together. The timeline
+adds waveform data, beat timestamps, global rhythm confidence, coverage and
+interval-derived local tempo without a second analysis job. The DJ renders a
+beat grid and never starts analysis. Unvalidated downbeat/onset/loudness/
+structure additions remain deferred as described below.
 
-- keep timeline extraction offline and start it only through the explicit
-  `/admin` job; the DJ client remains a read-only artifact consumer;
+- keep extraction offline and start it only through the existing explicit
+  `/admin` audio-feature job; the DJ client remains a read-only artifact consumer;
 - refactor the existing `RhythmExtractor2013` boundary so its already computed
   beat timestamps, confidence and intervals are no longer discarded;
-- project global BPM/confidence into the existing `audio_features_v1` rows and
-  encode beat events plus interval-derived local tempo into the timeline pack;
+- store global BPM/confidence as `audio_features_v2` scalar rows and encode beat
+  events plus interval-derived local tempo into the timeline projection of the
+  same worker result;
 - reuse the Phase 4 waveform low/mid/high series instead of computing a second
   set of frequency-energy curves;
 - add the beat-grid overlay first and validate it on representative library
@@ -311,8 +313,8 @@ deferred as described below.
 
 Existing `audio_features_v1` rows cannot backfill the beat grid: historical
 analysis stored only scalar BPM/confidence and discarded beat timestamps and
-intervals. Existing tracks therefore require an explicit admin timeline
-rebuild after the Phase 5 extractor is introduced.
+intervals. Existing tracks therefore require one explicit admin audio-feature
+v2 rebuild after the Phase 5 extractor is introduced.
 
 Integration tests requiring real Essentia are marked `@pytest.mark.integration`; ordinary unit tests use injected small fixtures/fakes.
 

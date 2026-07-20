@@ -156,12 +156,13 @@ The minimal Phase 5 extension adds:
 - interval-derived local tempo (`float32` BPM) aligned one-to-one with beat
   timestamps;
 
-`audio_features_v1` already invokes `RhythmExtractor2013`, but currently stores
-only global BPM/confidence and discards its beat timestamps and intervals. The
-extractor boundary is shared so the scalar feature rows and timeline event
-series use the same interpretation. Previously analyzed tracks require an
-explicit timeline rebuild because discarded arrays cannot be reconstructed
-from the stored BPM scalar.
+Legacy `audio_features_v1` invoked `RhythmExtractor2013` but stored only global
+BPM/confidence and discarded its beat timestamps and intervals.
+`audio_features_v2` emits scalar rows and the timeline projection from the same
+durable worker result, so rhythm extraction and audio acquisition are not
+repeated. Previously analyzed tracks require an explicit v2 audio-feature
+rebuild because discarded arrays cannot be reconstructed from the stored BPM
+scalar.
 
 The Phase 4 waveform already contains low/mid/high energy curves; Phase 5
 reuses those descriptors and does not generate duplicates. Downbeats, bar
@@ -178,7 +179,7 @@ The pack stores observations only. It must not include recommended cue points, l
 ## 8. Extraction pipeline
 
 - Reuse the existing durable analysis job/task mechanism and worker audio acquisition path.
-- Start analysis only through the explicit private-admin job. Opening a DJ
+- Start analysis only through the existing private-admin audio-feature job. Opening a DJ
   surface must never enqueue or execute extraction.
 - Import Essentia only inside the worker execution boundary so application
   startup and non-analysis API paths do not require the optional dependency;
@@ -199,7 +200,7 @@ Authenticated endpoints, exact naming subject only to normal API consistency:
 GET  /api/v1/tracks/{track_id}/timeline/manifest
 GET  /api/v1/tracks/{track_id}/timeline/payload
 POST /api/v1/timeline/status
-POST /api/v1/jobs/analyze-timeline
+POST /api/v1/jobs/analyze-audio-features
 ```
 
 Requirements:
@@ -207,7 +208,8 @@ Requirements:
 - manifest returns `404` when absent and `409` with structured stale details when source identity no longer matches;
 - payload validates the same identity and sets private cache headers plus ETag/checksum;
 - status accepts bounded track-id batches for queue/deck preparation and reports `missing`, `queued`, `running`, `ready`, `stale` or `failed`;
-- analyze job supports optional track ids, limit, reset and extractor fields consistent with existing job APIs;
+- the audio-feature job supports limit, execution mode and reset fields through
+  the existing durable local/remote worker API;
 - no endpoint returns arbitrary server filesystem paths to ordinary clients;
 - payload access remains protected by the existing authenticated media boundary.
 

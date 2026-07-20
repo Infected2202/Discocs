@@ -4,6 +4,7 @@ Extracted from app/main.py — Stage 6e.
 """
 from __future__ import annotations
 
+import base64
 import logging
 import sqlite3
 from pathlib import Path
@@ -26,6 +27,7 @@ from app.analysis_jobs import (
     schedule_auto_index_for_analysis,
 )
 from app.api.deps import context
+from app.audio_features import LEGACY_AUDIO_FEATURE_EXTRACTOR
 from app.audio_source import has_navidrome_audio_source, track_audio_path
 from app.models import TrackFeature, TrackPrediction
 from app.schemas.requests import (
@@ -36,6 +38,8 @@ from app.schemas.requests import (
     WorkerSubmitRequest,
 )
 from app.state import WORKER_HEARTBEAT_WRITE_INTERVAL_SECONDS
+from app.timeline.artifacts import cleanup_artifact, publish_artifact
+from app.timeline.codec import EXTRACTOR as TIMELINE_EXTRACTOR, EXTRACTOR_V1, PACK_NAME as TIMELINE_PACK_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +275,37 @@ def submit_worker_results(
             )
             for feature in item.features
         ]
+        if not features or any(feature.extractor != task.model_name for feature in features):
+            raise ValueError("Audio feature extractor identity mismatch")
+        try:
+            payload = base64.b64decode(item.timeline_payload_b64, validate=True)
+        except ValueError as exc:
+            raise ValueError("Timeline payload is not valid base64") from exc
+        manifest = item.timeline_manifest
+        source = manifest.get("source")
+        if (
+            manifest.get("track_id") != task.track_id
+            or manifest.get("pack_name") != TIMELINE_PACK_NAME
+            or manifest.get("extractor") != TIMELINE_EXTRACTOR
+            or not isinstance(source, dict)
+            or source.get("path") != task.path
+            or int(source.get("mtime", -1)) != task.mtime
+            or int(source.get("file_size", -1)) != task.file_size
+        ):
+            raise ValueError("Timeline artifact identity mismatch")
+        publish_artifact(store, _settings.data_dir / "timeline", manifest, payload)
         store.save_features(task.track_id, features)
+        store.delete_features_for_tracks([task.track_id], LEGACY_AUDIO_FEATURE_EXTRACTOR)
+        try:
+            cleanup_artifact(
+                store,
+                _settings.data_dir / "timeline",
+                task.track_id,
+                TIMELINE_PACK_NAME,
+                EXTRACTOR_V1,
+            )
+        except Exception:
+            logger.warning("Could not clean legacy timeline track_id=%s", task.track_id, exc_info=True)
         store.mark_track_available(task.track_id)
         store.complete_analysis_task(task.id, request.worker_id, refresh_job=False, update_worker=False)
         completed_job_ids.add(task.job_id)
@@ -297,87 +331,6 @@ def submit_worker_results(
         completed_job_ids.add(task.job_id)
         return task.id
 
-    from app.models import utc_now
-
-    def accept_feature_batch(items) -> list[str]:
-        if not items:
-            return []
-        now = utc_now()
-        accepted_ids: list[str] = []
-        with store.connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            for item in items:
-                row = conn.execute(
-                    """
-                    SELECT
-                        task.*,
-                        track.file_size AS current_file_size,
-                        track.mtime AS current_mtime
-                    FROM analysis_tasks task
-                    JOIN tracks track ON track.id = task.track_id
-                    WHERE task.id = ?
-                    """,
-                    (item.task_id,),
-                ).fetchone()
-                if row is None:
-                    raise ValueError(_TASK_NOT_FOUND)
-                if str(row["status"]) != "leased":
-                    raise ValueError(f"Task is not active: {row['status']}")
-                if row["lease_owner"] != request.worker_id:
-                    raise ValueError("Task is not leased by this worker")
-                if int(row["track_id"]) != item.track_id or row["model_name"] != item.model_name:
-                    raise ValueError("Task result identity mismatch")
-                if int(row["file_size"]) != item.file_size or int(row["mtime"]) != item.mtime:
-                    raise ValueError("Task result is stale")
-                if int(row["current_file_size"]) != item.file_size or int(row["current_mtime"]) != item.mtime:
-                    raise ValueError("Track changed after task was created")
-
-                extractors = sorted({feature.extractor for feature in item.features})
-                for extractor in extractors:
-                    conn.execute(
-                        "DELETE FROM track_features WHERE track_id = ? AND extractor = ?",
-                        (item.track_id, extractor),
-                    )
-                conn.executemany(
-                    """
-                    INSERT INTO track_features (
-                        track_id, feature_name, value, text_value, unit, confidence,
-                        extractor, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        (
-                            item.track_id, feature.name, feature.value, feature.text_value,
-                            feature.unit, feature.confidence, feature.extractor, now,
-                        )
-                        for feature in item.features
-                    ],
-                )
-                conn.execute(
-                    "UPDATE tracks SET missing_at = NULL, last_seen_at = ?, updated_at = ? WHERE id = ?",
-                    (now, now, item.track_id),
-                )
-                conn.execute(
-                    """
-                    UPDATE analysis_tasks
-                    SET status = 'completed',
-                        lease_owner = NULL,
-                        lease_expires_at = NULL,
-                        error = NULL,
-                        error_type = NULL,
-                        stage = 'completed',
-                        updated_at = ?,
-                        completed_at = ?
-                    WHERE id = ?
-                      AND lease_owner = ?
-                    """,
-                    (now, now, item.task_id, request.worker_id),
-                )
-                completed_job_ids.add(str(row["job_id"]))
-                accepted_ids.append(item.task_id)
-        return accepted_ids
-
     def accept_with_retry(operation):
         try:
             return sqlite_retry(operation)
@@ -396,23 +349,13 @@ def submit_worker_results(
             raise
         except Exception as exc:
             reject_task(item.task_id, exc, "result")
-    if request.feature_results:
+    for item in request.feature_results:
         try:
-            accepted.extend(accept_with_retry(lambda: accept_feature_batch(request.feature_results)))
+            accepted.append(accept_with_retry(lambda item=item: accept_features(item)))
         except HTTPException:
             raise
-        except Exception:
-            logger.exception(
-                "Batch feature submit failed; falling back to per-item submit worker_id=%s count=%s",
-                request.worker_id, len(request.feature_results),
-            )
-            for item in request.feature_results:
-                try:
-                    accepted.append(accept_with_retry(lambda item=item: accept_features(item)))
-                except HTTPException:
-                    raise
-                except Exception as exc:
-                    reject_task(item.task_id, exc, "feature result")
+        except Exception as exc:
+            reject_task(item.task_id, exc, "feature result")
     for item in request.head_results:
         try:
             accepted.append(accept_with_retry(lambda item=item: accept_heads(item)))
@@ -436,6 +379,9 @@ def submit_worker_results(
     refresh_seconds = perf_counter() - refresh_started
     for completed_job_id in sorted(completed_embedding_job_ids):
         schedule_auto_index_for_analysis(store, completed_job_id, background_tasks)
+    if request.feature_results:
+        from app.api.jobs import clear_stats_cache
+        clear_stats_cache()
     total_seconds = perf_counter() - started
     if total_seconds >= 1.0 or len(accepted) + len(rejected) >= 16:
         logger.info(

@@ -1,4 +1,4 @@
-"""Deterministic timeline v1 fixture codec.
+"""Deterministic versioned timeline artifact codec.
 
 This module deliberately has no Store, HTTP, or audio-decoder dependency. Phase 4
 can use the same contract after extraction has produced normalized base buckets.

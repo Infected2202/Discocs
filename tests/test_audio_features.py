@@ -3,7 +3,7 @@ import sys
 import types
 
 import app.audio_features as audio_features
-from app.audio_features import AUDIO_FEATURE_EXTRACTOR, AudioFeatureAnalyzer
+from app.audio_features import AUDIO_FEATURE_EXTRACTOR, AudioFeatureAnalyzer, RhythmAnalysis
 
 
 def test_audio_feature_analyzer_uses_feature_extractors(monkeypatch, tmp_path):
@@ -22,19 +22,17 @@ def test_audio_feature_analyzer_uses_feature_extractors(monkeypatch, tmp_path):
         "load_audio_with_ffmpeg",
         fake_load_audio,
     )
-    monkeypatch.setattr(
-        audio_features,
-        "extract_rhythm_features",
-        lambda audio: [
-            audio_features.TrackFeature(
-                name="bpm",
-                value=128.0,
-                unit="bpm",
-                confidence=0.9,
-                extractor=AUDIO_FEATURE_EXTRACTOR,
-            )
-        ] if audio is audio_44k else [],
-    )
+    def fake_analyze_rhythm(audio):
+        assert audio is audio_44k
+        return RhythmAnalysis(
+            bpm=128.0,
+            beats=np.array([], dtype=np.float32),
+            confidence=0.9,
+            estimates=np.array([], dtype=np.float32),
+            intervals=np.array([], dtype=np.float32),
+        )
+
+    monkeypatch.setattr(audio_features, "analyze_rhythm", fake_analyze_rhythm)
     monkeypatch.setattr(
         audio_features,
         "extract_key_features",
@@ -60,7 +58,16 @@ def test_audio_feature_analyzer_uses_feature_extractors(monkeypatch, tmp_path):
         ],
     )
 
-    features = AudioFeatureAnalyzer().analyze_track(tmp_path / "track.flac")
+    monkeypatch.setattr(
+        "app.timeline.extractor.encode_audio_timeline",
+        lambda *_args, **_kwargs: ({"track_id": 1}, b"timeline"),
+    )
+    analysis = AudioFeatureAnalyzer().analyze_bundle(
+        tmp_path / "track.flac",
+        track_id=1,
+        source={"path": "/music/track.flac", "mtime": 1, "file_size": 2},
+    )
+    features = analysis.features
 
     assert calls == [
         audio_features.EMBEDDING_SAMPLE_RATE,
@@ -69,6 +76,47 @@ def test_audio_feature_analyzer_uses_feature_extractors(monkeypatch, tmp_path):
     assert [feature.name for feature in features] == ["bpm", "key"]
     assert features[0].value == 128.0
     assert features[1].text_value == "F#"
+
+
+def test_audio_feature_bundle_reuses_rhythm_decode_for_features_and_timeline(monkeypatch, tmp_path):
+    audio_16k = np.ones(16_000, dtype=np.float32)
+    audio_44k = np.ones(44_100, dtype=np.float32)
+    rhythm = RhythmAnalysis(
+        bpm=128.0,
+        beats=np.array([0.5], dtype=np.float32),
+        confidence=0.9,
+        estimates=np.array([128.0], dtype=np.float32),
+        intervals=np.array([0.46875], dtype=np.float32),
+    )
+    rhythm_calls = []
+    timeline_calls = []
+    monkeypatch.setattr(
+        audio_features,
+        "load_audio_with_ffmpeg",
+        lambda _path, sample_rate: audio_44k if sample_rate == 44_100 else audio_16k,
+    )
+    monkeypatch.setattr(audio_features, "analyze_rhythm", lambda audio: rhythm_calls.append(audio) or rhythm)
+    monkeypatch.setattr(audio_features, "extract_key_features", lambda _audio: [])
+    monkeypatch.setattr(audio_features, "extract_loudness_features", lambda _audio: [])
+    monkeypatch.setattr(audio_features, "extract_dynamic_features", lambda _audio: [])
+    monkeypatch.setattr(
+        "app.timeline.extractor.encode_audio_timeline",
+        lambda audio, **kwargs: timeline_calls.append((audio, kwargs["rhythm"])) or ({"track_id": 7}, b"payload"),
+    )
+
+    analysis = AudioFeatureAnalyzer().analyze_bundle(
+        tmp_path / "track.flac",
+        track_id=7,
+        source={"path": "/music/track.flac", "mtime": 1, "file_size": 2},
+    )
+
+    assert len(rhythm_calls) == 1
+    assert rhythm_calls[0] is audio_44k
+    assert len(timeline_calls) == 1
+    assert timeline_calls[0][0] is audio_44k
+    assert timeline_calls[0][1] is rhythm
+    assert analysis.features[0].name == "bpm"
+    assert analysis.timeline_payload == b"payload"
 
 
 def test_loudness_extractor_converts_mono_audio_to_stereo(monkeypatch):
@@ -122,10 +170,10 @@ def test_rhythm_extractor_truncates_long_audio_to_avoid_buffer_overflow(monkeypa
     )
     long_audio = np.ones(max_samples + 1000, dtype=np.float32)
 
-    features = audio_features.extract_rhythm_features(long_audio)
+    analysis = audio_features.analyze_rhythm(long_audio)
 
     assert len(calls[0]) == max_samples
-    assert features[0].value == 120.0
+    assert analysis.bpm == 120.0
 
 
 def test_rhythm_extractor_keeps_short_audio_untouched(monkeypatch):

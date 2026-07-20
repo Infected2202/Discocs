@@ -1,4 +1,4 @@
-"""Atomic publication and validation for timeline v1 artifacts."""
+"""Atomic publication and validation for versioned timeline artifacts."""
 from __future__ import annotations
 
 import hashlib

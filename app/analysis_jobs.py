@@ -18,7 +18,7 @@ from app.analysis_helpers import (
     exception_detail,
     exception_traceback,
 )
-from app.audio_features import AUDIO_FEATURE_EXTRACTOR
+from app.audio_features import AUDIO_FEATURE_EXTRACTOR, LEGACY_AUDIO_FEATURE_EXTRACTOR
 from app.head_pack import (
     DISCOGS_EFFNET_HEADS,
     DiscogsEffnetHeadPackAnalyzer,
@@ -52,6 +52,8 @@ from app.state import (
     DEFAULT_ANALYZE_WORKERS,
     MAX_AUDIO_FEATURE_WORKERS,
 )
+from app.timeline.artifacts import cleanup_artifact, publish_artifact
+from app.timeline.codec import EXTRACTOR as TIMELINE_EXTRACTOR, EXTRACTOR_V1, PACK_NAME as TIMELINE_PACK_NAME
 
 logger = logging.getLogger(__name__)
 analysis_logger = get_analysis_logger()
@@ -495,7 +497,12 @@ def _analyze_audio_features_job(
             return
         store, settings = context()
         if enqueue:
-            tracks = store.list_tracks_missing_features(AUDIO_FEATURE_EXTRACTOR, limit=limit)
+            tracks = store.list_tracks_needing_audio_bundle(
+                AUDIO_FEATURE_EXTRACTOR,
+                TIMELINE_PACK_NAME,
+                TIMELINE_EXTRACTOR,
+                limit=limit,
+            )
             durable_job = store.create_analysis_job(
                 AUDIO_FEATURE_EXTRACTOR, limit, kind="analyze-audio-features",
                 tracks=tracks, local_executor_enabled=local_executor_enabled,
@@ -548,9 +555,35 @@ def _analyze_audio_features_job(
                 continue
             for task, result in _iter_audio_feature_task_results(tasks, store, settings, workers):
                 update_job(job_id, current=result.path, message=f"Analyzing audio features for {result.path}")
-                if result.status == "ok" and result.features is not None:
+                if (
+                    result.status == "ok"
+                    and result.features is not None
+                    and result.timeline_manifest is not None
+                    and result.timeline_payload is not None
+                ):
                     try:
+                        publish_artifact(
+                            store,
+                            settings.data_dir / "timeline",
+                            result.timeline_manifest,
+                            result.timeline_payload,
+                        )
                         store.save_features(result.track_id, result.features)
+                        store.delete_features_for_tracks([result.track_id], LEGACY_AUDIO_FEATURE_EXTRACTOR)
+                        try:
+                            cleanup_artifact(
+                                store,
+                                settings.data_dir / "timeline",
+                                result.track_id,
+                                TIMELINE_PACK_NAME,
+                                EXTRACTOR_V1,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Could not clean legacy timeline track_id=%s",
+                                result.track_id,
+                                exc_info=True,
+                            )
                         store.mark_track_available(result.track_id)
                         store.complete_analysis_task(task.id, local_worker_id)
                     except Exception as exc:
@@ -598,6 +631,8 @@ def _analyze_audio_features_job(
             "Finished analyze-audio-features job job_id=%s done=%s failed=%s total=%s",
             job_id, done, failed, total,
         )
+        from app.api.jobs import clear_stats_cache
+        clear_stats_cache()
         finish_job(job_id, "completed", f"Analyzed audio features for {done} tracks, failed {failed}")
     except Exception as exc:
         analysis_logger.exception("Analyze-audio-features job failed job_id=%s", job_id)

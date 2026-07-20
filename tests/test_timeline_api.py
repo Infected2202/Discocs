@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.audio_features import AUDIO_FEATURE_EXTRACTOR
 from app.scanner import ScannedTrack
 from app.store import INITIALIZED_DB_PATHS, Store
 from app.timeline.artifacts import publish_artifact
@@ -53,7 +54,7 @@ def test_manifest_payload_and_batch_status(tmp_path: Path, monkeypatch):
     assert [item["status"] for item in status["items"]] == ["ready", "missing"]
 
 
-def test_manifest_reports_stale_identity_and_job_validates_batch(tmp_path: Path, monkeypatch):
+def test_manifest_reports_stale_identity(tmp_path: Path, monkeypatch):
     store, track = setup_track(tmp_path, monkeypatch)
     publish(store, track, tmp_path / "timeline")
     store.upsert_track(ScannedTrack(
@@ -65,24 +66,34 @@ def test_manifest_reports_stale_identity_and_job_validates_batch(tmp_path: Path,
     assert client.get(f"/api/v1/tracks/{track.id}/timeline/manifest").status_code == 409
     status = client.post("/api/v1/timeline/status", json={"track_ids": [track.id]}).json()
     assert status["items"][0]["status"] == "stale"
-    assert client.post("/api/v1/jobs/analyze-timeline", json={"track_ids": [999]}).status_code == 404
 
 
-def test_missing_invalid_extractor_and_empty_job_paths(tmp_path: Path, monkeypatch):
+def test_missing_and_invalid_extractor_paths(tmp_path: Path, monkeypatch):
     _store, track = setup_track(tmp_path, monkeypatch)
     client = TestClient(app)
     assert client.get(f"/api/v1/tracks/{track.id}/timeline/manifest").status_code == 404
     assert client.post("/api/v1/timeline/status", json={"track_ids": [track.id], "extractor": "future"}).status_code == 400
-    assert client.post("/api/v1/jobs/analyze-timeline", json={"track_ids": [], "extractor": "future"}).status_code == 400
-    accepted = client.post("/api/v1/jobs/analyze-timeline", json={"track_ids": []})
-    assert accepted.status_code == 200
-    assert accepted.json()["total"] == 0
-    assert accepted.json()["extractor"] == EXTRACTOR
 
 
 def test_batch_status_reports_durable_failure_and_corrupt_artifact(tmp_path: Path, monkeypatch):
     store, track = setup_track(tmp_path, monkeypatch)
-    store.set_timeline_analysis_status(track.id, PACK_NAME, EXTRACTOR, "failed", error="worker failed")
+    job = store.create_analysis_job(
+        AUDIO_FEATURE_EXTRACTOR,
+        None,
+        kind="analyze-audio-features",
+        tracks=[track],
+        local_executor_enabled=False,
+    )
+    task = store.claim_analysis_tasks("worker-1", [AUDIO_FEATURE_EXTRACTOR], limit=1)[0]
+    store.fail_analysis_task(
+        task.id,
+        error="worker failed",
+        error_type="RuntimeError",
+        stage="audio_features",
+        worker_id="worker-1",
+        retryable=False,
+    )
+    assert store.get_analysis_job(job.id).failed == 1
     client = TestClient(app)
     failed = client.post("/api/v1/timeline/status", json={"track_ids": [track.id]}).json()["items"][0]
     assert failed == {"track_id": track.id, "status": "failed", "error": "worker failed"}

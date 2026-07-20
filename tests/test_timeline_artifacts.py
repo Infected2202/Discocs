@@ -3,10 +3,10 @@ from pathlib import Path
 import pytest
 
 from app.scanner import ScannedTrack
-from app.store import Store
+from app.audio_features import AUDIO_FEATURE_EXTRACTOR
+from app.store import Store, TrackFeature
 from app.timeline.artifacts import cleanup_artifact, cleanup_orphan_artifacts, load_valid_artifact, publish_artifact
-from app.timeline.codec import EXTRACTOR, EXTRACTOR_V1, PACK_NAME, TimelineFormatError, encode_timeline
-from app.timeline.jobs import run_timeline_job
+from app.timeline.codec import EXTRACTOR, PACK_NAME, TimelineFormatError, encode_timeline
 
 
 def track_fixture(tmp_path: Path):
@@ -99,36 +99,6 @@ def test_timeline_status_round_trip_and_track_delete_cascade(tmp_path: Path):
     assert not (tmp_path / "timeline" / str(track.id)).exists()
 
 
-def test_worker_failure_records_failure_without_publishing_partial_artifact(tmp_path: Path, monkeypatch):
-    store, track = track_fixture(tmp_path)
-    job = store.create_progress_job("analyze-timeline", EXTRACTOR, total=1)
-    settings = type("Settings", (), {"data_dir": tmp_path})()
-    monkeypatch.setattr("app.timeline.jobs.extract_timeline", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("decode failed")))
-
-    run_timeline_job(store, settings, [track], job_id=job.id)
-
-    state = store.get_timeline_analysis_states([track.id], PACK_NAME, EXTRACTOR)[track.id]
-    assert state["status"] == "failed"
-    assert state["error"] == "decode failed"
-    assert store.get_timeline_artifact(track.id, PACK_NAME, EXTRACTOR) is None
-    assert not (tmp_path / "timeline" / str(track.id)).exists()
-
-
-def test_worker_success_publishes_and_reset_cleans_previous_artifact(tmp_path: Path, monkeypatch):
-    store, track = track_fixture(tmp_path)
-    settings = type("Settings", (), {"data_dir": tmp_path})()
-    first_manifest, first_payload = encoded(track, EXTRACTOR_V1)
-    publish_artifact(store, tmp_path / "timeline", first_manifest, first_payload)
-    job = store.create_progress_job("analyze-timeline", EXTRACTOR, total=1)
-    monkeypatch.setattr("app.timeline.jobs.extract_timeline", lambda *args, **kwargs: encoded(track))
-    run_timeline_job(store, settings, [track], job_id=job.id, reset=True)
-    state = store.get_timeline_analysis_states([track.id], PACK_NAME, EXTRACTOR)[track.id]
-    assert state["status"] == "ready"
-    assert load_valid_artifact(store, tmp_path / "timeline", track, PACK_NAME, EXTRACTOR) is not None
-    assert store.get_timeline_artifact(track.id, PACK_NAME, EXTRACTOR_V1) is None
-    assert store.get_analysis_job(job.id).status == "completed"
-
-
 def test_publisher_validates_before_creating_files_and_needing_query_resumes(tmp_path: Path):
     store, track = track_fixture(tmp_path)
     manifest, payload = encoded(track)
@@ -137,3 +107,20 @@ def test_publisher_validates_before_creating_files_and_needing_query_resumes(tmp
         publish_artifact(store, tmp_path / "timeline", manifest, payload)
     assert not (tmp_path / "timeline").exists()
     assert [item.id for item in store.list_tracks_needing_timeline(PACK_NAME, EXTRACTOR)] == [track.id]
+
+
+def test_audio_bundle_is_ready_only_with_features_and_current_timeline(tmp_path: Path):
+    store, track = track_fixture(tmp_path)
+    assert store.audio_bundle_counts(AUDIO_FEATURE_EXTRACTOR, PACK_NAME, EXTRACTOR)["missing"] == 1
+
+    store.save_features(track.id, [TrackFeature(name="bpm", value=120.0, extractor=AUDIO_FEATURE_EXTRACTOR)])
+    assert [item.id for item in store.list_tracks_needing_audio_bundle(
+        AUDIO_FEATURE_EXTRACTOR, PACK_NAME, EXTRACTOR,
+    )] == [track.id]
+
+    manifest, payload = encoded(track)
+    publish_artifact(store, tmp_path / "timeline", manifest, payload)
+    assert store.audio_bundle_counts(AUDIO_FEATURE_EXTRACTOR, PACK_NAME, EXTRACTOR) == {
+        "total": 1, "ready": 1, "missing": 0,
+    }
+    assert store.list_tracks_needing_audio_bundle(AUDIO_FEATURE_EXTRACTOR, PACK_NAME, EXTRACTOR) == []

@@ -406,7 +406,12 @@ def start_analyze_audio_features(
                 len(tracks), deleted_features, extractor,
             )
         else:
-            tracks = store.list_tracks_missing_features(extractor, limit=request.limit)
+            tracks = store.list_tracks_needing_audio_bundle(
+                extractor,
+                TIMELINE_PACK_NAME,
+                TIMELINE_EXTRACTOR,
+                limit=request.limit,
+            )
             deleted_features = 0
         clear_stats_cache()
         durable_job = store.create_analysis_job(

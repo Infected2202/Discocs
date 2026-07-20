@@ -162,7 +162,7 @@ deleted.
 Audio features are stored separately:
 
 ```sql
-delete from track_features where extractor = 'audio_features_v1';
+delete from track_features where extractor in ('audio_features_v1', 'audio_features_v2');
 ```
 
 ## Lost Files
