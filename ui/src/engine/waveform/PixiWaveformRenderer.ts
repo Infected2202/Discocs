@@ -115,9 +115,9 @@ export class PixiWaveformRenderer {
     graphics.clear()
     for (let index = firstBucket; index <= lastBucket; index += 1) {
       const x = ((index * level.bucketDurationSeconds - viewport.startSeconds) / visibleSeconds) * width
-      const top = centre - (level.maximum[index]! / 32_767) * centre
-      const bottom = centre - (level.minimum[index]! / 32_767) * centre
-      const colour = energyColour(this.input, level.low[index]!, level.mid[index]!, level.high[index]!)
+      const top = centre - (level.maximum[index] / 32_767) * centre
+      const bottom = centre - (level.minimum[index] / 32_767) * centre
+      const colour = energyColour(this.input, level.low[index], level.mid[index], level.high[index])
       graphics.moveTo(x, top).lineTo(x, bottom).stroke({ color: colour, width: 1 })
     }
     const playheadX = ((playheadSeconds - viewport.startSeconds) / visibleSeconds) * width

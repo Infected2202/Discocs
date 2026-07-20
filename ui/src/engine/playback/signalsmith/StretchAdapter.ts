@@ -43,7 +43,7 @@ export class StretchAdapter {
     if (buffers.some((buffer) => buffer.length !== sampleCount)) {
       throw new Error("Stretch channel buffers must have equal lengths")
     }
-    const transfer = buffers.map((buffer) => buffer.buffer as ArrayBuffer)
+    const transfer = buffers.map((buffer) => buffer.buffer)
     const end = await node.addBuffers(buffers, transfer)
     this.extent = { start: this.extent.start, end }
     return this.extent

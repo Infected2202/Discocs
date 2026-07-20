@@ -9,8 +9,10 @@ export function selectWaveformLevel(
   const secondsPerPixel = Math.max(0, viewport.endSeconds - viewport.startSeconds)
     / Math.max(1, viewport.width)
   const ordered = [...levels].sort((left, right) => right.bucketDurationSeconds - left.bucketDurationSeconds)
+  const finest = ordered.at(-1)
+  if (!finest) throw new Error("Waveform timeline must contain at least one level")
   return ordered.find((level) => level.bucketDurationSeconds <= secondsPerPixel)
-    ?? ordered[ordered.length - 1]!
+    ?? finest
 }
 
 export function pointerXToTime(
