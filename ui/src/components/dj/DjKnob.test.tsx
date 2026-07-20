@@ -3,21 +3,30 @@ import { describe, expect, it, vi } from "vitest"
 import DjKnob from "./DjKnob"
 
 describe("DjKnob", () => {
-  it("renders the value arc from minimum to the current unipolar value", () => {
-    render(<DjKnob label="Deck A gain" value={0.25} />)
+  it("renders an empty value arc at the control's neutral default", () => {
+    render(<DjKnob label="Deck A gain" value={0.5} defaultValue={0.5} />)
 
     expect(screen.getByTestId("knob-value-arc")).toHaveStyle({
-      "--knob-arc-start": "0deg",
-      "--knob-arc-end": "67.5deg",
+      "--knob-arc-start": "135deg",
+      "--knob-arc-end": "135deg",
     })
   })
 
-  it("renders bipolar values outward from the neutral center", () => {
-    render(<DjKnob label="Deck A filter" value={-0.5} min={-1} max={1} />)
+  it("fills the arc between the neutral default and the current position", () => {
+    render(<DjKnob label="Deck A gain" value={0.25} defaultValue={0.5} />)
 
     expect(screen.getByTestId("knob-value-arc")).toHaveStyle({
       "--knob-arc-start": "67.5deg",
       "--knob-arc-end": "135deg",
+    })
+  })
+
+  it("fills toward the pointer on the other side of neutral", () => {
+    render(<DjKnob label="Deck A gain" value={0.75} defaultValue={0.5} />)
+
+    expect(screen.getByTestId("knob-value-arc")).toHaveStyle({
+      "--knob-arc-start": "135deg",
+      "--knob-arc-end": "202.5deg",
     })
   })
 

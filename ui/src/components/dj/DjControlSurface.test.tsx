@@ -146,4 +146,22 @@ describe("DjControlSurface", () => {
     expect(within(mixer).getByRole("slider", { name: "Crossfader" })).toBeInTheDocument()
     expect(within(deckA).queryByRole("slider", { name: "Deck A gain" })).not.toBeInTheDocument()
   })
+
+  it("keeps Traktor-style routing and pitch placeholders in their physical sections", () => {
+    useUIStore.setState({ djSurfaceOpen: true })
+    render(<DjControlSurface />)
+
+    const channelA = screen.getByRole("region", { name: "Deck A mixer channel" })
+    const fxAssignment = within(channelA).getByRole("group", { name: "Deck A effect assignment" })
+    expect(within(channelA).getByRole("combobox", { name: "Deck A filter type" })).toBeDisabled()
+    expect(within(channelA).getByRole("button", { name: "Toggle Deck A filter" })).toBeDisabled()
+    expect(within(channelA).getByRole("button", { name: "Mute Deck A high" })).toBeDisabled()
+    expect(within(channelA).getByRole("button", { name: "Match Deck A key" })).toBeDisabled()
+    expect(within(fxAssignment).getByRole("button", { name: "1" })).toBeDisabled()
+    expect(within(fxAssignment).getByRole("button", { name: "2" })).toBeDisabled()
+    const deckA = screen.getByRole("region", { name: "Deck A" })
+    const deckB = screen.getByRole("region", { name: "Deck B" })
+    expect(within(deckA).getByRole("slider", { name: "Deck A pitch" })).toBeDisabled()
+    expect(within(deckB).getByRole("slider", { name: "Deck B pitch" })).toBeDisabled()
+  })
 })

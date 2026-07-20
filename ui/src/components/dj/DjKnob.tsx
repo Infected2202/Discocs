@@ -1,9 +1,12 @@
-import { useRef, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react"
+import { useRef, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react"
 import { cn } from "@/lib/utils"
 import styles from "./DjControlSurface.module.css"
 
 interface DjKnobProps {
   readonly label: string
+  readonly displayLabel?: string
+  readonly labelContent?: ReactNode
+  readonly labelAccessory?: ReactNode
   readonly value: number
   readonly min?: number
   readonly max?: number
@@ -25,6 +28,9 @@ function clamp(value: number, min: number, max: number): number {
 
 export default function DjKnob({
   label,
+  displayLabel,
+  labelContent,
+  labelAccessory,
   value,
   min = 0,
   max = 1,
@@ -38,7 +44,7 @@ export default function DjKnob({
   const span = max - min
   const normalized = span === 0 ? 0 : (clamp(value, min, max) - min) / span
   const rotation = -135 + normalized * 270
-  const neutral = min < 0 && max > 0 ? (0 - min) / span : 0
+  const neutral = span === 0 ? 0 : (clamp(defaultValue, min, max) - min) / span
   const arcStart = Math.min(normalized, neutral) * 270
   const arcEnd = Math.max(normalized, neutral) * 270
   const arcStyle: KnobArcStyle = {
@@ -114,7 +120,10 @@ export default function DjKnob({
           <span className={styles.knobMark} />
         </span>
       </button>
-      <span className={styles.controlLabel}>{label}</span>
+      <div className={styles.controlLabelRow}>
+        {labelContent ?? <span className={styles.controlLabel}>{displayLabel ?? label}</span>}
+        {labelAccessory}
+      </div>
     </div>
   )
 }

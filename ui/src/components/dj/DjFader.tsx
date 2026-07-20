@@ -4,6 +4,7 @@ import styles from "./DjControlSurface.module.css"
 
 interface DjFaderProps {
   readonly label: string
+  readonly displayLabel?: string
   readonly value: number
   readonly min?: number
   readonly max?: number
@@ -19,6 +20,7 @@ function clamp(value: number, min: number, max: number): number {
 
 export default function DjFader({
   label,
+  displayLabel,
   value,
   min = 0,
   max = 1,
@@ -92,7 +94,7 @@ export default function DjFader({
           <span />
         </span>
       </button>
-      <span className={styles.controlLabel}>{label}</span>
+      <span className={styles.controlLabel}>{displayLabel ?? label}</span>
     </div>
   )
 }

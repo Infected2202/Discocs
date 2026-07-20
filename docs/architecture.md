@@ -263,9 +263,14 @@ The Phase 3 workspace follows the Traktor-style information hierarchy in the
 Discocs visual language: top effect/master regions, two horizontal waveform
 places, Deck A / central mixer / Deck B, then the existing current queue. All
 trim, EQ, filter, level-meter and channel-fader controls live in the two strips
-of the central mixer; deck panels contain track and transport controls only.
-Knob arcs render the actual value (outward from centre for bipolar filters),
-while channel and crossfader slots include scales and a high-contrast cap. The
+of the central mixer. Each strip follows the reference's outer
+Gain/Filter/FX/Key and inner HI/MID/LO/fader grouping, with a segmented meter
+between them. Compact per-control switches, the filter-type selector and FX 1/2
+routing preserve the reference hierarchy while remaining disabled placeholders.
+Deck panels contain track, transport and disabled Phase-placeholder
+pitch/performance controls. Knob arcs render the actual value outward from the
+control's neutral/default position, with no coloured fill at neutral. Channel
+and crossfader slots include scales and a high-contrast cap. The
 effect, cue, loop, BPM and waveform regions are explicitly unavailable or
 marked pending until their owning phases; they never simulate a successful
 command. Gain, three-band EQ, filter, channel faders, crossfader, master gain,

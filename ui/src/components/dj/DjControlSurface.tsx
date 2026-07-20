@@ -61,11 +61,13 @@ function EffectRack({ side }: { readonly side: DeckId }) {
     <section className={styles.effectRack} aria-label={`Deck ${side} effects`}>
       <div className={styles.sectionEyebrow}><Sparkles size={12} /> FX {side}</div>
       <div className={styles.effectControls}>
-        <DjKnob label={`Deck ${side} effect mix`} value={0.5} defaultValue={0.5} disabled />
+        <DjKnob label={`Deck ${side} effect mix`} displayLabel="D/W" value={0.5} defaultValue={0.5} disabled />
         <div className={styles.effectNames}>
           <span>Delay</span><span>Reverb</span><span>Flanger</span>
         </div>
-        <DjKnob label={`Deck ${side} effect parameter`} value={0.5} defaultValue={0.5} disabled />
+        <DjKnob label={`Deck ${side} delay parameter`} displayLabel="DELAY" value={0.5} defaultValue={0.5} disabled />
+        <DjKnob label={`Deck ${side} reverb parameter`} displayLabel="REVRB" value={0.5} defaultValue={0.5} disabled />
+        <DjKnob label={`Deck ${side} flanger parameter`} displayLabel="FLANG" value={0.5} defaultValue={0.5} disabled />
       </div>
       <span className={styles.unavailable}>Effects unavailable</span>
     </section>
@@ -86,7 +88,7 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover }: DeckPanelPr
   const canHandover = !isProgram && deck.preparation === "ready"
 
   return (
-    <section className={styles.deckPanel} aria-label={`Deck ${deck.id}`}>
+    <section className={styles.deckPanel} aria-label={`Deck ${deck.id}`} data-deck={deck.id}>
       <header className={styles.deckHeader}>
         <ArtworkImage
           src={track?.artwork?.url}
@@ -98,6 +100,10 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover }: DeckPanelPr
         <div className={styles.deckMeta}>
           <strong>{track?.title ?? `Deck ${deck.id} empty`}</strong>
           <span>{track?.artists?.map((artist) => artist.name).join(", ") || "—"}</span>
+          <div className={styles.deckSyncControls}>
+            <button type="button" disabled>SYNC</button>
+            <button type="button" disabled>MASTER</button>
+          </div>
         </div>
         <div className={styles.deckReadout}>
           <strong>-{formatTime(deck.duration && deck.anchor ? deck.duration - deck.anchor.mediaSeconds : null)}</strong>
@@ -138,15 +144,37 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover }: DeckPanelPr
             <SkipForward size={14} /> PROGRAM
           </button>
         </div>
-        <div className={styles.deckControlArea} aria-hidden="true" />
+        <div className={styles.deckControlArea}>
+          <div className={styles.beatControls}>
+            {(["1/8", "1/4", "1/2", "1", "2", "4", "8", "16"]).map((beat) => (
+              <button key={beat} type="button" disabled>{beat}</button>
+            ))}
+          </div>
+          <div className={styles.hotcuePads}>
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((cue) => (
+              <button key={cue} type="button" disabled>{cue}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className={styles.pitchControl}>
+        <span>0.0%</span>
+        <DjFader
+          label={`Deck ${deck.id} pitch`}
+          displayLabel="PITCH"
+          value={0}
+          min={-1}
+          max={1}
+          disabled
+        />
       </div>
     </section>
   )
 }
 
-function LevelMeter({ value, label }: { readonly value: number; readonly label: string }) {
+function LevelMeter({ value, label, className }: { readonly value: number; readonly label: string; readonly className?: string }) {
   return (
-    <meter className={styles.meter} aria-label={label} min={0} max={1} value={value}>
+    <meter className={cn(styles.meter, className)} aria-label={label} min={0} max={1} value={value}>
       <span style={{ height: `${Math.min(1, Math.max(0, value)) * 100}%` }} />
     </meter>
   )
@@ -157,43 +185,88 @@ interface MixerChannelProps {
   readonly mixer: ReturnType<typeof usePlaybackEngineSnapshot>["mixer"]
 }
 
+function MixerToggle({ label, active = false }: { readonly label: string; readonly active?: boolean }) {
+  return (
+    <button
+      type="button"
+      className={styles.controlToggle}
+      data-active={active || undefined}
+      disabled
+      aria-label={label}
+    />
+  )
+}
+
 function MixerChannel({ deck, mixer }: MixerChannelProps) {
   return (
-    <section className={styles.channel} aria-label={`Deck ${deck} mixer channel`}>
+    <section className={styles.channel} aria-label={`Deck ${deck} mixer channel`} data-deck={deck}>
       <strong className={styles.channelLabel}>{deck}</strong>
       <div className={styles.channelBody}>
-        <div className={styles.channelKnobs}>
+        <div className={styles.channelAux}>
           <DjKnob
             label={`Deck ${deck} gain`}
+            displayLabel="GAIN"
+            labelAccessory={<MixerToggle label={`Toggle Deck ${deck} gain`} />}
             value={mixer.trims[deck]}
             defaultValue={0.5}
             onChange={(value) => playerPlayback.setDeckTrim(deck, value)}
           />
-          {(["high", "mid", "low"] as EqBand[]).map((band) => (
-            <DjKnob
-              key={band}
-              label={`Deck ${deck} ${band}`}
-              value={mixer.eq[deck][band]}
-              defaultValue={0.8}
-              onChange={(value) => playerPlayback.setDeckEq(deck, band, value)}
-            />
-          ))}
           <DjKnob
             label={`Deck ${deck} filter`}
+            labelContent={(
+              <select className={styles.filterSelect} aria-label={`Deck ${deck} filter type`} defaultValue="filter" disabled>
+                <option value="filter">Filter</option>
+                <option value="reverb">Reverb</option>
+                <option value="dual-delay">Dual Delay</option>
+                <option value="noise">Noise</option>
+                <option value="time-gater">Time Gater</option>
+              </select>
+            )}
+            labelAccessory={<MixerToggle label={`Toggle Deck ${deck} filter`} active={mixer.filters[deck] !== 0} />}
             value={mixer.filters[deck]}
             min={-1}
             max={1}
             defaultValue={0}
             onChange={(value) => playerPlayback.setDeckFilter(deck, value)}
           />
-        </div>
-        <div className={styles.channelOutput}>
-          <LevelMeter value={mixer.meters[deck]} label={`Deck ${deck} output level`} />
-          <DjFader
-            label={`Deck ${deck} channel`}
-            value={mixer.channelFaders[deck]}
-            onChange={(value) => playerPlayback.setDeckChannelFader(deck, value)}
+          <div className={styles.fxAssign} role="group" aria-label={`Deck ${deck} effect assignment`}>
+            <div><button type="button" disabled>1</button><button type="button" disabled>2</button></div>
+            <span>FX</span>
+          </div>
+          <DjKnob
+            label={`Deck ${deck} key`}
+            displayLabel="KEY"
+            labelAccessory={<MixerToggle label={`Match Deck ${deck} key`} />}
+            value={0.5}
+            defaultValue={0.5}
+            disabled
           />
+        </div>
+        <LevelMeter
+          value={mixer.meters[deck]}
+          label={`Deck ${deck} output level`}
+          className={styles.channelMeter}
+        />
+        <div className={styles.channelEq}>
+          {(["high", "mid", "low"] as EqBand[]).map((band) => (
+            <DjKnob
+              key={band}
+              label={`Deck ${deck} ${band}`}
+              displayLabel={band === "high" ? "HI" : band.toUpperCase()}
+              labelAccessory={<MixerToggle label={`Mute Deck ${deck} ${band}`} />}
+              value={mixer.eq[deck][band]}
+              defaultValue={0.8}
+              onChange={(value) => playerPlayback.setDeckEq(deck, band, value)}
+            />
+          ))}
+          <div className={styles.channelOutput}>
+            <DjFader
+              label={`Deck ${deck} channel`}
+              displayLabel=""
+              value={mixer.channelFaders[deck]}
+              onChange={(value) => playerPlayback.setDeckChannelFader(deck, value)}
+            />
+          </div>
         </div>
       </div>
     </section>
@@ -259,6 +332,7 @@ export default function DjControlSurface() {
             </div>
             <DjKnob
               label="Master gain"
+              displayLabel="MAIN"
               value={snapshot.mixer.masterGain}
               defaultValue={1}
               onChange={(value) => playerPlayback.setMasterGain(value)}
@@ -301,6 +375,7 @@ export default function DjControlSurface() {
             </div>
             <DjFader
               label="Crossfader"
+              displayLabel="CROSSFADER"
               value={snapshot.mixer.crossfader}
               min={-1}
               max={1}
