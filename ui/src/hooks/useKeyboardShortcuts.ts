@@ -1,6 +1,6 @@
 import { useEffect } from "react"
 import { usePlayerStore } from "@/store/playerStore"
-import { audioEngine } from "@/engine/AudioEngine"
+import { playerPlayback as audioEngine } from "@/engine/playback"
 
 const SKIP_SECONDS = 10
 

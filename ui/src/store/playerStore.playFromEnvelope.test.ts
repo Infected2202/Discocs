@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest"
 import { usePlayerStore } from "./playerStore"
 import type { PlaybackEnvelope, QueueItem, TrackSummary } from "@/api/types"
 
-// AudioEngine is a browser/audio singleton — stub every method the store calls
+// The playback facade is a browser/audio singleton — stub every method the store calls
 // during playFromEnvelope → playTrack so nothing touches real audio.
-vi.mock("@/engine/AudioEngine", () => ({
-  audioEngine: {
+vi.mock("@/engine/playback", () => ({
+  playerPlayback: {
     init: vi.fn(),
     load: vi.fn(),
     play: vi.fn().mockResolvedValue(undefined),

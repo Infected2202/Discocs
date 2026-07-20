@@ -1,6 +1,6 @@
 # PlaybackEngine technical plan
 
-**Status:** Slice 0.1 graph/source contract confirmed; later-phase sections remain staged
+**Status:** Phase 1 one-deck migration implemented; Phase 2 sections remain staged
 **Applies to:** foundation Phases 0-3 and 6
 **Replaces:** direct use of `ui/src/engine/AudioEngine.ts` by player-facing code
 
@@ -324,3 +324,18 @@ source will implement scheduled transport behind the same boundary.
 Browser evidence and the outstanding controlled-browser check are recorded in
 `SLICE_0_1_BROWSER_RESULTS.md`. This limitation does not require a public API
 or Phase 1 file-boundary change.
+
+### Phase 1 confirmation
+
+The live player now uses `PlayerPlaybackFacade` from the playback package. It
+retains the current component/store contract while `PlaybackEngine` owns the
+single output route: every replacement `HTMLAudioElement` is wrapped by one
+`MediaElementAudioSourceNode`, attached to neutral Deck A, and the previous
+node is detached before it can remain audible. Deck B is present but silent.
+
+The compatibility facade retains compressed Blob caching/prefetch, buffer and
+transport callbacks, restore, volume/mute and Media Session behavior. The
+deprecated `engine/AudioEngine.ts` file only re-exports this singleton; live
+store and keyboard callers no longer import it. Lack of Web Audio degrades to
+ordinary direct HTML media with `manualMix=false`; context-resume failures are
+reported without calling `HTMLMediaElement.play()`.

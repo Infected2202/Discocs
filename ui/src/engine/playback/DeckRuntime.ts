@@ -62,6 +62,10 @@ export class DeckRuntime {
     }
   }
 
+  advanceGenerationFloor(minimum: number): void {
+    this.generation = Math.max(this.generation, minimum)
+  }
+
   get sourceIdentity(): AudioNode | null {
     return this.active?.output ?? null
   }

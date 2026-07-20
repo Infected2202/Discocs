@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { audioEngine } from "@/engine/AudioEngine"
+import { playerPlayback as audioEngine } from "@/engine/playback"
 import { patchQueue } from "@/api/playback"
 import { usePlayerStore } from "./playerStore"
 import type { PlaybackEnvelope, QueueItem, TrackSummary } from "@/api/types"
 
-vi.mock("@/engine/AudioEngine", () => ({
-  audioEngine: {
+vi.mock("@/engine/playback", () => ({
+  playerPlayback: {
     init: vi.fn(),
     load: vi.fn(),
     play: vi.fn().mockResolvedValue(undefined),

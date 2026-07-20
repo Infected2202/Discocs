@@ -116,4 +116,15 @@ describe("DeckRuntime source generations", () => {
     expect(graph.getAttachedSource("A")).toBe(identity)
     expect(sourceA.release).not.toHaveBeenCalled()
   })
+
+  it("advances past an adopted compatibility-source generation", async () => {
+    const source = fakeSource(async () => metadata)
+    const graph = fakeGraph()
+    const runtime = new DeckRuntime("A", graph, () => source)
+
+    runtime.advanceGenerationFloor(7)
+    await runtime.load(track(1))
+
+    expect(graph.attachSource).toHaveBeenCalledWith("A", source.output, 8)
+  })
 })

@@ -1,6 +1,6 @@
 # Discocs DJ implementation plan
 
-**Status:** Phase 0 complete; Slices 0.1 through 0.4 implemented
+**Status:** Phase 0 complete; Phase 1 implemented
 **Delivery rule:** one complete logical slice includes code, meaningful tests, affected docs, one commit and pushes to both configured remotes; Jenkins is the verification environment.
 
 ## 1. Readiness
@@ -107,7 +107,7 @@ Exit:
 
 ### Slice 0.4 — Timeline v1 fixture spike
 
-**Implementation:** complete; Jenkins verification pending. The accepted
+**Implementation:** complete; Jenkins verified in build #264. The accepted
 layout, fixture sizing and decode/render memory estimates are recorded in
 `SLICE_0_4_FORMAT_RESULTS.md`.
 
@@ -133,6 +133,10 @@ Exit:
 ## 3. Phase 1 — one-deck PlaybackEngine migration
 
 This is the first production vertical slice. It must not introduce a visible DJ feature.
+
+**Implementation:** complete; Jenkins verification pending. Deck A now owns
+ordinary playback through the neutral Web Audio graph while the compatibility
+facade preserves existing player selectors, persisted keys and UI behavior.
 
 ### Backend impact
 
@@ -331,10 +335,9 @@ Every implementation slice:
 
 ## 12. Current next action
 
-Verify Slice 0.4 in Jenkins, then begin Phase 1. Phase 1 migrates the existing
-single-deck player to Deck A behind a compatibility facade without exposing DJ
-controls or allowing the retired `AudioEngine` and new runtime to own output
-simultaneously.
+Verify Phase 1 in Jenkins, then begin Phase 2. Phase 2 adds the persistent
+second deck, mixer controls and idempotent canonical handover while retaining
+the Phase 1 ordinary-player fallback.
 
 Primary external references reviewed for the spike:
 

@@ -217,17 +217,26 @@ Raw playback sends `format=raw` to Navidrome. Enabled transcoding sends
 the active user's Navidrome credentials. Navidrome must have an applicable MP3
 transcoding profile. The browser keeps no persistent/offline audio cache.
 
-Implementation files: `ui/src/engine/AudioEngine.ts`,
+Implementation files: `ui/src/engine/playback/PlayerPlaybackFacade.ts`,
+`ui/src/engine/playback/PlaybackEngine.ts`,
 `ui/src/store/playerStore.ts`, `ui/src/pages/SettingsPage.tsx`,
 `app/api/tracks.py`, `app/api/settings.py`, and `app/store/settings.py`.
 
-The staged playback-engine replacement lives in
-`ui/src/engine/playback/`. Slice 0.1 adds lazy capability detection, initial
-typed contracts, generation-safe media-source ownership and a two-strip Web
-Audio graph sharing one `AudioContext`. It is not wired to `playerStore` yet;
-`AudioEngine` remains the only live output owner until the one-deck Phase 1
-migration. This prevents two engines from playing the same program source
-during the transition.
+The browser player now imports the compatibility facade from
+`ui/src/engine/playback/`. It preserves the established load, Blob cache,
+prefetch, transport, buffer callback, Media Session and persisted-position
+semantics while routing the live `HTMLAudioElement` through Deck A of one lazy
+`PlaybackEngine`. The engine creates one shared `AudioContext`, leaves Deck A
+at unity, silences Deck B, and resumes the context before calling media
+`play()`. Replacing the media element disconnects its previous source node, so
+the retired and current paths cannot both reach the destination.
+
+`ui/src/engine/AudioEngine.ts` is only a deprecated re-export for migrated
+regression tests and third-party imports; `playerStore`, keyboard shortcuts and
+session restore use the playback facade directly. Browsers without Web Audio
+or `MediaElementAudioSourceNode` retain ordinary direct HTML-media playback as
+a degraded mode with manual mixing unavailable. A context-resume failure is a
+recoverable play error surfaced through the existing player error state.
 
 ## Autoplay
 

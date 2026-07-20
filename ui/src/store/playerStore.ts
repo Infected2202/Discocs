@@ -1,5 +1,9 @@
 import { create } from "zustand"
-import { audioEngine, type BufferedRange, type PlaybackState } from "@/engine/AudioEngine"
+import {
+  playerPlayback as audioEngine,
+  type PlayerBufferedRange as BufferedRange,
+  type PlaybackState,
+} from "@/engine/playback"
 import {
   createSession,
   fetchQueue,
