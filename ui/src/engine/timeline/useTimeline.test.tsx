@@ -1,5 +1,5 @@
-import { renderHook, waitFor } from "@testing-library/react"
-import { act, beforeEach, describe, expect, it, vi } from "vitest"
+import { act, renderHook, waitFor } from "@testing-library/react"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { TimelineLoadState } from "@/api/timeline"
 
 const loadTimeline = vi.hoisted(() => vi.fn())
@@ -12,6 +12,7 @@ import { useTimeline } from "./useTimeline"
 
 describe("useTimeline", () => {
   beforeEach(() => loadTimeline.mockReset())
+  afterEach(() => vi.useRealTimers())
 
   it("loads an enabled track and returns to idle when disabled", async () => {
     const ready: TimelineLoadState = { status: "ready", timeline: {
@@ -58,6 +59,5 @@ describe("useTimeline", () => {
     expect(result.current).toBe(ready)
     expect(loadTimeline).toHaveBeenCalledTimes(2)
     unmount()
-    vi.useRealTimers()
   })
 })
