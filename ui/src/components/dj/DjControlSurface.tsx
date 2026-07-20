@@ -345,6 +345,7 @@ export default function DjControlSurface() {
             ref={closeButtonRef}
             type="button"
             className={styles.closeButton}
+            data-testid="close-dj-surface"
             onClick={close}
             aria-label={t("closeDjSurface")}
           >

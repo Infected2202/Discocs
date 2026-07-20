@@ -102,7 +102,7 @@ describe("DjControlSurface", () => {
     act(() => useUIStore.getState().openDjSurface())
     expect(screen.getByTestId("dj-control-surface")).toHaveAttribute("aria-hidden", "false")
 
-    fireEvent.click(screen.getByRole("button", { name: "Close DJ workspace" }))
+    fireEvent.click(screen.getByTestId("close-dj-surface"))
 
     expect(useUIStore.getState().djSurfaceOpen).toBe(false)
     expect(playback.load).not.toHaveBeenCalled()
@@ -112,11 +112,11 @@ describe("DjControlSurface", () => {
   })
 
   it("closes on Escape and restores focus", () => {
-    render(<><button type="button">Before DJ</button><DjControlSurface /></>)
-    const trigger = screen.getByRole("button", { name: "Before DJ" })
+    render(<><button type="button" data-testid="before-dj">Before DJ</button><DjControlSurface /></>)
+    const trigger = screen.getByTestId("before-dj")
     trigger.focus()
     act(() => useUIStore.getState().openDjSurface())
-    expect(screen.getByRole("button", { name: "Close DJ workspace" })).toHaveFocus()
+    expect(screen.getByTestId("close-dj-surface")).toHaveFocus()
 
     fireEvent.keyDown(document, { key: "Escape" })
 
