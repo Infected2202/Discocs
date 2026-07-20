@@ -268,9 +268,13 @@ Gain/Filter/FX/Key and inner HI/MID/LO/fader grouping, with a segmented meter
 between them. Compact per-control switches, the filter-type selector and FX 1/2
 routing preserve the reference hierarchy while remaining disabled placeholders.
 Deck panels contain track, transport and disabled Phase-placeholder
-pitch/performance controls. Knob arcs render the actual value outward from the
-control's neutral/default position, with no coloured fill at neutral. Channel
-and crossfader slots include scales and a high-contrast cap. The
+pitch/performance controls. Knob pointers place the neutral/default value at
+twelve o'clock, including controls whose audio range is asymmetric, and their
+arcs render the actual value outward from that centre with no coloured fill at
+neutral. The top panel uses shrink-safe effect regions around an isolated
+master block; compact landscape widths remove secondary effect names before
+they can overlap the master controls. Channel and crossfader slots include
+scales and a high-contrast cap. The
 effect, cue, loop, BPM and waveform regions are explicitly unavailable or
 marked pending until their owning phases; they never simulate a successful
 command. Gain, three-band EQ, filter, channel faders, crossfader, master gain,

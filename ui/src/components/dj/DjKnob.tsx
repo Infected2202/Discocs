@@ -26,6 +26,21 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
+function visualPosition(value: number, min: number, max: number, neutral: number): number {
+  if (max === min) return 0
+  const safeValue = clamp(value, min, max)
+  const safeNeutral = clamp(neutral, min, max)
+
+  // DJ controls put their neutral (usually 0 dB) at twelve o'clock even when
+  // the underlying audio range is asymmetric, such as -24 dB…+6 dB EQ.
+  if (safeNeutral > min && safeNeutral < max) {
+    if (safeValue <= safeNeutral) return ((safeValue - min) / (safeNeutral - min)) * 0.5
+    return 0.5 + ((safeValue - safeNeutral) / (max - safeNeutral)) * 0.5
+  }
+
+  return (safeValue - min) / (max - min)
+}
+
 export default function DjKnob({
   label,
   displayLabel,
@@ -42,11 +57,11 @@ export default function DjKnob({
 }: DjKnobProps) {
   const drag = useRef<{ pointerId: number; startY: number; startValue: number } | null>(null)
   const span = max - min
-  const normalized = span === 0 ? 0 : (clamp(value, min, max) - min) / span
-  const rotation = -135 + normalized * 270
-  const neutral = span === 0 ? 0 : (clamp(defaultValue, min, max) - min) / span
-  const arcStart = Math.min(normalized, neutral) * 270
-  const arcEnd = Math.max(normalized, neutral) * 270
+  const position = visualPosition(value, min, max, defaultValue)
+  const neutralPosition = visualPosition(defaultValue, min, max, defaultValue)
+  const rotation = -135 + position * 270
+  const arcStart = Math.min(position, neutralPosition) * 270
+  const arcEnd = Math.max(position, neutralPosition) * 270
   const arcStyle: KnobArcStyle = {
     "--knob-arc-start": `${arcStart}deg`,
     "--knob-arc-end": `${arcEnd}deg`,
@@ -116,7 +131,7 @@ export default function DjKnob({
         onKeyDown={handleKeyDown}
       >
         <span className={styles.knobArc} style={arcStyle} data-testid="knob-value-arc" />
-        <span className={styles.knobCap} style={{ transform: `rotate(${rotation}deg)` }}>
+        <span className={styles.knobCap} style={{ transform: `rotate(${rotation}deg)` }} data-testid="knob-pointer">
           <span className={styles.knobMark} />
         </span>
       </button>

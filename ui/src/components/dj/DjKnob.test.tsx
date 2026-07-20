@@ -30,6 +30,16 @@ describe("DjKnob", () => {
     })
   })
 
+  it("places an asymmetric audio neutral at twelve o'clock", () => {
+    render(<DjKnob label="Deck A high" value={0.8} defaultValue={0.8} />)
+
+    expect(screen.getByTestId("knob-pointer")).toHaveStyle({ transform: "rotate(0deg)" })
+    expect(screen.getByTestId("knob-value-arc")).toHaveStyle({
+      "--knob-arc-start": "135deg",
+      "--knob-arc-end": "135deg",
+    })
+  })
+
   it("maps upward drag to a clamped value and commits on release", () => {
     const onChange = vi.fn()
     const onCommit = vi.fn()

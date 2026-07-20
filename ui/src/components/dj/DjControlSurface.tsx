@@ -325,19 +325,21 @@ export default function DjControlSurface() {
           <EffectRack side="A" />
           <div className={styles.masterPanel}>
             <div className={styles.masterTitle}><SlidersHorizontal size={15} /> DJ Workspace</div>
-            <div className={styles.masterReadout}>
-              <span>MASTER BPM</span>
-              <strong>--.--</strong>
-              <small>Timeline pending</small>
+            <div className={styles.masterControls}>
+              <div className={styles.masterReadout}>
+                <span>MASTER BPM</span>
+                <strong>--.--</strong>
+                <small>Timeline pending</small>
+              </div>
+              <DjKnob
+                label="Master gain"
+                displayLabel="MAIN"
+                value={snapshot.mixer.masterGain}
+                defaultValue={1}
+                onChange={(value) => playerPlayback.setMasterGain(value)}
+              />
+              <LevelMeter value={snapshot.mixer.meters.master} label="Master output level" />
             </div>
-            <DjKnob
-              label="Master gain"
-              displayLabel="MAIN"
-              value={snapshot.mixer.masterGain}
-              defaultValue={1}
-              onChange={(value) => playerPlayback.setMasterGain(value)}
-            />
-            <LevelMeter value={snapshot.mixer.meters.master} label="Master output level" />
             <span className={styles.limiter}><Gauge size={12} /> protected</span>
           </div>
           <EffectRack side="B" />
