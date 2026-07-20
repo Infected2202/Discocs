@@ -15,6 +15,8 @@ function fixture() {
     payload,
     manifest: {
       schema_version: 1,
+      pack_name: "timeline_foundation",
+      extractor: "timeline_foundation_v1",
       duration_seconds: 2,
       waveform: {
         sample_rate: 8,

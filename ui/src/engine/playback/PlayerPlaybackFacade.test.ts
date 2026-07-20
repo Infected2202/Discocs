@@ -33,6 +33,25 @@ function runtime() {
 }
 
 describe("PlayerPlaybackFacade routing", () => {
+  it("seeks the requested physical deck and clamps to its media duration", async () => {
+    const audio: MockAudio[] = []
+    vi.stubGlobal("Audio", function () {
+      const instance = new MockAudio()
+      audio.push(instance)
+      return instance
+    })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob(["audio"])) }))
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:prepared-seek")
+    const facade = new PlayerPlaybackFacade(runtime())
+    facade.load("/audio/1", 1)
+    await facade.prefetch(2, "/audio/2", "raw", "queue-2")
+
+    facade.seekDeckToSeconds("B", 999)
+
+    expect(audio[2]?.currentTime).toBe(120)
+    expect(audio[1]?.currentTime).toBe(0)
+  })
+
   it("forwards physical deck and mixer controls to the shared runtime", () => {
     const engine = runtime()
     Object.assign(engine, {

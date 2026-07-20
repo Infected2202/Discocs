@@ -73,6 +73,9 @@ function parseManifest(value: unknown, payloadLength: number): TimelineManifestV
   if (!isRecord(value) || value.schema_version !== SCHEMA_VERSION) {
     throw new TimelineDecodeError("unsupported timeline schema version")
   }
+  if (value.pack_name !== "timeline_foundation" || value.extractor !== "timeline_foundation_v1") {
+    throw new TimelineDecodeError("unsupported timeline pack or extractor")
+  }
   if (!isRecord(value.payload) || value.payload.byte_length !== payloadLength) {
     throw new TimelineDecodeError("payload length mismatch")
   }
@@ -95,6 +98,8 @@ function parseManifest(value: unknown, payloadLength: number): TimelineManifestV
   }
   return {
     schema_version: 1,
+    pack_name: "timeline_foundation",
+    extractor: "timeline_foundation_v1",
     duration_seconds: value.duration_seconds,
     waveform: {
       sample_rate: value.waveform.sample_rate,

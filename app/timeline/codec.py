@@ -181,6 +181,21 @@ def _decode_descriptor(descriptor: Mapping[str, Any], payload: bytes) -> tuple[f
     return tuple(float(value) * float(scale) for value in values)
 
 
+def _validate_descriptor_layout(descriptor: Mapping[str, Any], payload_length: int) -> None:
+    dtype = descriptor.get("dtype")
+    if dtype not in _DTYPE_FORMATS:
+        raise TimelineFormatError(f"unsupported dtype: {dtype}")
+    offset = descriptor.get("offset")
+    length = descriptor.get("length")
+    scale = descriptor.get("scale")
+    if not isinstance(offset, int) or offset < 0 or offset % DESCRIPTOR_ALIGNMENT:
+        raise TimelineFormatError("descriptor offset is not aligned")
+    if not isinstance(length, int) or length < 0 or not isinstance(scale, (int, float)):
+        raise TimelineFormatError("invalid descriptor length or scale")
+    if offset + length * _DTYPE_FORMATS[dtype][1] > payload_length:
+        raise TimelineFormatError("descriptor exceeds payload length")
+
+
 def _validate_payload(manifest: Mapping[str, Any], payload: bytes) -> None:
     if manifest.get("schema_version") != SCHEMA_VERSION:
         raise TimelineFormatError("unsupported timeline schema version")
@@ -195,6 +210,33 @@ def _validate_payload(manifest: Mapping[str, Any], payload: bytes) -> None:
         raise TimelineFormatError("payload length mismatch")
     if payload_meta.get("sha256") != hashlib.sha256(payload).hexdigest():
         raise TimelineFormatError("payload checksum mismatch")
+
+
+def validate_timeline(manifest: Mapping[str, Any], payload: bytes) -> None:
+    """Validate v1 metadata and payload without materializing decoded arrays."""
+    _validate_payload(manifest, payload)
+    if manifest.get("pack_name") != PACK_NAME or manifest.get("extractor") != EXTRACTOR:
+        raise TimelineFormatError("unsupported timeline pack or extractor")
+    waveform = manifest.get("waveform")
+    if not isinstance(waveform, Mapping) or not isinstance(waveform.get("levels"), list):
+        raise TimelineFormatError("missing waveform levels")
+    if not waveform["levels"]:
+        raise TimelineFormatError("missing waveform levels")
+    for level in waveform["levels"]:
+        if not isinstance(level, Mapping) or not isinstance(level.get("arrays"), Mapping):
+            raise TimelineFormatError("invalid waveform level")
+        arrays = level["arrays"]
+        if set(arrays) != set(_FIELD_FORMATS):
+            raise TimelineFormatError("waveform level has unexpected arrays")
+        bucket_count = level.get("bucket_count")
+        if not isinstance(bucket_count, int) or bucket_count <= 0:
+            raise TimelineFormatError("invalid waveform bucket count")
+        for field, descriptor in arrays.items():
+            if not isinstance(descriptor, Mapping):
+                raise TimelineFormatError("invalid array descriptor")
+            _validate_descriptor_layout(descriptor, len(payload))
+            if descriptor.get("length") != bucket_count or descriptor.get("dtype") != _FIELD_FORMATS[field][0]:
+                raise TimelineFormatError("waveform array length or dtype mismatch")
 
 
 def _decode_waveform_levels(waveform: Mapping[str, Any], payload: bytes) -> list[dict[str, Any]]:
@@ -216,7 +258,7 @@ def _decode_waveform_levels(waveform: Mapping[str, Any], payload: bytes) -> list
 
 def decode_timeline(manifest: Mapping[str, Any], payload: bytes) -> dict[str, Any]:
     """Validate and decode a v1 payload for fixture and backend round trips."""
-    _validate_payload(manifest, payload)
+    validate_timeline(manifest, payload)
     waveform = manifest.get("waveform")
     if not isinstance(waveform, Mapping):
         raise TimelineFormatError("missing waveform levels")

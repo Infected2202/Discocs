@@ -1,6 +1,6 @@
 # Discocs DJ implementation plan
 
-**Status:** Phase 0 complete; Phases 1-3 implemented and Jenkins verified
+**Status:** Phase 0 complete; Phases 1-3 implemented and Jenkins verified; Phase 4 implemented, Jenkins verification pending
 **Delivery rule:** one complete logical slice includes code, meaningful tests, affected docs, one commit and pushes to both configured remotes; Jenkins is the verification environment.
 
 ## 1. Readiness
@@ -255,6 +255,12 @@ The surface follows the current Expanded Player open/close transition and focus 
 
 ## 6. Phase 4 — waveform artifact and renderer
 
+**Implementation:** complete; Jenkins verification pending. The frozen v1
+foundation artifact is published atomically for local and Navidrome-backed
+tracks, exposed through authenticated manifest/payload/status/job endpoints,
+and rendered in both DJ deck waveform regions from one shared decoded payload.
+Artifact availability never blocks manual audio transport.
+
 ### Backend
 
 - add `app/store/timeline.py` and schema initialization;
@@ -345,8 +351,8 @@ Every implementation slice:
 
 ## 12. Current next action
 
-Begin Phase 4: implement the versioned waveform artifact lifecycle and replace
-both labelled waveform placeholders with the real Pixi renderer.
+Verify Phase 4 in Jenkins, then begin Phase 5 by extending the frozen payload
+with beat, tempo, energy and structure observations.
 
 Primary external references reviewed for the spike:
 

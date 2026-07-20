@@ -12,6 +12,9 @@ import DjKnob from "./DjKnob"
 import DjFader from "./DjFader"
 import { usePlaybackEngineSnapshot } from "./usePlaybackEngineSnapshot"
 import styles from "./DjControlSurface.module.css"
+import { useTimeline } from "@/engine/timeline"
+import { WaveformSurface } from "@/engine/waveform"
+import { resolveFollowWindow } from "@/engine/waveform/geometry"
 
 const deckIds: DeckId[] = ["A", "B"]
 
@@ -40,20 +43,50 @@ function trackForDeck(
   return null
 }
 
-function WaveformPlaceholder({ deck, track }: { readonly deck: DeckSnapshot; readonly track: TrackSummary | null }) {
+const waveformPalette = { low: 0x2ed7ff, mid: 0xc738ff, high: 0xff6b3d, playhead: 0xffffff }
+
+function deckPlayhead(deck: DeckSnapshot): number {
+  return deck.anchor?.mediaSeconds ?? 0
+}
+
+function DeckWaveform({ deck, track, open }: { readonly deck: DeckSnapshot; readonly track: TrackSummary | null; readonly open: boolean }) {
+  const state = useTimeline(deck.trackId, open)
+  const playhead = deckPlayhead(deck)
+  const timeline = state.timeline
+  const viewport = timeline
+    ? { width: 1, height: 1, devicePixelRatio: globalThis.devicePixelRatio || 1, ...resolveFollowWindow(timeline.durationSeconds, playhead, 30) }
+    : null
   return (
     <div className={styles.waveformRow} data-deck={deck.id}>
       <div className={styles.waveformDeckLabel}>{deck.id}</div>
       <div className={styles.waveformCanvas}>
-        <div className={styles.waveformPattern} />
-        <div className={styles.playhead} />
+        {timeline && viewport && <WaveformSurface
+          className={styles.waveformRenderer}
+          input={{ timeline, viewport, playheadSeconds: playhead, follow: true, palette: waveformPalette }}
+          onSeek={(seconds) => playerPlayback.seekDeckToSeconds(deck.id, seconds)}
+        />}
         <div className={styles.waveformMessage}>
           <span>{track?.title ?? `Deck ${deck.id}`}</span>
-          <small>Waveform · Phase 4</small>
+          <small>{state.status === "ready" ? "30 second follow" : `Waveform · ${state.status}`}</small>
         </div>
       </div>
     </div>
   )
+}
+
+function OverviewWaveform({ deck, open }: { readonly deck: DeckSnapshot; readonly open: boolean }) {
+  const state = useTimeline(deck.trackId, open)
+  const timeline = state.timeline
+  if (!timeline) return <div className={styles.overviewWaveform}><span>{state.status}</span></div>
+  return <div className={styles.overviewWaveform}><WaveformSurface
+    className={styles.waveformRenderer}
+    input={{
+      timeline,
+      viewport: { width: 1, height: 1, devicePixelRatio: globalThis.devicePixelRatio || 1, startSeconds: 0, endSeconds: timeline.durationSeconds },
+      playheadSeconds: deckPlayhead(deck), follow: false, palette: waveformPalette,
+    }}
+    onSeek={(seconds) => playerPlayback.seekDeckToSeconds(deck.id, seconds)}
+  /></div>
 }
 
 function EffectRack({ side }: { readonly side: DeckId }) {
@@ -86,9 +119,10 @@ interface DeckPanelProps {
   readonly isProgram: boolean
   readonly onToggle: () => void
   readonly onHandover: () => void
+  readonly open: boolean
 }
 
-function DeckPanel({ deck, track, isProgram, onToggle, onHandover }: DeckPanelProps) {
+function DeckPanel({ deck, track, isProgram, onToggle, onHandover, open }: DeckPanelProps) {
   const isPlaying = deck.transport === "playing"
   const canPlay = deck.trackId !== null && deck.preparation !== "loading" && deck.preparation !== "unavailable"
   const canHandover = !isProgram && deck.preparation === "ready"
@@ -122,10 +156,7 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover }: DeckPanelPr
         </div>
       </header>
 
-      <div className={styles.overviewWaveform}>
-        <div className={styles.overviewPattern} />
-        <span>overview pending</span>
-      </div>
+      <OverviewWaveform deck={deck} open={open} />
 
       <div className={styles.deckControls}>
         <div className={styles.transportControls}>
@@ -363,7 +394,7 @@ export default function DjControlSurface() {
 
         <section className={styles.waveforms} aria-label="Deck waveforms">
           {deckIds.map((deck) => (
-            <WaveformPlaceholder key={deck} deck={snapshot.decks[deck]} track={tracks[deck]} />
+            <DeckWaveform key={deck} deck={snapshot.decks[deck]} track={tracks[deck]} open={open} />
           ))}
         </section>
 
@@ -374,6 +405,7 @@ export default function DjControlSurface() {
             isProgram={snapshot.programDeck === "A"}
             onToggle={() => runPlayerCommand(() => toggleDeck("A"))}
             onHandover={() => runPlayerCommand(skipNext)}
+            open={open}
           />
 
           <section className={styles.mixerPanel} aria-label="Mixer">
@@ -399,6 +431,7 @@ export default function DjControlSurface() {
             isProgram={snapshot.programDeck === "B"}
             onToggle={() => runPlayerCommand(() => toggleDeck("B"))}
             onHandover={() => runPlayerCommand(skipNext)}
+            open={open}
           />
         </section>
 

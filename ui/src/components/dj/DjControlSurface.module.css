@@ -97,6 +97,8 @@
 .waveformRow:last-child { border-bottom: 0; }
 .waveformDeckLabel { display: grid; place-items: center; color: color-mix(in srgb, var(--track-accent) 78%, white); background: rgb(0 0 0 / 22%); font-weight: 800; }
 .waveformCanvas { position: relative; overflow: hidden; background: rgb(4 6 8 / 74%); }
+.waveformRenderer { position: absolute; inset: 0; touch-action: none; }
+.waveformRenderer canvas { display: block; width: 100%; height: 100%; }
 .waveformPattern,
 .overviewPattern {
   position: absolute;
@@ -110,6 +112,7 @@
 .waveformRow[data-deck="B"] .waveformPattern { filter: hue-rotate(64deg); transform: scaleX(-1); }
 .playhead { position: absolute; inset-block: 0; left: 50%; width: 1px; background: rgb(255 255 255 / 82%); box-shadow: 0 0 8px white; }
 .waveformMessage { position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: space-between; padding: 6px 10px; text-shadow: 0 1px 4px black; }
+.waveformMessage { pointer-events: none; }
 .waveformMessage span { max-width: 60%; overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .waveformMessage small { color: rgb(255 255 255 / 48%); font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
 
@@ -135,6 +138,7 @@
 .overviewWaveform { position: relative; overflow: hidden; border-bottom: 1px solid var(--border); background: rgb(0 0 0 / 22%); }
 .overviewPattern { inset: 3px 0; opacity: .34; }
 .overviewWaveform span { position: absolute; right: 5px; bottom: 3px; color: rgb(255 255 255 / 32%); font-size: 7px; text-transform: uppercase; }
+.overviewWaveform span { pointer-events: none; }
 .deckControls { display: grid; grid-template-rows: 43px 1fr; min-height: 0; }
 .transportControls { display: flex; align-items: center; gap: 5px; padding: 5px 9px; border-bottom: 1px solid var(--border); }
 .playButton, .secondaryButton, .handoverButton { height: 30px; border-radius: 4px; font-size: 9px; font-weight: 750; }

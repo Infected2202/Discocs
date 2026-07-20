@@ -220,6 +220,35 @@ class StoreBase:
                     FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS track_timeline_artifacts (
+                    track_id INTEGER NOT NULL,
+                    pack_name TEXT NOT NULL,
+                    extractor TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    source_path TEXT NOT NULL,
+                    source_mtime REAL NOT NULL,
+                    source_file_size INTEGER NOT NULL,
+                    manifest_path TEXT NOT NULL,
+                    payload_path TEXT NOT NULL,
+                    payload_bytes INTEGER NOT NULL,
+                    checksum_sha256 TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (track_id, pack_name, extractor),
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS track_timeline_analysis (
+                    track_id INTEGER NOT NULL,
+                    pack_name TEXT NOT NULL,
+                    extractor TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    error TEXT,
+                    job_id TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (track_id, pack_name, extractor),
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS scan_state (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL

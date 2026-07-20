@@ -348,6 +348,7 @@ from app.api import (  # noqa: E402
     flow as _api_flow,
     map as _api_map,
     shares as _api_shares,
+    timeline as _api_timeline,
 )
 
 app.include_router(_api_auth.router)
@@ -368,6 +369,7 @@ app.include_router(_api_playlists.router)
 app.include_router(_api_flow.router)
 app.include_router(_api_map.router)
 app.include_router(_api_shares.router)
+app.include_router(_api_timeline.router)
 
 
 

@@ -22,6 +22,7 @@ from app.store.sessions import SessionsStoreMixin
 from app.store.users import UsersStoreMixin
 from app.store.settings import SettingsStoreMixin
 from app.store.shares import SharesStoreMixin
+from app.store.timeline import TimelineStoreMixin
 from app.store._helpers import (
     playback_event_is_completion,
     playback_event_is_early_skip,
@@ -115,5 +116,6 @@ class Store(
     UsersStoreMixin,
     SettingsStoreMixin,
     SharesStoreMixin,
+    TimelineStoreMixin,
 ):
     """Assembled Store — all domain mixins composed into one class."""

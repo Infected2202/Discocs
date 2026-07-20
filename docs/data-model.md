@@ -1,5 +1,9 @@
 # Data Model
 
+Timeline arrays are not stored in `track_features`. See
+[`timeline-waveforms.md`](timeline-waveforms.md) for artifact tables,
+source-identity invalidation and the binary lifecycle.
+
 ## Public shares
 
 `shares` хранит отзывные capability-ссылки: внутренний UUID, SHA-256 секретного

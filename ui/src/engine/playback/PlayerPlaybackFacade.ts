@@ -301,6 +301,12 @@ export class PlayerPlaybackFacade {
     this.el.currentTime = seconds
   }
 
+  seekDeckToSeconds(deck: DeckId, seconds: number): void {
+    const element = this.elementForDeck(deck)
+    if (!element || !Number.isFinite(seconds)) return
+    element.currentTime = Math.min(Math.max(0, seconds), element.duration || seconds)
+  }
+
   /**
    * Seek as soon as the track's metadata is available. Usable right after
    * load(): duration can remain unknown until metadata arrives,

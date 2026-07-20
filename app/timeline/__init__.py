@@ -5,6 +5,7 @@ from app.timeline.codec import (
     decode_timeline,
     encode_timeline,
     manifest_json_bytes,
+    validate_timeline,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "decode_timeline",
     "encode_timeline",
     "manifest_json_bytes",
+    "validate_timeline",
 ]

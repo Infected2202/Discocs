@@ -17,6 +17,8 @@ export interface TimelineWaveformLevelManifest {
 
 export interface TimelineManifestV1 {
   readonly schema_version: 1
+  readonly pack_name: "timeline_foundation"
+  readonly extractor: "timeline_foundation_v1"
   readonly duration_seconds: number
   readonly waveform: {
     readonly sample_rate: number
