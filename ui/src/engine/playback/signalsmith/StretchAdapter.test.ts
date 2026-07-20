@@ -62,8 +62,8 @@ describe("StretchAdapter", () => {
   })
 
   it("transfers appended chunks and drops old or all buffered audio", async () => {
-    const left = new Float32Array(96_000)
-    const right = new Float32Array(96_000)
+    const left = new Float32Array(8)
+    const right = new Float32Array(8)
 
     await expect(adapter.append([left, right])).resolves.toEqual({ start: 0, end: 2 })
     expect(node.addBuffers).toHaveBeenCalledWith([left, right], [left.buffer, right.buffer])
