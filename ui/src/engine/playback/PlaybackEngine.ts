@@ -5,11 +5,14 @@ import { HtmlMediaDeckSource } from "./sources/HtmlMediaDeckSource"
 import type { DeckId, PlaybackCapabilities, SourceMetadata, TrackSource } from "./types"
 
 export class PlaybackEngine {
+  private readonly log: MixerGraphLogger
   private context: AudioContext | null = null
   private graph: MixerGraph | null = null
   private decks: Record<DeckId, DeckRuntime> | null = null
 
-  constructor(private readonly log: MixerGraphLogger = () => undefined) {}
+  constructor(log: MixerGraphLogger = () => undefined) {
+    this.log = log
+  }
 
   async ensureReady(): Promise<PlaybackCapabilities> {
     const capabilities = detectPlaybackCapabilities()

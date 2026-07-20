@@ -39,6 +39,8 @@ interface DeckStrip {
 }
 
 export class MixerGraph {
+  private readonly context: AudioContext
+  private readonly log: MixerGraphLogger
   private readonly mixBus: GainNode
   private readonly master: GainNode
   private readonly protection: DynamicsCompressorNode
@@ -47,9 +49,11 @@ export class MixerGraph {
   private destroyed = false
 
   constructor(
-    private readonly context: AudioContext,
-    private readonly log: MixerGraphLogger = () => undefined,
+    context: AudioContext,
+    log: MixerGraphLogger = () => undefined,
   ) {
+    this.context = context
+    this.log = log
     this.mixBus = context.createGain()
     this.master = context.createGain()
     this.protection = context.createDynamicsCompressor()

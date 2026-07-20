@@ -5,11 +5,13 @@ export class HtmlMediaDeckSource implements DeckSource {
   readonly kind = "media-element" as const
   readonly output: MediaElementAudioSourceNode
 
+  private readonly context: AudioContext
   private readonly element: HTMLAudioElement
   private ownedObjectUrl: string | null = null
   private released = false
 
-  constructor(private readonly context: AudioContext) {
+  constructor(context: AudioContext) {
+    this.context = context
     this.element = new Audio()
     this.element.preload = "auto"
     this.output = context.createMediaElementSource(this.element)

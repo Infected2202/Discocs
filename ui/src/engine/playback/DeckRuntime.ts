@@ -3,16 +3,23 @@ import type { DeckSource, DeckSourceFactory } from "./sources/DeckSource"
 import type { DeckId, SourceMetadata, TrackSource } from "./types"
 
 export class DeckRuntime {
+  readonly id: DeckId
+  private readonly graph: MixerGraph
+  private readonly createSource: DeckSourceFactory
   private generation = 0
   private loadController: AbortController | null = null
   private candidate: DeckSource | null = null
   private active: DeckSource | null = null
 
   constructor(
-    readonly id: DeckId,
-    private readonly graph: MixerGraph,
-    private readonly createSource: DeckSourceFactory,
-  ) {}
+    id: DeckId,
+    graph: MixerGraph,
+    createSource: DeckSourceFactory,
+  ) {
+    this.id = id
+    this.graph = graph
+    this.createSource = createSource
+  }
 
   async load(source: TrackSource): Promise<SourceMetadata> {
     const generation = ++this.generation
