@@ -83,6 +83,13 @@ describe("StretchAdapter", () => {
     expect(node.addBuffers).not.toHaveBeenCalled()
   })
 
+  it("rejects shared backing that cannot be placed in a transfer list", async () => {
+    const shared = new Float32Array(new SharedArrayBuffer(16))
+
+    await expect(adapter.append([shared])).rejects.toThrow("transferable ArrayBuffer")
+    expect(node.addBuffers).not.toHaveBeenCalled()
+  })
+
   it("stops, drops buffers, disconnects and closes the port exactly once", async () => {
     await adapter.release()
     await adapter.release()
