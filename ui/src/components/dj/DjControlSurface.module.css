@@ -138,7 +138,10 @@
 .mixerChannels { display: flex; justify-content: space-evenly; min-height: 0; }
 .channel { display: grid; grid-template-columns: 12px 8px 42px; align-items: center; justify-content: center; gap: 4px; min-height: 0; }
 .channel > span { color: var(--track-accent); font-size: 10px; font-weight: 800; }
-.meter { position: relative; width: 6px; height: 44px; overflow: hidden; border-radius: 999px; background: rgb(255 255 255 / 8%); }
+.meter { position: relative; width: 6px; height: 44px; overflow: hidden; border: 0; border-radius: 999px; appearance: none; background: rgb(255 255 255 / 8%); }
+.meter::-webkit-meter-bar { border: 0; background: transparent; }
+.meter::-webkit-meter-optimum-value { background: linear-gradient(to top, #2fe69b 0 70%, #ffd65a 70% 88%, #ff526b 88%); }
+.meter::-moz-meter-bar { background: linear-gradient(to top, #2fe69b 0 70%, #ffd65a 70% 88%, #ff526b 88%); }
 .meter > span { position: absolute; right: 0; bottom: 0; left: 0; min-height: 2px; border-radius: inherit; background: linear-gradient(to top, #2fe69b 0 70%, #ffd65a 70% 88%, #ff526b 88%); transition: height 80ms linear; }
 
 .knobGroup, .faderGroup { display: grid; justify-items: center; gap: 3px; }

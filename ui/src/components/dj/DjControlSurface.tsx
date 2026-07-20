@@ -34,7 +34,7 @@ function trackForDeck(
 ): TrackSummary | null {
   if (deck.queueItemId) {
     const item = [...queueItems, ...history].find((candidate) => candidate.id === deck.queueItemId)
-    if (item?.track) return item.track as TrackSummary
+    if (item?.track) return item.track
   }
   if (deck.trackId === currentTrack?.id) return currentTrack
   return null
@@ -58,7 +58,7 @@ function WaveformPlaceholder({ deck, track }: { readonly deck: DeckSnapshot; rea
 
 function EffectRack({ side }: { readonly side: DeckId }) {
   return (
-    <section className={styles.effectRack} aria-label={`Deck ${side} effects`} aria-disabled="true">
+    <section className={styles.effectRack} aria-label={`Deck ${side} effects`}>
       <div className={styles.sectionEyebrow}><Sparkles size={12} /> FX {side}</div>
       <div className={styles.effectControls}>
         <DjKnob label={`Deck ${side} effect mix`} value={0.5} defaultValue={0.5} disabled />
@@ -171,10 +171,16 @@ function DeckPanel({ deck, track, isProgram, mixer, onToggle, onHandover }: Deck
 
 function LevelMeter({ value, label }: { readonly value: number; readonly label: string }) {
   return (
-    <div className={styles.meter} aria-label={label} role="meter" aria-valuemin={0} aria-valuemax={1} aria-valuenow={value}>
+    <meter className={styles.meter} aria-label={label} min={0} max={1} value={value}>
       <span style={{ height: `${Math.min(1, Math.max(0, value)) * 100}%` }} />
-    </div>
+    </meter>
   )
+}
+
+function runPlayerCommand(command: () => Promise<void>): void {
+  command().catch((error: Error) => {
+    usePlayerStore.setState({ error: error.message })
+  })
 }
 
 export default function DjControlSurface() {
@@ -261,8 +267,8 @@ export default function DjControlSurface() {
             track={tracks.A}
             isProgram={snapshot.programDeck === "A"}
             mixer={snapshot.mixer}
-            onToggle={() => void toggleDeck("A")}
-            onHandover={() => void skipNext()}
+            onToggle={() => runPlayerCommand(() => toggleDeck("A"))}
+            onHandover={() => runPlayerCommand(skipNext)}
           />
 
           <section className={styles.mixerPanel} aria-label="Mixer">
@@ -294,8 +300,8 @@ export default function DjControlSurface() {
             track={tracks.B}
             isProgram={snapshot.programDeck === "B"}
             mixer={snapshot.mixer}
-            onToggle={() => void toggleDeck("B")}
-            onHandover={() => void skipNext()}
+            onToggle={() => runPlayerCommand(() => toggleDeck("B"))}
+            onHandover={() => runPlayerCommand(skipNext)}
           />
         </section>
 

@@ -14,6 +14,7 @@ import type {
   PlaybackEngineSnapshot,
   SourceMetadata,
   TrackSource,
+  TransportState,
 } from "./types"
 
 const emptyDeck = (id: DeckId) => ({
@@ -27,6 +28,12 @@ const emptyDeck = (id: DeckId) => ({
   anchor: null,
   buffered: [],
 })
+
+function externalTransport(element: HTMLMediaElement): TransportState {
+  if (element.error) return "error"
+  if (element.ended) return "ended"
+  return element.paused ? "paused" : "playing"
+}
 
 export class PlaybackEngine {
   private readonly log: MixerGraphLogger
@@ -212,28 +219,9 @@ export class PlaybackEngine {
 
   getSnapshot(): PlaybackEngineSnapshot {
     const capabilities = detectPlaybackCapabilities()
-    const decks: Record<DeckId, DeckSnapshot> = { A: emptyDeck("A"), B: emptyDeck("B") }
-    for (const deck of ["A", "B"] as const) {
-      decks[deck].role = this.roles.roles[deck]
-      decks[deck].preparation = this.roles.preparation[deck]
-      decks[deck].trackId = this.identities[deck].trackId
-      decks[deck].queueItemId = this.identities[deck].queueItemId
-      const element = this.externalElements[deck]
-      if (element) {
-        decks[deck].transport = element.error
-          ? "error"
-          : element.ended
-            ? "ended"
-            : element.paused
-              ? "paused"
-              : "playing"
-        decks[deck].duration = Number.isFinite(element.duration) ? element.duration : null
-        decks[deck].anchor = {
-          mediaSeconds: element.currentTime,
-          audioTime: this.context?.currentTime ?? 0,
-          rate: element.playbackRate,
-        }
-      }
+    const decks: Record<DeckId, DeckSnapshot> = {
+      A: this.deckSnapshot("A"),
+      B: this.deckSnapshot("B"),
     }
     return {
       revision: this.revision,
@@ -288,6 +276,26 @@ export class PlaybackEngine {
     node.disconnect()
     this.externalNodes[deck] = null
     this.identities[deck] = { trackId: null, queueItemId: null }
+  }
+
+  private deckSnapshot(deck: DeckId): DeckSnapshot {
+    const snapshot: DeckSnapshot = {
+      ...emptyDeck(deck),
+      role: this.roles.roles[deck],
+      preparation: this.roles.preparation[deck],
+      trackId: this.identities[deck].trackId,
+      queueItemId: this.identities[deck].queueItemId,
+    }
+    const element = this.externalElements[deck]
+    if (!element) return snapshot
+    snapshot.transport = externalTransport(element)
+    snapshot.duration = Number.isFinite(element.duration) ? element.duration : null
+    snapshot.anchor = {
+      mediaSeconds: element.currentTime,
+      audioTime: this.context?.currentTime ?? 0,
+      rate: element.playbackRate,
+    }
+    return snapshot
   }
 
   private watchExternalElement(deck: DeckId, element: HTMLMediaElement): void {

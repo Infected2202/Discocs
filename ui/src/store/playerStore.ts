@@ -3,6 +3,7 @@ import {
   playerPlayback as audioEngine,
   type PlayerBufferedRange as BufferedRange,
   type PlaybackState,
+  type DeckId,
 } from "@/engine/playback"
 import {
   createSession,
@@ -32,7 +33,6 @@ import { throttle } from "@/lib/throttle"
 import type { PlaybackEnvelope, PlaybackSession, PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
 import type { PlaybackProfile } from "@/api/settings"
 import { useUIStore } from "./uiStore"
-import type { DeckId } from "@/engine/playback"
 
 const STORAGE_KEY = "discocs.playerState.v1"
 const REFILL_TRIGGER_EVENTS = new Set(["completed", "skipped", "liked", "disliked"])

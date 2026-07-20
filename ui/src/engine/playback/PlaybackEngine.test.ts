@@ -134,4 +134,17 @@ describe("PlaybackEngine Phase 1 routing", () => {
     expect(engine.getSnapshot().decks.A.transport).toBe("playing")
     expect(listener).toHaveBeenCalledTimes(2)
   })
+
+  it("projects ended and failed external media states", () => {
+    vi.stubGlobal("AudioContext", FakeContext)
+    const engine = new PlaybackEngine()
+    const media = document.createElement("audio")
+    engine.routeProgramElement(media)
+
+    Object.defineProperty(media, "ended", { configurable: true, value: true })
+    expect(engine.getSnapshot().decks.A.transport).toBe("ended")
+
+    Object.defineProperty(media, "error", { configurable: true, value: { code: 3 } })
+    expect(engine.getSnapshot().decks.A.transport).toBe("error")
+  })
 })

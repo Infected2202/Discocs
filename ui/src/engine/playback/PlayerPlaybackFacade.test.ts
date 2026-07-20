@@ -33,6 +33,33 @@ function runtime() {
 }
 
 describe("PlayerPlaybackFacade routing", () => {
+  it("forwards physical deck and mixer controls to the shared runtime", () => {
+    const engine = runtime()
+    Object.assign(engine, {
+      setTrim: vi.fn(),
+      setEq: vi.fn(),
+      setFilter: vi.fn(),
+      setChannelFader: vi.fn(),
+      setCrossfader: vi.fn(),
+      setMasterGain: vi.fn(),
+    })
+    const facade = new PlayerPlaybackFacade(engine)
+
+    facade.setDeckTrim("B", 0.6)
+    facade.setDeckEq("A", "mid", 0.7)
+    facade.setDeckFilter("B", -0.3)
+    facade.setDeckChannelFader("A", 0.4)
+    facade.setCrossfader(0.2)
+    facade.setMasterGain(0.9)
+
+    expect(engine.setTrim).toHaveBeenCalledWith("B", 0.6)
+    expect(engine.setEq).toHaveBeenCalledWith("A", "mid", 0.7)
+    expect(engine.setFilter).toHaveBeenCalledWith("B", -0.3)
+    expect(engine.setChannelFader).toHaveBeenCalledWith("A", 0.4)
+    expect(engine.setCrossfader).toHaveBeenCalledWith(0.2)
+    expect(engine.setMasterGain).toHaveBeenCalledWith(0.9)
+  })
+
   it("routes every loaded element and resumes Web Audio before media playback", async () => {
     const audio: MockAudio[] = []
     vi.stubGlobal("Audio", function () {
