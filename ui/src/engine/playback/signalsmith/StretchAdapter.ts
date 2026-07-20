@@ -39,13 +39,13 @@ export class StretchAdapter {
   async append(buffers: readonly Float32Array[]): Promise<StretchBufferExtent> {
     const node = this.requireNode()
     if (buffers.length === 0) throw new Error("Stretch buffers require at least one channel")
-    const sampleCount = buffers[0]!.length
+    const sampleCount = buffers[0].length
     if (buffers.some((buffer) => buffer.length !== sampleCount)) {
       throw new Error("Stretch channel buffers must have equal lengths")
     }
     const transfer = buffers.map((buffer) => {
       if (!(buffer.buffer instanceof ArrayBuffer)) {
-        throw new Error("Stretch buffers require transferable ArrayBuffer backing")
+        throw new TypeError("Stretch buffers require transferable ArrayBuffer backing")
       }
       return buffer.buffer
     })
