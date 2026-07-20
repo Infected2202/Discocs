@@ -1853,7 +1853,7 @@ def worker(
     startup_jitter_seconds: Annotated[float, typer.Option("--startup-jitter-seconds")] = 0.0,
 ) -> None:
     """Run a trusted HTTP pull worker for analysis tasks."""
-    _store, settings = get_store_and_settings()
+    settings = Settings.from_env()
     if worker_id == "auto":
         worker_id = socket.gethostname()
     models = normalize_worker_models(models)

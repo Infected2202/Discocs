@@ -139,6 +139,10 @@ v2 readiness and are removed per track only after a complete v2 result has
 been accepted. Consequently the first v2 deployment intentionally queues all
 active tracks for one explicit audio-feature rebuild.
 
+Remote pull workers are stateless with respect to the server catalog: startup
+loads runtime/model settings but does not initialize the worker-local SQLite
+file. Task identity and accepted results are owned by the backend database.
+
 Scalar data lives in `track_features`; browser-efficient temporal arrays live
 in the checksummed timeline artifact:
 

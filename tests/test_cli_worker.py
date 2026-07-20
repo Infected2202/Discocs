@@ -20,7 +20,7 @@ from app import cli as cli_module
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR, AudioFeatureAnalysis
 from app.cli import cli
 from app.config import Settings
-from app.store import Store, TrackFeature
+from app.store import TrackFeature
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -30,12 +30,6 @@ def _settings(tmp_path: Path) -> Settings:
         model_dir=tmp_path / "models",
         index_dir=tmp_path,
     )
-
-
-def _store(tmp_path: Path) -> Store:
-    store = Store(tmp_path / "app.db")
-    store.init()
-    return store
 
 
 def _task_payload(task_id: str, model_name: str, *, file_size: int = 100, mtime: int = 1) -> dict:
@@ -169,10 +163,14 @@ def run_worker(
     extra_args: list[str] | None = None,
 ):
     settings = _settings(tmp_path)
-    store = _store(tmp_path)
     embedder_kwargs = embedder_kwargs or {}
 
-    monkeypatch.setattr(cli_module, "get_store_and_settings", lambda: (store, settings))
+    monkeypatch.setattr(cli_module.Settings, "from_env", classmethod(lambda _cls: settings))
+    monkeypatch.setattr(
+        cli_module,
+        "get_store_and_settings",
+        lambda: (_ for _ in ()).throw(AssertionError("worker must not initialize a local database")),
+    )
     monkeypatch.setattr(cli_module, "register_worker_with_retry", lambda *a, **k: None)
     monkeypatch.setattr(cli_module, "resolve_cpu_workers", lambda cpu_workers: (1, "test"))
     monkeypatch.setattr(
