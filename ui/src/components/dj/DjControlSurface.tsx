@@ -57,18 +57,24 @@ function WaveformPlaceholder({ deck, track }: { readonly deck: DeckSnapshot; rea
 }
 
 function EffectRack({ side }: { readonly side: DeckId }) {
-  return (
-    <section className={styles.effectRack} aria-label={`Deck ${side} effects`}>
-      <div className={styles.sectionEyebrow}><Sparkles size={12} /> FX {side}</div>
-      <div className={styles.effectControls}>
-        <DjKnob label={`Deck ${side} effect mix`} displayLabel="D/W" value={0.5} defaultValue={0.5} disabled />
-        <div className={styles.effectNames}>
-          <span>Delay</span><span>Reverb</span><span>Flanger</span>
-        </div>
-        <DjKnob label={`Deck ${side} delay parameter`} displayLabel="DELAY" value={0.5} defaultValue={0.5} disabled />
-        <DjKnob label={`Deck ${side} reverb parameter`} displayLabel="REVRB" value={0.5} defaultValue={0.5} disabled />
-        <DjKnob label={`Deck ${side} flanger parameter`} displayLabel="FLANG" value={0.5} defaultValue={0.5} disabled />
+  const heading = <div className={styles.sectionEyebrow}><Sparkles size={12} /> FX {side}</div>
+  const controls = (
+    <div className={styles.effectControls} data-part="effect-controls">
+      <DjKnob label={`Deck ${side} effect mix`} displayLabel="D/W" value={0.5} defaultValue={0.5} disabled />
+      <div className={styles.effectNames}>
+        <span>Delay</span><span>Reverb</span><span>Flanger</span>
       </div>
+      <DjKnob label={`Deck ${side} delay parameter`} displayLabel="DELAY" value={0.5} defaultValue={0.5} disabled />
+      <DjKnob label={`Deck ${side} reverb parameter`} displayLabel="REVRB" value={0.5} defaultValue={0.5} disabled />
+      <DjKnob label={`Deck ${side} flanger parameter`} displayLabel="FLANG" value={0.5} defaultValue={0.5} disabled />
+    </div>
+  )
+
+  return (
+    <section className={styles.effectRack} aria-label={`Deck ${side} effects`} data-side={side}>
+      {side === "A" && heading}
+      {controls}
+      {side === "B" && heading}
       <span className={styles.unavailable}>Effects unavailable</span>
     </section>
   )

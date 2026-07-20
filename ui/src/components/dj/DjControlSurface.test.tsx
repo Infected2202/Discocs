@@ -147,6 +147,15 @@ describe("DjControlSurface", () => {
     expect(within(deckA).queryByRole("slider", { name: "Deck A gain" })).not.toBeInTheDocument()
   })
 
+  it("places Deck B effect controls in the wide grid column before its edge label", () => {
+    useUIStore.setState({ djSurfaceOpen: true })
+    render(<DjControlSurface />)
+
+    const rack = screen.getByRole("region", { name: "Deck B effects" })
+    expect(rack.firstElementChild).toHaveAttribute("data-part", "effect-controls")
+    expect(rack).toHaveAttribute("data-side", "B")
+  })
+
   it("keeps Traktor-style routing and pitch placeholders in their physical sections", () => {
     useUIStore.setState({ djSurfaceOpen: true })
     render(<DjControlSurface />)

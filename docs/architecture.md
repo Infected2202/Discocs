@@ -273,8 +273,10 @@ twelve o'clock, including controls whose audio range is asymmetric, and their
 arcs render the actual value outward from that centre with no coloured fill at
 neutral. The top panel uses shrink-safe effect regions around an isolated
 master block; compact landscape widths remove secondary effect names before
-they can overlap the master controls. Channel and crossfader slots include
-scales and a high-contrast cap. The
+they can overlap the master controls. The Deck B effect rack mirrors its DOM
+and grid columns explicitly, so its controls occupy the wide outer column
+rather than the narrow label column next to the master. Channel and crossfader
+slots include scales and a high-contrast cap. The
 effect, cue, loop, BPM and waveform regions are explicitly unavailable or
 marked pending until their owning phases; they never simulate a successful
 command. Gain, three-band EQ, filter, channel faders, crossfader, master gain,

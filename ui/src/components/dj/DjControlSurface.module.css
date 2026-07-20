@@ -62,8 +62,9 @@
   opacity: .9;
 }
 
-.effectRack:last-of-type .sectionEyebrow { order: 2; justify-self: end; }
-.effectRack:last-of-type .effectControls { order: 1; justify-content: flex-end; }
+.effectRack:last-of-type { grid-template-columns: minmax(0, 1fr) 54px; }
+.effectRack:last-of-type .sectionEyebrow { justify-self: end; }
+.effectRack:last-of-type .effectControls { justify-content: flex-end; }
 .sectionEyebrow { display: flex; align-items: center; gap: 5px; color: var(--muted-foreground); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .effectControls { display: flex; align-items: center; gap: 9px; min-width: 0; overflow: hidden; }
 .effectControls > * { flex: 0 0 auto; }
@@ -274,7 +275,7 @@
 
 @media (max-width: 1100px) {
   .effectNames, .effectRack .sectionEyebrow { display: none; }
-  .effectRack { grid-template-columns: minmax(0, 1fr); }
+  .effectRack, .effectRack:last-of-type { grid-template-columns: minmax(0, 1fr); }
   .effectControls { gap: 7px; }
   .effectRack:last-of-type { padding-right: 44px; }
 }
