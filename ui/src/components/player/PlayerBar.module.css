@@ -24,6 +24,27 @@
   pointer-events: none;
 }
 
+.djEntry {
+  position: relative;
+  display: flex;
+}
+
+.mixPulse {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--card);
+  border-radius: 50%;
+  background: var(--track-accent);
+  box-shadow: 0 0 8px var(--track-accent);
+}
+
+@media (max-width: 679px) and (orientation: portrait) {
+  .djEntry { display: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .trackLayer {
     transition: none;

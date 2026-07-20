@@ -1,7 +1,7 @@
 import type { TrackSummary } from "@/api/types"
 import { playerLog } from "@/lib/playerLogger"
 import { PlaybackEngine } from "./PlaybackEngine"
-import type { DeckId, HandoverResult } from "./types"
+import type { DeckId, EqBand, HandoverResult, PlaybackEngineSnapshot } from "./types"
 
 export type PlaybackState = "idle" | "loading" | "playing" | "paused" | "error"
 export interface BufferedRange {
@@ -342,6 +342,45 @@ export class PlayerPlaybackFacade {
     return this.el.paused
   }
 
+  getEngineSnapshot(): PlaybackEngineSnapshot {
+    return this.runtime.getSnapshot()
+  }
+
+  subscribeEngine(listener: () => void): () => void {
+    return this.runtime.subscribe(listener)
+  }
+
+  setDeckTrim(deck: DeckId, value: number): void {
+    this.runtime.setTrim(deck, value)
+  }
+
+  setDeckEq(deck: DeckId, band: EqBand, value: number): void {
+    this.runtime.setEq(deck, band, value)
+  }
+
+  setDeckFilter(deck: DeckId, value: number): void {
+    this.runtime.setFilter(deck, value)
+  }
+
+  setDeckChannelFader(deck: DeckId, value: number): void {
+    this.runtime.setChannelFader(deck, value)
+  }
+
+  setCrossfader(value: number): void {
+    this.runtime.setCrossfader(value)
+  }
+
+  setMasterGain(value: number): void {
+    this.runtime.setMasterGain(value)
+  }
+
+  async toggleDeck(deck: DeckId): Promise<void> {
+    const element = this.elementForDeck(deck)
+    if (!element) return
+    if (element.paused) await element.play()
+    else element.pause()
+  }
+
   setMediaSession(track: TrackSummary, artworkUrl?: string) {
     if (!("mediaSession" in navigator)) return
     navigator.mediaSession.metadata = new MediaMetadata({
@@ -471,6 +510,13 @@ export class PlayerPlaybackFacade {
     this.cancelActiveCache()
     this.callbacks?.onBufferUpdate([{ start: 0, end: 1 }])
     this.callbacks?.onFullyBuffered?.(this.activeTrackId, this.activeProfileKey)
+  }
+
+  private elementForDeck(deck: DeckId): HTMLAudioElement | null {
+    if (deck === this.runtime.programDeck) return this.el
+    if (this.prepared?.deck === deck) return this.prepared.element
+    if (this.retired?.deck === deck) return this.retired.element
+    return null
   }
 
   private cacheActiveTrack() {

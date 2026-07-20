@@ -16,6 +16,7 @@ import { useUserSettings } from "@/api/hooks/useUserSettings"
 import { playbackProfile } from "@/api/settings"
 import PlasmaFBM from "@/components/player/PlasmaFBM"
 import { ScrollContext } from "@/contexts/ScrollContext"
+import DjControlSurface from "@/components/dj/DjControlSurface"
 
 export default function AppShell() {
   useKeyboardShortcuts()
@@ -95,6 +96,7 @@ export default function AppShell() {
           {/* Player — always mounted, never unmounts */}
           <PlayerBar />
           <ExpandedPlayer />
+          <DjControlSurface />
           <PlaylistDialogs />
         </div>
       </div>

@@ -1,6 +1,6 @@
 # Discocs DJ implementation plan
 
-**Status:** Phase 0 complete; Phases 1-2 implemented
+**Status:** Phase 0 complete; Phases 1-2 verified; Phase 3 implemented, awaiting Jenkins verification
 **Delivery rule:** one complete logical slice includes code, meaningful tests, affected docs, one commit and pushes to both configured remotes; Jenkins is the verification environment.
 
 ## 1. Readiness
@@ -207,6 +207,14 @@ Two real locally buffered tracks can overlap and switch program role while the s
 
 ## 5. Phase 3 — expanded DJ control surface
 
+**Implementation:** complete in the working slice; Jenkins verification
+pending. The accepted visual direction keeps the Discocs palette, typography,
+backdrop and expanded-player transition while borrowing only the control set,
+information hierarchy and placement from the supplied Traktor reference.
+Waveforms and overviews are labelled placeholders until Phase 4. The lower
+region reuses the current playback queue and its existing actions; no separate
+library browser is introduced.
+
 ### UI structure
 
 ```text
@@ -337,9 +345,9 @@ Every implementation slice:
 
 ## 12. Current next action
 
-Verify Phase 2 in Jenkins, then begin Phase 3. Phase 3 exposes the implemented
-two-deck runtime through the expanded DJ control surface without changing
-transport when the surface opens or closes.
+Verify Phase 3 in Jenkins. After its gate passes, Phase 4 implements the
+versioned waveform artifact lifecycle and replaces both labelled waveform
+placeholders with the real Pixi renderer.
 
 Primary external references reviewed for the spike:
 

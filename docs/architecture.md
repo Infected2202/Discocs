@@ -252,6 +252,26 @@ master analyser. Crossfader endpoints and centre use the equal-power curve;
 parameter changes use short audio-time ramps. Playback profile changes do not
 replace an already prepared deck and apply to subsequent loads.
 
+The authenticated `AppShell` keeps `DjControlSurface` mounted beside the
+compact and expanded player presentations. Its independent UI state is
+coordinated so only Expanded Player or the DJ surface can be visible, and the
+same slide transition changes presentation without loading, seeking, pausing
+or replacing either physical deck. The surface targets desktop and landscape
+layouts; narrow portrait phones retain the compact player.
+
+The Phase 3 workspace follows the Traktor-style information hierarchy in the
+Discocs visual language: top effect/master regions, two horizontal waveform
+places, Deck A / central mixer / Deck B, then the existing current queue. The
+effect, cue, loop, BPM and waveform regions are explicitly unavailable or
+marked pending until their owning phases; they never simulate a successful
+command. Gain, three-band EQ, filter, channel faders, crossfader, master gain,
+deck transport and explicit prepared-deck handover issue real facade/engine
+commands. Knobs use vertical Pointer Event dragging, keyboard arrows and
+double-click reset. Engine snapshots expose stable physical identity, role,
+preparation, media transport and meters, so controls remain attached to Deck A
+and Deck B after the program role alternates. Starting an incoming deck records
+the preference-neutral `incoming_started` event once per queue occurrence.
+
 `ui/src/engine/AudioEngine.ts` is only a deprecated re-export for migrated
 regression tests and third-party imports; `playerStore`, keyboard shortcuts and
 session restore use the playback facade directly. Browsers without Web Audio

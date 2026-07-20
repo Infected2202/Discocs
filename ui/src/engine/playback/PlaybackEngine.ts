@@ -34,6 +34,8 @@ export class PlaybackEngine {
   private graph: MixerGraph | null = null
   private decks: Record<DeckId, DeckRuntime> | null = null
   private externalNodes: Record<DeckId, MediaElementAudioSourceNode | null> = { A: null, B: null }
+  private externalElements: Record<DeckId, HTMLMediaElement | null> = { A: null, B: null }
+  private externalListenerCleanup: Record<DeckId, (() => void) | null> = { A: null, B: null }
   private readonly generations: Record<DeckId, number> = { A: 0, B: 0 }
   private identities: Record<DeckId, { trackId: number | null; queueItemId: string | null }> = {
     A: { trackId: null, queueItemId: null },
@@ -111,6 +113,7 @@ export class PlaybackEngine {
     }
     previous?.disconnect()
     this.externalNodes[deck] = node
+    this.watchExternalElement(deck, element)
     this.identities[deck] = { trackId, queueItemId }
     if (role === "prepared") {
       this.roles = reduceDeckRoles(this.roles, { type: "preparing", deck })
@@ -215,6 +218,22 @@ export class PlaybackEngine {
       decks[deck].preparation = this.roles.preparation[deck]
       decks[deck].trackId = this.identities[deck].trackId
       decks[deck].queueItemId = this.identities[deck].queueItemId
+      const element = this.externalElements[deck]
+      if (element) {
+        decks[deck].transport = element.error
+          ? "error"
+          : element.ended
+            ? "ended"
+            : element.paused
+              ? "paused"
+              : "playing"
+        decks[deck].duration = Number.isFinite(element.duration) ? element.duration : null
+        decks[deck].anchor = {
+          mediaSeconds: element.currentTime,
+          audioTime: this.context?.currentTime ?? 0,
+          rate: element.playbackRate,
+        }
+      }
     }
     return {
       revision: this.revision,
@@ -260,12 +279,26 @@ export class PlaybackEngine {
   }
 
   private detachExternal(deck: DeckId): void {
+    this.externalListenerCleanup[deck]?.()
+    this.externalListenerCleanup[deck] = null
+    this.externalElements[deck] = null
     const node = this.externalNodes[deck]
     if (!node) return
     this.graph?.detachSource(deck, node)
     node.disconnect()
     this.externalNodes[deck] = null
     this.identities[deck] = { trackId: null, queueItemId: null }
+  }
+
+  private watchExternalElement(deck: DeckId, element: HTMLMediaElement): void {
+    this.externalListenerCleanup[deck]?.()
+    const notify = () => this.changed()
+    const events = ["play", "playing", "pause", "waiting", "ended", "error", "loadedmetadata"] as const
+    events.forEach((event) => element.addEventListener(event, notify))
+    this.externalElements[deck] = element
+    this.externalListenerCleanup[deck] = () => {
+      events.forEach((event) => element.removeEventListener(event, notify))
+    }
   }
 
   private requireGraph(): MixerGraph {

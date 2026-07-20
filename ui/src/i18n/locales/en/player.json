@@ -13,5 +13,8 @@
   "queue": "Queue",
   "queueEmpty": "Queue is empty.",
   "saveQueueToPlaylist": "Save queue to playlist",
-  "trackFallback": "Track #{{id}}"
+  "trackFallback": "Track #{{id}}",
+  "openDjSurface": "Open DJ workspace",
+  "closeDjSurface": "Close DJ workspace",
+  "activeMix": "Two decks are playing"
 }

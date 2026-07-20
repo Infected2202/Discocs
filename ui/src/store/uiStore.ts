@@ -43,6 +43,9 @@ export interface CreatePlaylistDialogOptions {
 interface UIState {
   sidebarCollapsed: boolean
   toggleSidebar(): void
+  djSurfaceOpen: boolean
+  openDjSurface(): void
+  closeDjSurface(): void
   /** Tracks pending "add to playlist"; null = dialog closed. */
   addToPlaylistTrackIds: number[] | null
   /** Prefill for the "New playlist" title if the user creates one from here (e.g. current playback source). */
@@ -63,6 +66,13 @@ export const useUIStore = create<UIState>((set, get) => ({
     set({ sidebarCollapsed: next })
     persist(next)
   },
+  djSurfaceOpen: false,
+  openDjSurface() {
+    set({ djSurfaceOpen: true })
+  },
+  closeDjSurface() {
+    set({ djSurfaceOpen: false })
+  },
   addToPlaylistTrackIds: null,
   addToPlaylistDefaultTitle: null,
   openAddToPlaylist(trackIds, defaultTitle) {
@@ -80,6 +90,7 @@ export const useUIStore = create<UIState>((set, get) => ({
       addToPlaylistTrackIds: null,
       addToPlaylistDefaultTitle: null,
       createPlaylistOptions: null,
+      djSurfaceOpen: false,
     })
   },
   closeCreatePlaylist() {

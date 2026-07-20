@@ -31,6 +31,8 @@ import { hiresArtworkUrl } from "@/lib/artworkUrl"
 import { throttle } from "@/lib/throttle"
 import type { PlaybackEnvelope, PlaybackSession, PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
 import type { PlaybackProfile } from "@/api/settings"
+import { useUIStore } from "./uiStore"
+import type { DeckId } from "@/engine/playback"
 
 const STORAGE_KEY = "discocs.playerState.v1"
 const REFILL_TRIGGER_EVENTS = new Set(["completed", "skipped", "liked", "disliked"])
@@ -99,6 +101,7 @@ interface PlayerState {
   jumpToQueueItem(queueItemId: string): Promise<void>
   jumpToAutoplayItem(poolItemId: string): Promise<void>
   togglePlay(): void
+  toggleDjDeck(deck: DeckId): Promise<void>
   seek(fraction: number): void
   skipNext(): Promise<void>
   skipPrevious(): Promise<void>
@@ -140,6 +143,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     queueItemId: string
     clientHandoverId: string
   } | null = null
+  const incomingStartedQueueItems = new Set<string>()
 
   function scheduleNextPrefetch() {
     const { queue, currentQueueItemId, currentTrackId, session, playbackProfile } = get()
@@ -888,6 +892,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       refillInFlight = false
       fullyBufferedSource = null
       pendingHandover = null
+      incomingStartedQueueItems.clear()
       audioEngine.clear()
       set({
         session: null,
@@ -906,7 +911,40 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     },
 
     toggleExpanded() {
+      useUIStore.getState().closeDjSurface()
       set((s) => ({ expanded: !s.expanded }))
+    },
+
+    async toggleDjDeck(deck) {
+      const before = audioEngine.getEngineSnapshot()
+      const target = before.decks[deck]
+      try {
+        await audioEngine.toggleDeck(deck)
+      } catch (err) {
+        set({ error: (err as Error).message })
+        return
+      }
+      if (
+        deck !== before.programDeck
+        && target.transport !== "playing"
+        && target.trackId !== null
+        && target.queueItemId !== null
+        && !incomingStartedQueueItems.has(target.queueItemId)
+      ) {
+        incomingStartedQueueItems.add(target.queueItemId)
+        const { session } = get()
+        try {
+          await postEvent({
+            session_id: session?.id ?? "",
+            queue_item_id: target.queueItemId,
+            track_id: target.trackId,
+            event_type: "incoming_started",
+          })
+        } catch {
+          // Incoming playback is browser-local; semantic reporting is best-effort.
+          incomingStartedQueueItems.delete(target.queueItemId)
+        }
+      }
     },
 
     // --- Internal callbacks from AudioEngine ---

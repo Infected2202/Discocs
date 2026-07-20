@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { playerPlayback as audioEngine } from "@/engine/playback"
-import { patchQueue } from "@/api/playback"
+import { patchQueue, postEvent } from "@/api/playback"
 import { usePlayerStore } from "./playerStore"
 import type { PlaybackEnvelope, QueueItem, TrackSummary } from "@/api/types"
 
@@ -22,6 +22,14 @@ vi.mock("@/engine/playback", () => ({
       trackId: 20, queueItemId: "next", profileKey: "raw", outgoingDeck: "A", programDeck: "B",
     }),
     confirmHandover: vi.fn().mockResolvedValue(undefined),
+    getEngineSnapshot: vi.fn().mockReturnValue({
+      programDeck: "A",
+      decks: {
+        A: { id: "A", transport: "playing", trackId: 10, queueItemId: "current" },
+        B: { id: "B", transport: "paused", trackId: 20, queueItemId: "next" },
+      },
+    }),
+    toggleDeck: vi.fn().mockResolvedValue(undefined),
   },
 }))
 
@@ -194,6 +202,21 @@ describe("player queue actions", () => {
     await usePlayerStore.getState().playTrack(20, { queueItemId: "next", recordStarted: false })
 
     expect(audioEngine.load).toHaveBeenCalledWith("blob:track-20", 20, "mp3-128", true, "next")
+  })
+
+  it("starts a prepared physical deck and reports incoming_started for its queue item", async () => {
+    const initial = makeEnvelope("session", [makeItem("current", 10), makeItem("next", 20)], "current")
+    usePlayerStore.setState({ session: initial.session, queue: initial.queue })
+
+    await usePlayerStore.getState().toggleDjDeck("B")
+
+    expect(audioEngine.toggleDeck).toHaveBeenCalledWith("B")
+    expect(postEvent).toHaveBeenCalledWith({
+      session_id: "session",
+      queue_item_id: "next",
+      track_id: 20,
+      event_type: "incoming_started",
+    })
   })
 
   it("hands over to a prepared deck exactly once without reloading incoming audio", async () => {

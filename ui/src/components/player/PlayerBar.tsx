@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next"
 import {
   Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat1, Infinity, Volume2, VolumeX, Volume1,
-  ChevronUp, ThumbsDown,
+  ChevronUp, ThumbsDown, SlidersHorizontal,
 } from "lucide-react"
 import type { TrackSummary } from "@/api/types"
 import { cn } from "@/lib/utils"
@@ -21,6 +21,8 @@ import { useDragSlider } from "@/components/player/useDragSlider"
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { usePlaybackEngineSnapshot } from "@/components/dj/usePlaybackEngineSnapshot"
+import { openDjPresentation } from "@/store/playerPresentation"
 
 interface PlayerBarTrackSnapshot {
   key: string | undefined
@@ -169,6 +171,7 @@ export default function PlayerBar() {
   const toggleRepeatOne = usePlayerStore((s) => s.toggleRepeatOne)
   const toggleAutoplay  = usePlayerStore((s) => s.toggleAutoplay)
   const toggleExpanded  = usePlayerStore((s) => s.toggleExpanded)
+  const engineSnapshot  = usePlaybackEngineSnapshot()
 
   const currentTrackId  = usePlayerStore((s) => s.currentTrackId)
 
@@ -178,6 +181,8 @@ export default function PlayerBar() {
   const shuffle    = session?.shuffle_enabled ?? false
   const repeatOne  = session?.repeat_mode === "one"
   const autoplay   = session?.autoplay_enabled ?? false
+  const activeMix  = engineSnapshot.decks.A.transport === "playing"
+    && engineSnapshot.decks.B.transport === "playing"
 
   const queueItems  = queue?.items ?? []
   const queueIdx    = queueItems.findIndex((i) => i.id === currentQueueItemId)
@@ -368,6 +373,18 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
             title={t("autoplay")}
           >
             <Infinity size={16} />
+          </button>
+
+          <button
+            onClick={() => {
+              openDjPresentation()
+            }}
+            className={cn(iconBtn, styles.djEntry, activeMix && activeBtn)}
+            title={t("openDjSurface")}
+            aria-label={t("openDjSurface")}
+          >
+            <SlidersHorizontal size={16} />
+            {activeMix && <span className={styles.mixPulse} aria-label={t("activeMix")} />}
           </button>
 
           <button

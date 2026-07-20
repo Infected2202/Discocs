@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next"
 import {
   Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat1, Infinity, ChevronDown,
-  Volume2, VolumeX, Volume1, ThumbsDown, ListPlus,
+  Volume2, VolumeX, Volume1, ThumbsDown, ListPlus, SlidersHorizontal,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { usePlayerStore } from "@/store/playerStore"
@@ -17,6 +17,7 @@ import { SeekIndicators, TimeReadout } from "@/components/player/PlaybackProgres
 import { useDragSlider } from "@/components/player/useDragSlider"
 import type { TrackSummary } from "@/api/types"
 import { hiresArtworkUrl as hiresUrl } from "@/lib/artworkUrl"
+import { openDjPresentation } from "@/store/playerPresentation"
 
 export default function ExpandedPlayer() {
   const { t } = useTranslation("player")
@@ -302,6 +303,17 @@ export default function ExpandedPlayer() {
                   {t("actions.save", { ns: "common" })}
                 </button>
               )}
+              <button
+                onClick={() => {
+                  openDjPresentation()
+                }}
+                className={cn(iconBtn, "hidden min-[680px]:flex items-center gap-1.5 px-2.5 text-sm font-medium")}
+                title={t("openDjSurface")}
+                aria-label={t("openDjSurface")}
+              >
+                <SlidersHorizontal size={18} />
+                DJ
+              </button>
               <button onClick={toggleExpanded} className={iconBtn}>
                 <ChevronDown size={20} />
               </button>

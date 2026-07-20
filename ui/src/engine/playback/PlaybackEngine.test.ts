@@ -111,4 +111,27 @@ describe("PlaybackEngine Phase 1 routing", () => {
     expect(context.mediaNodes[0]?.disconnect).toHaveBeenCalled()
     expect(context.mediaNodes[1]?.disconnect).not.toHaveBeenCalled()
   })
+
+  it("projects external media transport state and publishes media changes", () => {
+    vi.stubGlobal("AudioContext", FakeContext)
+    const engine = new PlaybackEngine()
+    const media = document.createElement("audio")
+    Object.defineProperty(media, "duration", { configurable: true, value: 180 })
+    Object.defineProperty(media, "currentTime", { configurable: true, value: 24, writable: true })
+    Object.defineProperty(media, "paused", { configurable: true, value: true })
+    const listener = vi.fn()
+    engine.subscribe(listener)
+
+    engine.routeProgramElement(media, 9, "queue-9")
+    expect(engine.getSnapshot().decks.A).toMatchObject({
+      transport: "paused",
+      duration: 180,
+      anchor: { mediaSeconds: 24, rate: 1 },
+    })
+
+    Object.defineProperty(media, "paused", { configurable: true, value: false })
+    media.dispatchEvent(new Event("play"))
+    expect(engine.getSnapshot().decks.A.transport).toBe("playing")
+    expect(listener).toHaveBeenCalledTimes(2)
+  })
 })
