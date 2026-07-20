@@ -129,10 +129,10 @@ describe("DjControlSurface", () => {
     useUIStore.setState({ djSurfaceOpen: true })
     render(<DjControlSurface />)
 
-    fireEvent.keyDown(screen.getByRole("slider", { name: "Deck A gain" }), { key: "ArrowUp" })
+    fireEvent.keyDown(screen.getByLabelText("Deck A gain"), { key: "ArrowUp" })
 
     expect(playback.setDeckTrim).toHaveBeenCalledWith("A", 0.51)
-    expect(screen.getByRole("button", { name: "Make Deck A program" })).toBeEnabled()
+    expect(screen.getByLabelText("Make Deck A program")).toBeEnabled()
   })
 
   it("keeps every channel control inside the central mixer instead of the deck panels", () => {
