@@ -471,3 +471,18 @@ GET  /api/map/mixes | /api/map/regions       # overlay membership
 Implementation files: `app/api/map.py`, `app/projection.py`,
 `app/store/map_atlas.py`, `_build_map_projection_job` in
 `app/analysis_jobs.py`. Full detail: `docs/collection-map.md`.
+
+## Waveform renderer foundation
+
+`ui/src/engine/waveform/` owns the PixiJS v8 rendering boundary for detailed deck
+waveforms. React owns each container and passes an immutable decoded timeline plus viewport,
+DPR, authoritative playhead, zoom/follow state and palette. Pixi owns its canvas, cached draw
+geometry and private 60 FPS ticker. The ticker stops while the document or surface is hidden;
+unmount removes ticker work, resize observation, canvas and GPU resources.
+
+Each deck uses a separate Pixi application. Decoded timeline arrays remain shareable and are
+not copied by the renderer. Level-of-detail selection chooses the coarsest pyramid level that
+still provides at least one source bucket per horizontal pixel. Pointer coordinates are
+clamped and translated to seconds before transport code receives them. The Phase 0 evidence
+and memory/frame measurements are in
+`plans/discocs-dj-design/SLICE_0_2_BROWSER_RESULTS.md`.

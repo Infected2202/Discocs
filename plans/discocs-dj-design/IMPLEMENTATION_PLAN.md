@@ -1,6 +1,6 @@
 # Discocs DJ implementation plan
 
-**Status:** ready to begin Phase 0
+**Status:** Phase 0 in progress; Slices 0.1 and 0.2 complete
 **Delivery rule:** one complete logical slice includes code, meaningful tests, affected docs, one commit and pushes to both configured remotes; Jenkins is the verification environment.
 
 ## 1. Readiness
@@ -25,7 +25,7 @@ Phase 0 produces evidence and freezes seams. Spike code is either promoted into 
 
 ### Slice 0.1 — Web Audio graph and source lifecycle
 
-**Implementation:** complete; Jenkins verification pending. Browser evidence
+**Implementation:** complete; Jenkins verified in build #256. Browser evidence
 and the controlled-environment limitation are recorded in
 `SLICE_0_1_BROWSER_RESULTS.md`.
 
@@ -52,6 +52,10 @@ Exit:
 - Phase 1 file-level tasks are unblocked.
 
 ### Slice 0.2 — PixiJS waveform renderer spike
+
+**Implementation:** complete; Jenkins verification pending. The renderer contract,
+measurements and per-deck application decision are recorded in
+`SLICE_0_2_BROWSER_RESULTS.md`.
 
 Work:
 
