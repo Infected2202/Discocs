@@ -25,6 +25,7 @@ from app.store.shares import share_token_hash
 router = APIRouter(prefix="/api/v1")
 
 _TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{40,64}$")
+_PREVIEW_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _UNAVAILABLE = "Share unavailable"
 _METADATA_CACHE_CONTROL = "private, no-cache"
 _MEDIA_CACHE_CONTROL = "private, max-age=3600"
@@ -253,6 +254,14 @@ def _public_asset_url(request: Request, token: str, suffix: str) -> str:
     return f"{origin}/api/v1/public/shares/{token}/{suffix.lstrip('/')}"
 
 
+def _preview_public_url(request: Request, token: str) -> str:
+    share_url = _public_url(request, token)
+    version = request.query_params.get("v", "")
+    if _PREVIEW_VERSION_PATTERN.fullmatch(version):
+        return f"{share_url}?v={version}"
+    return share_url
+
+
 def _formatted_duration(seconds: float | None) -> str | None:
     if seconds is None or seconds < 0:
         return None
@@ -462,7 +471,7 @@ def public_share_preview(token: str, request: Request) -> Response:
     if values is None:
         return _unavailable()
     title, description, _duration = values
-    share_url = _public_url(request, token)
+    share_url = _preview_public_url(request, token)
     cover_url = f'{_public_asset_url(request, token, "cover")}?preview=1'
     escaped_title = escape(title, quote=True)
     escaped_description = escape(description, quote=True)

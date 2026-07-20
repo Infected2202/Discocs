@@ -217,7 +217,7 @@ def test_public_preview_exposes_universal_metadata_without_audio(tmp_path, monke
     )
 
     response = TestClient(app, base_url="http://backend:7752").get(
-        f"/api/v1/public/shares/{token}/preview",
+        f"/api/v1/public/shares/{token}/preview?v=cache-bust",
         headers={
             "x-forwarded-proto": "https",
             "x-forwarded-host": "music.example",
@@ -231,7 +231,8 @@ def test_public_preview_exposes_universal_metadata_without_audio(tmp_path, monke
     assert 'property="og:type" content="website"' in response.text
     assert 'property="og:title" content="Visible &lt;track&gt; &amp; &quot;friends&quot;"' in response.text
     assert 'property="og:description" content="Preview Artist · Album · 2:03"' in response.text
-    assert f'property="og:url" content="https://music.example/share/{token}"' in response.text
+    assert f'<link rel="canonical" href="https://music.example/share/{token}?v=cache-bust">' in response.text
+    assert f'property="og:url" content="https://music.example/share/{token}?v=cache-bust"' in response.text
     assert f'property="og:image" content="https://music.example/api/v1/public/shares/{token}/cover?preview=1"' in response.text
     assert 'name="twitter:card" content="summary_large_image"' in response.text
     assert "music:" not in response.text
@@ -239,6 +240,18 @@ def test_public_preview_exposes_universal_metadata_without_audio(tmp_path, monke
     assert "<audio" not in response.text
     assert 'name="robots"' not in response.text
     assert scoped.get_user_share(share.id).access_count == 0
+
+    unsafe_version = TestClient(app, base_url="http://backend:7752").get(
+        f"/api/v1/public/shares/{token}/preview",
+        params={"v": 'bad\"<script>'},
+        headers={
+            "x-forwarded-proto": "https",
+            "x-forwarded-host": "music.example",
+        },
+    )
+    assert f'property="og:url" content="https://music.example/share/{token}"' in unsafe_version.text
+    assert "bad" not in unsafe_version.text
+    assert "<script>" not in unsafe_version.text
 
     head = TestClient(app, base_url="http://backend:7752").head(
         f"/api/v1/public/shares/{token}/preview?v=cache-bust",
