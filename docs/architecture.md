@@ -150,7 +150,8 @@ Key tables:
 - `queue_items` — ordered queue entries for a session, tagged with `origin`
   (`source`, `manual`, `autoplay`, `flow`, `generated_mix`) and status
   (`queued`, `playing`, `played`, `skipped`, `removed`).
-- `playback_events` — append-only event log (`track_started`, `progress`,
+- `playback_events` — append-only event log (`track_started`,
+  `incoming_started`, `handover_completed`, manual transition events, `progress`,
   `play_threshold_reached`, `completed`, `skipped`, `queue_click`, `liked`,
   `disliked`, `replayed`, `removed_from_queue`, `saved_to_playlist`,
   `autoplay_toggled`, etc.), deduplicated by `client_event_id`.
@@ -181,8 +182,13 @@ POST  /api/v1/playback/events
 ```
 
 The queue `PATCH` endpoint is a single operation-dispatch route (`replace`,
-`add`, `remove`, `move`, `jump`, `mark_current`), not one endpoint per
-operation.
+`add`, `remove`, `move`, `jump`, `mark_current`, `handover`), not one endpoint
+per operation. `handover` requires a queue item from the addressed session and
+a `client_handover_id`. It atomically changes the canonical current item and
+records one `handover_completed` event; retrying the same client id returns the
+same queue projection without advancing twice. Preparing or starting the
+incoming deck emits only preference-neutral telemetry and does not move the
+server queue.
 
 When a Navidrome-mapped track crosses the meaningful-listen threshold, the
 event endpoint also fires a Subsonic `scrobble` call
@@ -222,14 +228,29 @@ Implementation files: `ui/src/engine/playback/PlayerPlaybackFacade.ts`,
 `ui/src/store/playerStore.ts`, `ui/src/pages/SettingsPage.tsx`,
 `app/api/tracks.py`, `app/api/settings.py`, and `app/store/settings.py`.
 
-The browser player now imports the compatibility facade from
+The browser player imports the compatibility facade from
 `ui/src/engine/playback/`. It preserves the established load, Blob cache,
-prefetch, transport, buffer callback, Media Session and persisted-position
-semantics while routing the live `HTMLAudioElement` through Deck A of one lazy
-`PlaybackEngine`. The engine creates one shared `AudioContext`, leaves Deck A
-at unity, silences Deck B, and resumes the context before calling media
-`play()`. Replacing the media element disconnects its previous source node, so
-the retired and current paths cannot both reach the destination.
+transport, buffer callback, Media Session and persisted-position semantics
+while routing two persistent physical deck strips through one lazy
+`PlaybackEngine`. Once the program track is fully buffered, the next-track
+Blob prefetch also creates and routes the free deck without changing the
+compact-player projection or canonical queue item.
+
+Global Next uses the prepared deck when available: it starts incoming, applies
+the equal-power crossfader endpoint, immediately projects that physical deck
+as program, and submits the idempotent server handover. A failed server update
+remains visible and is retried with the same client id without replaying the
+audio action. The muted outgoing element, source node and object URL remain
+owned until successful reconciliation; only then are they retired and the
+physical roles alternate. If preparation or Web Audio is unavailable, Next
+retains the established `jump` plus ordinary network/Blob load path.
+
+Each mixer strip contains trim, bounded low/mid/high EQ, bipolar low/high-pass
+filter stages, channel and crossfader gains, and a non-critical analyser tap.
+The shared master passes through gain, dynamics-compressor protection and a
+master analyser. Crossfader endpoints and centre use the equal-power curve;
+parameter changes use short audio-time ramps. Playback profile changes do not
+replace an already prepared deck and apply to subsequent loads.
 
 `ui/src/engine/AudioEngine.ts` is only a deprecated re-export for migrated
 regression tests and third-party imports; `playerStore`, keyboard shortcuts and

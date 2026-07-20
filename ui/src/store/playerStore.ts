@@ -129,6 +129,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
   // should ever render off of.
   let refillInFlight = false
   let fullyBufferedSource: { trackId: number; profileKey: string } | null = null
+  let pendingHandover: {
+    sessionId: string
+    queueItemId: string
+    clientHandoverId: string
+  } | null = null
 
   function scheduleNextPrefetch() {
     const { queue, currentQueueItemId, currentTrackId, session, playbackProfile } = get()
@@ -147,7 +152,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     }
     const url = trackAudioUrl(next.track_id, playbackProfile.key)
     playerLog("buffer", "prefetch next", { trackId: next.track_id, profile: playbackProfile.key })
-    void audioEngine.prefetch(next.track_id, url, playbackProfile.key)
+    void audioEngine.prefetch(next.track_id, url, playbackProfile.key, next.id)
       .then(() => playerLog("buffer", "prefetch complete", {
         trackId: next.track_id,
         profile: playbackProfile.key,
@@ -241,7 +246,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     set({ playedHistory: [...existing, item] })
   }
 
-  function applyEnvelope(envelope: PlaybackEnvelope, resetHistory = false) {
+  function applyEnvelope(envelope: PlaybackEnvelope, resetHistory = false, prefetch = true) {
     const { session, queue } = envelope
     const currentItem = queue.current_item ?? queue.items[0] ?? null
     set({
@@ -252,8 +257,23 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       currentQueueItemId: currentItem?.id ?? null,
       currentTrack: currentItem?.track ?? null,
     })
-    scheduleNextPrefetch()
+    if (prefetch) scheduleNextPrefetch()
     return { session, queue, currentItem }
+  }
+
+  async function reconcilePendingHandover() {
+    const pending = pendingHandover
+    if (!pending) return
+    const envelope = await patchQueue(pending.sessionId, {
+      operation: "handover",
+      queue_item_id: pending.queueItemId,
+      client_handover_id: pending.clientHandoverId,
+    })
+    applyEnvelope(envelope, false, false)
+    await audioEngine.confirmHandover()
+    pendingHandover = null
+    set({ error: null })
+    scheduleNextPrefetch()
   }
 
   // Shared start-playback step for both session-create (playSource) and
@@ -399,7 +419,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         trackId,
         profile: profile.key,
       })
-      audioEngine.load(url, trackId, profile.key, prefetchedUrl !== null)
+      audioEngine.load(url, trackId, profile.key, prefetchedUrl !== null, queueItemId ?? null)
       audioEngine.setVolume(get().volume)
       audioEngine.setMuted(get().muted)
 
@@ -488,6 +508,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       const { queue, currentQueueItemId, session } = get()
       if (!queue || !session) return
 
+      if (pendingHandover) {
+        try {
+          await reconcilePendingHandover()
+        } catch (err) {
+          set({ error: `Handover pending: ${(err as Error).message}` })
+        }
+        return
+      }
+
       await get().recordEvent("skipped", {
         position_seconds: audioEngine.currentTime,
         duration_seconds: audioEngine.duration,
@@ -497,7 +526,46 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       const idx = items.findIndex((i) => i.id === currentQueueItemId)
       const next: QueueItem | undefined = items[idx + 1]
       if (next) {
-        await get().jumpToQueueItem(next.id)
+        if (audioEngine.hasPrepared(next.track_id, next.id)) {
+          const clientHandoverId = globalThis.crypto?.randomUUID?.()
+            ?? `handover-${Date.now()}-${Math.random().toString(16).slice(2)}`
+          try {
+            await postEvent({
+              session_id: session.id,
+              queue_item_id: next.id,
+              track_id: next.track_id,
+              event_type: "incoming_started",
+              client_event_id: `incoming-${clientHandoverId}`,
+            })
+          } catch {
+            // Semantic telemetry is best-effort; canonical handover is not.
+          }
+          addCurrentToHistory()
+          try {
+            await audioEngine.handoverPrepared(clientHandoverId)
+            fullyBufferedSource = { trackId: next.track_id, profileKey: get().playbackProfile.key }
+            set({
+              currentTrackId: next.track_id,
+              currentQueueItemId: next.id,
+              currentTrack: next.track ?? null,
+              currentTime: 0,
+              bufferedRanges: [{ start: 0, end: 1 }],
+            })
+            pendingHandover = {
+              sessionId: session.id,
+              queueItemId: next.id,
+              clientHandoverId,
+            }
+            await reconcilePendingHandover()
+            if (next.track) {
+              audioEngine.setMediaSession(next.track, hiresArtworkUrl(next.track.artwork?.url, 512))
+            }
+          } catch (err) {
+            set({ error: `Handover pending: ${(err as Error).message}` })
+          }
+        } else {
+          await get().jumpToQueueItem(next.id)
+        }
       }
       scheduleAutoplayRefill("skipped")
     },
@@ -583,7 +651,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       if (profile.key === get().playbackProfile.key) return
       fullyBufferedSource = null
       audioEngine.cancelPrefetch()
-      audioEngine.clearPrefetched()
       set({ playbackProfile: profile })
       playerLog("buffer", "playback profile changed", { profile: profile.key })
     },
@@ -597,6 +664,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     },
 
     async refreshQueue() {
+      if (pendingHandover) {
+        try {
+          await reconcilePendingHandover()
+        } catch (err) {
+          set({ error: `Handover pending: ${(err as Error).message}` })
+        }
+        return
+      }
       const { session } = get()
       if (!session?.id) return
       try {
@@ -750,13 +825,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       try {
         const envelope = await fetchQueue(sessionId)
         applyEnvelope(envelope)
-        const { currentTrackId, currentTrack } = get()
+        const { currentTrackId, currentTrack, currentQueueItemId: restoreQueueItemId } = get()
         if (currentTrackId) {
           const profile = get().playbackProfile
           audioEngine.load(
             trackAudioUrl(currentTrackId, profile.key),
             currentTrackId,
             profile.key,
+            false,
+            restoreQueueItemId,
           )
           audioEngine.setVolume(get().volume)
           audioEngine.setMuted(get().muted)
@@ -764,7 +841,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           // нажмёт play (метаданные при preload="none" грузятся только тогда).
           const persisted = loadPersistedPlaybackPosition()
           const sessionId = get().session?.id
-          const queueItemId = get().currentQueueItemId
+          const queueItemId = restoreQueueItemId
           if (
             persisted
             && sessionId
@@ -799,6 +876,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       throttledPersistPosition.cancel()
       refillInFlight = false
       fullyBufferedSource = null
+      pendingHandover = null
       audioEngine.clear()
       set({
         session: null,

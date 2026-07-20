@@ -1,10 +1,13 @@
 import {
   channelFaderGain,
   clampNormalized,
+  eqGainDb,
   equalPowerCrossfader,
+  filterFrequencies,
   parameterRampWindow,
+  trimGain,
 } from "./curves"
-import type { DeckId } from "./types"
+import type { DeckId, EqBand } from "./types"
 
 export type MixerGraphEvent =
   | {
@@ -15,7 +18,7 @@ export type MixerGraphEvent =
   | {
       type: "parameter-ramp"
       deck?: DeckId
-      parameter: "crossfader" | "channel-fader" | "master-gain"
+      parameter: "crossfader" | "channel-fader" | "master-gain" | "trim" | "eq" | "filter"
       value: number
       startTime: number
       endTime: number
@@ -32,8 +35,13 @@ export type MixerGraphLogger = (event: MixerGraphEvent) => void
 
 interface DeckStrip {
   input: GainNode
+  trim: GainNode
+  eq: Record<EqBand, BiquadFilterNode>
+  lowpass: BiquadFilterNode
+  highpass: BiquadFilterNode
   channel: GainNode
   crossfader: GainNode
+  meter: AnalyserNode
   source: AudioNode | null
   generation: number
 }
@@ -44,6 +52,7 @@ export class MixerGraph {
   private readonly mixBus: GainNode
   private readonly master: GainNode
   private readonly protection: DynamicsCompressorNode
+  private readonly masterMeter: AnalyserNode
   private readonly strips: Record<DeckId, DeckStrip>
   private readonly handleContextStateChange = () => this.logContextState()
   private destroyed = false
@@ -57,9 +66,11 @@ export class MixerGraph {
     this.mixBus = context.createGain()
     this.master = context.createGain()
     this.protection = context.createDynamicsCompressor()
+    this.masterMeter = context.createAnalyser()
     this.mixBus.connect(this.master)
     this.master.connect(this.protection)
     this.protection.connect(context.destination)
+    this.protection.connect(this.masterMeter)
     this.strips = {
       A: this.createStrip(),
       B: this.createStrip(),
@@ -106,12 +117,34 @@ export class MixerGraph {
     )
   }
 
+  setTrim(deck: DeckId, value: number, when?: number): void {
+    this.schedule(this.strips[deck].trim.gain, trimGain(value), "trim", deck, when)
+  }
+
+  setEq(deck: DeckId, band: EqBand, value: number, when?: number): void {
+    this.schedule(this.strips[deck].eq[band].gain, eqGainDb(band, value), "eq", deck, when)
+  }
+
+  setFilter(deck: DeckId, value: number, when?: number): void {
+    const frequencies = filterFrequencies(value)
+    this.schedule(this.strips[deck].lowpass.frequency, frequencies.lowpassHz, "filter", deck, when)
+    this.schedule(this.strips[deck].highpass.frequency, frequencies.highpassHz, "filter", deck, when)
+  }
+
   setMasterGain(value: number, when?: number): void {
     this.schedule(this.master.gain, clampNormalized(value), "master-gain", undefined, when)
   }
 
   getAttachedSource(deck: DeckId): AudioNode | null {
     return this.strips[deck].source
+  }
+
+  readMeters(): Record<DeckId | "master", number> {
+    return {
+      A: this.readMeter(this.strips.A.meter),
+      B: this.readMeter(this.strips.B.meter),
+      master: this.readMeter(this.masterMeter),
+    }
   }
 
   logContextState(): void {
@@ -130,30 +163,65 @@ export class MixerGraph {
       const strip = this.strips[deck]
       if (strip.source) strip.source.disconnect(strip.input)
       strip.input.disconnect()
+      strip.trim.disconnect()
+      Object.values(strip.eq).forEach((node) => node.disconnect())
+      strip.lowpass.disconnect()
+      strip.highpass.disconnect()
       strip.channel.disconnect()
       strip.crossfader.disconnect()
+      strip.meter.disconnect()
       strip.source = null
     }
     this.mixBus.disconnect()
     this.master.disconnect()
     this.protection.disconnect()
+    this.masterMeter.disconnect()
   }
 
   private createStrip(): DeckStrip {
     const input = this.context.createGain()
+    const trim = this.context.createGain()
+    const low = this.context.createBiquadFilter()
+    low.type = "lowshelf"
+    low.frequency.value = 250
+    const mid = this.context.createBiquadFilter()
+    mid.type = "peaking"
+    mid.frequency.value = 1_000
+    mid.Q.value = 0.8
+    const high = this.context.createBiquadFilter()
+    high.type = "highshelf"
+    high.frequency.value = 4_000
+    const lowpass = this.context.createBiquadFilter()
+    lowpass.type = "lowpass"
+    lowpass.frequency.value = 20_000
+    const highpass = this.context.createBiquadFilter()
+    highpass.type = "highpass"
+    highpass.frequency.value = 20
     const channel = this.context.createGain()
     const crossfader = this.context.createGain()
-    input.connect(channel)
+    const meter = this.context.createAnalyser()
+    input.connect(trim)
+    trim.connect(low)
+    low.connect(mid)
+    mid.connect(high)
+    high.connect(lowpass)
+    lowpass.connect(highpass)
+    highpass.connect(channel)
     channel.connect(crossfader)
     crossfader.connect(this.mixBus)
+    crossfader.connect(meter)
+    trim.gain.value = 1
     channel.gain.value = 1
-    return { input, channel, crossfader, source: null, generation: 0 }
+    return {
+      input, trim, eq: { low, mid, high }, lowpass, highpass,
+      channel, crossfader, meter, source: null, generation: 0,
+    }
   }
 
   private schedule(
     parameter: AudioParam,
     value: number,
-    name: "crossfader" | "channel-fader" | "master-gain",
+    name: "crossfader" | "channel-fader" | "master-gain" | "trim" | "eq" | "filter",
     deck?: DeckId,
     when?: number,
   ): void {
@@ -169,5 +237,13 @@ export class MixerGraph {
       ...window,
       contextState: this.context.state,
     })
+  }
+
+  private readMeter(analyser: AnalyserNode): number {
+    const samples = new Float32Array(analyser.fftSize)
+    analyser.getFloatTimeDomainData(samples)
+    let peak = 0
+    for (const sample of samples) peak = Math.max(peak, Math.abs(sample))
+    return peak
   }
 }

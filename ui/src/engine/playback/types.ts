@@ -56,6 +56,21 @@ export interface MixerSnapshot {
   crossfader: number
   masterGain: number
   channelFaders: Record<DeckId, number>
+  trims: Record<DeckId, number>
+  eq: Record<DeckId, Record<EqBand, number>>
+  filters: Record<DeckId, number>
+  meters: Record<DeckId | "master", number>
+}
+
+export interface HandoverRequest {
+  incomingDeck: DeckId
+  clientHandoverId: string
+}
+
+export interface HandoverResult {
+  outgoingDeck: DeckId
+  programDeck: DeckId
+  clientHandoverId: string
 }
 
 export interface PlaybackCapabilities {

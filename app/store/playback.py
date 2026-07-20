@@ -557,6 +557,91 @@ class PlaybackStoreMixin:
             ).fetchone()
         return row_to_queue_item(refreshed) if refreshed else None
 
+    def handover_queue_item(
+        self,
+        session_id: str,
+        queue_item_id: str,
+        client_handover_id: str,
+    ) -> tuple[QueueItem | None, bool]:
+        """Atomically make a prepared queue item canonical.
+
+        The client id is scoped to the current user by the existing unique
+        playback-event index. Repeating the exact command is successful;
+        reusing it for another session or queue item is rejected.
+        """
+        user_id = self.require_user_id()
+        now = utc_now()
+        with self.connect() as conn:
+            duplicate = conn.execute(
+                "SELECT * FROM playback_events WHERE client_event_id = ? AND user_id = ?",
+                (client_handover_id, user_id),
+            ).fetchone()
+            if duplicate is not None:
+                if (
+                    duplicate["event_type"] != "handover_completed"
+                    or duplicate["session_id"] != session_id
+                    or duplicate["queue_item_id"] != queue_item_id
+                ):
+                    raise ValueError("client_handover_id was already used for another command")
+                item_row = conn.execute(
+                    "SELECT * FROM queue_items WHERE id = ? AND session_id = ?",
+                    (queue_item_id, session_id),
+                ).fetchone()
+                return (row_to_queue_item(item_row) if item_row else None, True)
+
+            item_row = conn.execute(
+                """
+                SELECT q.* FROM queue_items q
+                JOIN playback_sessions s ON s.id = q.session_id
+                WHERE q.id = ? AND q.session_id = ? AND s.user_id = ?
+                """,
+                (queue_item_id, session_id, user_id),
+            ).fetchone()
+            if item_row is None:
+                return None, False
+
+            item = row_to_queue_item(item_row)
+            previous_row = conn.execute(
+                "SELECT current_queue_item_id FROM playback_sessions WHERE id = ? AND user_id = ?",
+                (session_id, user_id),
+            ).fetchone()
+            previous_queue_item_id = previous_row["current_queue_item_id"] if previous_row else None
+            conn.execute(
+                "UPDATE queue_items SET status = 'playing', updated_at = ? WHERE id = ?",
+                (now, queue_item_id),
+            )
+            conn.execute(
+                """
+                UPDATE playback_sessions
+                SET current_queue_item_id = ?, current_track_id = ?, updated_at = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (queue_item_id, item.track_id, now, session_id, user_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO playback_events (
+                    id, user_id, session_id, queue_item_id, track_id, event_type,
+                    created_at, client_event_id, source, payload_json
+                ) VALUES (?, ?, ?, ?, ?, 'handover_completed', ?, ?, 'api', ?)
+                """,
+                (
+                    str(uuid4()),
+                    user_id,
+                    session_id,
+                    queue_item_id,
+                    item.track_id,
+                    now,
+                    client_handover_id,
+                    _json_dumps({"previous_queue_item_id": previous_queue_item_id}),
+                ),
+            )
+            refreshed = conn.execute(
+                "SELECT * FROM queue_items WHERE id = ? AND session_id = ?",
+                (queue_item_id, session_id),
+            ).fetchone()
+        return (row_to_queue_item(refreshed) if refreshed else None, False)
+
     def record_playback_event(self, event: PlaybackEventCreate) -> PlaybackEventResult:
         user_id = self.require_user_id()
         _require_choice(event.event_type, PLAYBACK_EVENT_TYPES, "event_type")
@@ -721,7 +806,16 @@ class PlaybackStoreMixin:
         row: sqlite3.Row,
     ) -> dict[str, object]:
         event_type = str(row["event_type"])
-        if event_type in {"track_started", "progress", "queue_click", "autoplay_toggled"}:
+        if event_type in {
+            "track_started",
+            "incoming_started",
+            "handover_completed",
+            "manual_transition_completed",
+            "manual_transition_cancelled",
+            "progress",
+            "queue_click",
+            "autoplay_toggled",
+        }:
             return {}
         track_id = int(row["track_id"]) if row["track_id"] is not None else None
         release_id = int(row["release_id"]) if row["release_id"] is not None else None

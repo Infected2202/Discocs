@@ -1,6 +1,7 @@
 import type { TrackSummary } from "@/api/types"
 import { playerLog } from "@/lib/playerLogger"
 import { PlaybackEngine } from "./PlaybackEngine"
+import type { DeckId, HandoverResult } from "./types"
 
 export type PlaybackState = "idle" | "loading" | "playing" | "paused" | "error"
 export interface BufferedRange {
@@ -22,13 +23,23 @@ export class PlayerPlaybackFacade {
   private readonly runtime: PlaybackEngine
   private callbacks: AudioEngineCallbacks | null = null
   private activeTrackId: number | null = null
+  private activeQueueItemId: string | null = null
   private activeProfileKey = "raw"
   private activeNetworkUrl: string | null = null
   private activeObjectUrl: string | null = null
   private activeCacheController: AbortController | null = null
   private activeCacheTarget: { trackId: number; profileKey: string; url: string } | null = null
   private fullyBufferedReported = false
-  private prefetched: { trackId: number; profileKey: string; objectUrl: string } | null = null
+  private prefetched: { trackId: number; queueItemId: string | null; profileKey: string; objectUrl: string } | null = null
+  private prepared: {
+    trackId: number
+    queueItemId: string | null
+    profileKey: string
+    objectUrl: string
+    element: HTMLAudioElement
+    deck: DeckId
+  } | null = null
+  private retired: { element: HTMLAudioElement; objectUrl: string | null; deck: DeckId } | null = null
   private prefetchController: AbortController | null = null
   private prefetchTarget: { trackId: number; profileKey: string } | null = null
 
@@ -46,6 +57,7 @@ export class PlayerPlaybackFacade {
     trackId: number | null = null,
     profileKey = "raw",
     fullyAvailable = false,
+    queueItemId: string | null = null,
   ) {
     this.cancelActiveCache()
     // Явно освобождаем буфер старого элемента — src='' надёжнее removeAttribute
@@ -61,12 +73,13 @@ export class PlayerPlaybackFacade {
     // Новый элемент — Chrome гарантированно освобождает нативный PCM буфер
     // когда старый элемент теряет все ссылки и GC его собирает
     this.el = this.createElement()
-    this.runtime.routeProgramElement(this.el)
+    this.runtime.routeProgramElement(this.el, trackId, queueItemId)
     this.el.volume = prev.volume
     this.el.muted = prev.muted
     this.el.src = url
     this.el.load()
     this.activeTrackId = trackId
+    this.activeQueueItemId = queueItemId
     this.activeProfileKey = profileKey
     this.activeNetworkUrl = fullyAvailable || url.startsWith("blob:") ? null : url
     this.fullyBufferedReported = false
@@ -77,8 +90,12 @@ export class PlayerPlaybackFacade {
     if (fullyAvailable && trackId !== null) this.reportFullyBuffered()
   }
 
-  async prefetch(trackId: number, url: string, profileKey: string): Promise<void> {
-    if (this.prefetched?.trackId === trackId && this.prefetched.profileKey === profileKey) return
+  async prefetch(trackId: number, url: string, profileKey: string, queueItemId: string | null = null): Promise<void> {
+    if (
+      this.prefetched?.trackId === trackId
+      && this.prefetched.profileKey === profileKey
+      && this.prefetched.queueItemId === queueItemId
+    ) return
     if (this.prefetchTarget?.trackId === trackId && this.prefetchTarget.profileKey === profileKey) return
     this.cancelPrefetch()
     this.clearPrefetched()
@@ -94,7 +111,20 @@ export class PlayerPlaybackFacade {
       const blob = await response.blob()
       if (controller.signal.aborted) return
       if (this.prefetchTarget?.trackId !== trackId || this.prefetchTarget.profileKey !== profileKey) return
-      this.prefetched = { trackId, profileKey, objectUrl: URL.createObjectURL(blob) }
+      const objectUrl = URL.createObjectURL(blob)
+      this.prefetched = { trackId, queueItemId, profileKey, objectUrl }
+      const element = this.createElement()
+      element.volume = this.el.volume
+      element.muted = this.el.muted
+      element.src = objectUrl
+      element.load()
+      const deck = this.runtime.routeIncomingElement(element, trackId, queueItemId)
+      if (deck) {
+        this.prepared = { trackId, queueItemId, profileKey, objectUrl, element, deck }
+      } else {
+        element.src = ""
+        element.load()
+      }
     } finally {
       if (this.prefetchController === controller) {
         this.prefetchController = null
@@ -107,6 +137,13 @@ export class PlayerPlaybackFacade {
     if (this.prefetched?.trackId !== trackId || this.prefetched.profileKey !== profileKey) return null
     const objectUrl = this.prefetched.objectUrl
     this.prefetched = null
+    if (this.prepared?.objectUrl === objectUrl) {
+      this.runtime.cancelIncoming()
+      this.prepared.element.pause()
+      this.prepared.element.src = ""
+      this.prepared.element.load()
+      this.prepared = null
+    }
     if (this.activeObjectUrl && this.activeObjectUrl !== objectUrl) {
       URL.revokeObjectURL(this.activeObjectUrl)
     }
@@ -121,8 +158,78 @@ export class PlayerPlaybackFacade {
   }
 
   clearPrefetched() {
+    if (this.prepared) {
+      this.runtime.cancelIncoming()
+      this.prepared.element.pause()
+      this.prepared.element.src = ""
+      this.prepared.element.load()
+      this.prepared = null
+    }
     if (this.prefetched) URL.revokeObjectURL(this.prefetched.objectUrl)
     this.prefetched = null
+  }
+
+  hasPrepared(trackId: number, queueItemId: string): boolean {
+    return this.prepared?.trackId === trackId
+      && this.prepared.queueItemId === queueItemId
+  }
+
+  async handoverPrepared(clientHandoverId: string): Promise<{
+    trackId: number
+    queueItemId: string
+    profileKey: string
+    outgoingDeck: DeckId
+    programDeck: DeckId
+  }> {
+    const incoming = this.prepared
+    if (!incoming?.queueItemId) throw new Error("Incoming deck is not prepared")
+    await this.runtime.ensureReady()
+    const previous = this.el
+    const previousObjectUrl = this.activeObjectUrl
+    this.cancelActiveCache()
+    await incoming.element.play()
+    let result: HandoverResult
+    try {
+      result = await this.runtime.handover({
+        incomingDeck: incoming.deck,
+        clientHandoverId,
+      })
+    } catch (error) {
+      incoming.element.pause()
+      throw error
+    }
+    this.el = incoming.element
+    this.retired = { element: previous, objectUrl: previousObjectUrl, deck: result.outgoingDeck }
+    this.activeTrackId = incoming.trackId
+    this.activeQueueItemId = incoming.queueItemId
+    this.activeProfileKey = incoming.profileKey
+    this.activeNetworkUrl = null
+    this.activeObjectUrl = incoming.objectUrl
+    this.fullyBufferedReported = true
+    this.prefetched = null
+    this.prepared = null
+    this.callbacks?.onBufferUpdate([{ start: 0, end: 1 }])
+    this.callbacks?.onPlaybackStateChange("playing")
+    return {
+      trackId: incoming.trackId,
+      queueItemId: incoming.queueItemId,
+      profileKey: incoming.profileKey,
+      outgoingDeck: result.outgoingDeck,
+      programDeck: result.programDeck,
+    }
+  }
+
+  async confirmHandover(): Promise<void> {
+    const retired = this.retired
+    if (!retired) return
+    this.retired = null
+    retired.element.pause()
+    retired.element.src = ""
+    retired.element.load()
+    if (retired.objectUrl && retired.objectUrl !== this.activeObjectUrl) {
+      URL.revokeObjectURL(retired.objectUrl)
+    }
+    await this.runtime.confirmRetirement(retired.deck)
   }
 
   async play(): Promise<void> {
@@ -152,7 +259,15 @@ export class PlayerPlaybackFacade {
     this.activeObjectUrl = null
     this.activeNetworkUrl = null
     this.activeTrackId = null
+    this.activeQueueItemId = null
     this.fullyBufferedReported = false
+    if (this.retired) {
+      this.retired.element.pause()
+      this.retired.element.src = ""
+      this.retired.element.load()
+      if (this.retired.objectUrl) URL.revokeObjectURL(this.retired.objectUrl)
+      this.retired = null
+    }
 
     this.el = this.createElement()
     void this.runtime.destroy().catch((error: Error) => {
@@ -205,11 +320,14 @@ export class PlayerPlaybackFacade {
   }
 
   setVolume(v: number) {
-    this.el.volume = Math.max(0, Math.min(1, v))
+    const volume = Math.max(0, Math.min(1, v))
+    this.el.volume = volume
+    if (this.prepared) this.prepared.element.volume = volume
   }
 
   setMuted(muted: boolean) {
     this.el.muted = muted
+    if (this.prepared) this.prepared.element.muted = muted
   }
 
   get currentTime() {
@@ -435,7 +553,7 @@ export class PlayerPlaybackFacade {
     // Make stale element events inert before unloading it. The replacement is
     // local, so metadata/seek do not require another network request.
     this.el = next
-    this.runtime.routeProgramElement(next)
+    this.runtime.routeProgramElement(next, this.activeTrackId, this.activeQueueItemId)
     prev.pause()
     prev.src = ""
     prev.load()

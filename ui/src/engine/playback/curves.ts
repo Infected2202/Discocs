@@ -41,6 +41,25 @@ export function eqGainDb(band: EqBand, value: number): number {
   return minimum + clampNormalized(value) * (maximum - minimum)
 }
 
+export interface FilterFrequencies {
+  lowpassHz: number
+  highpassHz: number
+}
+
+export function filterFrequencies(value: number): FilterFrequencies {
+  const normalized = clampBipolar(value)
+  if (normalized < 0) {
+    return {
+      lowpassHz: 20 * (1000 ** (normalized + 1)),
+      highpassHz: 20,
+    }
+  }
+  return {
+    lowpassHz: 20_000,
+    highpassHz: 20 * (1000 ** normalized),
+  }
+}
+
 export interface RampWindow {
   startTime: number
   endTime: number

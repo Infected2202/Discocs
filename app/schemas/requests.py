@@ -323,8 +323,9 @@ class PlaybackQueueItemRequest(BaseModel):
 
 
 class PlaybackQueuePatchRequest(BaseModel):
-    operation: str = Field(pattern="^(replace|add|remove|move|jump|mark_current)$")
+    operation: str = Field(pattern="^(replace|add|remove|move|jump|mark_current|handover)$")
     queue_item_id: str | None = None
+    client_handover_id: str | None = Field(default=None, min_length=1, max_length=128)
     track_id: int | None = None
     track_ids: list[int] = Field(default_factory=list)
     position: int | None = Field(default=None, ge=0)
@@ -340,6 +341,7 @@ class PlaybackEventRequest(BaseModel):
     event_type: str = Field(
         pattern=(
             "^(track_started|progress|play_threshold_reached|completed|skipped|queue_click|"
+            "incoming_started|handover_completed|manual_transition_completed|manual_transition_cancelled|"
             "liked|unliked|disliked|replayed|removed_from_queue|saved_to_playlist|"
             "autoplay_toggled|preference_changed)$"
         )

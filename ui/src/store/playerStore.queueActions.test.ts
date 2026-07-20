@@ -17,6 +17,11 @@ vi.mock("@/engine/playback", () => ({
     prefetch: vi.fn().mockResolvedValue(undefined),
     cancelPrefetch: vi.fn(),
     clearPrefetched: vi.fn(),
+    hasPrepared: vi.fn().mockReturnValue(false),
+    handoverPrepared: vi.fn().mockResolvedValue({
+      trackId: 20, queueItemId: "next", profileKey: "raw", outgoingDeck: "A", programDeck: "B",
+    }),
+    confirmHandover: vi.fn().mockResolvedValue(undefined),
   },
 }))
 
@@ -83,6 +88,7 @@ const audioCallbacks = vi.mocked(audioEngine.init).mock.calls[0][0]
 describe("player queue actions", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(audioEngine.hasPrepared).mockReturnValue(false)
     localStorage.clear()
     usePlayerStore.setState({
       session: null,
@@ -175,7 +181,7 @@ describe("player queue actions", () => {
     })
     audioCallbacks.onFullyBuffered?.(10, "raw")
 
-    expect(audioEngine.prefetch).toHaveBeenCalledWith(20, "/audio/20", "raw")
+    expect(audioEngine.prefetch).toHaveBeenCalledWith(20, "/audio/20", "raw", "next")
   })
 
   it("plays a matching prefetched Blob without requesting a new network source", async () => {
@@ -187,6 +193,98 @@ describe("player queue actions", () => {
 
     await usePlayerStore.getState().playTrack(20, { queueItemId: "next", recordStarted: false })
 
-    expect(audioEngine.load).toHaveBeenCalledWith("blob:track-20", 20, "mp3-128", true)
+    expect(audioEngine.load).toHaveBeenCalledWith("blob:track-20", 20, "mp3-128", true, "next")
+  })
+
+  it("hands over to a prepared deck exactly once without reloading incoming audio", async () => {
+    const current = makeItem("current", 10)
+    const next = makeItem("next", 20)
+    const before = makeEnvelope("session", [current, next], current.id)
+    const after = makeEnvelope("session", [current, next], next.id)
+    usePlayerStore.setState({
+      session: before.session,
+      queue: before.queue,
+      currentTrackId: 10,
+      currentQueueItemId: current.id,
+      currentTrack: current.track,
+      playbackState: "playing",
+    })
+    vi.mocked(audioEngine.hasPrepared).mockReturnValue(true)
+    vi.mocked(patchQueue).mockResolvedValueOnce(after)
+
+    await usePlayerStore.getState().skipNext()
+
+    expect(audioEngine.handoverPrepared).toHaveBeenCalledTimes(1)
+    expect(audioEngine.load).not.toHaveBeenCalled()
+    expect(patchQueue).toHaveBeenCalledWith("session", expect.objectContaining({
+      operation: "handover",
+      queue_item_id: "next",
+      client_handover_id: expect.any(String),
+    }))
+    expect(audioEngine.confirmHandover).toHaveBeenCalledTimes(1)
+    expect(usePlayerStore.getState().currentQueueItemId).toBe("next")
+  })
+
+  it("falls back to canonical jump when the incoming deck is unavailable", async () => {
+    const current = makeItem("current", 10)
+    const next = makeItem("next", 20)
+    const before = makeEnvelope("session", [current, next], current.id)
+    const after = makeEnvelope("session", [current, next], next.id)
+    usePlayerStore.setState({
+      session: before.session,
+      queue: before.queue,
+      currentTrackId: 10,
+      currentQueueItemId: current.id,
+      currentTrack: current.track,
+    })
+    vi.mocked(patchQueue).mockResolvedValueOnce(after)
+
+    await usePlayerStore.getState().skipNext()
+
+    expect(audioEngine.handoverPrepared).not.toHaveBeenCalled()
+    expect(patchQueue).toHaveBeenCalledWith("session", {
+      operation: "jump",
+      queue_item_id: "next",
+    })
+    expect(audioEngine.load).toHaveBeenCalled()
+  })
+
+  it("retries canonical reconciliation without replaying an audible handover", async () => {
+    const current = makeItem("current", 10)
+    const next = makeItem("next", 20)
+    const before = makeEnvelope("session", [current, next], current.id)
+    const after = makeEnvelope("session", [current, next], next.id)
+    usePlayerStore.setState({
+      session: before.session,
+      queue: before.queue,
+      currentTrackId: 10,
+      currentQueueItemId: current.id,
+      currentTrack: current.track,
+    })
+    vi.mocked(audioEngine.hasPrepared).mockReturnValue(true)
+    vi.mocked(patchQueue)
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(after)
+
+    await usePlayerStore.getState().skipNext()
+    await usePlayerStore.getState().skipNext()
+
+    expect(audioEngine.handoverPrepared).toHaveBeenCalledTimes(1)
+    expect(patchQueue).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(patchQueue).mock.calls[1]?.[1]).toEqual(
+      vi.mocked(patchQueue).mock.calls[0]?.[1],
+    )
+    expect(audioEngine.confirmHandover).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps an already prepared source when the profile changes", () => {
+    usePlayerStore.getState().setPlaybackProfile({
+      transcodingEnabled: true,
+      bitrateKbps: 128,
+      key: "mp3-128",
+    })
+
+    expect(audioEngine.cancelPrefetch).toHaveBeenCalled()
+    expect(audioEngine.clearPrefetched).not.toHaveBeenCalled()
   })
 })

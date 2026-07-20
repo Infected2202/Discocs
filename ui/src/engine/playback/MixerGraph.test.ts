@@ -25,6 +25,18 @@ class FakeNode {
   })
 }
 
+class FakeBiquad extends FakeNode {
+  type = "peaking"
+  frequency = new FakeParam()
+  gain = new FakeParam()
+  Q = new FakeParam()
+}
+
+class FakeAnalyser extends FakeNode {
+  fftSize = 32
+  getFloatTimeDomainData = vi.fn((samples: Float32Array) => samples.fill(0))
+}
+
 class FakeGain extends FakeNode {
   gain = new FakeParam()
 }
@@ -37,6 +49,8 @@ function makeContext() {
     destination,
     createGain: vi.fn(() => new FakeGain()),
     createDynamicsCompressor: vi.fn(() => new FakeNode()),
+    createBiquadFilter: vi.fn(() => new FakeBiquad()),
+    createAnalyser: vi.fn(() => new FakeAnalyser()),
   } as unknown as AudioContext
 }
 

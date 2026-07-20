@@ -213,6 +213,16 @@ def api_v1_patch_playback_queue(
                 return api_error(404, "not_found", "Queue item not found")
             event_type = "queue_click" if request.operation == "jump" else "track_started"
             store.record_playback_event(_queue_event(session_id, request.queue_item_id, item.track_id, event_type))
+        elif request.operation == "handover":
+            if not request.queue_item_id or not request.client_handover_id:
+                return api_error(400, "invalid_request", "handover requires queue_item_id and client_handover_id")
+            item, _duplicate = store.handover_queue_item(
+                session_id,
+                request.queue_item_id,
+                request.client_handover_id,
+            )
+            if item is None:
+                return api_error(404, "not_found", "Queue item not found in playback session")
         else:
             return api_error(400, "invalid_request", "Unsupported queue operation")
     except ValueError as exc:

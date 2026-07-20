@@ -657,6 +657,10 @@ PLAYLIST_KINDS = {"manual", "saved_mix"}
 SHARE_SOURCE_TYPES = {"track", "release"}
 PLAYBACK_EVENT_TYPES = {
     "track_started",
+    "incoming_started",
+    "handover_completed",
+    "manual_transition_completed",
+    "manual_transition_cancelled",
     "progress",
     "play_threshold_reached",
     "completed",

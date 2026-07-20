@@ -691,6 +691,64 @@ def test_api_v1_playback_queue_remove_and_include_debug(tmp_path: Path, monkeypa
     assert store.list_playback_events(session_id)[0].event_type == "removed_from_queue"
 
 
+def test_api_v1_playback_handover_advances_once_and_rejects_cross_session_item(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    first_id = add_track(store, tmp_path / "handover" / "01.flac", title="Outgoing")
+    second_id = add_track(store, tmp_path / "handover" / "02.flac", title="Incoming")
+    client = TestClient(app)
+    created = client.post(
+        "/api/v1/playback/sessions",
+        json={"source_type": "manual", "track_ids": [first_id, second_id]},
+    ).json()
+    session_id = created["session"]["id"]
+    incoming_id = created["queue"]["items"][1]["id"]
+
+    incoming_started = client.post(
+        "/api/v1/playback/events",
+        json={
+            "session_id": session_id,
+            "queue_item_id": incoming_id,
+            "track_id": second_id,
+            "event_type": "incoming_started",
+            "client_event_id": "incoming-started-1",
+        },
+    )
+    assert incoming_started.status_code == 200
+    assert store.get_playback_session(session_id).current_track_id == first_id
+    assert store.get_track_preference(second_id) is None
+
+    command = {
+        "operation": "handover",
+        "queue_item_id": incoming_id,
+        "client_handover_id": "client-handover-1",
+    }
+    first = client.patch(f"/api/v1/playback/sessions/{session_id}/queue", json=command)
+    repeated = client.patch(f"/api/v1/playback/sessions/{session_id}/queue", json=command)
+
+    assert first.status_code == 200
+    assert repeated.status_code == 200
+    assert first.json()["session"]["current_track_id"] == second_id
+    assert repeated.json()["session"]["current_queue_item_id"] == incoming_id
+    assert [event.event_type for event in store.list_playback_events(session_id)] == [
+        "incoming_started",
+        "handover_completed",
+    ]
+
+    other = client.post(
+        "/api/v1/playback/sessions",
+        json={"source_type": "track", "source_id": first_id},
+    ).json()
+    rejected = client.patch(
+        f"/api/v1/playback/sessions/{other['session']['id']}/queue",
+        json={
+            "operation": "handover",
+            "queue_item_id": incoming_id,
+            "client_handover_id": "client-handover-2",
+        },
+    )
+    assert rejected.status_code == 404
+
+
 def test_api_v1_playback_event_ingest_updates_preferences_and_is_idempotent(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     track_id = add_track(store, tmp_path / "signals.flac", title="Signals", artist="Alpha")

@@ -53,13 +53,14 @@ export function patchSession(sessionId: string, patch: SessionPatch): Promise<Pl
   })
 }
 
-export type QueueOperation = "replace" | "add" | "remove" | "move" | "jump" | "mark_current"
+export type QueueOperation = "replace" | "add" | "remove" | "move" | "jump" | "mark_current" | "handover"
 
 export interface QueuePatch {
   operation: QueueOperation
   track_id?: number
   track_ids?: number[]
   queue_item_id?: string
+  client_handover_id?: string
   position?: number
 }
 

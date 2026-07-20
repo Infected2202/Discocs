@@ -4,6 +4,8 @@ import {
   clampBipolar,
   clampNormalized,
   equalPowerCrossfader,
+  eqGainDb,
+  filterFrequencies,
   parameterRampWindow,
   trimGain,
 } from "./curves"
@@ -15,6 +17,13 @@ describe("playback parameter curves", () => {
     expect(equalPowerCrossfader(0).B).toBeCloseTo(Math.SQRT1_2)
     expect(equalPowerCrossfader(1).A).toBeCloseTo(0)
     expect(equalPowerCrossfader(1).B).toBe(1)
+  })
+
+  it("keeps the filter centre neutral and maps both directions", () => {
+    expect(filterFrequencies(0)).toEqual({ lowpassHz: 20_000, highpassHz: 20 })
+    expect(filterFrequencies(-1).lowpassHz).toBeCloseTo(20)
+    expect(filterFrequencies(1).highpassHz).toBeCloseTo(20_000)
+    expect(eqGainDb("mid", 0.8)).toBeCloseTo(0)
   })
 
   it("clamps public normalized and bipolar parameters", () => {

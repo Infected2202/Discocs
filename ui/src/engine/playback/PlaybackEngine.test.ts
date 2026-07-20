@@ -10,8 +10,13 @@ class FakeParam {
 
 class FakeNode {
   gain = new FakeParam()
+  frequency = new FakeParam()
+  Q = new FakeParam()
+  type = "peaking"
+  fftSize = 32
   connect = vi.fn()
   disconnect = vi.fn()
+  getFloatTimeDomainData = vi.fn((samples: Float32Array) => samples.fill(0))
 }
 
 class FakeContext {
@@ -25,6 +30,8 @@ class FakeContext {
   close = vi.fn(async () => { this.state = "closed" })
   createGain = vi.fn(() => new FakeNode())
   createDynamicsCompressor = vi.fn(() => new FakeNode())
+  createBiquadFilter = vi.fn(() => new FakeNode())
+  createAnalyser = vi.fn(() => new FakeNode())
   createMediaElementSource(element: HTMLMediaElement) {
     const node = new FakeNode()
     this.mediaNodes.push(node)
@@ -81,5 +88,27 @@ describe("PlaybackEngine Phase 1 routing", () => {
 
     expect(engine.routeProgramElement(document.createElement("audio"))).toBe(false)
     expect(FakeContext.instances).toHaveLength(0)
+  })
+
+  it("keeps both sources attached through handover and retires outgoing only after confirmation", async () => {
+    vi.stubGlobal("AudioContext", FakeContext)
+    const engine = new PlaybackEngine()
+    const outgoing = document.createElement("audio")
+    const incoming = document.createElement("audio")
+    engine.routeProgramElement(outgoing, 1, "queue-1")
+    const incomingDeck = engine.routeIncomingElement(incoming, 2, "queue-2")
+
+    const result = await engine.handover({ incomingDeck: incomingDeck!, clientHandoverId: "h-1" })
+    const context = FakeContext.instances[0]!
+    expect(result).toMatchObject({ outgoingDeck: "A", programDeck: "B" })
+    expect(engine.getSnapshot()).toMatchObject({
+      programDeck: "B",
+      decks: { B: { trackId: 2, queueItemId: "queue-2", role: "program" } },
+    })
+    expect(context.mediaNodes[0]?.disconnect).not.toHaveBeenCalled()
+
+    await engine.confirmRetirement("A")
+    expect(context.mediaNodes[0]?.disconnect).toHaveBeenCalled()
+    expect(context.mediaNodes[1]?.disconnect).not.toHaveBeenCalled()
   })
 })

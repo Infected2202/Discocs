@@ -1,6 +1,6 @@
 # Discocs DJ implementation plan
 
-**Status:** Phase 0 complete; Phase 1 implemented
+**Status:** Phase 0 complete; Phases 1-2 implemented
 **Delivery rule:** one complete logical slice includes code, meaningful tests, affected docs, one commit and pushes to both configured remotes; Jenkins is the verification environment.
 
 ## 1. Readiness
@@ -17,7 +17,7 @@
 | 7. Settings/diagnostics | incremental after owners exist | corresponding runtime/backend features |
 | Future Epic B: Auto DJ | not part of this plan | completed foundation and separate product/design work |
 
-There are currently no unresolved product decisions blocking Phase 0 or Phase 1. New approval is required only if a spike forces a user-visible compromise.
+There are currently no unresolved product decisions blocking Phases 0-3. New approval is required only if a spike forces a user-visible compromise.
 
 ## 2. Phase 0 — contracts and risk spikes
 
@@ -170,6 +170,8 @@ None expected. Existing track audio, queue and playback event APIs remain unchan
 Push once the slice is complete, then inspect Jenkins. A failed pipeline is diagnosed through structured test/stage sources per `AGENTS.md`; no local test/build duplication.
 
 ## 4. Phase 2 — Deck B, mixer and canonical handover
+
+**Implementation:** complete; Jenkins verification pending.
 
 ### Backend work
 
@@ -335,9 +337,9 @@ Every implementation slice:
 
 ## 12. Current next action
 
-Verify Phase 1 in Jenkins, then begin Phase 2. Phase 2 adds the persistent
-second deck, mixer controls and idempotent canonical handover while retaining
-the Phase 1 ordinary-player fallback.
+Verify Phase 2 in Jenkins, then begin Phase 3. Phase 3 exposes the implemented
+two-deck runtime through the expanded DJ control surface without changing
+transport when the surface opens or closes.
 
 Primary external references reviewed for the spike:
 

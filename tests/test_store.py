@@ -1187,6 +1187,44 @@ def test_playback_queue_click_is_navigation_not_skip(tmp_path: Path):
     assert store.list_playback_events(session.id)[0].event_type == "queue_click"
 
 
+def test_playback_handover_is_atomic_idempotent_and_preference_neutral(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    first_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "handover-1.flac").resolve(), artist="DJ", title="Outgoing",
+            album="Mix", duration=180.0, file_size=1, mtime=1,
+        )
+    )
+    second_id, _changed = store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "handover-2.flac").resolve(), artist="DJ", title="Incoming",
+            album="Mix", duration=180.0, file_size=1, mtime=1,
+        )
+    )
+    session, queue = store.create_playback_session(
+        source_type="manual", track_ids=[first_id, second_id]
+    )
+
+    item, duplicate = store.handover_queue_item(session.id, queue[1].id, "handover-1")
+    repeated, repeated_duplicate = store.handover_queue_item(session.id, queue[1].id, "handover-1")
+
+    assert item is not None and item.track_id == second_id
+    assert duplicate is False
+    assert repeated is not None and repeated.id == item.id
+    assert repeated_duplicate is True
+    assert store.get_playback_session(session.id).current_queue_item_id == queue[1].id
+    events = store.list_playback_events(session.id)
+    assert [event.event_type for event in events] == ["handover_completed"]
+    assert store.get_track_preference(second_id) is None
+
+    other_session, other_queue = store.create_playback_session(
+        source_type="track", source_id=first_id, track_ids=[first_id]
+    )
+    with pytest.raises(ValueError, match="another command"):
+        store.handover_queue_item(other_session.id, other_queue[0].id, "handover-1")
+
+
 def test_playback_skip_strength_and_recompute_from_raw_events(tmp_path: Path):
     store = Store(tmp_path / "app.db")
     store.init()

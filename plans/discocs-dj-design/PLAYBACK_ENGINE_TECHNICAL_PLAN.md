@@ -1,6 +1,6 @@
 # PlaybackEngine technical plan
 
-**Status:** Phase 1 one-deck migration implemented; Phase 2 sections remain staged
+**Status:** Phase 2 two-deck runtime and canonical handover implemented
 **Applies to:** foundation Phases 0-3 and 6
 **Replaces:** direct use of `ui/src/engine/AudioEngine.ts` by player-facing code
 
@@ -339,3 +339,25 @@ deprecated `engine/AudioEngine.ts` file only re-exports this singleton; live
 store and keyboard callers no longer import it. Lack of Web Audio degrades to
 ordinary direct HTML media with `manualMix=false`; context-resume failures are
 reported without calling `HTMLMediaElement.play()`.
+
+### Phase 2 confirmation
+
+Next-track Blob prefetch now prepares the free physical deck and retains the
+program deck unchanged. The deck-role reducer alternates A/B only after an
+audible handover. The mixer graph contains trim, bounded three-band EQ,
+bipolar filter stages, channel faders, the equal-power crossfader, master
+gain/protection and bounded analyser reads.
+
+`PATCH /api/v1/playback/sessions/{id}/queue` accepts `handover` with
+`client_handover_id`. SQLite validates ownership and session membership,
+updates session/queue state and writes `handover_completed` in one transaction;
+an exact retry is successful and a reused id for another command is rejected.
+`incoming_started` and manual-transition telemetry are explicitly
+preference-neutral.
+
+The compact player promotes the prepared element without calling `load()`.
+Canonical failure does not reverse audio: the same command is retried, and the
+outgoing element/source/object URL is retained until server reconciliation.
+Missing preparation or missing Web Audio retains the Phase 1 single-deck
+`jump` fallback. Profile changes leave both active mix sources untouched and
+apply to future preparation.
