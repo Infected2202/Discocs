@@ -229,10 +229,10 @@ function MixerChannel({ deck, mixer }: MixerChannelProps) {
             defaultValue={0}
             onChange={(value) => playerPlayback.setDeckFilter(deck, value)}
           />
-          <div className={styles.fxAssign} role="group" aria-label={`Deck ${deck} effect assignment`}>
+          <fieldset className={styles.fxAssign} aria-label={`Deck ${deck} effect assignment`}>
             <div><button type="button" disabled>1</button><button type="button" disabled>2</button></div>
             <span>FX</span>
-          </div>
+          </fieldset>
           <DjKnob
             label={`Deck ${deck} key`}
             displayLabel="KEY"
