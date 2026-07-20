@@ -1,6 +1,6 @@
 # Track Timeline Analysis Pack technical plan
 
-**Status:** v1 contract draft
+**Status:** accepted v1 contract (Slice 0.4)
 **Applies to:** Phases 0, 4 and 5
 
 ## 1. Objective
@@ -102,12 +102,19 @@ Every array descriptor contains:
   "offset": 0,
   "length": 1000,
   "dtype": "int16",
-  "scale": 0.000030517578125,
+  "scale": 0.000030518509476,
   "unit": "linear_amplitude"
 }
 ```
 
 Allowed v1 dtypes are `int16`, `uint16`, `uint8` and `float32`. Consumers reject unknown schema versions/dtypes instead of guessing.
+
+All descriptor offsets are aligned to 4 bytes. Payload integers and floats are
+little-endian. Signed peaks use the symmetric range `[-32767, 32767]` with
+scale `1 / 32767`; normalized energy uses `[0, 65535]` with scale `1 / 65535`.
+The manifest declares `descriptor_alignment: 4` and consumers reject a layout
+or endianness they do not support. Padding bytes are zero-filled and covered by
+the payload checksum.
 
 ## 6. Waveform pyramid
 
@@ -122,6 +129,12 @@ Each level contains:
 - high-band energy (`uint16`).
 
 The first version uses a mono display envelope derived from all source channels. Frequency-colour energy bands use documented fixed boundaries, initially low below 250 Hz, mid 250 Hz-4 kHz and high above 4 kHz. Exact filter implementation is validated in the extractor spike; changing boundaries requires a new extractor id.
+
+Pyramid aggregation takes the minimum of signed minima and the maximum of
+signed maxima and energy values in every four-bucket group. The final partial
+group is retained. Max aggregation intentionally preserves short energy
+transients at overview resolutions; alternative RMS/mean summaries require a
+new extractor identity.
 
 Pixi selects the coarsest level that still supplies at least one bucket per horizontal pixel. It never resamples the complete base array on every frame.
 
@@ -265,4 +278,13 @@ Generate fixtures for short, typical and long tracks and record:
 - visual usefulness of the proposed frequency bands;
 - beat/downbeat confidence behaviour on representative library material.
 
-The spike may tune bucket size, grid step, quantization or band boundaries. Once Phase 4 implementation begins, any incompatible change increments the extractor id or schema version.
+Slice 0.4 accepted the 512-sample base bucket, factor-4 pyramid, 4-byte
+descriptor alignment, little-endian layout and quantization rules above.
+`app.timeline.codec` is the offline reference encoder/decoder,
+`app.timeline.fixtures` generates short/typical/long synthetic artifacts, and
+`ui/src/engine/timeline/decoder.ts` is the browser contract implementation.
+Measurements and size/memory estimates are recorded in
+`SLICE_0_4_FORMAT_RESULTS.md`.
+
+Once Phase 4 implementation begins, any incompatible change increments the
+extractor id or schema version.

@@ -487,6 +487,24 @@ clamped and translated to seconds before transport code receives them. The Phase
 and memory/frame measurements are in
 `plans/discocs-dj-design/SLICE_0_2_BROWSER_RESULTS.md`.
 
+### Timeline artifact format foundation
+
+`app/timeline/codec.py` is the offline reference for the accepted timeline v1
+manifest/payload contract. `app/timeline/fixtures.py` and
+`scripts/generate_timeline_fixtures.py` generate deterministic synthetic
+artifacts for format inspection; they are not part of request handling and do
+not publish runtime files. The browser counterpart in
+`ui/src/engine/timeline/` validates schema, payload length, layout and SHA-256,
+then returns typed-array views over the original `ArrayBuffer` without copying
+the waveform payload.
+
+Timeline v1 uses little-endian arrays with 4-byte-aligned descriptors, a
+512-sample base bucket and a factor-4 extrema-preserving pyramid. Signed peaks
+are `int16` with scale `1/32767`; normalized band energies are `uint16` with
+scale `1/65535`. Phase 4 will add persistence, publication and authenticated
+delivery around this frozen codec. Format evidence is in
+`plans/discocs-dj-design/SLICE_0_4_FORMAT_RESULTS.md`.
+
 ### Signalsmith tempo adapter foundation
 
 `ui/src/engine/playback/signalsmith/` validates the future pitch-preserving tempo source

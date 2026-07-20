@@ -1,6 +1,6 @@
 # Discocs DJ implementation plan
 
-**Status:** Phase 0 in progress; Slices 0.1 through 0.3 complete
+**Status:** Phase 0 complete; Slices 0.1 through 0.4 implemented
 **Delivery rule:** one complete logical slice includes code, meaningful tests, affected docs, one commit and pushes to both configured remotes; Jenkins is the verification environment.
 
 ## 1. Readiness
@@ -80,7 +80,7 @@ Exit:
 
 ### Slice 0.3 — Signalsmith integration spike
 
-**Implementation:** complete; Jenkins verification pending. Package/asset validation,
+**Implementation:** complete; Jenkins verified in build #262. Package/asset validation,
 latency measurements and the `DeckSource` feasibility decision are recorded in
 `SLICE_0_3_BROWSER_RESULTS.md`.
 
@@ -106,6 +106,10 @@ Exit:
 - failure affects Phase 6 choice, not Phase 1 ordinary playback.
 
 ### Slice 0.4 — Timeline v1 fixture spike
+
+**Implementation:** complete; Jenkins verification pending. The accepted
+layout, fixture sizing and decode/render memory estimates are recorded in
+`SLICE_0_4_FORMAT_RESULTS.md`.
 
 Work:
 
@@ -327,7 +331,10 @@ Every implementation slice:
 
 ## 12. Current next action
 
-Begin Slice 0.1. It establishes the production `PlaybackEngine` seam and Web Audio graph without changing visible playback behaviour. Slice 0.2 and 0.3 follow only after the seam is stable enough to evaluate their adapters against it.
+Verify Slice 0.4 in Jenkins, then begin Phase 1. Phase 1 migrates the existing
+single-deck player to Deck A behind a compatibility facade without exposing DJ
+controls or allowing the retired `AudioEngine` and new runtime to own output
+simultaneously.
 
 Primary external references reviewed for the spike:
 
