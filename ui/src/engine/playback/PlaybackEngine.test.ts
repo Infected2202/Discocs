@@ -17,6 +17,7 @@ class FakeNode {
 class FakeContext {
   static instances: FakeContext[] = []
   readonly mediaNodes: FakeNode[] = []
+  readonly mediaElements: HTMLMediaElement[] = []
   state: AudioContextState = "suspended"
   currentTime = 3
   destination = new FakeNode()
@@ -24,11 +25,12 @@ class FakeContext {
   close = vi.fn(async () => { this.state = "closed" })
   createGain = vi.fn(() => new FakeNode())
   createDynamicsCompressor = vi.fn(() => new FakeNode())
-  createMediaElementSource = vi.fn(() => {
+  createMediaElementSource(element: HTMLMediaElement) {
     const node = new FakeNode()
     this.mediaNodes.push(node)
+    this.mediaElements.push(element)
     return node
-  })
+  }
   addEventListener = vi.fn()
   removeEventListener = vi.fn()
 
@@ -54,8 +56,7 @@ describe("PlaybackEngine Phase 1 routing", () => {
 
     const context = FakeContext.instances[0]!
     expect(FakeContext.instances).toHaveLength(1)
-    expect(context.createMediaElementSource).toHaveBeenNthCalledWith(1, first)
-    expect(context.createMediaElementSource).toHaveBeenNthCalledWith(2, second)
+    expect(context.mediaElements).toEqual([first, second])
     expect(context.resume).toHaveBeenCalledTimes(1)
     expect(context.mediaNodes[0]?.disconnect).toHaveBeenCalled()
   })
