@@ -4,6 +4,7 @@ import { usePlayerStore } from "@/store/playerStore"
 import { useUIStore } from "@/store/uiStore"
 
 const playback = vi.hoisted(() => ({
+  init: vi.fn(),
   getEngineSnapshot: vi.fn(),
   subscribeEngine: vi.fn(() => () => undefined),
   setDeckTrim: vi.fn(),

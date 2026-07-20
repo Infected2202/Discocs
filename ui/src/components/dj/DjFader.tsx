@@ -10,8 +10,8 @@ interface DjFaderProps {
   readonly orientation?: "vertical" | "horizontal"
   readonly disabled?: boolean
   readonly className?: string
-  readonly onChange?(value: number): void
-  readonly onCommit?(value: number): void
+  readonly onChange?: (value: number) => void
+  readonly onCommit?: (value: number) => void
 }
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))

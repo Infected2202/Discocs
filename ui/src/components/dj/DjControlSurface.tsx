@@ -77,8 +77,8 @@ interface DeckPanelProps {
   readonly track: TrackSummary | null
   readonly isProgram: boolean
   readonly mixer: ReturnType<typeof usePlaybackEngineSnapshot>["mixer"]
-  readonly onToggle(): void
-  readonly onHandover(): void
+  readonly onToggle: () => void
+  readonly onHandover: () => void
 }
 
 function DeckPanel({ deck, track, isProgram, mixer, onToggle, onHandover }: DeckPanelProps) {
