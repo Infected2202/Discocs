@@ -83,11 +83,14 @@ export default function DjFader({
         onPointerUp={(event) => handlePointer(event, true)}
         onKeyDown={handleKeyDown}
       >
+        <span className={styles.faderScale} />
         <span className={styles.faderTrack} />
         <span
           className={styles.faderThumb}
           style={orientation === "vertical" ? { bottom: position } : { left: position }}
-        />
+        >
+          <span />
+        </span>
       </button>
       <span className={styles.controlLabel}>{label}</span>
     </div>

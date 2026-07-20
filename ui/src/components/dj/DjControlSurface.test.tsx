@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { usePlayerStore } from "@/store/playerStore"
 import { useUIStore } from "@/store/uiStore"
@@ -133,5 +133,17 @@ describe("DjControlSurface", () => {
 
     expect(playback.setDeckTrim).toHaveBeenCalledWith("A", 0.51)
     expect(screen.getByRole("button", { name: "Make Deck A program" })).toBeEnabled()
+  })
+
+  it("keeps every channel control inside the central mixer instead of the deck panels", () => {
+    useUIStore.setState({ djSurfaceOpen: true })
+    render(<DjControlSurface />)
+
+    const mixer = screen.getByRole("region", { name: "Mixer" })
+    const deckA = screen.getByRole("region", { name: "Deck A" })
+    expect(within(mixer).getByRole("slider", { name: "Deck A gain" })).toBeInTheDocument()
+    expect(within(mixer).getByRole("slider", { name: "Deck B filter" })).toBeInTheDocument()
+    expect(within(mixer).getByRole("slider", { name: "Crossfader" })).toBeInTheDocument()
+    expect(within(deckA).queryByRole("slider", { name: "Deck A gain" })).not.toBeInTheDocument()
   })
 })

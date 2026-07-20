@@ -3,6 +3,24 @@ import { describe, expect, it, vi } from "vitest"
 import DjKnob from "./DjKnob"
 
 describe("DjKnob", () => {
+  it("renders the value arc from minimum to the current unipolar value", () => {
+    render(<DjKnob label="Deck A gain" value={0.25} />)
+
+    expect(screen.getByTestId("knob-value-arc")).toHaveStyle({
+      "--knob-arc-start": "0deg",
+      "--knob-arc-end": "67.5deg",
+    })
+  })
+
+  it("renders bipolar values outward from the neutral center", () => {
+    render(<DjKnob label="Deck A filter" value={-0.5} min={-1} max={1} />)
+
+    expect(screen.getByTestId("knob-value-arc")).toHaveStyle({
+      "--knob-arc-start": "67.5deg",
+      "--knob-arc-end": "135deg",
+    })
+  })
+
   it("maps upward drag to a clamped value and commits on release", () => {
     const onChange = vi.fn()
     const onCommit = vi.fn()

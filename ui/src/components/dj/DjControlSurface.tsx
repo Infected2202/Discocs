@@ -76,12 +76,11 @@ interface DeckPanelProps {
   readonly deck: DeckSnapshot
   readonly track: TrackSummary | null
   readonly isProgram: boolean
-  readonly mixer: ReturnType<typeof usePlaybackEngineSnapshot>["mixer"]
   readonly onToggle: () => void
   readonly onHandover: () => void
 }
 
-function DeckPanel({ deck, track, isProgram, mixer, onToggle, onHandover }: DeckPanelProps) {
+function DeckPanel({ deck, track, isProgram, onToggle, onHandover }: DeckPanelProps) {
   const isPlaying = deck.transport === "playing"
   const canPlay = deck.trackId !== null && deck.preparation !== "loading" && deck.preparation !== "unavailable"
   const canHandover = !isProgram && deck.preparation === "ready"
@@ -139,31 +138,7 @@ function DeckPanel({ deck, track, isProgram, mixer, onToggle, onHandover }: Deck
             <SkipForward size={14} /> PROGRAM
           </button>
         </div>
-        <div className={styles.deckMixerStrip}>
-          <DjKnob
-            label={`Deck ${deck.id} gain`}
-            value={mixer.trims[deck.id]}
-            defaultValue={0.5}
-            onChange={(value) => playerPlayback.setDeckTrim(deck.id, value)}
-          />
-          {(["high", "mid", "low"] as EqBand[]).map((band) => (
-            <DjKnob
-              key={band}
-              label={`Deck ${deck.id} ${band}`}
-              value={mixer.eq[deck.id][band]}
-              defaultValue={0.8}
-              onChange={(value) => playerPlayback.setDeckEq(deck.id, band, value)}
-            />
-          ))}
-          <DjKnob
-            label={`Deck ${deck.id} filter`}
-            value={mixer.filters[deck.id]}
-            min={-1}
-            max={1}
-            defaultValue={0}
-            onChange={(value) => playerPlayback.setDeckFilter(deck.id, value)}
-          />
-        </div>
+        <div className={styles.deckControlArea} aria-hidden="true" />
       </div>
     </section>
   )
@@ -174,6 +149,54 @@ function LevelMeter({ value, label }: { readonly value: number; readonly label: 
     <meter className={styles.meter} aria-label={label} min={0} max={1} value={value}>
       <span style={{ height: `${Math.min(1, Math.max(0, value)) * 100}%` }} />
     </meter>
+  )
+}
+
+interface MixerChannelProps {
+  readonly deck: DeckId
+  readonly mixer: ReturnType<typeof usePlaybackEngineSnapshot>["mixer"]
+}
+
+function MixerChannel({ deck, mixer }: MixerChannelProps) {
+  return (
+    <section className={styles.channel} aria-label={`Deck ${deck} mixer channel`}>
+      <strong className={styles.channelLabel}>{deck}</strong>
+      <div className={styles.channelBody}>
+        <div className={styles.channelKnobs}>
+          <DjKnob
+            label={`Deck ${deck} gain`}
+            value={mixer.trims[deck]}
+            defaultValue={0.5}
+            onChange={(value) => playerPlayback.setDeckTrim(deck, value)}
+          />
+          {(["high", "mid", "low"] as EqBand[]).map((band) => (
+            <DjKnob
+              key={band}
+              label={`Deck ${deck} ${band}`}
+              value={mixer.eq[deck][band]}
+              defaultValue={0.8}
+              onChange={(value) => playerPlayback.setDeckEq(deck, band, value)}
+            />
+          ))}
+          <DjKnob
+            label={`Deck ${deck} filter`}
+            value={mixer.filters[deck]}
+            min={-1}
+            max={1}
+            defaultValue={0}
+            onChange={(value) => playerPlayback.setDeckFilter(deck, value)}
+          />
+        </div>
+        <div className={styles.channelOutput}>
+          <LevelMeter value={mixer.meters[deck]} label={`Deck ${deck} output level`} />
+          <DjFader
+            label={`Deck ${deck} channel`}
+            value={mixer.channelFaders[deck]}
+            onChange={(value) => playerPlayback.setDeckChannelFader(deck, value)}
+          />
+        </div>
+      </div>
+    </section>
   )
 }
 
@@ -266,7 +289,6 @@ export default function DjControlSurface() {
             deck={snapshot.decks.A}
             track={tracks.A}
             isProgram={snapshot.programDeck === "A"}
-            mixer={snapshot.mixer}
             onToggle={() => runPlayerCommand(() => toggleDeck("A"))}
             onHandover={() => runPlayerCommand(skipNext)}
           />
@@ -274,15 +296,7 @@ export default function DjControlSurface() {
           <section className={styles.mixerPanel} aria-label="Mixer">
             <div className={styles.mixerChannels}>
               {deckIds.map((deck) => (
-                <div key={deck} className={styles.channel}>
-                  <span>{deck}</span>
-                  <LevelMeter value={snapshot.mixer.meters[deck]} label={`Deck ${deck} output level`} />
-                  <DjFader
-                    label={`Deck ${deck} channel`}
-                    value={snapshot.mixer.channelFaders[deck]}
-                    onChange={(value) => playerPlayback.setDeckChannelFader(deck, value)}
-                  />
-                </div>
+                <MixerChannel key={deck} deck={deck} mixer={snapshot.mixer} />
               ))}
             </div>
             <DjFader
@@ -299,7 +313,6 @@ export default function DjControlSurface() {
             deck={snapshot.decks.B}
             track={tracks.B}
             isProgram={snapshot.programDeck === "B"}
-            mixer={snapshot.mixer}
             onToggle={() => runPlayerCommand(() => toggleDeck("B"))}
             onHandover={() => runPlayerCommand(skipNext)}
           />

@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent, type PointerEvent } from "react"
+import { useRef, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react"
 import { cn } from "@/lib/utils"
 import styles from "./DjControlSurface.module.css"
 
@@ -13,6 +13,12 @@ interface DjKnobProps {
   readonly onChange?: (value: number) => void
   readonly onCommit?: (value: number) => void
 }
+
+interface KnobArcStyle extends CSSProperties {
+  "--knob-arc-start": string
+  "--knob-arc-end": string
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
@@ -32,6 +38,13 @@ export default function DjKnob({
   const span = max - min
   const normalized = span === 0 ? 0 : (clamp(value, min, max) - min) / span
   const rotation = -135 + normalized * 270
+  const neutral = min < 0 && max > 0 ? (0 - min) / span : 0
+  const arcStart = Math.min(normalized, neutral) * 270
+  const arcEnd = Math.max(normalized, neutral) * 270
+  const arcStyle: KnobArcStyle = {
+    "--knob-arc-start": `${arcStart}deg`,
+    "--knob-arc-end": `${arcEnd}deg`,
+  }
 
   function update(next: number, commit = false) {
     const clamped = clamp(next, min, max)
@@ -96,7 +109,7 @@ export default function DjKnob({
         onDoubleClick={() => update(defaultValue, true)}
         onKeyDown={handleKeyDown}
       >
-        <span className={styles.knobArc} />
+        <span className={styles.knobArc} style={arcStyle} data-testid="knob-value-arc" />
         <span className={styles.knobCap} style={{ transform: `rotate(${rotation}deg)` }}>
           <span className={styles.knobMark} />
         </span>

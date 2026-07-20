@@ -105,7 +105,7 @@
 .waveformMessage span { max-width: 60%; overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .waveformMessage small { color: rgb(255 255 255 / 48%); font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
 
-.decksAndMixer { display: grid; grid-template-columns: minmax(0, 1fr) 170px minmax(0, 1fr); min-height: 0; overflow: hidden; }
+.decksAndMixer { display: grid; grid-template-columns: minmax(0, 1fr) 260px minmax(0, 1fr); min-height: 0; overflow: hidden; }
 .deckPanel { display: grid; grid-template-rows: 68px 33px minmax(0, 1fr); min-width: 0; background: rgb(0 0 0 / 8%); }
 .deckHeader { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 .deckArtwork { width: 47px; height: 47px; border-radius: 5px; object-fit: cover; }
@@ -132,12 +132,21 @@
 .secondaryButton { padding: 0 10px; color: var(--muted-foreground); background: var(--muted); }
 .handoverButton { display: flex; align-items: center; gap: 4px; margin-left: auto; padding: 0 9px; border: 1px solid color-mix(in srgb, var(--track-accent) 30%, var(--border)); color: var(--foreground); background: color-mix(in srgb, var(--track-accent) 10%, transparent); }
 .playButton:disabled, .secondaryButton:disabled, .handoverButton:disabled { opacity: .32; }
-.deckMixerStrip { display: flex; align-items: center; justify-content: space-evenly; gap: 3px; min-height: 0; padding: 5px 8px; }
+.deckControlArea { min-height: 0; background: linear-gradient(180deg, rgb(255 255 255 / 1%), transparent 35%); }
 
-.mixerPanel { display: grid; grid-template-rows: 1fr 52px; min-height: 0; padding: 9px 8px 4px; border-inline: 1px solid var(--border); background: rgb(0 0 0 / 24%); }
-.mixerChannels { display: flex; justify-content: space-evenly; min-height: 0; }
-.channel { display: grid; grid-template-columns: 12px 8px 42px; align-items: center; justify-content: center; gap: 4px; min-height: 0; }
-.channel > span { color: var(--track-accent); font-size: 10px; font-weight: 800; }
+.mixerPanel { display: grid; grid-template-rows: minmax(0, 1fr) 44px; min-height: 0; padding: 5px 8px 3px; border-inline: 1px solid var(--border); background: rgb(0 0 0 / 30%); }
+.mixerChannels { display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
+.channel { display: grid; grid-template-rows: 17px minmax(0, 1fr); min-width: 0; min-height: 0; border-right: 1px solid var(--border); }
+.channel:last-child { border-right: 0; }
+.channelLabel { color: color-mix(in srgb, var(--track-accent) 78%, white); font-size: 11px; text-align: center; }
+.channelBody { display: grid; grid-template-columns: minmax(56px, 1fr) 45px; min-height: 0; }
+.channelKnobs { display: flex; flex-direction: column; align-items: center; justify-content: space-evenly; min-height: 0; }
+.channelOutput { display: flex; align-items: center; justify-content: center; gap: 2px; min-height: 0; }
+.mixerPanel .knob { width: 28px; height: 28px; }
+.mixerPanel .knobCap { inset: 4px; }
+.mixerPanel .controlLabel { max-width: 54px; font-size: 6px; }
+.mixerPanel .fader { height: 92px; }
+.mixerPanel .faderHorizontal { width: 210px; height: 25px; }
 .meter { position: relative; width: 6px; height: 44px; overflow: hidden; border: 0; border-radius: 999px; appearance: none; background: rgb(255 255 255 / 8%); }
 .meter::-webkit-meter-bar { border: 0; background: transparent; }
 .meter::-webkit-meter-optimum-value { background: linear-gradient(to top, #2fe69b 0 70%, #ffd65a 70% 88%, #ff526b 88%); }
@@ -147,17 +156,44 @@
 .knobGroup, .faderGroup { display: grid; justify-items: center; gap: 3px; }
 .knob { position: relative; width: 36px; height: 36px; border-radius: 50%; touch-action: none; cursor: ns-resize; }
 .knob:disabled { cursor: default; opacity: .35; }
-.knobArc { position: absolute; inset: 0; border: 2px solid rgb(255 255 255 / 12%); border-top-color: var(--track-accent); border-radius: 50%; transform: rotate(-45deg); }
+.knobArc {
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgb(255 255 255 / 12%);
+  border-radius: 50%;
+  background: conic-gradient(
+    from -135deg,
+    transparent 0 var(--knob-arc-start),
+    var(--track-accent) var(--knob-arc-start) var(--knob-arc-end),
+    transparent var(--knob-arc-end) 360deg
+  );
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--track-accent) 48%, transparent));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+}
 .knobCap { position: absolute; inset: 5px; border: 1px solid rgb(255 255 255 / 12%); border-radius: 50%; background: radial-gradient(circle at 38% 32%, #3c4247, #171a1d 68%); box-shadow: 0 3px 7px rgb(0 0 0 / 35%); }
 .knobMark { position: absolute; top: 2px; left: 50%; width: 2px; height: 8px; border-radius: 2px; background: var(--track-accent); transform: translateX(-50%); }
 .controlLabel { max-width: 58px; overflow: hidden; color: var(--muted-foreground); font-size: 7px; font-weight: 700; letter-spacing: .06em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
-.fader { position: relative; width: 30px; height: 96px; touch-action: none; cursor: ns-resize; }
-.faderTrack { position: absolute; top: 3px; bottom: 3px; left: 50%; width: 3px; border-radius: 3px; background: rgb(255 255 255 / 14%); transform: translateX(-50%); }
-.faderThumb { position: absolute; left: 50%; width: 22px; height: 9px; border: 1px solid rgb(255 255 255 / 24%); border-radius: 2px; background: #34393d; box-shadow: 0 2px 4px rgb(0 0 0 / 45%); transform: translate(-50%, 50%); }
+.fader { position: relative; width: 42px; height: 96px; touch-action: none; cursor: ns-resize; }
+.faderScale {
+  position: absolute;
+  inset: 4px 2px;
+  opacity: .45;
+  background: repeating-linear-gradient(to bottom, rgb(255 255 255 / 48%) 0 1px, transparent 1px 11px);
+  mask: linear-gradient(90deg, #000 0 7px, transparent 7px calc(100% - 7px), #000 calc(100% - 7px));
+}
+.faderTrack { position: absolute; top: 3px; bottom: 3px; left: 50%; width: 5px; border: 1px solid rgb(255 255 255 / 8%); border-radius: 2px; background: #0b0d0f; box-shadow: inset 0 0 3px black, 1px 0 rgb(255 255 255 / 5%); transform: translateX(-50%); }
+.faderThumb { position: absolute; left: 50%; display: grid; place-items: center; width: 32px; height: 15px; border: 1px solid rgb(255 255 255 / 27%); border-radius: 3px; background: linear-gradient(#50575c, #292e32 48%, #1a1d20 52%, #3b4145); box-shadow: 0 3px 6px rgb(0 0 0 / 60%); transform: translate(-50%, 50%); }
+.faderThumb > span { width: 22px; height: 3px; border-block: 1px solid rgb(0 0 0 / 65%); background: color-mix(in srgb, var(--track-accent) 72%, white 8%); box-shadow: 0 1px rgb(255 255 255 / 18%); }
 .faderGroupHorizontal { align-self: end; }
-.faderHorizontal { width: 132px; height: 25px; cursor: ew-resize; }
+.faderHorizontal { width: 132px; height: 32px; cursor: ew-resize; }
+.faderHorizontal .faderScale {
+  inset: 3px 4px;
+  background: repeating-linear-gradient(to right, rgb(255 255 255 / 48%) 0 1px, transparent 1px 17px);
+  mask: linear-gradient(#000 0 7px, transparent 7px calc(100% - 7px), #000 calc(100% - 7px));
+}
 .faderHorizontal .faderTrack { top: 50%; right: 3px; bottom: auto; left: 3px; width: auto; height: 3px; transform: translateY(-50%); }
-.faderHorizontal .faderThumb { top: 50%; left: 50%; width: 10px; height: 20px; transform: translate(-50%, -50%); }
+.faderHorizontal .faderThumb { top: 50%; left: 50%; width: 15px; height: 27px; transform: translate(-50%, -50%); }
+.faderHorizontal .faderThumb > span { width: 3px; height: 18px; border: 0; border-inline: 1px solid rgb(0 0 0 / 65%); }
 
 .queuePanel { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .queuePanel > header { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 42px; padding: 6px 14px; border-bottom: 1px solid var(--border); background: rgb(0 0 0 / 12%); }
@@ -184,7 +220,11 @@
   .transportControls { padding: 3px 6px; }
   .playButton, .secondaryButton, .handoverButton { height: 26px; }
   .fader { height: 58px; }
-  .mixerPanel { grid-template-rows: 1fr 40px; padding-top: 4px; }
+  .mixerPanel { grid-template-rows: 1fr 35px; padding-top: 3px; }
+  .mixerPanel .knob { width: 22px; height: 22px; }
+  .mixerPanel .knobCap { inset: 3px; }
+  .mixerPanel .fader { height: 58px; }
+  .mixerPanel .faderHorizontal { height: 22px; }
   .meter { height: 34px; }
   .queuePanel > header { min-height: 32px; padding-block: 3px; }
 }
@@ -193,10 +233,9 @@
   .workspace { min-width: 680px; }
   .topPanel { grid-template-columns: 1fr 250px 1fr; }
   .effectRack .sectionEyebrow { display: none; }
-  .decksAndMixer { grid-template-columns: minmax(0, 1fr) 138px minmax(0, 1fr); }
+  .decksAndMixer { grid-template-columns: minmax(0, 1fr) 220px minmax(0, 1fr); }
   .secondaryButton { display: none; }
-  .deckMixerStrip { padding-inline: 2px; }
-  .faderHorizontal { width: 108px; }
+  .mixerPanel .faderHorizontal { width: 178px; }
 }
 
 @media (max-width: 679px) and (orientation: portrait) {
