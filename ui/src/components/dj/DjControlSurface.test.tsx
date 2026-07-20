@@ -13,6 +13,8 @@ const playback = vi.hoisted(() => ({
   setDeckChannelFader: vi.fn(),
   setCrossfader: vi.fn(),
   setMasterGain: vi.fn(),
+  setVolume: vi.fn(),
+  setMuted: vi.fn(),
   load: vi.fn(),
   play: vi.fn(),
   pause: vi.fn(),
