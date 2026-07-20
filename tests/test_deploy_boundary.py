@@ -221,28 +221,27 @@ def test_independent_checks_run_in_one_parallel_stage():
     pipeline = JENKINSFILE.read_text(encoding="utf-8")
 
     checks = pipeline.index("stage('Checks')")
-    analyze = pipeline.index("stage('Analyze & Build')")
-    scan = pipeline.index("stage('Security Scan')")
-    assert checks < analyze < scan
+    build = pipeline.index("stage('Build & Push')")
+    assert checks < build
 
     # Тесты трёх частей и скан зависимостей не связаны друг с другом: если их
     # снова растащить по последовательным стадиям, стадия начнёт стоить сумму,
     # а не максимум.
-    assert pipeline.index("parallel {", checks) < analyze
+    assert pipeline.index("parallel {", checks) < build
     for branch in (
         "stage('Tests: backend')",
         "stage('Tests: bot')",
         "stage('Tests: ui')",
         "stage('Deps CVE')",
     ):
-        assert checks < pipeline.index(branch) < analyze
+        assert checks < pipeline.index(branch) < build
 
     # trivy fs читает только lock-файлы — ждать сборки образов ему незачем.
-    assert checks < pipeline.index("deploy/ci/Dockerfile.trivy-fs") < analyze
+    assert checks < pipeline.index("deploy/ci/Dockerfile.trivy-fs") < build
 
     # failFast обрывал бы соседние ветки на первом падении, и junit/coverage
     # почти доехавших наборов снова терялись бы (см. билд #53).
-    assert "failFast" not in pipeline[checks:analyze]
+    assert "failFast" not in pipeline[checks:build]
 
     # Каждая ветка публикует свой junit сама — общий `junit 'junit-*.xml'`
     # после параллельной стадии подхватил бы отчёты только полностью успешного прогона.
@@ -250,16 +249,22 @@ def test_independent_checks_run_in_one_parallel_stage():
         assert f"junit '{report}'" in pipeline
 
 
-def test_sonar_runs_alongside_image_build():
+def test_sonar_runs_alongside_the_image_scan():
     pipeline = JENKINSFILE.read_text(encoding="utf-8")
 
-    analyze = pipeline.index("stage('Analyze & Build')")
-    scan = pipeline.index("stage('Security Scan')")
+    build = pipeline.index("stage('Build & Push')")
+    analyze = pipeline.index("stage('Analyze & Scan')")
 
-    # Сканеру нужны только coverage-отчёты из Checks, сборке — только исходники.
-    assert pipeline.index("parallel {", analyze) < scan
-    for branch in ("stage('Sonar')", "stage('Build & Push')", "stage('Docker Login')"):
-        assert analyze < pipeline.index(branch) < scan
+    # Сборка идёт отдельной стадией и строго после проверок: Trivy нужны
+    # готовые образы. Docker Login — внутри неё.
+    assert pipeline.index("stage('Checks')") < build < analyze
+    assert build < pipeline.index("stage('Docker Login')") < analyze
+
+    # Sonar'у нужен только coverage из Checks, Trivy — образы из Build & Push,
+    # друг от друга они не зависят. Раньше Sonar шёл параллельно сборке, но
+    # после её ускорения (131 -> 22.8с, билд #248) прятать его стало не под чем.
+    assert pipeline.index("parallel {", analyze) < pipeline.index("stage('Sonar')")
+    assert analyze < pipeline.index("stage('Security Scan')")
 
 
 def test_image_scans_share_one_vulnerability_db_refresh():

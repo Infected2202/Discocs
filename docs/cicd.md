@@ -19,14 +19,16 @@ push в Gitea ──webhook──> Jenkins
    │                 каждый тестовый образ — BuildKit + --mount=type=cache;
    │                 coverage- и junit-отчёты достаются docker cp'ом, junit
    │                 публикуется в своей же ветке (Test Result Trend)
-   └─ Analyze&Build 2 ветки parallel (сборка от Sonar не зависит и наоборот):
-   │                 Sonar      — отчёт в SonarQube, без Quality Gate (билд не блокируется)
-   │                 Build&Push — Docker Login, затем сборка backend/frontend/bot
-   │                              (ещё 3 вложенные ветки) → Nexus (docker-dev @ :5000),
-   │                              теги: :<git-sha> (всегда) + :latest (только с main)
-   └─ Security Scan одно обновление БД Trivy, затем 3 ветки parallel по образам
-   │                 с отдельным in-memory scan cache:
-   │                 полный отчёт → HTML-вкладка (publishHTML) → блокирующий гейт
+   └─ Build&Push    Docker Login, затем сборка backend/frontend/bot — 3 ветки
+   │                 parallel → Nexus (docker-dev @ :5000),
+   │                 теги: :<git-sha> (всегда) + :latest (только с main)
+   └─ Analyze&Scan  2 ветки parallel (Sonar'у нужен coverage из Checks,
+   │                 Trivy — образы из Build&Push; друг от друга не зависят):
+   │                 Sonar         — отчёт в SonarQube, без Quality Gate (билд не блокируется)
+   │                 Security Scan — одно обновление БД Trivy, затем 3 ветки
+   │                                 parallel по образам с отдельным in-memory
+   │                                 scan cache: отчёт → HTML-вкладка
+   │                                 (publishHTML) → блокирующий гейт
    └─ Deploy        [post/success, только main] по SSH на TARGET_SERVER:
                        scp compose в TARGET_DIR → docker compose pull && up -d --force-recreate
                        backend и frontend должны пройти healthcheck;
@@ -173,8 +175,11 @@ frontend поднимаются без него. Образ бота при эт
 
 ## SonarQube
 
-Стадия `Sonar` в `Jenkinsfile` — ветка параллельной стадии `Analyze & Build`
-(вторая ветка — `Build & Push`), идёт после `Checks`, откуда берёт coverage. Гоняет
+Стадия `Sonar` в `Jenkinsfile` — ветка параллельной стадии `Analyze & Scan`
+(вторая ветка — `Security Scan`). Coverage она берёт из `Checks`, а с Trivy
+не пересекается ничем, поэтому идёт с ним бок о бок. Раньше Sonar был
+параллелен сборке образов, но после её ускорения (131 → 22.8с на билде #248)
+он стал держать стадию один — 52с из 52с. Гоняет
 `sonar-scanner` (см. `sonar-project.properties`) против сервера
 `http://192.168.1.41:9077` под токеном `sonar_token`. Это только отчёт —
 `waitForQualityGate` не используется, результат анализа не может завалить
