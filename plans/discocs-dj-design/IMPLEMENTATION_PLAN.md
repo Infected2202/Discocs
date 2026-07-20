@@ -171,7 +171,7 @@ Push once the slice is complete, then inspect Jenkins. A failed pipeline is diag
 
 ## 4. Phase 2 — Deck B, mixer and canonical handover
 
-**Implementation:** complete; Jenkins verification pending.
+**Implementation:** complete; Jenkins verified in build #268.
 
 ### Backend work
 

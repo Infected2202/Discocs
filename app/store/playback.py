@@ -115,6 +115,7 @@ logger = logging.getLogger(__name__)
 INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
 _TOUCH_PLAYBACK_SESSION = "UPDATE playback_sessions SET updated_at = ? WHERE id = ?"
+_QUEUE_ITEM_IN_SESSION_SQL = "SELECT * FROM queue_items WHERE id = ? AND session_id = ?"
 
 
 @dataclass(frozen=True)
@@ -470,10 +471,7 @@ class PlaybackStoreMixin:
                 _TOUCH_PLAYBACK_SESSION,
                 (now, session_id),
             )
-            row = conn.execute(
-                "SELECT * FROM queue_items WHERE id = ? AND session_id = ?",
-                (queue_item_id, session_id),
-            ).fetchone()
+            row = conn.execute(_QUEUE_ITEM_IN_SESSION_SQL, (queue_item_id, session_id)).fetchone()
         return row_to_queue_item(row) if row else None
 
     def move_queue_item(self, session_id: str, queue_item_id: str, position: int) -> list[QueueItem]:
@@ -527,10 +525,7 @@ class PlaybackStoreMixin:
             return None
         now = utc_now()
         with self.connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM queue_items WHERE id = ? AND session_id = ?",
-                (queue_item_id, session_id),
-            ).fetchone()
+            row = conn.execute(_QUEUE_ITEM_IN_SESSION_SQL, (queue_item_id, session_id)).fetchone()
             if row is None:
                 return None
             item = row_to_queue_item(row)
@@ -583,10 +578,7 @@ class PlaybackStoreMixin:
                     or duplicate["queue_item_id"] != queue_item_id
                 ):
                     raise ValueError("client_handover_id was already used for another command")
-                item_row = conn.execute(
-                    "SELECT * FROM queue_items WHERE id = ? AND session_id = ?",
-                    (queue_item_id, session_id),
-                ).fetchone()
+                item_row = conn.execute(_QUEUE_ITEM_IN_SESSION_SQL, (queue_item_id, session_id)).fetchone()
                 return (row_to_queue_item(item_row) if item_row else None, True)
 
             item_row = conn.execute(
@@ -636,10 +628,7 @@ class PlaybackStoreMixin:
                     _json_dumps({"previous_queue_item_id": previous_queue_item_id}),
                 ),
             )
-            refreshed = conn.execute(
-                "SELECT * FROM queue_items WHERE id = ? AND session_id = ?",
-                (queue_item_id, session_id),
-            ).fetchone()
+            refreshed = conn.execute(_QUEUE_ITEM_IN_SESSION_SQL, (queue_item_id, session_id)).fetchone()
         return (row_to_queue_item(refreshed) if refreshed else None, False)
 
     def record_playback_event(self, event: PlaybackEventCreate) -> PlaybackEventResult:

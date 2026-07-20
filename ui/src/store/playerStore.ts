@@ -34,6 +34,12 @@ import type { PlaybackProfile } from "@/api/settings"
 
 const STORAGE_KEY = "discocs.playerState.v1"
 const REFILL_TRIGGER_EVENTS = new Set(["completed", "skipped", "liked", "disliked"])
+let handoverSequence = 0
+
+function createClientHandoverId(sessionId: string, queueItemId: string): string {
+  handoverSequence += 1
+  return `handover-${sessionId}-${queueItemId}-${Date.now().toString(36)}-${handoverSequence}`
+}
 
 function loadPersistedVolume(): { volume: number; muted: boolean } {
   try {
@@ -276,6 +282,56 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     scheduleNextPrefetch()
   }
 
+  async function retryPendingHandover() {
+    try {
+      await reconcilePendingHandover()
+    } catch (err) {
+      set({ error: `Handover pending: ${(err as Error).message}` })
+    }
+  }
+
+  async function handoverToPrepared(next: QueueItem, session: PlaybackSession) {
+    const clientHandoverId = createClientHandoverId(session.id, next.id)
+    try {
+      await postEvent({
+        session_id: session.id,
+        queue_item_id: next.id,
+        track_id: next.track_id,
+        event_type: "incoming_started",
+        client_event_id: `incoming-${clientHandoverId}`,
+      })
+    } catch {
+      // Semantic telemetry is best-effort; canonical handover is not.
+    }
+    addCurrentToHistory()
+    try {
+      await audioEngine.handoverPrepared(clientHandoverId)
+      fullyBufferedSource = { trackId: next.track_id, profileKey: get().playbackProfile.key }
+      set({
+        currentTrackId: next.track_id,
+        currentQueueItemId: next.id,
+        currentTrack: next.track ?? null,
+        currentTime: 0,
+        bufferedRanges: [{ start: 0, end: 1 }],
+      })
+      pendingHandover = { sessionId: session.id, queueItemId: next.id, clientHandoverId }
+      await reconcilePendingHandover()
+      if (next.track) {
+        audioEngine.setMediaSession(next.track, hiresArtworkUrl(next.track.artwork?.url, 512))
+      }
+    } catch (err) {
+      set({ error: `Handover pending: ${(err as Error).message}` })
+    }
+  }
+
+  async function advanceToNext(next: QueueItem, session: PlaybackSession) {
+    if (audioEngine.hasPrepared(next.track_id, next.id)) {
+      await handoverToPrepared(next, session)
+      return
+    }
+    await get().jumpToQueueItem(next.id)
+  }
+
   // Shared start-playback step for both session-create (playSource) and
   // pre-built-envelope (playFromEnvelope) flows: begin at the preferred track
   // if it's in the queue, else the session's current item, else the first item.
@@ -509,11 +565,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       if (!queue || !session) return
 
       if (pendingHandover) {
-        try {
-          await reconcilePendingHandover()
-        } catch (err) {
-          set({ error: `Handover pending: ${(err as Error).message}` })
-        }
+        await retryPendingHandover()
         return
       }
 
@@ -525,48 +577,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       const items = queue.items
       const idx = items.findIndex((i) => i.id === currentQueueItemId)
       const next: QueueItem | undefined = items[idx + 1]
-      if (next) {
-        if (audioEngine.hasPrepared(next.track_id, next.id)) {
-          const clientHandoverId = globalThis.crypto?.randomUUID?.()
-            ?? `handover-${Date.now()}-${Math.random().toString(16).slice(2)}`
-          try {
-            await postEvent({
-              session_id: session.id,
-              queue_item_id: next.id,
-              track_id: next.track_id,
-              event_type: "incoming_started",
-              client_event_id: `incoming-${clientHandoverId}`,
-            })
-          } catch {
-            // Semantic telemetry is best-effort; canonical handover is not.
-          }
-          addCurrentToHistory()
-          try {
-            await audioEngine.handoverPrepared(clientHandoverId)
-            fullyBufferedSource = { trackId: next.track_id, profileKey: get().playbackProfile.key }
-            set({
-              currentTrackId: next.track_id,
-              currentQueueItemId: next.id,
-              currentTrack: next.track ?? null,
-              currentTime: 0,
-              bufferedRanges: [{ start: 0, end: 1 }],
-            })
-            pendingHandover = {
-              sessionId: session.id,
-              queueItemId: next.id,
-              clientHandoverId,
-            }
-            await reconcilePendingHandover()
-            if (next.track) {
-              audioEngine.setMediaSession(next.track, hiresArtworkUrl(next.track.artwork?.url, 512))
-            }
-          } catch (err) {
-            set({ error: `Handover pending: ${(err as Error).message}` })
-          }
-        } else {
-          await get().jumpToQueueItem(next.id)
-        }
-      }
+      if (next) await advanceToNext(next, session)
       scheduleAutoplayRefill("skipped")
     },
 

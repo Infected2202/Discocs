@@ -34,15 +34,15 @@ export class PlaybackEngine {
   private graph: MixerGraph | null = null
   private decks: Record<DeckId, DeckRuntime> | null = null
   private externalNodes: Record<DeckId, MediaElementAudioSourceNode | null> = { A: null, B: null }
-  private generations: Record<DeckId, number> = { A: 0, B: 0 }
+  private readonly generations: Record<DeckId, number> = { A: 0, B: 0 }
   private identities: Record<DeckId, { trackId: number | null; queueItemId: string | null }> = {
     A: { trackId: null, queueItemId: null },
     B: { trackId: null, queueItemId: null },
   }
   private roles: DeckRoleState = initialDeckRoleState()
   private revision = 0
-  private listeners = new Set<() => void>()
-  private mixer = {
+  private readonly listeners = new Set<() => void>()
+  private readonly mixer = {
     crossfader: -1,
     masterGain: 1,
     channelFaders: { A: 1, B: 1 },
