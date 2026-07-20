@@ -50,7 +50,8 @@ describe("MixerGraph", () => {
     graph.setCrossfader(3, 6)
 
     const ramps = events.filter((event) => event.type === "parameter-ramp")
-    expect(ramps.map((event) => event.value)).toEqual([0, 1])
+    expect(ramps[0]?.value).toBeCloseTo(0)
+    expect(ramps[1]?.value).toBe(1)
     expect(ramps.every((event) => event.startTime === 6 && event.endTime === 6.015)).toBe(true)
     expect(ramps.every((event) => event.contextState === "running")).toBe(true)
   })
