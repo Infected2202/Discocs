@@ -150,9 +150,9 @@ function typedView(descriptor: TimelineArrayDescriptor, payload: ArrayBuffer): I
 
 function validateRhythmPayload(beats: Float32Array, localTempo: Float32Array, durationSeconds: number): void {
   for (let index = 0; index < beats.length; index += 1) {
-    const beat = beats[index]!
-    const tempo = localTempo[index]!
-    const ordered = index === 0 || beat >= beats[index - 1]!
+    const beat = beats[index]
+    const tempo = localTempo[index]
+    const ordered = index === 0 || beat >= beats[index - 1]
     if (!Number.isFinite(beat) || beat < 0 || beat > durationSeconds || !ordered || !Number.isFinite(tempo) || tempo <= 0) {
       throw new TimelineDecodeError("invalid rhythm payload")
     }

@@ -23,7 +23,7 @@ function firstEventAtOrAfter(events: Float32Array, seconds: number): number {
   let high = events.length
   while (low < high) {
     const middle = (low + high) >>> 1
-    if (events[middle]! < seconds) low = middle + 1
+    if (events[middle] < seconds) low = middle + 1
     else high = middle
   }
   return low
@@ -127,7 +127,7 @@ export class PixiWaveformRenderer {
     graphics.clear()
     const beats = timeline.beats ?? EMPTY_EVENTS
     for (let index = firstEventAtOrAfter(beats, viewport.startSeconds); index < beats.length; index += 1) {
-      const beat = beats[index]!
+      const beat = beats[index]
       if (beat > viewport.endSeconds) break
       const x = ((beat - viewport.startSeconds) / visibleSeconds) * width
       graphics.moveTo(x, 0).lineTo(x, height)
