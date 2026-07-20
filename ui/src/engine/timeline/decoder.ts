@@ -51,11 +51,12 @@ function parseDescriptor(value: unknown, payloadLength: number): TimelineArrayDe
 
 function parseLevel(value: unknown, payloadLength: number): TimelineWaveformLevelManifest {
   if (!isRecord(value) || !isRecord(value.arrays)) throw new TimelineDecodeError("invalid waveform level")
+  const arrayValues = value.arrays
   if (!Number.isInteger(value.level) || !Number.isInteger(value.bucket_samples) || !Number.isInteger(value.bucket_count)) {
     throw new TimelineDecodeError("invalid waveform level dimensions")
   }
   const arrays = Object.fromEntries(
-    waveformFields.map((field) => [field, parseDescriptor(value.arrays[field], payloadLength)]),
+    waveformFields.map((field) => [field, parseDescriptor(arrayValues[field], payloadLength)]),
   ) as unknown as TimelineWaveformLevelManifest["arrays"]
   if (waveformFields.some((field) => arrays[field].length !== value.bucket_count)) {
     throw new TimelineDecodeError("waveform array length mismatch")
