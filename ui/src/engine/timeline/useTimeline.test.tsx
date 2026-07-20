@@ -1,5 +1,5 @@
 import { renderHook, waitFor } from "@testing-library/react"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { act, beforeEach, describe, expect, it, vi } from "vitest"
 import type { TimelineLoadState } from "@/api/timeline"
 
 const loadTimeline = vi.hoisted(() => vi.fn())
@@ -35,5 +35,23 @@ describe("useTimeline", () => {
     resolve({ status: "failed", message: "late" })
     await Promise.resolve()
     expect(result.current.status).toBe("missing")
+  })
+
+  it("polls queued analysis until the admin job publishes a ready artifact", async () => {
+    vi.useFakeTimers()
+    const ready: TimelineLoadState = { status: "ready", timeline: { durationSeconds: 1, levels: [] } }
+    loadTimeline
+      .mockResolvedValueOnce({ status: "queued" } satisfies TimelineLoadState)
+      .mockResolvedValueOnce(ready)
+    const { result, unmount } = renderHook(() => useTimeline(11))
+    await act(async () => { await Promise.resolve() })
+    expect(result.current.status).toBe("queued")
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+
+    expect(result.current).toBe(ready)
+    expect(loadTimeline).toHaveBeenCalledTimes(2)
+    unmount()
+    vi.useRealTimers()
   })
 })

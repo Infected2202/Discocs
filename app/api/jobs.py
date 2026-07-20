@@ -70,6 +70,7 @@ from app.state import (
     STATS_CACHE_LOCK,
     STATS_CACHE_TTL_SECONDS,
 )
+from app.timeline.codec import EXTRACTOR as TIMELINE_EXTRACTOR, PACK_NAME as TIMELINE_PACK_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,7 @@ def stats(model: str = "discogs_multi") -> dict[str, object]:
     audio_started = perf_counter()
     audio_status = audio_feature_status(store)
     logger.info("Stats audio_feature_status seconds=%.3f", perf_counter() - audio_started)
+    timeline_status = store.timeline_artifact_counts(TIMELINE_PACK_NAME, TIMELINE_EXTRACTOR)
     counts_started = perf_counter()
     tracks = store.count_tracks()
     missing_files = store.count_missing_files()
@@ -190,6 +192,11 @@ def stats(model: str = "discogs_multi") -> dict[str, object]:
         "audio_features_complete_tracks": audio_status["complete_tracks"],
         "audio_features_missing_tracks": audio_status["missing_tracks"],
         "audio_features": audio_status,
+        "timeline": {
+            "pack_name": TIMELINE_PACK_NAME,
+            "extractor": TIMELINE_EXTRACTOR,
+            **timeline_status,
+        },
         "release_aggregates": {"ready": agg_ready, "pending": agg_pending},
         "artist_aggregates": {"ready": artist_agg_ready, "pending": artist_agg_pending},
         "model": model,

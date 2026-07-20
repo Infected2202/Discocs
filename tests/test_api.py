@@ -1324,6 +1324,9 @@ def test_test_ui_loads():
     assert "homeSearchQuery" in response.text
     assert "listenerDashboardShelves" in response.text
     assert "/api/v1/dashboard?limit=8" in response.text
+    assert "DJ waveforms" in response.text
+    assert "startAnalyzeTimeline()" in response.text
+    assert '\"/api/v1/jobs/analyze-timeline\"' in response.text
     assert "listenerSearch" in response.text
     assert "/api/v1/search" in response.text
     assert "artistSurface" in response.text
@@ -1541,6 +1544,13 @@ def test_stats_includes_pipeline_fields(tmp_path: Path, monkeypatch):
     assert "head_pack_missing_tracks" in data
     assert "audio_features_complete_tracks" in data
     assert "audio_features_missing_tracks" in data
+    assert data["timeline"] == {
+        "pack_name": "timeline_foundation",
+        "extractor": "timeline_foundation_v1",
+        "ready": 0,
+        "missing": 0,
+        "total": 0,
+    }
     assert "missing_files" in data
     assert "index_status" in data
     assert "index_count" in data

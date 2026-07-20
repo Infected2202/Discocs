@@ -7,6 +7,30 @@ from app.models import utc_now
 
 
 class TimelineStoreMixin:
+    def timeline_artifact_counts(self, pack_name: str, extractor: str) -> dict[str, int]:
+        """Return ready/missing counts for active tracks using exact source identity."""
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    COALESCE(SUM(CASE WHEN
+                        a.track_id IS NOT NULL AND
+                        a.source_path = t.path AND
+                        a.source_mtime = t.mtime AND
+                        a.source_file_size = t.file_size
+                    THEN 1 ELSE 0 END), 0) AS ready
+                FROM tracks t
+                LEFT JOIN track_timeline_artifacts a
+                  ON a.track_id=t.id AND a.pack_name=? AND a.extractor=?
+                WHERE t.missing_at IS NULL
+                """,
+                (pack_name, extractor),
+            ).fetchone()
+        total = int(row["total"])
+        ready = int(row["ready"])
+        return {"ready": ready, "missing": total - ready, "total": total}
+
     def upsert_timeline_artifact(self, metadata: dict[str, object]) -> None:
         with self.connect() as conn:
             conn.execute(

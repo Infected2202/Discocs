@@ -35,3 +35,7 @@ def run_timeline_job(store, settings, tracks, *, job_id: str, reset: bool = Fals
         store.update_progress_job(job_id, done=done, failed=failed, message=f"Waveforms ready {done}, failed {failed}")
     status = "completed" if failed == 0 else "failed"
     store.update_progress_job(job_id, done=done, failed=failed, status=status, message=f"Waveforms ready {done}, failed {failed}", finished=True)
+    # Stats are cached for the private admin dashboard. Import lazily to keep
+    # the background runner independent from API module initialization.
+    from app.api.jobs import clear_stats_cache
+    clear_stats_cache()

@@ -266,6 +266,7 @@ Artifact availability never blocks manual audio transport.
 - add `app/store/timeline.py` and schema initialization;
 - add artifact encoder, atomic publisher and safe cleanup;
 - add manifest, payload, batch status and waveform analysis job endpoints;
+- expose ready/missing counts and explicit waveform job launch in `/admin`;
 - integrate existing worker acquisition for local/Navidrome-backed tracks;
 - implement path + mtime + file-size invalidation.
 
@@ -275,6 +276,8 @@ Artifact availability never blocks manual audio transport.
 - share decoded arrays between overview/detailed views;
 - connect Pixi renderer to both deck snapshots and pointer seek;
 - expose loading/missing/stale/failed states without blocking manual audio.
+- poll only already queued/running jobs so the DJ surface remains a read-only
+  consumer and never triggers analysis itself.
 
 ### Gate
 
@@ -282,12 +285,27 @@ The complete waveform vertical slice works for real queue tracks before adding t
 
 ## 7. Phase 5 — full timeline analysis
 
-- extend the frozen payload descriptors with all required v1 series;
-- add Essentia-backed beat/downbeat/tempo and generic energy/novelty extraction;
-- reuse chunked audio work and avoid duplicate full decodes;
-- add beat/bar/energy/structure overlays;
-- expose admin status/rebuild/storage diagnostics;
-- keep optional activity/stem packs separate.
+- keep timeline extraction offline and start it only through the explicit
+  `/admin` job; the DJ client remains a read-only artifact consumer;
+- refactor the existing `RhythmExtractor2013` boundary so its already computed
+  beat timestamps, confidence and intervals are no longer discarded;
+- project global BPM/confidence into the existing `audio_features_v1` rows and
+  encode beat events plus interval-derived local tempo into the timeline pack;
+- reuse the Phase 4 waveform low/mid/high series instead of computing a second
+  set of frequency-energy curves;
+- add the beat-grid overlay first and validate it on representative library
+  material before making beat-aware transport depend on it;
+- treat downbeats/bar indices as a separately validated follow-up because the
+  current analyzer does not produce them;
+- defer onset, short-term loudness and structural-boundary series until a
+  concrete DJ feature consumes them;
+- expose admin rebuild/storage diagnostics and keep optional activity/stem
+  packs separate.
+
+Existing `audio_features_v1` rows cannot backfill the beat grid: historical
+analysis stored only scalar BPM/confidence and discarded beat timestamps and
+intervals. Existing tracks therefore require an explicit admin timeline
+rebuild after the Phase 5 extractor is introduced.
 
 Integration tests requiring real Essentia are marked `@pytest.mark.integration`; ordinary unit tests use injected small fixtures/fakes.
 

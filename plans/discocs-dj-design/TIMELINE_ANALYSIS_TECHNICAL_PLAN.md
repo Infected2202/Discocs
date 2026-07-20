@@ -140,16 +140,23 @@ Pixi selects the coarsest level that still supplies at least one bucket per hori
 
 ## 7. Timeline series
 
-Required v1 series:
+The minimal Phase 5 extension adds:
 
 - beat timestamps (`float32` seconds) and confidence (`uint8` normalized);
-- downbeat timestamps and bar indices where available;
-- meter and its confidence as manifest scalars;
 - local tempo sampled on a documented regular grid;
-- onset/transient strength;
-- short-term loudness/energy;
-- low/mid/high energy curves;
-- structural novelty/boundary strength.
+
+`audio_features_v1` already invokes `RhythmExtractor2013`, but currently stores
+only global BPM/confidence and discards its beat timestamps and intervals. The
+extractor boundary is shared so the scalar feature rows and timeline event
+series use the same interpretation. Previously analyzed tracks require an
+explicit timeline rebuild because discarded arrays cannot be reconstructed
+from the stored BPM scalar.
+
+The Phase 4 waveform already contains low/mid/high energy curves; Phase 5
+reuses those descriptors and does not generate duplicates. Downbeats, bar
+indices and meter require a separate detector and quality gate. Onset strength,
+short-term loudness and structural novelty remain reserved descriptors until a
+concrete DJ feature consumes them.
 
 Regular curves share a 100 ms grid unless an extractor requires a separately declared step. Each descriptor declares `start_seconds`, `step_seconds`, unit, scale and missing-value policy. Event series use timestamp arrays rather than a regular grid.
 
@@ -158,7 +165,11 @@ The pack stores observations only. It must not include recommended cue points, l
 ## 8. Extraction pipeline
 
 - Reuse the existing durable analysis job/task mechanism and worker audio acquisition path.
-- Use lazy imports for Essentia/heavy dependencies.
+- Start analysis only through the explicit private-admin job. Opening a DJ
+  surface must never enqueue or execute extraction.
+- Import Essentia only inside the worker execution boundary so application
+  startup and non-analysis API paths do not require the optional dependency;
+  this is dependency loading, not lazy or client-triggered analysis.
 - Decode once per task where practical and derive waveform/energy products from the same audio pass.
 - Bound memory: waveform aggregation and regular curves should stream/chunk; the extractor must not require multiple whole-track PCM copies.
 - Separate extraction computation from encoding so unit tests can use small NumPy fixtures and fake extractors.

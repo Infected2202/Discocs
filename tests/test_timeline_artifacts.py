@@ -42,6 +42,7 @@ def test_artifact_publish_round_trip_and_exact_source_invalidation(tmp_path: Pat
     loaded = load_valid_artifact(store, root, track, PACK_NAME, EXTRACTOR)
 
     assert loaded is not None
+    assert store.timeline_artifact_counts(PACK_NAME, EXTRACTOR) == {"ready": 1, "missing": 0, "total": 1}
     assert loaded[0]["payload"]["sha256"] == manifest["payload"]["sha256"]
     assert loaded[1] == payload
     changed = ScannedTrack(
@@ -51,6 +52,7 @@ def test_artifact_publish_round_trip_and_exact_source_invalidation(tmp_path: Pat
     store.upsert_track(changed)
     with pytest.raises(TimelineFormatError, match="stale"):
         load_valid_artifact(store, root, store.get_track(track.id), PACK_NAME, EXTRACTOR)
+    assert store.timeline_artifact_counts(PACK_NAME, EXTRACTOR) == {"ready": 0, "missing": 1, "total": 1}
 
 
 def test_publish_rejects_corruption_and_cleanup_cannot_escape_root(tmp_path: Path):

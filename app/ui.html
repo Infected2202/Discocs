@@ -3077,8 +3077,10 @@
     function renderDashboardCards(data) {
       const audio = data.audio_features || {};
       const headPack = data.head_pack || {};
+      const timeline = data.timeline || {};
       const cards = [
         statCard("Tracks", data.tracks, "total tracks", detailLine("Navidrome catalog"), `<button id="navidromeSyncBtn" onclick="startNavidromeSync()"${disabledAttr("navidrome-sync")}>Sync Navidrome</button>`),
+        statCard("DJ waveforms", timeline.missing ?? data.tracks, "need waveform analysis", detailLine(`${countText(timeline.ready || 0)} ready / ${countText(timeline.total ?? data.tracks)} active`), `<button id="analyzeTimelineBtn" onclick="startAnalyzeTimeline()" title="Analyze missing DJ waveforms"${disabledAttr("analyze-timeline")}>Analyze missing</button>`),
         statCard("Audio features", audio.missing_tracks ?? data.audio_features_missing_tracks, "need audio features", detailLine(`${countText(audio.complete_tracks || 0)} ready / ${countText(data.tracks)} total`), `<button id="analyzeAudioFeaturesBtn" onclick="startAnalyzeAudioFeatures()" title="Analyze audio features"${disabledAttr("analyze-audio-features")}>Analyze missing</button>`),
         statCard("Discogs-EffNet heads", headPack.missing_tracks ?? data.head_pack_missing_tracks, "need head outputs", detailLine(`${countText(headPack.complete_tracks || 0)} ready / ${countText(data.tracks)} total`), `<button id="analyzeHeadsBtn" onclick="startAnalyzeHeads()" title="Analyze Discogs-EffNet heads"${disabledAttr("analyze-heads")}>Analyze missing</button>`),
         statCard("Lost files", data.missing_files, "missing on disk", detailLine("Check unavailable paths"), `<button onclick="routeTo({view: 'lostFiles', model: model()}, {reset: true})">Open</button>`),
@@ -4820,6 +4822,17 @@
       });
       await refreshJobs();
     }
+    async function startAnalyzeTimeline() {
+      const rawLimit = document.getElementById("limit").value;
+      const parsedLimit = rawLimit ? Number(rawLimit) : null;
+      await json("/api/v1/jobs/analyze-timeline", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          limit: parsedLimit && parsedLimit > 0 ? Math.min(parsedLimit, 500) : null
+        })
+      });
+      await refreshJobs();
+    }
     async function downloadHeadModels() {
       await json("/api/v1/jobs/download-head-models", {method: "POST"});
       await refreshJobs();
@@ -5021,6 +5034,7 @@
       setDisabled("analyzeHeadsBtn", false);
       setDisabled("downloadHeadsBtn", false);
       setDisabled("analyzeAudioFeaturesBtn", false);
+      setDisabled("analyzeTimelineBtn", false);
       setDisabled("rescanAudioFeaturesBtn", false);
       setDisabled("checkMissingBtn", false);
       document.querySelectorAll(".dashboard-analyze-btn").forEach(button => {
