@@ -25,6 +25,10 @@ Phase 0 produces evidence and freezes seams. Spike code is either promoted into 
 
 ### Slice 0.1 — Web Audio graph and source lifecycle
 
+**Implementation:** complete; Jenkins verification pending. Browser evidence
+and the controlled-environment limitation are recorded in
+`SLICE_0_1_BROWSER_RESULTS.md`.
+
 Work:
 
 - add the initial playback type contracts and pure crossfader/parameter curves;

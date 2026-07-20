@@ -1,6 +1,6 @@
 # PlaybackEngine technical plan
 
-**Status:** implementation contract draft
+**Status:** Slice 0.1 graph/source contract confirmed; later-phase sections remain staged
 **Applies to:** foundation Phases 0-3 and 6
 **Replaces:** direct use of `ui/src/engine/AudioEngine.ts` by player-facing code
 
@@ -304,3 +304,23 @@ No local self-check commands are run; tests are authored and executed by Jenkins
 - Signalsmith assets load under the production Vite/static-serving model; schedule, seek, loop, rate, latency and buffer dropping are exercised.
 - The source interface above can represent both implementations without UI-specific branches.
 - Any browser limitation is recorded as a capability fallback, not hidden in component code.
+
+### Slice 0.1 confirmation
+
+The shared-context graph, stable physical deck identity, equal-power curve and
+generation-guarded source replacement are now represented by production
+modules under `ui/src/engine/playback/`. `PlaybackEngine` remains lazy: merely
+importing or constructing it does not create or resume an `AudioContext`.
+The existing `AudioEngine` remains the live player until Phase 1, so this slice
+does not create a second media owner.
+
+The source boundary is retained with one clarified limitation: the Phase 1
+HTML-media implementation accepts only immediate `play`, `pause` and rate
+changes. It rejects future audio timestamps because an
+`HTMLMediaElement` cannot provide sample-accurate scheduled transport. Mixer
+gain ramps still use `AudioContext.currentTime`; Phase 6's buffered worklet
+source will implement scheduled transport behind the same boundary.
+
+Browser evidence and the outstanding controlled-browser check are recorded in
+`SLICE_0_1_BROWSER_RESULTS.md`. This limitation does not require a public API
+or Phase 1 file-boundary change.

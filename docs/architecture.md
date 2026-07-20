@@ -221,6 +221,14 @@ Implementation files: `ui/src/engine/AudioEngine.ts`,
 `ui/src/store/playerStore.ts`, `ui/src/pages/SettingsPage.tsx`,
 `app/api/tracks.py`, `app/api/settings.py`, and `app/store/settings.py`.
 
+The staged playback-engine replacement lives in
+`ui/src/engine/playback/`. Slice 0.1 adds lazy capability detection, initial
+typed contracts, generation-safe media-source ownership and a two-strip Web
+Audio graph sharing one `AudioContext`. It is not wired to `playerStore` yet;
+`AudioEngine` remains the only live output owner until the one-deck Phase 1
+migration. This prevents two engines from playing the same program source
+during the transition.
+
 ## Autoplay
 
 Continues whatever source is currently playing (release, artist, track,
