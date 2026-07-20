@@ -114,8 +114,9 @@ def test_public_nginx_serves_universal_link_preview_metadata_to_crawlers():
     assert "Discordbot" in config
     assert 'location ~ "^/share/(?<discocs_share_token>[A-Za-z0-9_-]{40,64})/?$"' in config
     assert "/api/v1/public/shares/$discocs_share_token/preview" in config
-    assert 'map "$uri$is_args$args" $discocs_robots_policy' in config
-    assert "/cover\\?preview=1" in config
+    assert 'map "$uri:$arg_preview" $discocs_robots_policy' in config
+    assert "/preview:" in config
+    assert "/cover:1" in config
 
 
 def test_production_waits_for_public_frontend_health():

@@ -16,10 +16,10 @@ map $uri $discocs_referrer_policy {
     ~^/api/v1/public/shares/[A-Za-z0-9_-]+ no-referrer;
 }
 
-map "$uri$is_args$args" $discocs_robots_policy {
+map "$uri:$arg_preview" $discocs_robots_policy {
     default "";
-    ~^/api/v1/public/shares/[A-Za-z0-9_-]+/preview$ "";
-    ~^/api/v1/public/shares/[A-Za-z0-9_-]+/cover\?preview=1$ "";
+    ~^/api/v1/public/shares/[A-Za-z0-9_-]+/preview: "";
+    ~^/api/v1/public/shares/[A-Za-z0-9_-]+/cover:1$ "";
     ~^/share/[A-Za-z0-9_-]+ "noindex, nofollow, noarchive";
     ~^/api/v1/public/shares/[A-Za-z0-9_-]+ "noindex, nofollow, noarchive";
 }

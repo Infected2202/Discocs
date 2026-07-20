@@ -241,7 +241,7 @@ def test_public_preview_exposes_universal_metadata_without_audio(tmp_path, monke
     assert scoped.get_user_share(share.id).access_count == 0
 
     head = TestClient(app, base_url="http://backend:7752").head(
-        f"/api/v1/public/shares/{token}/preview",
+        f"/api/v1/public/shares/{token}/preview?v=cache-bust",
         headers={
             "x-forwarded-proto": "https",
             "x-forwarded-host": "music.example",
