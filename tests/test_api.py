@@ -1401,7 +1401,7 @@ def test_test_ui_loads():
     assert "Analyze missing" in response.text
     assert "Download head models" in response.text
     assert "Analyze Discogs-EffNet heads" in response.text
-    assert "Analyze audio features" in response.text
+    assert "Analyze missing audio features and DJ timelines" in response.text
     assert "Audio feature workers" in response.text
     assert 'id="audioFeatureWorkers"' in response.text
     assert "Navidrome" in response.text

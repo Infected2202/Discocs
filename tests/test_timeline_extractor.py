@@ -9,7 +9,7 @@ def test_encode_audio_timeline_uses_precomputed_rhythm_without_decode():
     audio = np.linspace(-1.0, 1.0, extractor.BUCKET_SAMPLES + 3, dtype=np.float32)
     rhythm = RhythmAnalysis(
         bpm=120.0,
-        beats=np.array([0.5], dtype=np.float32),
+        beats=np.array([0.005], dtype=np.float32),
         confidence=0.8,
         estimates=np.array([], dtype=np.float32),
         intervals=np.array([0.5], dtype=np.float32),
@@ -23,4 +23,4 @@ def test_encode_audio_timeline_uses_precomputed_rhythm_without_decode():
     decoded = decode_timeline(manifest, payload)
 
     assert len(decoded["levels"][0]["arrays"]["minimum"]) == 2
-    assert decoded["rhythm"]["beats"] == (0.5,)
+    assert np.isclose(decoded["rhythm"]["beats"][0], 0.005)
