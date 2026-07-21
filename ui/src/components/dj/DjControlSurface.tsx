@@ -381,7 +381,9 @@ function OpenDjControlSurface() {
   const timelineA = useTimeline(snapshot.decks.A.trackId)
   const timelineB = useTimeline(snapshot.decks.B.trackId)
   const timelines: Record<DeckId, TimelineLoadState> = { A: timelineA, B: timelineB }
-  const programTimeline = timelines[snapshot.programDeck]
+  const programTimeline: TimelineLoadState = snapshot.programDeck
+    ? timelines[snapshot.programDeck]
+    : { status: "missing" }
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
   const queueItems = queue?.items ?? []

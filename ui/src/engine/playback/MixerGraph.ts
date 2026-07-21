@@ -54,7 +54,7 @@ export class MixerGraph {
   private readonly protection: DynamicsCompressorNode
   private readonly masterMeter: AnalyserNode
   private readonly strips: Record<DeckId, DeckStrip>
-  private readonly meterBuffers = new WeakMap<AnalyserNode, Float32Array>()
+  private readonly meterBuffers = new WeakMap<AnalyserNode, Float32Array<ArrayBuffer>>()
   private readonly handleContextStateChange = () => this.logContextState()
   private destroyed = false
 

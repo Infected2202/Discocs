@@ -48,7 +48,7 @@ vi.mock("@/components/player/QueueItem", () => ({
 
 import DjControlSurface from "./DjControlSurface"
 
-function snapshot(programDeck: "A" | "B" = "A") {
+function snapshot(programDeck: "A" | "B" | null = "A") {
   return {
     revision: 1,
     contextState: "running" as const,
@@ -149,6 +149,16 @@ describe("DjControlSurface", () => {
     expect(screen.getByText("118.3")).toBeInTheDocument()
     expect(screen.getByText("Timeline ready")).toBeInTheDocument()
     expect(screen.queryByText("Timeline pending")).not.toBeInTheDocument()
+  })
+
+  it("renders an uninitialized engine snapshot without indexing a null program deck", () => {
+    playback.getEngineSnapshot.mockReturnValue(snapshot(null))
+    useUIStore.setState({ djSurfaceOpen: true })
+
+    render(<DjControlSurface />)
+
+    expect(screen.getByText("--.--")).toBeInTheDocument()
+    expect(screen.getByText("Timeline missing")).toBeInTheDocument()
   })
 
   it("closes on Escape and restores focus", () => {
