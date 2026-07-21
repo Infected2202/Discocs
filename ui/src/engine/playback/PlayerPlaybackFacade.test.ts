@@ -134,6 +134,7 @@ describe("PlayerPlaybackFacade routing", () => {
     vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:prepared-seek")
     const facade = new PlayerPlaybackFacade(runtime())
     facade.load("/audio/1", 1)
+    await facade.activateDjMode()
     await facade.prefetch(2, "/audio/2", "raw", "queue-2")
 
     facade.seekDeckToSeconds("B", 999)
@@ -313,6 +314,7 @@ describe("PlayerPlaybackFacade routing", () => {
     const engine = runtime()
     const facade = new PlayerPlaybackFacade(engine)
     facade.load("/audio/1", 1)
+    await facade.activateDjMode()
 
     await facade.prefetch(2, "/audio/2", "raw", "queue-2")
     expect(facade.hasPrepared(2, "queue-2")).toBe(true)

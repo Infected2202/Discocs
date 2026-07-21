@@ -6,6 +6,7 @@ import { useUIStore } from "@/store/uiStore"
 const playback = vi.hoisted(() => ({
   init: vi.fn(),
   getEngineSnapshot: vi.fn(),
+  getDeckCurrentTime: vi.fn(() => 0),
   getMixerMeters: vi.fn(() => ({ A: 0.2, B: 0.1, master: 0.3 })),
   subscribeEngine: vi.fn(() => () => undefined),
   setDeckTrim: vi.fn(),
@@ -366,7 +367,7 @@ describe("DjControlSurface", () => {
     render(<DjControlSurface />)
 
     // Дека A зеркалит текущий трек; полный микшер не рендерится.
-    expect(screen.getByText("Mirror Track")).toBeInTheDocument()
+    expect(screen.getAllByText("Mirror Track")).not.toHaveLength(0)
     expect(screen.queryByRole("region", { name: "Mixer" })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId("activate-dj-engine"))

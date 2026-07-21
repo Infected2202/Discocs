@@ -44,8 +44,10 @@ function makeItem(id: string, trackId: number): QueueItem {
   return { id, track_id: trackId, track: makeTrack(trackId) } as QueueItem
 }
 
-function stubSession(): PlaybackSession {
-  return { id: "s1", source_type: "track", autoplay_enabled: false } as unknown as PlaybackSession
+function stubSession(currentTrackId = 10): PlaybackSession {
+  return {
+    id: "s1", source_type: "track", autoplay_enabled: false, current_track_id: currentTrackId,
+  } as unknown as PlaybackSession
 }
 
 function stubQueue(items: QueueItem[], currentId: string): PlaybackQueue {
@@ -86,7 +88,7 @@ describe("player background / DJ engine behaviour", () => {
     // Фоновый fetch может зависнуть — awaited postEvent раньше блокировал переход.
     vi.mocked(postEvent).mockReturnValueOnce(new Promise(() => undefined) as Promise<never>)
     const items = [makeItem("current", 10), makeItem("next", 20)]
-    const nextEnvelope: PlaybackEnvelope = { session: stubSession(), queue: stubQueue(items, "next") }
+    const nextEnvelope: PlaybackEnvelope = { session: stubSession(20), queue: stubQueue(items, "next") }
     vi.mocked(patchQueue).mockResolvedValue(nextEnvelope)
     usePlayerStore.setState({
       session: stubSession(),
