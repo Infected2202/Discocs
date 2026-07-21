@@ -78,7 +78,7 @@ export default function AppShell() {
             active={shouldAnimatePlasma(playbackState, djSurfaceOpen)}
             accent={plasmaAccent}
             speed={0.9}
-            scale={1.0}
+            scale={1}
             opacity={0.9}
           />
         </div>
