@@ -19,6 +19,7 @@ const graphicsClear = vi.fn()
 const graphicsStroke = vi.fn()
 const graphicsRect = vi.fn()
 const graphicsFill = vi.fn()
+const graphicsLineTo = vi.fn()
 
 class ApplicationStub {
   canvas = document.createElement("canvas")
@@ -36,7 +37,7 @@ class ApplicationStub {
 class GraphicsStub {
   clear = graphicsClear.mockReturnThis()
   moveTo = vi.fn().mockReturnThis()
-  lineTo = vi.fn().mockReturnThis()
+  lineTo = graphicsLineTo.mockReturnThis()
   stroke = graphicsStroke.mockReturnThis()
   rect = graphicsRect.mockReturnThis()
   fill = graphicsFill.mockReturnThis()
@@ -139,7 +140,7 @@ describe("PixiWaveformRenderer lifecycle", () => {
 
   it("redraws only the moving history and playhead overlays when an overview viewport stays fixed", async () => {
     const app = new ApplicationStub()
-    const initial = input()
+    const initial = { ...input(), follow: false }
     const renderer = new PixiWaveformRenderer(document.createElement("div"), initial, loader(app))
     await renderer.mount()
     graphicsClear.mockClear()
@@ -183,7 +184,21 @@ describe("PixiWaveformRenderer lifecycle", () => {
     expect(stageAdd).toHaveBeenCalledTimes(4)
     expect(graphicsStroke).toHaveBeenCalledWith({ color: 0x05070a, width: 3, alpha: 0.62 })
     expect(graphicsStroke).toHaveBeenCalledWith({ color: 0xffffff, width: 1, alpha: 0.55 })
-    expect(graphicsRect).toHaveBeenCalledWith(0, 0, 400, 160)
+    expect(graphicsLineTo).toHaveBeenCalledWith(200, 160)
+    expect(graphicsRect).not.toHaveBeenCalled()
+    renderer.destroy()
+  })
+
+  it("keeps overview beats as subdued ticks instead of a full-height barcode", async () => {
+    const app = new ApplicationStub()
+    const overview = { ...input(), follow: false }
+    const renderer = new PixiWaveformRenderer(document.createElement("div"), overview, loader(app))
+
+    await renderer.mount()
+
+    expect(graphicsStroke).toHaveBeenCalledWith({ color: 0x05070a, width: 3, alpha: 0.38 })
+    expect(graphicsStroke).toHaveBeenCalledWith({ color: 0xffffff, width: 1, alpha: 0.32 })
+    expect(graphicsLineTo).toHaveBeenCalledWith(200, 6)
     renderer.destroy()
   })
 })
