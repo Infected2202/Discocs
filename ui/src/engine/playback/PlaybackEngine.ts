@@ -78,6 +78,7 @@ export class PlaybackEngine {
   private roles: DeckRoleState = initialDeckRoleState()
   private revision = 0
   private readonly listeners = new Set<() => void>()
+  private readonly explicitTransportCommands = new Set<DeckId>()
   private mixer = defaultMixerState()
   private readonly stretchDependencies: StretchDeckSourceDependencies
   private readonly stretchEligibility: StretchEligibilityResolver
@@ -261,8 +262,14 @@ export class PlaybackEngine {
   async pauseDeck(deck: DeckId, when?: number): Promise<void> {
     const runtime = this.decks?.[deck]
     if (!runtime) throw new Error("Playback engine is not initialized")
-    await runtime.pause(when)
-    if (this.beatSync.master === deck) {
+    const wasMaster = this.beatSync.master === deck
+    this.explicitTransportCommands.add(deck)
+    try {
+      await runtime.pause(when)
+    } finally {
+      this.explicitTransportCommands.delete(deck)
+    }
+    if (wasMaster) {
       this.assignTempoMaster(this.findPlayingDeck(deck) ?? "clock")
       await this.synchronizeFollowers()
     }
@@ -393,11 +400,17 @@ export class PlaybackEngine {
   }
 
   async unload(deck: DeckId): Promise<void> {
-    await this.decks?.[deck].release()
+    const wasMaster = this.beatSync.master === deck
+    this.explicitTransportCommands.add(deck)
+    try {
+      await this.decks?.[deck].release()
+    } finally {
+      this.explicitTransportCommands.delete(deck)
+    }
     this.detachExternal(deck)
     this.roles = reduceDeckRoles(this.roles, { type: "retire", deck })
     this.clearDeckSync(deck)
-    if (this.beatSync.master === deck) {
+    if (wasMaster) {
       this.assignTempoMaster(this.findPlayingDeck(deck) ?? "clock")
       await this.synchronizeFollowers()
     }
@@ -794,7 +807,7 @@ export class PlaybackEngine {
   }
 
   private handleDeckRuntimeChange(deck: DeckId): void {
-    this.reconcileAutoMaster(deck)
+    if (!this.explicitTransportCommands.has(deck)) this.reconcileAutoMaster(deck)
     this.changed()
   }
 
