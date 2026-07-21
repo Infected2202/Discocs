@@ -1,6 +1,6 @@
 # Discocs DJ implementation plan
 
-**Status:** Phases 0-5 implemented; Phase 3/4 interaction and mixer correction is implemented with Jenkins verification pending; the Phase 5 production backfill is running
+**Status:** Phases 0-5 implemented; Phase 3/4 interaction and mixer correction is deployed and verified in Jenkins build #305; the Phase 5 production backfill is running
 **Delivery rule:** one complete logical slice includes code, meaningful tests, affected docs, one commit and pushes to both configured remotes; Jenkins is the verification environment.
 
 ## 1. Readiness
@@ -214,7 +214,7 @@ Two real locally buffered tracks can overlap and switch program role while the s
 ## 5. Phase 3 — expanded DJ control surface
 
 **Implementation:** visual foundation verified in build #272; interaction
-and mixer correction implemented with Jenkins verification pending. The accepted
+and mixer correction deployed and verified in build #305. The accepted
 visual direction keeps the Discocs palette, typography,
 backdrop and expanded-player transition while borrowing only the control set,
 information hierarchy and placement from the supplied Traktor reference.
@@ -275,7 +275,7 @@ The surface follows the current Expanded Player open/close transition and focus 
 ## 6. Phase 4 — waveform artifact and renderer
 
 **Implementation:** artifact/backend complete; renderer interaction correction
-implemented with Jenkins verification pending. The frozen v1
+deployed and verified in build #305. The frozen v1
 foundation artifact is published atomically for local and Navidrome-backed
 tracks, exposed through authenticated manifest/payload/status endpoints,
 and rendered in both DJ deck waveform regions from one shared decoded payload.
@@ -406,8 +406,8 @@ Every implementation slice:
 
 ## 12. Current next action
 
-Verify the Phase 3/4 correction in Jenkins, let the explicit Phase 5 production
-analysis finish, and validate real waveform/beat artifacts in the deployed DJ
+Let the explicit Phase 5 production analysis finish and validate real
+waveform/beat artifacts in the deployed DJ
 workspace. Phase 6 starts only after that validation; energy/structure remain
 deferred until their payload contracts and actual UI consumers are designed.
 
