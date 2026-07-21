@@ -20,6 +20,10 @@ const deck = (transport: DeckSnapshot["transport"]): DeckSnapshot => ({
   duration: 180,
   anchor: { mediaSeconds: 12, audioTime: 1, rate: 1 },
   buffered: [],
+  sourceKind: "signalsmith",
+  tempoMode: "pitch-preserving",
+  tempoRatio: 1,
+  degradedReason: null,
 })
 
 describe("useDeckPosition", () => {

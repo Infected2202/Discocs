@@ -29,8 +29,23 @@ function runtime() {
     handover: vi.fn().mockResolvedValue({ outgoingDeck: "A", programDeck: "B", clientHandoverId: "h-1" }),
     confirmRetirement: vi.fn().mockResolvedValue(undefined),
     cancelIncoming: vi.fn(),
+    isStretchDeck: vi.fn().mockReturnValue(false),
+    playDeck: vi.fn().mockResolvedValue(undefined),
+    pauseDeck: vi.fn().mockResolvedValue(undefined),
+    seekDeck: vi.fn().mockResolvedValue(undefined),
+    setTempo: vi.fn().mockResolvedValue(undefined),
+    setMasterGain: vi.fn(),
+    upgradeDeckSource: vi.fn().mockResolvedValue({ upgraded: false, kind: "media-element", reason: null }),
+    getSnapshot: vi.fn().mockReturnValue({
+      programDeck: "A",
+      decks: {
+        A: { sourceKind: "media-element", transport: "paused", duration: 120, anchor: null },
+        B: { sourceKind: "media-element", transport: "paused", duration: 120, anchor: null },
+      },
+    }),
     getMeterLevels: vi.fn().mockReturnValue({ A: 0.2, B: 0.1, master: 0.25 }),
     destroy: vi.fn().mockResolvedValue(undefined),
+    subscribe: vi.fn(() => () => undefined),
   } as unknown as PlaybackEngine
 }
 
@@ -140,6 +155,36 @@ describe("PlayerPlaybackFacade routing", () => {
 
     await expect(facade.play()).rejects.toThrow("context suspended")
     expect(media.play).not.toHaveBeenCalled()
+  })
+
+  it("upgrades the current track at its native playhead when DJ mode opens", async () => {
+    const audio: MockAudio[] = []
+    vi.stubGlobal("Audio", function () {
+      const instance = new MockAudio()
+      audio.push(instance)
+      return instance
+    })
+    const engine = runtime()
+    vi.mocked(engine.upgradeDeckSource).mockResolvedValueOnce({
+      upgraded: true,
+      kind: "signalsmith",
+      reason: null,
+    })
+    const facade = new PlayerPlaybackFacade(engine)
+    facade.load("/audio/9", 9, "raw", false, "queue-9")
+    const current = audio.at(-1)!
+    current.currentTime = 37
+    current.paused = false
+
+    await facade.activateDjMode()
+
+    expect(engine.setMasterGain).toHaveBeenCalledWith(1)
+    expect(engine.upgradeDeckSource).toHaveBeenCalledWith(
+      "A",
+      { url: "/audio/9", trackId: 9, queueItemId: "queue-9", blob: undefined },
+      { startAtSeconds: 37, autoplay: true },
+    )
+    expect(current.pause).toHaveBeenCalled()
   })
 
   it("promotes the prepared element without load and delays outgoing cleanup until confirmation", async () => {

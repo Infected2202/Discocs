@@ -269,8 +269,10 @@ of the central mixer. Each strip follows the reference's outer
 Gain/Filter/FX/Key and inner HI/MID/LO/fader grouping, with a segmented meter
 between them. Compact per-control switches, the filter-type selector and FX 1/2
 routing preserve the reference hierarchy while remaining disabled placeholders.
-Deck panels contain live track, transport, time and waveform state plus disabled
-future pitch/performance controls. Knob pointers place the neutral/default value at
+Deck panels contain live track, transport, time and waveform state. Their
+±8% pitch faders issue real tempo commands; eligible decks use Signalsmith
+pitch preservation and ineligible decks expose native tempo as degraded.
+Cue, loop, sync and performance controls remain disabled. Knob pointers place the neutral/default value at
 twelve o'clock, including controls whose audio range is asymmetric, and their
 arcs render the actual value outward from that centre with no coloured fill at
 neutral. The top panel uses shrink-safe effect regions around an isolated
@@ -278,9 +280,9 @@ master block; compact landscape widths remove secondary effect names before
 they can overlap the master controls. The Deck B effect rack mirrors its DOM
 and grid columns explicitly, so its controls occupy the wide outer column
 rather than the narrow label column next to the master. Channel and crossfader
-slots include scales and a high-contrast cap. Effects, cue, loop, sync, pitch
-and performance-pad regions are explicitly unavailable until their owning
-phases; they never simulate a successful command. BPM and waveform regions
+slots include scales and a high-contrast cap. Effects, cue, loop, sync and
+performance-pad regions are explicitly unavailable until their owning phases;
+they never simulate a successful command. BPM and waveform regions
 consume the published timeline artifact. Gain, three-band EQ, filter, channel
 faders, crossfader, master gain,
 deck transport and explicit prepared-deck handover issue real facade/engine
@@ -582,9 +584,12 @@ manifest/payload delivery around this frozen codec. Format evidence is in
 `ui/src/engine/playback/signalsmith/` validates the future pitch-preserving tempo source
 behind `DeckSource`. Signalsmith Stretch 1.3.2 is loaded dynamically; Vite emits its official
 ESM file as the same-origin AudioWorklet URL, while that file carries its WASM payload inline.
-The adapter transfers bounded decoded channel chunks to the worklet, supports incremental
-drop, and schedules transport/rate/loop changes using runtime-reported latency plus a small
-lead margin. It never requires a whole-track PCM copy on the main thread.
+The production source uses the existing two-complete-`Blob` deck lifecycle. Each
+physical deck is decoded completely in the browser and its channel buffers are
+transferred to the worklet; no PCM endpoint or live backend audio dependency is
+introduced. The two-deck model bounds residency, and deck retirement drops the
+complete worklet buffer together with the compressed payload and object URL.
+Transport/rate/loop changes use runtime-reported latency plus a small lead margin.
 
 The package is MIT licensed. Browser measurements, configuration comparison and the Phase 6
 feasibility decision are recorded in

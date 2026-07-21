@@ -40,14 +40,15 @@ queries `latency()` after configuration and derives the lead time from the repor
 
 ## Buffer and lifecycle decision
 
-Decoded audio will be delivered as bounded, transferable channel chunks. `append()`
-transfers each chunk's `ArrayBuffer` to the worklet, so the main thread does not retain a
-second PCM copy. `dropBefore()` releases consumed chunks while later chunks continue to be
-appended. Phase 6 can therefore use a rolling decode/look-ahead window instead of retaining
-whole-track PCM.
+The harness proved transferable channel buffers and worklet buffer cleanup. The
+earlier rolling decode/look-ahead proposal is superseded by the production deck
+contract: Discocs already owns at most two completely buffered compressed tracks,
+one per physical deck. Phase 6 decodes each of those tracks completely in the
+browser and transfers its channel buffers to Signalsmith. It does not add a PCM
+streaming endpoint or place the backend in the live audio path.
 
 `StretchAdapter` owns scheduling, latency compensation and worklet buffers. Release stops
-the node, drops every buffer, disconnects output and closes its message port exactly once.
+the node, drops the complete deck buffer, disconnects output and closes its message port exactly once.
 Capability failures distinguish missing AudioWorklet, unavailable WASM, CSP/worklet blocking
 and generic initialization errors.
 

@@ -139,6 +139,16 @@ The browser retains at most the forced complete active Blob and one upcoming Blo
 Object URLs are revoked after use, on profile/source changes, and on logout.
 This is intentionally an in-memory transition buffer, not offline storage.
 
+Opening the DJ workspace upgrades eligible physical decks from their native
+media-element source to Signalsmith Stretch. The existing complete Blob is
+decoded in the browser and transferred to the deck worklet in full; there is
+no PCM stream and the backend is not part of playback after preparation. The
+pitch fader controls pitch-preserving tempo over the agreed ±8% range. Missing
+timeline data, unsupported AudioWorklet/WASM, or source initialization failure
+keeps that deck on native media playback and exposes the degraded mode in the
+deck status. Retiring a deck releases its compressed Blob, decoded/worklet
+buffer, object URL, and source references.
+
 The per-user playback settings page can request MP3 transcoding at
 96/128/192/256/320 Kbit/s. The profile key is included in the audio URL and
 the backend validates it against the saved settings before forwarding

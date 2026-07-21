@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PlaybackEngine } from "./PlaybackEngine"
+import type { StretchNode } from "./signalsmith/types"
 
 class FakeParam {
   value = 1
@@ -43,6 +44,12 @@ class FakeContext {
     this.mediaElements.push(element)
     return node
   }
+  decodeAudioData = vi.fn(async () => ({
+    duration: 2,
+    length: 4,
+    numberOfChannels: 2,
+    getChannelData: (channel: number) => new Float32Array(channel === 0 ? [1, 2, 3, 4] : [5, 6, 7, 8]),
+  } as AudioBuffer))
   addEventListener = vi.fn()
   removeEventListener = vi.fn()
 
@@ -54,6 +61,7 @@ class FakeContext {
 describe("PlaybackEngine Phase 1 routing", () => {
   beforeEach(() => {
     FakeContext.instances.length = 0
+    vi.stubGlobal("AudioWorkletNode", class AudioWorkletNode {})
   })
 
   it("routes replacement media through one neutral Deck A graph", async () => {
@@ -161,5 +169,56 @@ describe("PlaybackEngine Phase 1 routing", () => {
 
     Object.defineProperty(media, "error", { configurable: true, value: { code: 3 } })
     expect(engine.getSnapshot().decks.A.transport).toBe("error")
+  })
+
+  it("upgrades a fully buffered eligible deck to Signalsmith and keeps native fallback otherwise", async () => {
+    vi.stubGlobal("AudioContext", FakeContext)
+    const stretchNode = Object.assign(new FakeNode(), {
+      inputTime: 0,
+      configure: vi.fn().mockResolvedValue(undefined),
+      latency: vi.fn().mockResolvedValue(0.12),
+      addBuffers: vi.fn().mockResolvedValue(2),
+      dropBuffers: vi.fn().mockResolvedValue({ start: 0, end: 0 }),
+      schedule: vi.fn().mockImplementation(async (change) => change),
+      start: vi.fn().mockResolvedValue({}),
+      stop: vi.fn().mockResolvedValue({}),
+      setUpdateInterval: vi.fn().mockResolvedValue(undefined),
+      port: { close: vi.fn() },
+    }) as unknown as StretchNode
+    const eligible = vi.fn().mockResolvedValue({ ready: true, reason: null })
+    const engine = new PlaybackEngine(undefined, {
+      stretch: { createNode: vi.fn().mockResolvedValue(stretchNode) },
+      stretchEligibility: eligible,
+    })
+    const media = document.createElement("audio")
+    engine.routeProgramElement(media, 9, "queue-9")
+
+    await expect(engine.upgradeDeckSource("A", {
+      url: "blob:track-9",
+      trackId: 9,
+      queueItemId: "queue-9",
+      blob: new Blob(["encoded"]),
+    })).resolves.toEqual({ upgraded: true, kind: "signalsmith", reason: null })
+
+    expect(eligible).toHaveBeenCalledWith(9)
+    expect(engine.getSnapshot().decks.A).toMatchObject({
+      sourceKind: "signalsmith",
+      tempoMode: "pitch-preserving",
+      buffered: [{ start: 0, end: 2 }],
+    })
+
+    const fallback = new PlaybackEngine(undefined, {
+      stretchEligibility: vi.fn().mockResolvedValue({ ready: false, reason: "Timeline is missing" }),
+    })
+    const fallbackMedia = document.createElement("audio")
+    fallback.routeProgramElement(fallbackMedia, 10, "queue-10")
+    await expect(fallback.upgradeDeckSource("A", {
+      url: "blob:track-10", trackId: 10, blob: new Blob(["encoded"]),
+    })).resolves.toEqual({ upgraded: false, kind: "media-element", reason: "Timeline is missing" })
+    expect(fallback.getSnapshot().decks.A).toMatchObject({
+      sourceKind: "media-element",
+      tempoMode: "native",
+      degradedReason: "Timeline is missing",
+    })
   })
 })

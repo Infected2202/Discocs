@@ -91,7 +91,8 @@ Work:
 - exercise buffer append/drop, start/stop, seek, rate, loop and scheduled changes;
 - record reported latency and the scheduling lead time required for clean changes;
 - compare default and cheaper configurations on representative hardware;
-- confirm how decoded chunks will reach the worklet without retaining whole-track PCM.
+- confirm that a complete browser-local track buffer can be transferred to the
+  worklet without adding a backend live-audio path.
 
 Tests to author where deterministic:
 
@@ -348,12 +349,45 @@ Integration tests requiring real Essentia are marked `@pytest.mark.integration`;
 
 ## 8. Phase 6 — Signalsmith tempo and beat sync
 
+Phase 6 is delivered in three ordered groups.
+
+### Group 1 — production Signalsmith source
+
+- retain the existing two-complete-`Blob` deck lifecycle; do not add a PCM
+  streaming endpoint or another live backend audio dependency;
+- decode each loaded physical deck completely in the browser and transfer its
+  channel buffers to the Signalsmith worklet;
 - promote the Phase 0 adapter into `StretchDeckSource`;
-- select it only when capability and timeline prerequisites are ready;
+- select it only when browser capability and timeline prerequisites are ready;
 - schedule rate/seek/loop with reported latency compensation;
-- implement beat-phase mapping, sync engagement/disengagement and drift correction;
 - expose native playback-rate mode as degraded, not completed sync;
-- define measurable drift and continuity thresholds from Phase 0 evidence.
+- release the compressed payload, decoded/worklet buffers and source references
+  when a physical deck is retired or replaced.
+
+Gate: two fully buffered real tracks can be loaded into the physical decks,
+played, sought, looped and tempo-adjusted without a network dependency after
+preparation; unsupported or failed Signalsmith initialization preserves native
+playback.
+
+### Group 2 — beat sync
+
+- implement beat-timeline mapping and master/follower ownership;
+- implement sync engagement/disengagement and initial beat-phase alignment;
+- recover correctly around seek, loop, tempo changes and handover.
+
+Gate: two real tracks align by tempo and beat phase and preserve explicit deck
+roles through transport operations.
+
+### Group 3 — correction, product state and quality gate
+
+- implement measured drift detection and correction;
+- expose Signalsmith/native capability, sync state and degraded reasons in the
+  DJ workspace;
+- define measurable drift and continuity thresholds from Phase 0 evidence;
+- validate supported browsers and record the production results.
+
+Gate: supported browsers pass the defined quality, drift and continuity checks;
+future automatic transitions remain blocked until this gate passes.
 
 ## 9. Phase 7 — settings and diagnostics
 

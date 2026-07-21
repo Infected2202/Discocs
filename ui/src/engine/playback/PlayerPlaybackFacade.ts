@@ -1,7 +1,15 @@
 import type { TrackSummary } from "@/api/types"
 import { playerLog } from "@/lib/playerLogger"
 import { PlaybackEngine } from "./PlaybackEngine"
-import type { DeckId, EqBand, HandoverResult, PlaybackEngineSnapshot } from "./types"
+import type {
+  DeckId,
+  DeckSourceUpgradeResult,
+  EqBand,
+  HandoverResult,
+  PlaybackEngineSnapshot,
+  TrackSource,
+  TransportState,
+} from "./types"
 
 export type PlaybackState = "idle" | "loading" | "playing" | "paused" | "error"
 export interface BufferedRange {
@@ -30,18 +38,33 @@ export class PlayerPlaybackFacade {
   private activeCacheController: AbortController | null = null
   private activeCacheTarget: { trackId: number; profileKey: string; url: string } | null = null
   private fullyBufferedReported = false
-  private prefetched: { trackId: number; queueItemId: string | null; profileKey: string; objectUrl: string } | null = null
+  private prefetched: {
+    trackId: number
+    queueItemId: string | null
+    profileKey: string
+    objectUrl: string
+    blob: Blob
+  } | null = null
   private prepared: {
     trackId: number
     queueItemId: string | null
     profileKey: string
     objectUrl: string
+    blob: Blob
     element: HTMLAudioElement
     deck: DeckId
   } | null = null
-  private retired: { element: HTMLAudioElement; objectUrl: string | null; deck: DeckId } | null = null
+  private retired: { element: HTMLAudioElement; objectUrl: string | null; blob: Blob | null; deck: DeckId } | null = null
   private prefetchController: AbortController | null = null
   private prefetchTarget: { trackId: number; profileKey: string } | null = null
+  // False = ordinary direct-<audio> playback (no AudioContext, reliable mobile
+  // background). True = DJ mode: audio routed through the Web Audio mixer graph.
+  // The graph is only ever created once DJ mode is activated by a user gesture.
+  private graphActive = false
+  private activeBlob: Blob | null = null
+  private readonly upgradePromises: Record<DeckId, Promise<DeckSourceUpgradeResult> | null> = { A: null, B: null }
+  private runtimeUnsubscribe: (() => void) | null = null
+  private lastRuntimeTransport: TransportState | null = null
 
   constructor(runtime = new PlaybackEngine()) {
     this.runtime = runtime
@@ -50,6 +73,9 @@ export class PlayerPlaybackFacade {
 
   init(callbacks: AudioEngineCallbacks) {
     this.callbacks = callbacks
+    if (!this.runtimeUnsubscribe && typeof this.runtime.subscribe === "function") {
+      this.runtimeUnsubscribe = this.runtime.subscribe(() => this.syncRuntimeCallbacks())
+    }
   }
 
   load(
@@ -60,6 +86,7 @@ export class PlayerPlaybackFacade {
     queueItemId: string | null = null,
   ) {
     this.cancelActiveCache()
+    const retainedBlob = fullyAvailable && this.activeObjectUrl === url ? this.activeBlob : null
     // Явно освобождаем буфер старого элемента — src='' надёжнее removeAttribute
     const prev = this.el
     prev.pause()
@@ -69,6 +96,7 @@ export class PlayerPlaybackFacade {
       URL.revokeObjectURL(this.activeObjectUrl)
       this.activeObjectUrl = null
     }
+    this.activeBlob = retainedBlob
 
     // Новый элемент — Chrome гарантированно освобождает нативный PCM буфер
     // когда старый элемент теряет все ссылки и GC его собирает
@@ -83,11 +111,20 @@ export class PlayerPlaybackFacade {
     this.activeProfileKey = profileKey
     this.activeNetworkUrl = fullyAvailable || url.startsWith("blob:") ? null : url
     this.fullyBufferedReported = false
+    this.lastRuntimeTransport = null
 
     // Reset immediately — otherwise the buffered indicator briefly shows
     // the previous track's ranges. A prepared Blob is already fully local.
     this.callbacks?.onBufferUpdate(fullyAvailable ? [{ start: 0, end: 1 }] : [])
     if (fullyAvailable && trackId !== null) this.reportFullyBuffered()
+    if (this.graphActive && trackId !== null) {
+      this.queueStretchUpgrade(this.runtime.programDeck, {
+        url,
+        trackId,
+        queueItemId,
+        blob: this.activeBlob ?? undefined,
+      })
+    }
   }
 
   async prefetch(trackId: number, url: string, profileKey: string, queueItemId: string | null = null): Promise<void> {
@@ -112,7 +149,7 @@ export class PlayerPlaybackFacade {
       if (controller.signal.aborted) return
       if (this.prefetchTarget?.trackId !== trackId || this.prefetchTarget.profileKey !== profileKey) return
       const objectUrl = URL.createObjectURL(blob)
-      this.prefetched = { trackId, queueItemId, profileKey, objectUrl }
+      this.prefetched = { trackId, queueItemId, profileKey, objectUrl, blob }
       const element = this.createElement()
       element.volume = this.el.volume
       element.muted = this.el.muted
@@ -120,7 +157,10 @@ export class PlayerPlaybackFacade {
       element.load()
       const deck = this.runtime.routeIncomingElement(element, trackId, queueItemId)
       if (deck) {
-        this.prepared = { trackId, queueItemId, profileKey, objectUrl, element, deck }
+        this.prepared = { trackId, queueItemId, profileKey, objectUrl, blob, element, deck }
+        if (this.graphActive) {
+          await this.queueStretchUpgrade(deck, { url: objectUrl, trackId, queueItemId, blob })
+        }
       } else {
         element.src = ""
         element.load()
@@ -136,6 +176,7 @@ export class PlayerPlaybackFacade {
   consumePrefetched(trackId: number, profileKey: string): string | null {
     if (this.prefetched?.trackId !== trackId || this.prefetched.profileKey !== profileKey) return null
     const objectUrl = this.prefetched.objectUrl
+    this.activeBlob = this.prefetched.blob
     this.prefetched = null
     if (this.prepared?.objectUrl === objectUrl) {
       this.runtime.cancelIncoming()
@@ -186,8 +227,10 @@ export class PlayerPlaybackFacade {
     await this.runtime.ensureReady()
     const previous = this.el
     const previousObjectUrl = this.activeObjectUrl
+    const previousBlob = this.activeBlob
     this.cancelActiveCache()
-    await incoming.element.play()
+    if (this.runtime.isStretchDeck(incoming.deck)) await this.runtime.playDeck(incoming.deck)
+    else await incoming.element.play()
     let result: HandoverResult
     try {
       result = await this.runtime.handover({
@@ -195,16 +238,18 @@ export class PlayerPlaybackFacade {
         clientHandoverId,
       })
     } catch (error) {
-      incoming.element.pause()
+      if (this.runtime.isStretchDeck(incoming.deck)) await this.runtime.pauseDeck(incoming.deck)
+      else incoming.element.pause()
       throw error
     }
     this.el = incoming.element
-    this.retired = { element: previous, objectUrl: previousObjectUrl, deck: result.outgoingDeck }
+    this.retired = { element: previous, objectUrl: previousObjectUrl, blob: previousBlob, deck: result.outgoingDeck }
     this.activeTrackId = incoming.trackId
     this.activeQueueItemId = incoming.queueItemId
     this.activeProfileKey = incoming.profileKey
     this.activeNetworkUrl = null
     this.activeObjectUrl = incoming.objectUrl
+    this.activeBlob = incoming.blob
     this.fullyBufferedReported = true
     this.prefetched = null
     this.prepared = null
@@ -229,21 +274,71 @@ export class PlayerPlaybackFacade {
     if (retired.objectUrl && retired.objectUrl !== this.activeObjectUrl) {
       URL.revokeObjectURL(retired.objectUrl)
     }
+    retired.blob = null
     await this.runtime.confirmRetirement(retired.deck)
+  }
+
+  async activateDjMode(): Promise<void> {
+    if (this.graphActive) return
+    await this.runtime.ensureReady()
+    this.graphActive = true
+    this.runtime.setMasterGain(this.el.muted ? 0 : this.el.volume)
+
+    const trackId = this.activeTrackId
+    if (trackId !== null) {
+      const element = this.el
+      const sourceUrl = this.activeObjectUrl ?? this.activeNetworkUrl ?? element.currentSrc ?? element.src
+      const result = await this.queueStretchUpgrade(this.runtime.programDeck, {
+        url: sourceUrl,
+        trackId,
+        queueItemId: this.activeQueueItemId,
+        blob: this.activeBlob ?? undefined,
+      }, {
+        startAtSeconds: element.currentTime,
+        autoplay: !element.paused,
+      })
+      if (result.upgraded && element === this.el) {
+        element.pause()
+        this.activeNetworkUrl = null
+        this.reportFullyBuffered()
+      }
+    }
+
+    const incoming = this.prepared
+    if (incoming) {
+      await this.queueStretchUpgrade(incoming.deck, {
+        url: incoming.objectUrl,
+        trackId: incoming.trackId,
+        queueItemId: incoming.queueItemId,
+        blob: incoming.blob,
+      })
+    }
   }
 
   async play(): Promise<void> {
     await this.runtime.ensureReady()
-    await this.el.play()
+    const deck = this.runtime.programDeck
+    await this.upgradePromises[deck]
+    if (this.runtime.isStretchDeck(deck)) {
+      await this.runtime.playDeck(deck)
+      this.reportFullyBuffered()
+    } else {
+      await this.el.play()
+    }
     // `preload=auto` is only a browser hint and commonly stalls around 90%.
     // Once playback has actually started, explicitly consume the complete
     // response into a Blob. Native playback remains uninterrupted; the Blob
     // guarantees that all bytes are present before the next prefetch begins.
-    this.cacheActiveTrack()
+    if (!this.runtime.isStretchDeck(deck)) this.cacheActiveTrack()
   }
 
   pause() {
-    this.el.pause()
+    const deck = this.runtime.programDeck
+    if (this.runtime.isStretchDeck(deck)) {
+      void this.runtime.pauseDeck(deck).catch((error: Error) => this.callbacks?.onError(error.message))
+    } else {
+      this.el.pause()
+    }
   }
 
   clear() {
@@ -257,10 +352,15 @@ export class PlayerPlaybackFacade {
     this.cancelActiveCache()
     if (this.activeObjectUrl) URL.revokeObjectURL(this.activeObjectUrl)
     this.activeObjectUrl = null
+    this.activeBlob = null
     this.activeNetworkUrl = null
     this.activeTrackId = null
     this.activeQueueItemId = null
     this.fullyBufferedReported = false
+    this.graphActive = false
+    this.lastRuntimeTransport = null
+    this.upgradePromises.A = null
+    this.upgradePromises.B = null
     if (this.retired) {
       this.retired.element.pause()
       this.retired.element.src = ""
@@ -295,6 +395,13 @@ export class PlayerPlaybackFacade {
   seek(fraction: number) {
     if (!Number.isFinite(fraction)) return
     const clamped = Math.min(1, Math.max(0, fraction))
+    const deck = this.runtime.programDeck
+    const snapshot = this.runtime.getSnapshot().decks[deck]
+    if (snapshot.sourceKind === "signalsmith" && snapshot.duration) {
+      void this.runtime.seekDeck(deck, clamped * snapshot.duration)
+        .catch((error: Error) => this.callbacks?.onError(error.message))
+      return
+    }
     const el = this.el
     const apply = () => {
       el.removeEventListener("loadedmetadata", apply)
@@ -306,10 +413,19 @@ export class PlayerPlaybackFacade {
   }
 
   seekToSeconds(seconds: number) {
-    this.el.currentTime = seconds
+    const deck = this.runtime.programDeck
+    if (this.runtime.isStretchDeck(deck)) {
+      void this.runtime.seekDeck(deck, seconds).catch((error: Error) => this.callbacks?.onError(error.message))
+    } else {
+      this.el.currentTime = seconds
+    }
   }
 
   seekDeckToSeconds(deck: DeckId, seconds: number): void {
+    if (this.runtime.isStretchDeck(deck)) {
+      void this.runtime.seekDeck(deck, seconds).catch((error: Error) => this.callbacks?.onError(error.message))
+      return
+    }
     const element = this.elementForDeck(deck)
     if (!element || !Number.isFinite(seconds)) return
     const maximum = Number.isFinite(element.duration) && element.duration > 0
@@ -324,6 +440,11 @@ export class PlayerPlaybackFacade {
    * so an immediate currentTime write would be silently dropped.
    */
   resumeAtSeconds(seconds: number) {
+    const deck = this.runtime.programDeck
+    if (this.runtime.isStretchDeck(deck)) {
+      void this.runtime.seekDeck(deck, seconds).catch((error: Error) => this.callbacks?.onError(error.message))
+      return
+    }
     if (Number.isFinite(this.el.duration) && this.el.duration > 0) {
       this.el.currentTime = seconds
       return
@@ -340,23 +461,37 @@ export class PlayerPlaybackFacade {
     const volume = Math.max(0, Math.min(1, v))
     this.el.volume = volume
     if (this.prepared) this.prepared.element.volume = volume
+    if (this.graphActive) this.runtime.setMasterGain(this.el.muted ? 0 : volume)
   }
 
   setMuted(muted: boolean) {
     this.el.muted = muted
     if (this.prepared) this.prepared.element.muted = muted
+    if (this.graphActive) this.runtime.setMasterGain(muted ? 0 : this.el.volume)
   }
 
   get currentTime() {
-    return this.el.currentTime
+    const deck = this.runtime.programDeck
+    const snapshot = this.runtime.getSnapshot().decks[deck]
+    return snapshot.sourceKind === "signalsmith"
+      ? snapshot.anchor?.mediaSeconds ?? 0
+      : this.el.currentTime
   }
 
   get duration() {
-    return this.el.duration
+    const deck = this.runtime.programDeck
+    const snapshot = this.runtime.getSnapshot().decks[deck]
+    return snapshot.sourceKind === "signalsmith"
+      ? snapshot.duration ?? 0
+      : this.el.duration
   }
 
   get paused() {
-    return this.el.paused
+    const deck = this.runtime.programDeck
+    const snapshot = this.runtime.getSnapshot().decks[deck]
+    return snapshot.sourceKind === "signalsmith"
+      ? snapshot.transport !== "playing"
+      : this.el.paused
   }
 
   getEngineSnapshot(): PlaybackEngineSnapshot {
@@ -364,6 +499,8 @@ export class PlayerPlaybackFacade {
   }
 
   getDeckCurrentTime(deck: DeckId): number | null {
+    const snapshot = this.runtime.getSnapshot().decks[deck]
+    if (snapshot.sourceKind === "signalsmith") return snapshot.anchor?.mediaSeconds ?? null
     const element = this.elementForDeck(deck)
     return element && Number.isFinite(element.currentTime) ? element.currentTime : null
   }
@@ -400,7 +537,17 @@ export class PlayerPlaybackFacade {
     this.runtime.setMasterGain(value)
   }
 
+  setDeckTempo(deck: DeckId, ratio: number): Promise<void> {
+    return this.runtime.setTempo(deck, ratio)
+  }
+
   async toggleDeck(deck: DeckId): Promise<void> {
+    if (this.runtime.isStretchDeck(deck)) {
+      const transport = this.runtime.getSnapshot().decks[deck].transport
+      if (transport === "playing") await this.runtime.pauseDeck(deck)
+      else await this.runtime.playDeck(deck)
+      return
+    }
     const element = this.elementForDeck(deck)
     if (!element) return
     if (element.paused) await element.play()
@@ -435,6 +582,49 @@ export class PlayerPlaybackFacade {
         // browser may not support all actions
       }
     }
+  }
+
+  private queueStretchUpgrade(
+    deck: DeckId,
+    source: TrackSource,
+    options: { readonly startAtSeconds?: number; readonly autoplay?: boolean } = {},
+  ): Promise<DeckSourceUpgradeResult> {
+    const pending = this.runtime.upgradeDeckSource(deck, source, options).catch((error: Error) => ({
+      upgraded: false,
+      kind: "media-element" as const,
+      reason: error.message,
+    }))
+    this.upgradePromises[deck] = pending
+    void pending.finally(() => {
+      if (this.upgradePromises[deck] === pending) this.upgradePromises[deck] = null
+    })
+    return pending
+  }
+
+  private syncRuntimeCallbacks(): void {
+    if (!this.graphActive) return
+    const snapshot = this.runtime.getSnapshot()
+    if (!snapshot.programDeck) return
+    const deck = snapshot.decks[snapshot.programDeck]
+    if (deck.sourceKind !== "signalsmith") return
+    const duration = deck.duration ?? 0
+    const currentTime = deck.anchor?.mediaSeconds ?? 0
+    this.callbacks?.onTimeUpdate(currentTime, duration)
+    if (duration > 0) this.reportFullyBuffered()
+    if (deck.transport === this.lastRuntimeTransport) return
+    const previous = this.lastRuntimeTransport
+    this.lastRuntimeTransport = deck.transport
+    const state: PlaybackState = deck.transport === "playing"
+      ? "playing"
+      : deck.transport === "loading"
+        ? "loading"
+        : deck.transport === "error"
+          ? "error"
+          : deck.transport === "idle"
+            ? "idle"
+            : "paused"
+    this.callbacks?.onPlaybackStateChange(state)
+    if (deck.transport === "ended" && previous !== "ended") this.callbacks?.onEnded()
   }
 
   private createElement(): HTMLAudioElement {
@@ -574,6 +764,7 @@ export class PlayerPlaybackFacade {
 
         if (this.activeObjectUrl) URL.revokeObjectURL(this.activeObjectUrl)
         this.activeObjectUrl = URL.createObjectURL(blob)
+        this.activeBlob = blob
         this.activeNetworkUrl = null
         this.activeCacheController = null
         this.activeCacheTarget = null

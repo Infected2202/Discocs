@@ -140,7 +140,13 @@ interface DeckSource {
 
 ### Phase 6 Signalsmith implementation
 
-The official Web release provides a WASM/AudioWorklet `AudioNode`, scheduled input/rate/loop changes, dynamically appended sample buffers, buffer dropping and latency reporting. The spike must verify bundling of worklet/WASM assets and whether the app can feed decoded chunks without whole-track PCM residency.
+The official Web release provides a WASM/AudioWorklet `AudioNode`, scheduled
+input/rate/loop changes, sample buffers, buffer dropping and latency reporting.
+`StretchDeckSource` consumes the complete compressed `Blob` already owned by a
+prepared physical deck, decodes that track completely with the browser audio
+decoder and transfers its channel arrays to the worklet. The live path remains
+browser-local: Phase 6 does not introduce a PCM endpoint or depend on the
+backend after deck preparation.
 
 The Signalsmith source must implement the same interface and compensate its reported latency when scheduling handover, cue, loop and sync operations.
 
@@ -197,7 +203,11 @@ Exact coefficients and ramp durations are pure configuration covered by curve/gr
 
 - At most the program/outgoing and prepared/incoming complete compressed payloads are retained normally.
 - The current payload becomes eligible for release only after successful handover and outgoing completion/cancellation policy.
-- Whole-track PCM decode is forbidden in the Phase 1-5 steady state.
+- Phase 1-5 do not eagerly decode whole-track PCM. Phase 6 intentionally holds
+  one complete decoded Signalsmith buffer per loaded physical deck, bounded by
+  the two-deck model.
+- Retiring or replacing a Signalsmith deck releases its compressed `Blob`,
+  decoded/worklet buffers and source references together.
 - Auto DJ requires `ready`; manual operation may use `streaming`.
 - Loading carries an `AbortSignal` and generation id.
 - Profile changes apply only to future loads while two decks are active. They never invalidate one side of an audible transition.

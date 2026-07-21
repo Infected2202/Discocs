@@ -27,6 +27,7 @@ export interface TrackSource {
   trackId: number | null
   queueItemId?: string | null
   fetchAsBlob?: boolean
+  blob?: Blob
 }
 
 export interface SourceMetadata {
@@ -50,6 +51,16 @@ export interface DeckSnapshot {
   duration: number | null
   anchor: PlayheadAnchor | null
   buffered: BufferedRange[]
+  sourceKind: "media-element" | "signalsmith" | null
+  tempoMode: "native" | "pitch-preserving" | "unavailable"
+  tempoRatio: number
+  degradedReason: string | null
+}
+
+export interface DeckSourceUpgradeResult {
+  readonly upgraded: boolean
+  readonly kind: "media-element" | "signalsmith"
+  readonly reason: string | null
 }
 
 export interface MixerSnapshot {

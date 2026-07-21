@@ -2,11 +2,16 @@ import { DeckRuntime } from "./DeckRuntime"
 import { freeDeck, initialDeckRoleState, reduceDeckRoles, type DeckRoleState } from "./deckRoles"
 import { MixerGraph, type MixerGraphLogger } from "./MixerGraph"
 import { detectPlaybackCapabilities } from "./capabilities"
-import { HtmlMediaDeckSource } from "./sources/HtmlMediaDeckSource"
+import { StretchDeckSource, type StretchDeckSourceDependencies } from "./signalsmith/StretchDeckSource"
+import {
+  resolveStretchEligibility,
+  type StretchEligibilityResolver,
+} from "./signalsmith/selection"
 import { clampBipolar, clampNormalized } from "./curves"
 import type {
   DeckId,
   DeckSnapshot,
+  DeckSourceUpgradeResult,
   EqBand,
   HandoverRequest,
   HandoverResult,
@@ -27,6 +32,10 @@ const emptyDeck = (id: DeckId) => ({
   duration: null,
   anchor: null,
   buffered: [],
+  sourceKind: null,
+  tempoMode: "unavailable" as const,
+  tempoRatio: 1,
+  degradedReason: null,
 })
 
 const defaultMixerState = () => ({
@@ -56,6 +65,7 @@ export class PlaybackEngine {
   private externalElements: Record<DeckId, HTMLMediaElement | null> = { A: null, B: null }
   private externalListenerCleanup: Record<DeckId, (() => void) | null> = { A: null, B: null }
   private readonly generations: Record<DeckId, number> = { A: 0, B: 0 }
+  private readonly upgradeGenerations: Record<DeckId, number> = { A: 0, B: 0 }
   private identities: Record<DeckId, { trackId: number | null; queueItemId: string | null }> = {
     A: { trackId: null, queueItemId: null },
     B: { trackId: null, queueItemId: null },
@@ -64,9 +74,21 @@ export class PlaybackEngine {
   private revision = 0
   private readonly listeners = new Set<() => void>()
   private mixer = defaultMixerState()
+  private readonly stretchDependencies: StretchDeckSourceDependencies
+  private readonly stretchEligibility: StretchEligibilityResolver
+  private readonly degradedReasons: Record<DeckId, string | null> = { A: null, B: null }
+  private readonly tempoRatios: Record<DeckId, number> = { A: 1, B: 1 }
 
-  constructor(log: MixerGraphLogger = () => undefined) {
+  constructor(
+    log: MixerGraphLogger = () => undefined,
+    dependencies: {
+      readonly stretch?: StretchDeckSourceDependencies
+      readonly stretchEligibility?: StretchEligibilityResolver
+    } = {},
+  ) {
     this.log = log
+    this.stretchDependencies = dependencies.stretch ?? {}
+    this.stretchEligibility = dependencies.stretchEligibility ?? resolveStretchEligibility
   }
 
   async ensureReady(): Promise<PlaybackCapabilities> {
@@ -104,6 +126,7 @@ export class PlaybackEngine {
     trackId: number | null = null,
     queueItemId: string | null = null,
   ): boolean {
+    ++this.upgradeGenerations[deck]
     const capabilities = detectPlaybackCapabilities()
     if (!capabilities.manualMix) return false
     this.initialize()
@@ -111,6 +134,7 @@ export class PlaybackEngine {
     const graph = this.graph
     if (!context || !graph) return false
 
+    void this.decks?.[deck].release()
     const node = context.createMediaElementSource(element)
     const previous = this.externalNodes[deck]
     if (previous) graph.detachSource(deck, previous)
@@ -124,6 +148,8 @@ export class PlaybackEngine {
     this.externalNodes[deck] = node
     this.watchExternalElement(deck, element)
     this.identities[deck] = { trackId, queueItemId }
+    this.degradedReasons[deck] = null
+    this.tempoRatios[deck] = element.playbackRate
     if (role === "prepared") {
       this.roles = reduceDeckRoles(this.roles, { type: "preparing", deck })
       this.roles = reduceDeckRoles(this.roles, { type: "prepared", deck })
@@ -142,6 +168,87 @@ export class PlaybackEngine {
     this.roles = reduceDeckRoles(this.roles, { type: "prepared", deck })
     this.changed()
     return metadata
+  }
+
+  async upgradeDeckSource(
+    deck: DeckId,
+    source: TrackSource,
+    options: { readonly startAtSeconds?: number; readonly autoplay?: boolean } = {},
+  ): Promise<DeckSourceUpgradeResult> {
+    const upgradeGeneration = ++this.upgradeGenerations[deck]
+    const capabilities = await this.ensureReady()
+    if (!capabilities.manualMix || !this.decks || source.trackId === null) {
+      const reason = capabilities.reasons.join("; ") || "Signalsmith requires a persisted track"
+      this.degradedReasons[deck] = reason
+      this.changed()
+      return { upgraded: false, kind: "media-element", reason }
+    }
+    const eligibility = await this.stretchEligibility(source.trackId)
+    if (upgradeGeneration !== this.upgradeGenerations[deck]) {
+      return { upgraded: false, kind: "media-element", reason: "Deck source changed" }
+    }
+    if (!eligibility.ready) {
+      this.degradedReasons[deck] = eligibility.reason
+      this.changed()
+      return { upgraded: false, kind: "media-element", reason: eligibility.reason }
+    }
+    try {
+      this.decks[deck].advanceGenerationFloor(this.generations[deck])
+      await this.decks[deck].load(source, options)
+      if (upgradeGeneration !== this.upgradeGenerations[deck]) {
+        await this.decks[deck].release()
+        return { upgraded: false, kind: "media-element", reason: "Deck source changed" }
+      }
+      this.detachExternalRoute(deck)
+      this.identities[deck] = { trackId: source.trackId, queueItemId: source.queueItemId ?? null }
+      this.degradedReasons[deck] = null
+      this.tempoRatios[deck] = 1
+      this.roles = reduceDeckRoles(this.roles, { type: "prepared", deck })
+      this.changed()
+      return { upgraded: true, kind: "signalsmith", reason: null }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Signalsmith initialization failed"
+      this.degradedReasons[deck] = reason
+      this.changed()
+      return { upgraded: false, kind: "media-element", reason }
+    }
+  }
+
+  async playDeck(deck: DeckId, when?: number): Promise<void> {
+    const runtime = this.decks?.[deck]
+    if (!runtime) throw new Error("Playback engine is not initialized")
+    await runtime.play(when)
+  }
+
+  async pauseDeck(deck: DeckId, when?: number): Promise<void> {
+    const runtime = this.decks?.[deck]
+    if (!runtime) throw new Error("Playback engine is not initialized")
+    await runtime.pause(when)
+  }
+
+  async seekDeck(deck: DeckId, seconds: number): Promise<void> {
+    const runtime = this.decks?.[deck]
+    if (!runtime) throw new Error("Playback engine is not initialized")
+    await runtime.seek(seconds)
+  }
+
+  async setTempo(deck: DeckId, ratio: number, when?: number): Promise<void> {
+    const clamped = Math.max(0.5, Math.min(2, ratio))
+    const runtime = this.decks?.[deck]
+    if (runtime?.sourceKind === "signalsmith") {
+      await runtime.setRate(clamped, when)
+    } else {
+      const element = this.externalElements[deck]
+      if (!element) throw new Error(`Deck ${deck} has no loaded source`)
+      element.playbackRate = clamped
+      element.preservesPitch = true
+    }
+    this.tempoRatios[deck] = clamped
+    this.changed()
+  }
+
+  isStretchDeck(deck: DeckId): boolean {
+    return this.decks?.[deck].sourceKind === "signalsmith"
   }
 
   async unload(deck: DeckId): Promise<void> {
@@ -170,6 +277,8 @@ export class PlaybackEngine {
 
   cancelIncoming(): void {
     const deck = freeDeck(this.roles)
+    ++this.upgradeGenerations[deck]
+    void this.decks?.[deck].release()
     this.detachExternal(deck)
     this.roles = reduceDeckRoles(this.roles, { type: "cancel-preparation", deck })
     this.changed()
@@ -259,6 +368,10 @@ export class PlaybackEngine {
     if (context && context.state !== "closed") await context.close()
     this.roles = initialDeckRoleState()
     this.mixer = defaultMixerState()
+    this.degradedReasons.A = null
+    this.degradedReasons.B = null
+    this.tempoRatios.A = 1
+    this.tempoRatios.B = 1
     this.changed()
   }
 
@@ -268,12 +381,25 @@ export class PlaybackEngine {
     this.graph = new MixerGraph(this.context, this.log)
     this.graph.setCrossfader(this.mixer.crossfader)
     this.decks = {
-      A: new DeckRuntime("A", this.graph, () => new HtmlMediaDeckSource(this.context!)),
-      B: new DeckRuntime("B", this.graph, () => new HtmlMediaDeckSource(this.context!)),
+      A: new DeckRuntime(
+        "A", this.graph,
+        () => new StretchDeckSource(this.context!, this.stretchDependencies),
+        () => this.changed(),
+      ),
+      B: new DeckRuntime(
+        "B", this.graph,
+        () => new StretchDeckSource(this.context!, this.stretchDependencies),
+        () => this.changed(),
+      ),
     }
   }
 
   private detachExternal(deck: DeckId): void {
+    this.detachExternalRoute(deck)
+    this.identities[deck] = { trackId: null, queueItemId: null }
+  }
+
+  private detachExternalRoute(deck: DeckId): void {
     this.externalListenerCleanup[deck]?.()
     this.externalListenerCleanup[deck] = null
     this.externalElements[deck] = null
@@ -282,7 +408,6 @@ export class PlaybackEngine {
     this.graph?.detachSource(deck, node)
     node.disconnect()
     this.externalNodes[deck] = null
-    this.identities[deck] = { trackId: null, queueItemId: null }
   }
 
   private deckSnapshot(deck: DeckId): DeckSnapshot {
@@ -294,7 +419,22 @@ export class PlaybackEngine {
       queueItemId: this.identities[deck].queueItemId,
     }
     const element = this.externalElements[deck]
-    if (!element) return snapshot
+    const runtime = this.decks?.[deck]
+    if (runtime?.sourceKind) {
+      snapshot.transport = runtime.currentTransport
+      snapshot.duration = runtime.sourceDuration
+      snapshot.anchor = runtime.anchor
+      snapshot.buffered = runtime.buffered
+      snapshot.sourceKind = runtime.sourceKind
+      snapshot.tempoMode = "pitch-preserving"
+      snapshot.tempoRatio = this.tempoRatios[deck]
+      snapshot.degradedReason = this.degradedReasons[deck]
+      return snapshot
+    }
+    if (!element) {
+      snapshot.degradedReason = this.degradedReasons[deck]
+      return snapshot
+    }
     snapshot.transport = externalTransport(element)
     snapshot.duration = Number.isFinite(element.duration) ? element.duration : null
     snapshot.anchor = {
@@ -302,6 +442,10 @@ export class PlaybackEngine {
       audioTime: this.context?.currentTime ?? 0,
       rate: element.playbackRate,
     }
+    snapshot.sourceKind = "media-element"
+    snapshot.tempoMode = "native"
+    snapshot.tempoRatio = element.playbackRate
+    snapshot.degradedReason = this.degradedReasons[deck]
     return snapshot
   }
 

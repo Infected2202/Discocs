@@ -14,6 +14,7 @@ const playback = vi.hoisted(() => ({
   setDeckChannelFader: vi.fn(),
   setCrossfader: vi.fn(),
   setMasterGain: vi.fn(),
+  setDeckTempo: vi.fn().mockResolvedValue(undefined),
   setVolume: vi.fn(),
   setMuted: vi.fn(),
   load: vi.fn(),
@@ -71,6 +72,10 @@ function snapshot(programDeck: "A" | "B" | null = "A") {
         duration: 180,
         anchor: { mediaSeconds: 12, audioTime: 5, rate: 1 },
         buffered: [],
+        sourceKind: "signalsmith" as const,
+        tempoMode: "pitch-preserving" as const,
+        tempoRatio: 1,
+        degradedReason: null,
       },
       B: {
         id: "B" as const,
@@ -82,6 +87,10 @@ function snapshot(programDeck: "A" | "B" | null = "A") {
         duration: 200,
         anchor: { mediaSeconds: 0, audioTime: 5, rate: 1 },
         buffered: [],
+        sourceKind: "media-element" as const,
+        tempoMode: "native" as const,
+        tempoRatio: 1,
+        degradedReason: "Signalsmith unavailable",
       },
     },
     mixer: {
@@ -258,7 +267,7 @@ describe("DjControlSurface", () => {
     expect(rack).toHaveAttribute("data-side", "B")
   })
 
-  it("keeps Traktor-style routing and pitch placeholders in their physical sections", () => {
+  it("keeps Traktor-style routing in place and sends physical-deck tempo commands", () => {
     useUIStore.setState({ djSurfaceOpen: true })
     render(<DjControlSurface />)
 
@@ -272,7 +281,12 @@ describe("DjControlSurface", () => {
     expect(within(fxAssignment).getByRole("button", { name: "2" })).toBeDisabled()
     const deckA = screen.getByRole("region", { name: "Deck A" })
     const deckB = screen.getByRole("region", { name: "Deck B" })
-    expect(within(deckA).getByRole("slider", { name: "Deck A pitch" })).toBeDisabled()
-    expect(within(deckB).getByRole("slider", { name: "Deck B pitch" })).toBeDisabled()
+    const pitchA = within(deckA).getByRole("slider", { name: "Deck A pitch" })
+    expect(pitchA).toBeEnabled()
+    expect(within(deckB).getByRole("slider", { name: "Deck B pitch" })).toBeEnabled()
+
+    fireEvent.keyDown(pitchA, { key: "End" })
+
+    expect(playback.setDeckTempo).toHaveBeenCalledWith("A", 1.08)
   })
 })

@@ -98,7 +98,14 @@ The backend is not part of the live audio path. It prepares audio metadata and a
 
 Full local readiness of the incoming deck is mandatory for Auto DJ transitions but not for ordinary manual playback. A deck is ready for automatic transition only when its compressed audio is locally available, duration and source metadata are known, the deck source is initialized, and required timeline analysis is available.
 
-The runtime normally retains at most two complete compressed track payloads: the program/outgoing track and the prepared/incoming track. It must not eagerly decode both complete tracks to PCM. After handover, the retired outgoing payload and object URL are released before the free deck prepares the following queue item.
+The runtime retains at most two complete compressed track payloads: the
+program/outgoing track and the prepared/incoming track. In the Phase 6
+Signalsmith path both locally buffered payloads are decoded completely in the
+browser and transferred to their physical deck worklets. This is deliberately
+bounded by the two-deck model; it is not a streaming decoder and does not add a
+backend PCM endpoint. After handover, the retired outgoing compressed payload,
+decoded/worklet buffers and object URL are released before the free deck
+prepares the following queue item.
 
 Manual playback retains a streaming fallback. Auto DJ must not begin a transition from a partially prepared deck. If preparation fails, it marks the item unavailable for the transition, attempts another queued item where policy permits, and otherwise allows the current track to finish through ordinary playback while exposing the failure state.
 

@@ -176,6 +176,8 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
     data: dropData,
     disabled: isProgram || isPlaying,
   })
+  const pitchValue = Math.max(-1, Math.min(1, (deck.tempoRatio - 1) / 0.08))
+  const pitchPercent = (deck.tempoRatio - 1) * 100
 
   return (
     <section
@@ -204,7 +206,7 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
         <div className={styles.deckIdentity}>
           <b>{deck.id}</b>
           <span className={cn(styles.roleBadge, isProgram && styles.roleProgram)}>{roleLabel(deck.role)}</span>
-          <small>{deck.preparation} · {deck.transport}</small>
+          <small>{deck.preparation} · {deck.transport} · {deck.tempoMode}</small>
         </div>
       </header>
 
@@ -247,14 +249,15 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
         </div>
       </div>
       <div className={styles.pitchControl}>
-        <span>0.0%</span>
+        <span>{pitchPercent >= 0 ? "+" : ""}{pitchPercent.toFixed(1)}%</span>
         <DjFader
           label={`Deck ${deck.id} pitch`}
           displayLabel="PITCH"
-          value={0}
+          value={pitchValue}
           min={-1}
           max={1}
-          disabled
+          disabled={!canPlay}
+          onChange={(value) => runPlayerCommand(() => playerPlayback.setDeckTempo(deck.id, 1 + value * 0.08))}
         />
       </div>
     </section>

@@ -1,4 +1,6 @@
 export * from "./assets"
 export * from "./capabilities"
 export * from "./StretchAdapter"
+export * from "./StretchDeckSource"
+export * from "./selection"
 export type * from "./types"
