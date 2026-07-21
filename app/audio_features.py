@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 
@@ -36,6 +37,7 @@ class AudioFeatureAnalysis:
     features: list[TrackFeature]
     timeline_manifest: dict[str, object]
     timeline_payload: bytes
+    timings: dict[str, float] | None = None
 
 
 class AudioFeatureAnalyzer:
@@ -51,9 +53,19 @@ class AudioFeatureAnalyzer:
 
         configure_tensorflow_logging()
         logger.info("Analyzing audio bundle path=%s extractor=%s", path, AUDIO_FEATURE_EXTRACTOR)
+        started = perf_counter()
         audio = load_audio_with_ffmpeg(path, sample_rate=EMBEDDING_SAMPLE_RATE)
+        decoded_16k_at = perf_counter()
         rhythm_audio = load_audio_with_ffmpeg(path, sample_rate=ESSENTIA_RHYTHM_SAMPLE_RATE)
+        decoded_44k_at = perf_counter()
         rhythm = analyze_rhythm(rhythm_audio)
+        rhythm_at = perf_counter()
+        key_features = extract_key_features(audio)
+        key_at = perf_counter()
+        loudness_features = extract_loudness_features(audio)
+        loudness_at = perf_counter()
+        dynamic_features = extract_dynamic_features(rhythm_audio)
+        dynamic_at = perf_counter()
         features = [
             TrackFeature(
                 name="bpm",
@@ -62,9 +74,9 @@ class AudioFeatureAnalyzer:
                 confidence=rhythm.confidence,
                 extractor=AUDIO_FEATURE_EXTRACTOR,
             ),
-            *extract_key_features(audio),
-            *extract_loudness_features(audio),
-            *extract_dynamic_features(rhythm_audio),
+            *key_features,
+            *loudness_features,
+            *dynamic_features,
         ]
         manifest, payload = encode_audio_timeline(
             rhythm_audio,
@@ -72,7 +84,22 @@ class AudioFeatureAnalyzer:
             source=source,
             rhythm=rhythm,
         )
-        return AudioFeatureAnalysis(features=features, timeline_manifest=manifest, timeline_payload=payload)
+        finished_at = perf_counter()
+        return AudioFeatureAnalysis(
+            features=features,
+            timeline_manifest=manifest,
+            timeline_payload=payload,
+            timings={
+                "decode_16k": decoded_16k_at - started,
+                "decode_44k": decoded_44k_at - decoded_16k_at,
+                "rhythm": rhythm_at - decoded_44k_at,
+                "key": key_at - rhythm_at,
+                "loudness": loudness_at - key_at,
+                "dynamic": dynamic_at - loudness_at,
+                "timeline": finished_at - dynamic_at,
+                "analysis_total": finished_at - started,
+            },
+        )
 
 
 def analyze_rhythm(audio: np.ndarray) -> RhythmAnalysis:

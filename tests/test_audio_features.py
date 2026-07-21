@@ -76,6 +76,17 @@ def test_audio_feature_analyzer_uses_feature_extractors(monkeypatch, tmp_path):
     assert [feature.name for feature in features] == ["bpm", "key"]
     assert features[0].value == 128.0
     assert features[1].text_value == "F#"
+    assert set(analysis.timings or {}) == {
+        "decode_16k",
+        "decode_44k",
+        "rhythm",
+        "key",
+        "loudness",
+        "dynamic",
+        "timeline",
+        "analysis_total",
+    }
+    assert all(seconds >= 0 for seconds in (analysis.timings or {}).values())
 
 
 def test_audio_feature_bundle_reuses_rhythm_decode_for_features_and_timeline(monkeypatch, tmp_path):

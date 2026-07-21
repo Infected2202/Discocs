@@ -253,6 +253,9 @@ def test_audio_feature_worker_submits_scalar_and_timeline_as_one_result(tmp_path
     assert submitted["features"][0]["name"] == "bpm"
     assert submitted["timeline_manifest"]["source"]["path"] == "features-1.flac"
     assert submitted["timeline_payload_b64"] == "dGltZWxpbmUtcGF5bG9hZA=="
+    assert "download_seconds=" in result.output
+    assert "serialize_seconds=" in result.output
+    assert "submit_seconds=" in result.output
 
 
 def test_close_inactive_task_via_active_false(tmp_path, monkeypatch):

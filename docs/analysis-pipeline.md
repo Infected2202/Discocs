@@ -134,6 +134,13 @@ separate timeline-analysis job: local and remote audio-feature executors return
 both projections from one analysis result. The DJ interface remains read-only
 and never starts analysis.
 
+Remote worker logs expose per-track timing without changing the analysis path
+or its parameters: download, the existing independent 16 kHz and 44.1 kHz
+decodes, rhythm, key, loudness, dynamics, timeline encoding and result
+serialization. Result-submit logs include request duration. These measurements
+are used for queue tuning; they are not stored as audio features and do not
+affect accepted analysis data.
+
 `audio_features_v1` rows are legacy scalar-only results. They do not satisfy
 v2 readiness and are removed per track only after a complete v2 result has
 been accepted. Consequently the first v2 deployment intentionally queues all

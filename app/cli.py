@@ -1030,6 +1030,7 @@ def submit_worker_buffers(
     acknowledged: set[str] = set()
     if results or feature_results or head_results:
         result_count = len(results) + len(feature_results) + len(head_results)
+        submit_started = perf_counter()
         response = post_worker_submit_json(
             server,
             "/api/v1/workers/results",
@@ -1049,17 +1050,22 @@ def submit_worker_buffers(
         acknowledged.update(accepted)
         acknowledged.update(rejected)
         typer.echo(
-            f"submitted results={result_count} accepted={len(accepted)} rejected={len(rejected)}"
+            f"submitted results={result_count} accepted={len(accepted)} rejected={len(rejected)} "
+            f"submit_seconds={perf_counter() - submit_started:.3f}"
         )
         results.clear()
         feature_results.clear()
         head_results.clear()
     if failures:
         failure_count = len(failures)
+        submit_started = perf_counter()
         response = post_worker_submit_json(server, "/api/v1/workers/failures", {"worker_id": worker_id, "failures": failures})
         failed = [str(task_id) for task_id in response.get("failed", []) if task_id]
         acknowledged.update(failed)
-        typer.echo(f"submitted failures={failure_count} accepted={len(failed)}")
+        typer.echo(
+            f"submitted failures={failure_count} accepted={len(failed)} "
+            f"submit_seconds={perf_counter() - submit_started:.3f}"
+        )
         failures.clear()
     if acknowledged_task_ids is not None:
         acknowledged_task_ids.update(acknowledged)
@@ -1281,6 +1287,7 @@ class WorkerRuntime:
         self.head_results: list[dict[str, object]] = []
         self.failures: list[dict[str, object]] = []
         self.future_to_task: dict[object, tuple[dict[str, object], Path]] = {}
+        self.download_future_started_at: dict[object, float] = {}
         self.cpu_future_to_task: dict[object, tuple[dict[str, object], Path]] = {}
         self.embedding_future_to_task: dict[object, tuple[dict[str, object], Path]] = {}
         self.embedding_future_started_at: dict[object, float] = {}
@@ -1394,6 +1401,7 @@ class WorkerRuntime:
                 audio_path,
             )
             self.future_to_task[future] = (task, audio_path)
+            self.download_future_started_at[future] = perf_counter()
         self.processed_any = True
 
     def maybe_log_metrics(self) -> None:
@@ -1627,6 +1635,7 @@ class WorkerRuntime:
             analysis = future.result()
             if self.draining:
                 return
+            serialize_started = perf_counter()
             self.feature_results.append(
                 {
                     "task_id": task_id,
@@ -1649,8 +1658,17 @@ class WorkerRuntime:
                     "timeline_payload_b64": base64.b64encode(analysis.timeline_payload).decode("ascii"),
                 }
             )
+            serialize_seconds = perf_counter() - serialize_started
             self.completed_task_ids.add(task_id)
-            typer.echo(f"ok task_id={task_id} track_id={task['track_id']} model={model_name}")
+            timing_values = analysis.timings or {}
+            timing_text = " ".join(
+                f"{name}_seconds={seconds:.3f}"
+                for name, seconds in timing_values.items()
+            )
+            typer.echo(
+                f"ok task_id={task_id} track_id={task['track_id']} model={model_name} "
+                f"{timing_text}{(' ' if timing_text else '')}serialize_seconds={serialize_seconds:.3f}"
+            )
         except Exception as exc:
             if close_task_on_conflict(exc, task_id, model_name, audio_path, self.close_inactive_task):
                 return
@@ -1668,10 +1686,15 @@ class WorkerRuntime:
 
     def _handle_download_future(self, future: object) -> None:
         task, audio_path = self.future_to_task.pop(future)
+        download_started = self.download_future_started_at.pop(future, perf_counter())
         task_id = str(task["task_id"])
         model_name = str(task["model_name"])
         try:
             future.result()
+            typer.echo(
+                f"stage task_id={task_id} track_id={task['track_id']} model={model_name} "
+                f"download_seconds={perf_counter() - download_started:.3f}"
+            )
             if self.draining:
                 return
             if model_name == AUDIO_FEATURE_EXTRACTOR:
