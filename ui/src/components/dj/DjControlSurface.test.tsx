@@ -15,6 +15,11 @@ const playback = vi.hoisted(() => ({
   setCrossfader: vi.fn(),
   setMasterGain: vi.fn(),
   setDeckTempo: vi.fn().mockResolvedValue(undefined),
+  setAutoTempoMaster: vi.fn().mockResolvedValue(undefined),
+  setClockTempoMaster: vi.fn().mockResolvedValue(undefined),
+  setDeckTempoMaster: vi.fn().mockResolvedValue(undefined),
+  setMasterClockTempo: vi.fn().mockResolvedValue(undefined),
+  toggleDeckSync: vi.fn().mockResolvedValue(undefined),
   setVolume: vi.fn(),
   setMuted: vi.fn(),
   load: vi.fn(),
@@ -102,6 +107,15 @@ function snapshot(programDeck: "A" | "B" | null = "A") {
       filters: { A: 0, B: 0 },
       meters: { A: 0.2, B: 0.1, master: 0.3 },
     },
+    beatSync: {
+      auto: true,
+      master: "clock" as const,
+      clockBpm: 126,
+      decks: {
+        A: { enabled: false, phase: "off" as const, reason: null },
+        B: { enabled: false, phase: "off" as const, reason: null },
+      },
+    },
     automation: { owner: "none" as const },
     capabilities: { webAudio: true, mediaElementSource: true, ordinary: true, manualMix: true, reasons: [] },
     error: null,
@@ -146,7 +160,7 @@ describe("DjControlSurface", () => {
     expect(screen.queryByTestId("dj-control-surface")).not.toBeInTheDocument()
   })
 
-  it("shows the ready program timeline instead of a permanent pending placeholder", () => {
+  it("shows and controls the standalone master clock", () => {
     useTimeline.mockImplementationOnce(() => ({
       status: "ready",
       timeline: {
@@ -163,9 +177,11 @@ describe("DjControlSurface", () => {
 
     render(<DjControlSurface />)
 
-    expect(screen.getByText("118.3")).toBeInTheDocument()
-    expect(screen.getByText("Timeline ready")).toBeInTheDocument()
-    expect(screen.queryByText("Timeline pending")).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Master clock tempo")).toHaveValue(126)
+    fireEvent.change(screen.getByLabelText("Master clock tempo"), { target: { value: "128.5" } })
+    expect(playback.setMasterClockTempo).toHaveBeenCalledWith(128.5)
+    fireEvent.click(screen.getByRole("button", { name: "AUTO" }))
+    expect(playback.setAutoTempoMaster).toHaveBeenCalledOnce()
   })
 
   it("zooms both detailed deck waveforms together and resets to 16 seconds", () => {
@@ -217,8 +233,7 @@ describe("DjControlSurface", () => {
 
     render(<DjControlSurface />)
 
-    expect(screen.getByText("--.--")).toBeInTheDocument()
-    expect(screen.getByText("Timeline missing")).toBeInTheDocument()
+    expect(screen.getByLabelText("Master clock tempo")).toHaveValue(126)
   })
 
   it("closes on Escape and restores focus", () => {
@@ -288,5 +303,40 @@ describe("DjControlSurface", () => {
     fireEvent.keyDown(pitchA, { key: "End" })
 
     expect(playback.setDeckTempo).toHaveBeenCalledWith("A", 1.08)
+  })
+
+  it("exposes deck MASTER/SYNC ownership and locks the synced follower pitch", () => {
+    const base = snapshot()
+    playback.getEngineSnapshot.mockReturnValue({
+      ...base,
+      decks: { ...base.decks, B: { ...base.decks.B, sourceKind: "signalsmith", tempoMode: "pitch-preserving" } },
+      beatSync: {
+        auto: true,
+        master: "A",
+        clockBpm: 126,
+        decks: {
+          A: { enabled: false, phase: "off", reason: null },
+          B: { enabled: true, phase: "aligned", reason: null },
+        },
+      },
+    })
+    useTimeline.mockReturnValue({
+      status: "ready",
+      timeline: {
+        durationSeconds: 180, levels: [], bpm: 126, beatConfidence: 0.8, rhythmCoverageSeconds: 180,
+        beats: new Float32Array([0, 0.5]), localTempo: new Float32Array([126, 126]),
+      },
+    })
+    useUIStore.setState({ djSurfaceOpen: true })
+    render(<DjControlSurface />)
+
+    expect(screen.getByLabelText("Master clock tempo")).toBeDisabled()
+    expect(screen.getByLabelText("Set Deck A as tempo master")).toHaveAttribute("data-active", "true")
+    expect(screen.getByLabelText("Deck B pitch")).toBeDisabled()
+
+    fireEvent.click(screen.getByLabelText("Sync Deck B to tempo master"))
+    fireEvent.click(screen.getByLabelText("Set Deck B as tempo master"))
+    expect(playback.toggleDeckSync).toHaveBeenCalledWith("B")
+    expect(playback.setDeckTempoMaster).toHaveBeenCalledWith("B")
   })
 })

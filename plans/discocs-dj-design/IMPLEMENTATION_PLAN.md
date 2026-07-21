@@ -1,6 +1,6 @@
 # Discocs DJ implementation plan
 
-**Status:** Phases 0-5 implemented; Phase 3/4 interaction and mixer correction is deployed and verified in Jenkins build #305; the Phase 5 production backfill is running
+**Status:** Phases 0-5 and Phase 6 Groups 1-2 implemented; Phase 6 Group 3 remains pending explicit approval and browser quality validation
 **Delivery rule:** one complete logical slice includes code, meaningful tests, affected docs, one commit and pushes to both configured remotes; Jenkins is the verification environment.
 
 ## 1. Readiness
@@ -353,6 +353,9 @@ Phase 6 is delivered in three ordered groups.
 
 ### Group 1 — production Signalsmith source
 
+**Implementation:** complete; two complete browser-local deck buffers and the
+native fallback are in production.
+
 - retain the existing two-complete-`Blob` deck lifecycle; do not add a PCM
   streaming endpoint or another live backend audio dependency;
 - decode each loaded physical deck completely in the browser and transfer its
@@ -370,6 +373,13 @@ preparation; unsupported or failed Signalsmith initialization preserves native
 playback.
 
 ### Group 2 — beat sync
+
+**Implementation:** complete. The accepted interaction model follows Traktor:
+an editable master clock owns tempo while no deck is master; AUTO promotes the
+first eligible playing deck and transfers ownership when it stops; either deck
+can be selected explicitly with its MASTER button; an engaged SYNC deck is a
+tempo/phase follower and its pitch fader is locked. Disengaging SYNC preserves
+the currently matched tempo.
 
 - implement beat-timeline mapping and master/follower ownership;
 - implement sync engagement/disengagement and initial beat-phase alignment;
@@ -440,10 +450,10 @@ Every implementation slice:
 
 ## 12. Current next action
 
-Let the explicit Phase 5 production analysis finish and validate real
-waveform/beat artifacts in the deployed DJ
-workspace. Phase 6 starts only after that validation; energy/structure remain
-deferred until their payload contracts and actual UI consumers are designed.
+Run Phase 6 Group 3 only after explicit approval: measure drift and continuity,
+add bounded correction, expose final capability/degraded diagnostics and record
+the supported-browser quality gate. Energy/structure remain deferred until
+their payload contracts and actual UI consumers are designed.
 
 Primary external references reviewed for the spike:
 
@@ -451,3 +461,4 @@ Primary external references reviewed for the spike:
 - [PixiJS v8 ticker](https://pixijs.com/8.x/guides/components/ticker)
 - [Web Audio media element sources](https://developer.mozilla.org/en-US/docs/Web/API/AudioContext/createMediaElementSource)
 - [Signalsmith Stretch official Web Audio release](https://github.com/Signalsmith-Audio/signalsmith-stretch/tree/main/web/release)
+- [Traktor Pro 4 manual: Tempo Master, AUTO, Master Clock and BeatSync](https://www.native-instruments.com/fileadmin/ni_media/downloads/manuals/traktor/Traktor-Pro-4-Manual-English-170724.pdf)

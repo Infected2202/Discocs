@@ -34,6 +34,11 @@ function runtime() {
     pauseDeck: vi.fn().mockResolvedValue(undefined),
     seekDeck: vi.fn().mockResolvedValue(undefined),
     setTempo: vi.fn().mockResolvedValue(undefined),
+    setAutoMaster: vi.fn().mockResolvedValue(undefined),
+    setClockMaster: vi.fn().mockResolvedValue(undefined),
+    setTempoMaster: vi.fn().mockResolvedValue(undefined),
+    setClockTempo: vi.fn().mockResolvedValue(undefined),
+    toggleSync: vi.fn().mockResolvedValue(undefined),
     setMasterGain: vi.fn(),
     upgradeDeckSource: vi.fn().mockResolvedValue({ upgraded: false, kind: "media-element", reason: null }),
     getSnapshot: vi.fn().mockReturnValue({
@@ -50,6 +55,23 @@ function runtime() {
 }
 
 describe("PlayerPlaybackFacade routing", () => {
+  it("forwards master-clock and deck-sync ownership commands", async () => {
+    const engine = runtime()
+    const facade = new PlayerPlaybackFacade(engine)
+
+    await facade.setAutoTempoMaster()
+    await facade.setClockTempoMaster()
+    await facade.setDeckTempoMaster("B")
+    await facade.setMasterClockTempo(128.5)
+    await facade.toggleDeckSync("B")
+
+    expect(engine.setAutoMaster).toHaveBeenCalledOnce()
+    expect(engine.setClockMaster).toHaveBeenCalledOnce()
+    expect(engine.setTempoMaster).toHaveBeenCalledWith("B")
+    expect(engine.setClockTempo).toHaveBeenCalledWith(128.5)
+    expect(engine.toggleSync).toHaveBeenCalledWith("B")
+  })
+
   it("defers a fractional seek until replacement media metadata is ready", () => {
     const audio: MockAudio[] = []
     vi.stubGlobal("Audio", function () {

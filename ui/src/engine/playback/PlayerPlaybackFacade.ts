@@ -541,6 +541,26 @@ export class PlayerPlaybackFacade {
     return this.runtime.setTempo(deck, ratio)
   }
 
+  setAutoTempoMaster(): Promise<void> {
+    return this.runtime.setAutoMaster()
+  }
+
+  setClockTempoMaster(): Promise<void> {
+    return this.runtime.setClockMaster()
+  }
+
+  setDeckTempoMaster(deck: DeckId): Promise<void> {
+    return this.runtime.setTempoMaster(deck)
+  }
+
+  setMasterClockTempo(bpm: number): Promise<void> {
+    return this.runtime.setClockTempo(bpm)
+  }
+
+  toggleDeckSync(deck: DeckId): Promise<void> {
+    return this.runtime.toggleSync(deck)
+  }
+
   async toggleDeck(deck: DeckId): Promise<void> {
     if (this.runtime.isStretchDeck(deck)) {
       const transport = this.runtime.getSnapshot().decks[deck].transport

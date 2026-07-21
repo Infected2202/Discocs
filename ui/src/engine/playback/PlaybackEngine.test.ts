@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PlaybackEngine } from "./PlaybackEngine"
 import type { StretchNode } from "./signalsmith/types"
+import type { DecodedTimeline } from "@/engine/timeline/types"
 
 class FakeParam {
   value = 1
@@ -220,5 +221,89 @@ describe("PlaybackEngine Phase 1 routing", () => {
       tempoMode: "native",
       degradedReason: "Timeline is missing",
     })
+  })
+
+  it("assigns the first playing deck as master and drives an engaged follower", async () => {
+    vi.stubGlobal("AudioContext", FakeContext)
+    const makeStretchNode = (inputTime: number) => Object.assign(new FakeNode(), {
+      inputTime,
+      configure: vi.fn().mockResolvedValue(undefined),
+      latency: vi.fn().mockResolvedValue(0.12),
+      addBuffers: vi.fn().mockResolvedValue(2),
+      dropBuffers: vi.fn().mockResolvedValue({ start: 0, end: 0 }),
+      schedule: vi.fn().mockImplementation(async (change) => change),
+      start: vi.fn().mockResolvedValue({}),
+      stop: vi.fn().mockResolvedValue({}),
+      setUpdateInterval: vi.fn().mockResolvedValue(undefined),
+      port: { close: vi.fn() },
+    }) as unknown as StretchNode
+    const nodeA = makeStretchNode(0.75)
+    const nodeB = makeStretchNode(1.4)
+    const timelines: Record<number, DecodedTimeline> = {
+      1: {
+        durationSeconds: 2, levels: [], bpm: 126, beatConfidence: 0.9, rhythmCoverageSeconds: 2,
+        beats: new Float32Array([0, 0.5, 1, 1.5]), localTempo: new Float32Array([126, 126, 126, 126]),
+      },
+      2: {
+        durationSeconds: 2, levels: [], bpm: 120, beatConfidence: 0.9, rhythmCoverageSeconds: 2,
+        beats: new Float32Array([0.1, 0.6, 1.1, 1.6]), localTempo: new Float32Array([120, 120, 120, 120]),
+      },
+    }
+    const engine = new PlaybackEngine(undefined, {
+      stretch: { createNode: vi.fn().mockResolvedValueOnce(nodeA).mockResolvedValueOnce(nodeB) },
+      stretchEligibility: vi.fn(async (trackId) => ({ ready: true, reason: null, timeline: timelines[trackId] })),
+    })
+    engine.routeProgramElement(document.createElement("audio"), 1, "q1")
+    engine.routeIncomingElement(document.createElement("audio"), 2, "q2")
+    await engine.upgradeDeckSource("A", { url: "blob:a", trackId: 1, blob: new Blob(["a"]) })
+    await engine.upgradeDeckSource("B", { url: "blob:b", trackId: 2, blob: new Blob(["b"]) })
+
+    await engine.playDeck("A")
+    expect(engine.getSnapshot().beatSync).toMatchObject({ auto: true, master: "A", clockBpm: 126 })
+
+    await engine.toggleSync("B")
+    expect(engine.getSnapshot()).toMatchObject({
+      beatSync: { decks: { B: { enabled: true, phase: "aligned", reason: null } } },
+      decks: { B: { tempoRatio: 1.05 } },
+    })
+    expect(vi.mocked(nodeB.schedule)).toHaveBeenCalledWith(expect.objectContaining({ rate: 1.05 }), true)
+
+    await engine.setTempo("A", 1.02)
+    expect(engine.getSnapshot().decks.B.tempoRatio).toBeCloseTo(1.071)
+    await expect(engine.setTempo("B", 1)).rejects.toThrow("controlled by the tempo master")
+    await engine.toggleSync("B")
+    expect(engine.getSnapshot().decks.B.tempoRatio).toBeCloseTo(1.071)
+    expect(engine.getSnapshot().beatSync.decks.B).toMatchObject({ enabled: false, phase: "off" })
+    await engine.toggleSync("B")
+
+    const scheduledBeforeRecovery = vi.mocked(nodeB.schedule).mock.calls.length
+    await engine.playDeck("B")
+    await engine.seekDeck("B", 1.2)
+    await engine.setLoop("B", { enabled: true, startSeconds: 0.6, endSeconds: 1.6 })
+    expect(vi.mocked(nodeB.schedule).mock.calls.length).toBeGreaterThan(scheduledBeforeRecovery)
+    expect(vi.mocked(nodeB.schedule)).toHaveBeenCalledWith(expect.objectContaining({
+      loopStart: 0.6,
+      loopEnd: 1.6,
+    }))
+
+    await engine.pauseDeck("A")
+    expect(engine.getSnapshot().beatSync).toMatchObject({
+      auto: true,
+      master: "B",
+      decks: { B: { enabled: false, phase: "off" } },
+    })
+    await engine.handover({ incomingDeck: "B", clientHandoverId: "sync-handover" })
+    expect(engine.getSnapshot()).toMatchObject({ programDeck: "B", beatSync: { master: "B" } })
+  })
+
+  it("keeps the editable master clock selected when AUTO is disabled", async () => {
+    vi.stubGlobal("AudioContext", FakeContext)
+    const engine = new PlaybackEngine()
+    await engine.ensureReady()
+
+    await engine.setClockMaster()
+    await engine.setClockTempo(140)
+
+    expect(engine.getSnapshot().beatSync).toMatchObject({ auto: false, master: "clock", clockBpm: 140 })
   })
 })

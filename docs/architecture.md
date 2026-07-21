@@ -272,7 +272,11 @@ routing preserve the reference hierarchy while remaining disabled placeholders.
 Deck panels contain live track, transport, time and waveform state. Their
 ±8% pitch faders issue real tempo commands; eligible decks use Signalsmith
 pitch preservation and ineligible decks expose native tempo as degraded.
-Cue, loop, sync and performance controls remain disabled. Knob pointers place the neutral/default value at
+The master clock, automatic/deck tempo-master assignment and per-deck BeatSync
+controls are live. The first eligible playing deck becomes master in AUTO mode;
+a synced follower receives scheduled tempo and beat-phase changes and cannot
+move its own pitch fader. Cue and performance controls remain disabled; loop
+recovery exists in the engine but has no live loop UI yet. Knob pointers place the neutral/default value at
 twelve o'clock, including controls whose audio range is asymmetric, and their
 arcs render the actual value outward from that centre with no coloured fill at
 neutral. The top panel uses shrink-safe effect regions around an isolated
@@ -280,7 +284,7 @@ master block; compact landscape widths remove secondary effect names before
 they can overlap the master controls. The Deck B effect rack mirrors its DOM
 and grid columns explicitly, so its controls occupy the wide outer column
 rather than the narrow label column next to the master. Channel and crossfader
-slots include scales and a high-contrast cap. Effects, cue, loop, sync and
+slots include scales and a high-contrast cap. Effects, cue, loop and
 performance-pad regions are explicitly unavailable until their owning phases;
 they never simulate a successful command. BPM and waveform regions
 consume the published timeline artifact. Gain, three-band EQ, filter, channel
@@ -590,6 +594,12 @@ transferred to the worklet; no PCM endpoint or live backend audio dependency is
 introduced. The two-deck model bounds residency, and deck retirement drops the
 complete worklet buffer together with the compressed payload and object URL.
 Transport/rate/loop changes use runtime-reported latency plus a small lead margin.
+`ui/src/engine/playback/beatSync.ts` maps the versioned beat series to a common
+AudioContext schedule. `PlaybackEngine` owns AUTO/master-clock/deck-master
+state, keeps synced followers within the agreed ±8% range, schedules initial
+phase alignment, and reapplies alignment after seek, loop, master-tempo changes
+and deck retirement. Continuous measured drift correction remains a separate
+Phase 6 Group 3 concern.
 
 The package is MIT licensed. Browser measurements, configuration comparison and the Phase 6
 feasibility decision are recorded in

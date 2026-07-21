@@ -87,9 +87,9 @@ export class StretchDeckSource implements DeckSource {
     }
   }
 
-  async play(when?: number): Promise<void> {
+  async play(when?: number, offsetSeconds?: number): Promise<void> {
     this.assertUsable()
-    await this.requireAdapter().start(undefined, when)
+    await this.requireAdapter().start(offsetSeconds, when)
     this.transport = "playing"
     this.notify()
   }
@@ -101,10 +101,10 @@ export class StretchDeckSource implements DeckSource {
     this.notify()
   }
 
-  async seek(seconds: number): Promise<void> {
+  async seek(seconds: number, when?: number): Promise<void> {
     this.assertUsable()
     const target = Math.max(0, Math.min(seconds, this.duration ?? Number.POSITIVE_INFINITY))
-    await this.requireAdapter().seek(target)
+    await this.requireAdapter().seek(target, when)
     this.notify()
   }
 
@@ -114,13 +114,13 @@ export class StretchDeckSource implements DeckSource {
     this.notify()
   }
 
-  async setLoop(loop: LoopState): Promise<void> {
+  async setLoop(loop: LoopState, when?: number): Promise<void> {
     this.assertUsable()
     if (loop.enabled && (loop.startSeconds < 0 || loop.endSeconds <= loop.startSeconds)) {
       throw new RangeError("Loop end must be after its non-negative start")
     }
     this.loop = loop
-    await this.requireAdapter().setLoop(loop)
+    await this.requireAdapter().setLoop(loop, when)
     this.notify()
   }
 

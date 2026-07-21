@@ -2,7 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { ChevronDown, Gauge, Pause, Play, SkipForward, SlidersHorizontal, Sparkles } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
-import { playerPlayback, type DeckId, type DeckSnapshot, type EqBand } from "@/engine/playback"
+import {
+  playerPlayback,
+  type BeatSyncSnapshot,
+  type DeckId,
+  type DeckSnapshot,
+  type EqBand,
+} from "@/engine/playback"
 import { usePlayerStore } from "@/store/playerStore"
 import { useUIStore } from "@/store/uiStore"
 import type { QueueItem as QueueItemType, TrackSummary } from "@/api/types"
@@ -164,9 +170,10 @@ interface DeckPanelProps {
   readonly onToggle: () => void
   readonly onHandover: () => void
   readonly timelineState: TimelineLoadState
+  readonly beatSync: BeatSyncSnapshot
 }
 
-function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState }: DeckPanelProps) {
+function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState, beatSync }: DeckPanelProps) {
   const isPlaying = deck.transport === "playing"
   const canPlay = deck.trackId !== null && deck.preparation !== "loading" && deck.preparation !== "unavailable"
   const canHandover = !isProgram && deck.preparation === "ready"
@@ -178,6 +185,9 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
   })
   const pitchValue = Math.max(-1, Math.min(1, (deck.tempoRatio - 1) / 0.08))
   const pitchPercent = (deck.tempoRatio - 1) * 100
+  const isTempoMaster = beatSync.master === deck.id
+  const syncState = beatSync.decks[deck.id]
+  const canUseBeatSync = deck.sourceKind === "signalsmith" && timelineState.status === "ready"
 
   return (
     <section
@@ -198,8 +208,20 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
           <strong>{track?.title ?? `Deck ${deck.id} empty`}</strong>
           <span>{track?.artists?.map((artist) => artist.name).join(", ") || "—"}</span>
           <div className={styles.deckSyncControls}>
-            <button type="button" disabled>SYNC</button>
-            <button type="button" disabled>MASTER</button>
+            <button
+              type="button"
+              data-active={syncState.enabled || undefined}
+              disabled={!canUseBeatSync || isTempoMaster}
+              onClick={() => runPlayerCommand(() => playerPlayback.toggleDeckSync(deck.id))}
+              aria-label={`Sync Deck ${deck.id} to tempo master`}
+            >SYNC</button>
+            <button
+              type="button"
+              data-active={isTempoMaster || undefined}
+              disabled={!canUseBeatSync}
+              onClick={() => runPlayerCommand(() => playerPlayback.setDeckTempoMaster(deck.id))}
+              aria-label={`Set Deck ${deck.id} as tempo master`}
+            >MASTER</button>
           </div>
         </div>
         <DeckTimeReadout deck={deck} />
@@ -256,7 +278,7 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
           value={pitchValue}
           min={-1}
           max={1}
-          disabled={!canPlay}
+          disabled={!canPlay || (syncState.enabled && !isTempoMaster)}
           onChange={(value) => runPlayerCommand(() => playerPlayback.setDeckTempo(deck.id, 1 + value * 0.08))}
         />
       </div>
@@ -389,9 +411,6 @@ function OpenDjControlSurface() {
   const timelineA = useTimeline(snapshot.decks.A.trackId)
   const timelineB = useTimeline(snapshot.decks.B.trackId)
   const timelines: Record<DeckId, TimelineLoadState> = { A: timelineA, B: timelineB }
-  const programTimeline: TimelineLoadState = snapshot.programDeck
-    ? timelines[snapshot.programDeck]
-    : { status: "missing" }
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
   const [waveformWindowSeconds, setWaveformWindowSeconds] = useState<number>(defaultWaveformWindow)
@@ -433,8 +452,28 @@ function OpenDjControlSurface() {
             <div className={styles.masterControls}>
               <div className={styles.masterReadout}>
                 <span>MASTER BPM</span>
-                <strong>{programTimeline.timeline ? programTimeline.timeline.bpm.toFixed(1) : "--.--"}</strong>
-                <small>Timeline {programTimeline.status}</small>
+                <input
+                  type="number"
+                  min="1"
+                  step="0.01"
+                  value={snapshot.beatSync.clockBpm.toFixed(2)}
+                  disabled={snapshot.beatSync.master !== "clock"}
+                  onChange={(event) => runPlayerCommand(() => playerPlayback.setMasterClockTempo(Number(event.target.value)))}
+                  aria-label="Master clock tempo"
+                />
+                <small>{snapshot.beatSync.master === "clock" ? "CLOCK" : `DECK ${snapshot.beatSync.master}`}</small>
+                <div className={styles.masterClockModes}>
+                  <button
+                    type="button"
+                    data-active={snapshot.beatSync.auto || undefined}
+                    onClick={() => runPlayerCommand(() => playerPlayback.setAutoTempoMaster())}
+                  >AUTO</button>
+                  <button
+                    type="button"
+                    data-active={snapshot.beatSync.master === "clock" || undefined}
+                    onClick={() => runPlayerCommand(() => playerPlayback.setClockTempoMaster())}
+                  >MASTER</button>
+                </div>
               </div>
               <DjKnob
                 label="Master gain"
@@ -508,6 +547,7 @@ function OpenDjControlSurface() {
             onToggle={() => runPlayerCommand(() => toggleDeck("A"))}
             onHandover={() => runPlayerCommand(skipNext)}
             timelineState={timelines.A}
+            beatSync={snapshot.beatSync}
           />
 
           <section className={styles.mixerPanel} aria-label="Mixer">
@@ -534,6 +574,7 @@ function OpenDjControlSurface() {
             onToggle={() => runPlayerCommand(() => toggleDeck("B"))}
             onHandover={() => runPlayerCommand(skipNext)}
             timelineState={timelines.B}
+            beatSync={snapshot.beatSync}
           />
         </section>
 

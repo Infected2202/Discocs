@@ -36,7 +36,7 @@ ui/src/engine/playback/
   MixerGraph.ts              deck strips, crossfader and master graph
   AutomationScheduler.ts     reserved for the separate Auto DJ epic
   curves.ts                  pure gain/EQ/filter/crossfader mappings
-  clock.ts                   audio-time/playhead conversion helpers
+  beatSync.ts                beat-grid, tempo-ratio and phase mapping helpers
 ```
 
 `ui/src/engine/AudioEngine.ts` remains temporarily as a compatibility adapter or is reduced to re-exporting the Phase 1 facade. It is removed only after all callers and tests use `PlaybackEngine`.
@@ -149,6 +149,17 @@ browser-local: Phase 6 does not introduce a PCM endpoint or depend on the
 backend after deck preparation.
 
 The Signalsmith source must implement the same interface and compensate its reported latency when scheduling handover, cue, loop and sync operations.
+
+Group 2 follows the accepted Traktor ownership model. The engine snapshot owns
+one tempo master (`clock`, Deck A or Deck B), AUTO state and per-deck SYNC phase.
+The first eligible playing deck becomes master in AUTO; stopping/retiring it
+selects the other playing eligible deck or the clock. Deck MASTER is an explicit
+override. A synced follower derives its ratio from the master's effective BPM,
+maps the master's current beat phase onto its nearest beat interval and
+schedules rate/seek/start at one common latency-compensated AudioContext time.
+Follower pitch is locked while SYNC is engaged; disengagement keeps the reached
+tempo. Seek, loop, master-tempo change and ownership transfer invoke the same
+event-driven realignment. Periodic drift measurement/correction is Group 3.
 
 ## 7. Audio graph
 

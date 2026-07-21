@@ -5,6 +5,7 @@ import { detectStretchCapability } from "./capabilities"
 export interface StretchEligibility {
   readonly ready: boolean
   readonly reason: string | null
+  readonly timeline?: DecodedTimeline
 }
 
 export type StretchEligibilityResolver = (trackId: number) => Promise<StretchEligibility>
@@ -26,5 +27,6 @@ export const resolveStretchEligibility: StretchEligibilityResolver = async (trac
   if (state.status !== "ready" || !state.timeline) {
     return { ready: false, reason: state.message ?? `Timeline is ${state.status}` }
   }
-  return timelineSupportsStretch(state.timeline)
+  const eligibility = timelineSupportsStretch(state.timeline)
+  return eligibility.ready ? { ...eligibility, timeline: state.timeline } : eligibility
 }

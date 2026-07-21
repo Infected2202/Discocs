@@ -149,6 +149,17 @@ keeps that deck on native media playback and exposes the degraded mode in the
 deck status. Retiring a deck releases its compressed Blob, decoded/worklet
 buffer, object URL, and source references.
 
+The DJ header contains Traktor-style `AUTO` and `MASTER` clock controls. With
+AUTO active, the first eligible deck that starts becomes tempo master; if that
+deck stops, ownership moves to the other playing eligible deck or back to the
+editable master clock. Each deck has live `MASTER` and `SYNC` buttons. BeatSync
+matches the follower to the master BPM and beat phase, disables only the
+follower's pitch fader, and leaves the matched tempo in place when SYNC is
+disengaged. Master tempo changes propagate to engaged followers. Sync requires
+Signalsmith plus a valid beat timeline and respects the agreed ±8% deck range.
+Seek, loop and handover/retirement paths re-evaluate phase and ownership; Group
+3 will add measured continuous drift correction and browser quality gates.
+
 The per-user playback settings page can request MP3 transcoding at
 96/128/192/256/320 Kbit/s. The profile key is included in the audio URL and
 the backend validates it against the saved settings before forwarding

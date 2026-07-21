@@ -37,11 +37,12 @@ export class HtmlMediaDeckSource implements DeckSource {
     }
   }
 
-  async play(when?: number): Promise<void> {
+  async play(when?: number, offsetSeconds?: number): Promise<void> {
     this.assertUsable()
     if (when !== undefined && when > this.context.currentTime) {
       throw new Error("HTML media sources cannot start sample-accurately in the future")
     }
+    if (offsetSeconds !== undefined) this.element.currentTime = Math.max(0, offsetSeconds)
     await this.element.play()
   }
 
@@ -53,8 +54,11 @@ export class HtmlMediaDeckSource implements DeckSource {
     this.element.pause()
   }
 
-  async seek(seconds: number): Promise<void> {
+  async seek(seconds: number, when?: number): Promise<void> {
     this.assertUsable()
+    if (when !== undefined && when > this.context.currentTime) {
+      throw new Error("HTML media seeks cannot be scheduled in the future")
+    }
     this.element.currentTime = Math.max(0, seconds)
   }
 
@@ -67,8 +71,11 @@ export class HtmlMediaDeckSource implements DeckSource {
     this.element.preservesPitch = true
   }
 
-  setLoop(loop: LoopState): void {
+  setLoop(loop: LoopState, when?: number): void {
     this.assertUsable()
+    if (when !== undefined && when > this.context.currentTime) {
+      throw new Error("HTML media loops cannot be scheduled in the future")
+    }
     this.element.loop = loop.enabled && loop.startSeconds === 0
   }
 

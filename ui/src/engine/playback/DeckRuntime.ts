@@ -120,9 +120,13 @@ export class DeckRuntime {
     return this.duration
   }
 
-  async play(when?: number): Promise<void> {
+  get schedulingLeadSeconds(): number {
+    return this.active?.activationDelaySeconds ?? 0
+  }
+
+  async play(when?: number, offsetSeconds?: number): Promise<void> {
     const active = this.requireActive()
-    await active.play(when)
+    await active.play(when, offsetSeconds)
     this.transport = "playing"
     this.notify()
   }
@@ -134,8 +138,8 @@ export class DeckRuntime {
     this.notify()
   }
 
-  async seek(seconds: number): Promise<void> {
-    await this.requireActive().seek(seconds)
+  async seek(seconds: number, when?: number): Promise<void> {
+    await this.requireActive().seek(seconds, when)
     this.notify()
   }
 
@@ -144,8 +148,8 @@ export class DeckRuntime {
     this.notify()
   }
 
-  async setLoop(loop: LoopState): Promise<void> {
-    await this.requireActive().setLoop(loop)
+  async setLoop(loop: LoopState, when?: number): Promise<void> {
+    await this.requireActive().setLoop(loop, when)
     this.notify()
   }
 
