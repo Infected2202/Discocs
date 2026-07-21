@@ -133,11 +133,11 @@ def test_local_worker_receives_service_token_from_environment():
     assert "DISCOCS_SERVICE_TOKEN: ${DISCOCS_SERVICE_TOKEN:-}" in config
 
 
-def test_local_worker_buffers_tasks_without_raising_cpu_parallelism():
+def test_local_worker_bounds_cpu_and_request_parallelism():
     config = WORKER_COMPOSE.read_text(encoding="utf-8")
 
-    assert "DISCOCS_WORKER_CLAIM_BATCH_SIZE:-4" in config
-    assert "DISCOCS_WORKER_MAX_INFLIGHT_TASKS:-4" in config
+    assert "DISCOCS_WORKER_CLAIM_BATCH_SIZE:-2" in config
+    assert "DISCOCS_WORKER_MAX_INFLIGHT_TASKS:-2" in config
     assert "DISCOCS_WORKER_CPU_WORKERS:-2" in config
     assert "DISCOCS_WORKER_DOWNLOAD_CONCURRENCY:-1" in config
     assert "DISCOCS_WORKER_SUBMIT_BATCH_SIZE:-1" in config

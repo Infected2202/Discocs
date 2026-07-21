@@ -23,6 +23,7 @@ from urllib.request import Request, urlopen
 from urllib.parse import urljoin
 
 import typer
+import httpx
 import numpy as np
 
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR, AudioFeatureAnalyzer
@@ -684,9 +685,81 @@ def _service_headers() -> dict[str, str]:
     return {"X-Discocs-Service-Token": token} if token else {}
 
 
+_WORKER_HTTP_CLIENT: httpx.Client | None = None
+_WORKER_HTTP_SERVER: str | None = None
+
+
+def open_worker_http_client(server: str, *, max_connections: int) -> None:
+    """Open the process-wide worker pool before its hot request loop starts."""
+    global _WORKER_HTTP_CLIENT, _WORKER_HTTP_SERVER
+    close_worker_http_client()
+    connection_limit = max(max_connections, 2)
+    _WORKER_HTTP_SERVER = urljoin(server.rstrip("/") + "/", "/").rstrip("/")
+    _WORKER_HTTP_CLIENT = httpx.Client(
+        headers=_service_headers(),
+        limits=httpx.Limits(
+            max_connections=connection_limit,
+            max_keepalive_connections=connection_limit,
+            keepalive_expiry=60.0,
+        ),
+        trust_env=False,
+    )
+
+
+def close_worker_http_client() -> None:
+    global _WORKER_HTTP_CLIENT, _WORKER_HTTP_SERVER
+    client = _WORKER_HTTP_CLIENT
+    _WORKER_HTTP_CLIENT = None
+    _WORKER_HTTP_SERVER = None
+    if client is not None:
+        client.close()
+
+
+def _worker_http_request(
+    method: str,
+    url: str,
+    *,
+    timeout: float,
+    content: bytes | None = None,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response | None:
+    if _WORKER_HTTP_CLIENT is None or _WORKER_HTTP_SERVER != urljoin(url, "/").rstrip("/"):
+        return None
+    try:
+        response = _WORKER_HTTP_CLIENT.request(
+            method,
+            url,
+            content=content,
+            headers=headers,
+            timeout=timeout,
+        )
+    except httpx.TimeoutException as exc:
+        raise TimeoutError(str(exc)) from exc
+    except httpx.TransportError as exc:
+        raise URLError(str(exc)) from exc
+    if response.status_code >= 400:
+        raise HTTPError(
+            url,
+            response.status_code,
+            response.reason_phrase,
+            response.headers,
+            None,
+        )
+    return response
+
+
 def post_json(server: str, path: str, payload: dict[str, object], *, timeout: float = 60) -> dict[str, object]:
     url = urljoin(server.rstrip("/") + "/", path.lstrip("/"))
     data = json.dumps(payload).encode("utf-8")
+    pooled_response = _worker_http_request(
+        "POST",
+        url,
+        timeout=timeout,
+        content=data,
+        headers={"Content-Type": "application/json"},
+    )
+    if pooled_response is not None:
+        return pooled_response.json()
     request = Request(
         url,
         data=data,
@@ -720,10 +793,15 @@ def register_worker_with_retry(
 
 def download_task_audio(server: str, audio_url: str, target: Path) -> None:
     url = urljoin(server.rstrip("/") + "/", audio_url.lstrip("/"))
-    request = Request(url, headers=_service_headers())
-    with urlopen(request, timeout=300) as response:
-        payload = response.read()
-        content_type = response.headers.get("Content-Type", "")
+    pooled_response = _worker_http_request("GET", url, timeout=300)
+    if pooled_response is not None:
+        payload = pooled_response.content
+        content_type = pooled_response.headers.get("Content-Type", "")
+    else:
+        request = Request(url, headers=_service_headers())
+        with urlopen(request, timeout=300) as response:
+            payload = response.read()
+            content_type = response.headers.get("Content-Type", "")
     if not payload:
         raise RuntimeError(f"Downloaded empty audio payload from {url}")
     stripped = payload[:512].lstrip()
@@ -769,6 +847,9 @@ def worker_task_state(server: str, worker_id: str, task_id: str) -> dict[str, ob
         server.rstrip("/") + "/",
         f"/api/v1/workers/tasks/{task_id}/state?worker_id={worker_id}",
     )
+    pooled_response = _worker_http_request("GET", url, timeout=30)
+    if pooled_response is not None:
+        return pooled_response.json()
     request = Request(url, headers=_service_headers())
     with urlopen(request, timeout=30) as response:
         return json.loads(response.read().decode("utf-8"))
@@ -1928,7 +2009,15 @@ def worker(
         f"embedding_backend={embedding_backend} cpu_workers={resolved_cpu_workers} {cpu_workers_source} "
         f"startup_jitter_seconds={startup_jitter_seconds}"
     )
-    register_worker_with_retry(server, worker_id, models, poll_seconds, once)
+    open_worker_http_client(
+        server,
+        max_connections=max(download_concurrency + 2, max_inflight_tasks),
+    )
+    try:
+        register_worker_with_retry(server, worker_id, models, poll_seconds, once)
+    except Exception:
+        close_worker_http_client()
+        raise
     direct_embedding_pipeline = (
         embedding_backend in {"auto", "tensorflow"}
         and any(isinstance(embedder, DiscogsEffnetEmbedder) for embedder in embedders.values())
@@ -1955,7 +2044,10 @@ def worker(
         head_pack_analyzer=head_pack_analyzer,
         direct_embedding_pipeline=direct_embedding_pipeline,
     )
-    runtime.run()
+    try:
+        runtime.run()
+    finally:
+        close_worker_http_client()
 
 
 @cli.command("download-models")

@@ -132,6 +132,60 @@ def _make_post_json(claim_sequence: list[list[dict]]):
     return fake_post_json, calls
 
 
+def test_worker_http_client_reuses_one_connection_pool(monkeypatch, tmp_path):
+    clients = []
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, *, payload=None, content=b"audio"):
+            self.status_code = 200
+            self.reason_phrase = "OK"
+            self.headers = {"Content-Type": "audio/flac"}
+            self.content = content
+            self._payload = payload or {}
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.closed = False
+            clients.append(self)
+
+        def request(self, method, url, **kwargs):
+            calls.append((method, url, kwargs))
+            if url.endswith("/state?worker_id=worker-1"):
+                return FakeResponse(payload={"active": True})
+            if method == "POST":
+                return FakeResponse(payload={"tasks": []})
+            return FakeResponse()
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setenv("DISCOCS_SERVICE_TOKEN", "worker-secret")
+    monkeypatch.setattr(cli_module.httpx, "Client", FakeClient)
+    cli_module.open_worker_http_client("http://worker.test", max_connections=4)
+    target = tmp_path / "track.flac"
+    try:
+        assert cli_module.post_json("http://worker.test", "/api/v1/workers/claim", {}) == {
+            "tasks": []
+        }
+        cli_module.download_task_audio("http://worker.test", "/files/1", target)
+        assert cli_module.worker_task_state("http://worker.test", "worker-1", "task-1") == {
+            "active": True
+        }
+    finally:
+        cli_module.close_worker_http_client()
+
+    assert len(clients) == 1
+    assert clients[0].kwargs["headers"] == {"X-Discocs-Service-Token": "worker-secret"}
+    assert clients[0].closed is True
+    assert target.read_bytes() == b"audio"
+    assert [method for method, _url, _kwargs in calls] == ["POST", "GET", "GET"]
+
+
 def _make_task_state(active_map: dict[str, bool | None] | None):
     active_map = active_map or {}
 

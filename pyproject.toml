@@ -12,6 +12,7 @@ dependencies = [
   "cryptography>=43",
   "fastapi>=0.111",
   "hnswlib>=0.8",
+  "httpx>=0.28",
   "mutagen>=1.47",
   "numpy>=1.26,<2",
   "Pillow>=10",
