@@ -94,6 +94,8 @@ interface PlayerState {
 
   // UI state
   expanded: boolean
+  /** DJ engine (Web Audio graph) is active. Panel visibility lives in uiStore. */
+  djEngineActive: boolean
 
   // Actions
   playSource(type: string, id: number, label: string, preferredTrackId?: number): Promise<void>
@@ -101,6 +103,8 @@ interface PlayerState {
   jumpToQueueItem(queueItemId: string): Promise<void>
   jumpToAutoplayItem(poolItemId: string): Promise<void>
   togglePlay(): void
+  activateDj(): Promise<void>
+  deactivateDj(): Promise<void>
   toggleDjDeck(deck: DeckId): Promise<void>
   seek(fraction: number): void
   skipNext(): Promise<void>
@@ -220,6 +224,24 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       if (session?.id && currentQueueItemId && currentTrackId != null && currentTime > 0) {
         throttledPersistPosition(session.id, currentQueueItemId, currentTrackId, currentTime)
       }
+      // Локскрин/фоновый плеер: точная позиция на системном плеере повышает
+      // надёжность фонового воспроизведения и убирает «прыгающий» прогресс.
+      if (
+        typeof navigator !== "undefined"
+        && "mediaSession" in navigator
+        && "setPositionState" in navigator.mediaSession
+        && Number.isFinite(duration) && duration > 0
+      ) {
+        try {
+          navigator.mediaSession.setPositionState({
+            duration,
+            position: Math.min(Math.max(0, currentTime), duration),
+            playbackRate: 1,
+          })
+        } catch {
+          // невалидные значения в переходный момент — игнорируем
+        }
+      }
     },
     onBufferUpdate: (ranges) => get()._setBuffered(ranges),
     onFullyBuffered: (trackId, profileKey) => {
@@ -235,6 +257,23 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
   audioEngine.setVolume(initVolume)
   audioEngine.setMuted(initMuted)
 
+  // При возврате из фона дозапускаем зависший переход: мобильный браузер мог
+  // заблокировать play() следующего трека в фоне (нет жеста), либо трек
+  // доиграл до конца, а автопереход не стартовал. В обычном режиме мягко
+  // продолжаем; в DJ-режиме сведение ручное — не вмешиваемся.
+  function reconcileOnForeground() {
+    const { playbackState, djEngineActive } = get()
+    if (djEngineActive || playbackState !== "playing" || !audioEngine.paused) return
+    const duration = audioEngine.duration
+    const position = audioEngine.currentTime
+    if (Number.isFinite(duration) && duration > 0 && position >= duration - 0.5) {
+      // Текущий трек доиграл в фоне, но следующий не включился.
+      void get().handleTrackEnded()
+    } else {
+      audioEngine.play().catch(() => undefined)
+    }
+  }
+
   // Точка невозврата для timeupdate — сохранить позицию сразу при уходе в фон
   // (следующий тик может уже не случиться, если вкладку выгрузят).
   if (typeof document !== "undefined") {
@@ -243,6 +282,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     }
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) flushPosition()
+      else reconcileOnForeground()
     })
     globalThis.addEventListener("pagehide", flushPosition)
   }
@@ -432,6 +472,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     error: null,
     playbackProfile: { transcodingEnabled: false, bitrateKbps: 192, key: "raw" },
     expanded: false,
+    djEngineActive: false,
 
     // --- Playback actions ---
 
@@ -552,6 +593,31 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         audioEngine.play().catch((err: Error) => set({ error: err.message, playbackState: "error" }))
       } else {
         audioEngine.pause()
+      }
+    },
+
+    async activateDj() {
+      if (get().djEngineActive) return
+      try {
+        // Живой трек одноразово передаётся в граф с текущей позиции.
+        await audioEngine.activateDjMode()
+        set({ djEngineActive: true, error: null })
+      } catch (err) {
+        set({ error: (err as Error).message })
+      }
+    },
+
+    async deactivateDj() {
+      if (!get().djEngineActive) return
+      try {
+        // Возврат к чистому <audio> на той же позиции (разрыв при клике допустим).
+        await audioEngine.deactivateDjMode()
+      } catch (err) {
+        set({ error: (err as Error).message })
+      } finally {
+        set({ djEngineActive: false })
+        // Обычный prefetch пересобирает blob-кеш следующего трека.
+        scheduleNextPrefetch()
       }
     },
 
@@ -716,7 +782,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     },
 
     async handleTrackEnded() {
-      const { session, queue, currentQueueItemId } = get()
+      const { session, queue, currentQueueItemId, djEngineActive } = get()
 
       addCurrentToHistory()
       // The backend intentionally keeps the completed item as current. Do not
@@ -724,7 +790,23 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       throttledPersistPosition.cancel()
       clearPersistedPlaybackPosition()
 
-      await get().recordEvent("completed", {
+      // DJ-движок активен → ручное сведение: дека останавливается в конечной
+      // позиции, статус переходит в паузу, автоперехода нет.
+      if (djEngineActive) {
+        set({ playbackState: "paused" })
+        void get().recordEvent("completed", {
+          position_seconds: audioEngine.duration,
+          duration_seconds: audioEngine.duration,
+          play_fraction: 1,
+        })
+        return
+      }
+
+      // Телеметрию «completed» шлём НЕ блокируя переход. Awaited postEvent в фоне
+      // может зависнуть (фоновый fetch троттлится), и именно это раньше не давало
+      // следующему треку стартовать. recordEvent читает текущее состояние, поэтому
+      // вызываем до перевода указателей на следующий трек.
+      void get().recordEvent("completed", {
         position_seconds: audioEngine.duration,
         duration_seconds: audioEngine.duration,
         play_fraction: 1,
@@ -748,7 +830,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         }
       }
 
-      // Queue exhausted
+      // Queue exhausted. recordEvent обычно уже дёрнул refill, но если postEvent
+      // упал — подстрахуемся явно (guard refillInFlight не даст дубля).
       set({ playbackState: "idle" })
       scheduleAutoplayRefill("completed")
     },
@@ -962,6 +1045,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         bufferedRanges: [],
         error: null,
         expanded: false,
+        djEngineActive: false,
       })
     },
 
@@ -1011,6 +1095,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     },
     _setPlaybackState(state) {
       set({ playbackState: state })
+      // Системный медиа-плеер (локскрин/шторка): без явного playbackState
+      // некоторые браузеры не удерживают фоновую сессию. "loading" держим как
+      // "playing", чтобы статус не мигал в момент автоперехода между треками.
+      if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+        navigator.mediaSession.playbackState = state === "paused"
+          ? "paused"
+          : state === "idle" || state === "error"
+            ? "none"
+            : "playing"
+      }
     },
     _setError(message) {
       set({ error: message, playbackState: "error" })

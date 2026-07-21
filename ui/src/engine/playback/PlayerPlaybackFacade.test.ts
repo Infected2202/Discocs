@@ -172,7 +172,7 @@ describe("PlayerPlaybackFacade routing", () => {
     expect(facade.getMixerMeters()).toEqual({ A: 0.2, B: 0.1, master: 0.25 })
   })
 
-  it("routes every loaded element and resumes Web Audio before media playback", async () => {
+  it("keeps ordinary playback off the Web Audio graph until DJ mode is activated", async () => {
     const audio: MockAudio[] = []
     vi.stubGlobal("Audio", function () {
       const instance = new MockAudio()
@@ -185,15 +185,42 @@ describe("PlayerPlaybackFacade routing", () => {
     facade.load("blob:audio-7", 7, "raw", true)
     await facade.play()
 
-    expect(engine.routeProgramElement).toHaveBeenCalledWith(audio[1], 7, null)
-    expect(engine.ensureReady).toHaveBeenCalledTimes(1)
+    // Обычный режим: элемент НЕ заводится в граф и AudioContext не трогается —
+    // именно чистый <audio> надёжно играет в фоне на мобиле.
+    expect(engine.routeProgramElement).not.toHaveBeenCalled()
+    expect(engine.ensureReady).not.toHaveBeenCalled()
     expect(audio[1]?.play).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(engine.ensureReady).mock.invocationCallOrder[0]).toBeLessThan(
-      audio[1]!.play.mock.invocationCallOrder[0]!,
-    )
+
+    // Активация DJ одноразово заводит живой элемент в микшер.
+    await facade.activateDjMode()
+    expect(engine.ensureReady).toHaveBeenCalled()
+    expect(engine.routeProgramElement).toHaveBeenCalledWith(audio[1], 7, null)
+    expect(facade.djModeActive).toBe(true)
   })
 
-  it("does not start media when AudioContext resume fails", async () => {
+  it("does not create a graph deck for prefetch while DJ mode is inactive", async () => {
+    const audio: MockAudio[] = []
+    vi.stubGlobal("Audio", function () {
+      const instance = new MockAudio()
+      audio.push(instance)
+      return instance
+    })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob(["audio"])) }))
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:prefetched-8")
+    const engine = runtime()
+    const facade = new PlayerPlaybackFacade(engine)
+    facade.load("/audio/7", 7)
+
+    await facade.prefetch(8, "/audio/8", "raw", "queue-8")
+
+    // Only the program element exists — no incoming deck routed into the graph.
+    expect(engine.routeIncomingElement).not.toHaveBeenCalled()
+    expect(facade.hasPrepared(8, "queue-8")).toBe(false)
+    // The blob is still cached and consumable for the next ordinary <audio>.
+    expect(facade.consumePrefetched(8, "raw")).toBe("blob:prefetched-8")
+  })
+
+  it("does not enter DJ mode when AudioContext resume fails", async () => {
     const media = new MockAudio()
     vi.stubGlobal("Audio", function () { return media })
     const engine = runtime()
@@ -201,8 +228,45 @@ describe("PlayerPlaybackFacade routing", () => {
     const facade = new PlayerPlaybackFacade(engine)
     facade.load("/audio/8", 8)
 
-    await expect(facade.play()).rejects.toThrow("context suspended")
-    expect(media.play).not.toHaveBeenCalled()
+    await expect(facade.activateDjMode()).rejects.toThrow("context suspended")
+    expect(facade.djModeActive).toBe(false)
+    // Обычное воспроизведение не зависит от графа и продолжает работать.
+    await facade.play()
+    expect(media.play).toHaveBeenCalled()
+  })
+
+  it("returns to a fresh unrouted element at the same position when DJ mode is deactivated", async () => {
+    const audio: MockAudio[] = []
+    vi.stubGlobal("Audio", function () {
+      const instance = new MockAudio()
+      audio.push(instance)
+      return instance
+    })
+    const engine = runtime()
+    const facade = new PlayerPlaybackFacade(engine)
+    facade.load("blob:audio-9", 9, "raw", true)
+    const program = audio.at(-1)!
+    program.currentTime = 54
+    program.paused = false
+
+    await facade.activateDjMode()
+    expect(facade.djModeActive).toBe(true)
+
+    await facade.deactivateDjMode()
+
+    expect(facade.djModeActive).toBe(false)
+    expect(engine.destroy).toHaveBeenCalledTimes(1)
+    // A brand-new <audio> replaced the routed one (createMediaElementSource is
+    // irreversible), seeded with the same blob source.
+    const replacement = audio.at(-1)!
+    expect(replacement).not.toBe(program)
+    expect(replacement.src).toBe("blob:audio-9")
+    const resume = replacement.addEventListener.mock.calls
+      .filter(([event]) => event === "loadedmetadata").at(-1)?.[1]
+    replacement.duration = 200
+    ;(resume as EventListener)(new Event("loadedmetadata"))
+    expect(replacement.currentTime).toBe(54)
+    expect(replacement.play).toHaveBeenCalled()
   })
 
   it("upgrades the current track at its native playhead when DJ mode opens", async () => {
@@ -227,6 +291,7 @@ describe("PlayerPlaybackFacade routing", () => {
     await facade.activateDjMode()
 
     expect(engine.setMasterGain).toHaveBeenCalledWith(1)
+    expect(engine.routeProgramElement).toHaveBeenLastCalledWith(current, 9, "queue-9")
     expect(engine.upgradeDeckSource).toHaveBeenCalledWith(
       "A",
       { url: "/audio/9", trackId: 9, queueItemId: "queue-9", blob: undefined },

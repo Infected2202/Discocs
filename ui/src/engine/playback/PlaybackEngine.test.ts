@@ -87,6 +87,17 @@ describe("PlaybackEngine Phase 1 routing", () => {
     })
   })
 
+  it("does not create a second media source when DJ activation routes the same element", () => {
+    vi.stubGlobal("AudioContext", FakeContext)
+    const engine = new PlaybackEngine()
+    const media = document.createElement("audio")
+
+    expect(engine.routeProgramElement(media, 1, "q1")).toBe(true)
+    expect(engine.routeProgramElement(media, 1, "q1")).toBe(true)
+
+    expect(FakeContext.instances[0]?.mediaElements).toEqual([media])
+  })
+
   it("propagates context-resume failure and never calls media playback itself", async () => {
     class FailingContext extends FakeContext {
       override resume = vi.fn(async () => { throw new Error("gesture required") })
@@ -159,36 +170,33 @@ describe("PlaybackEngine Phase 1 routing", () => {
     expect(listener).toHaveBeenCalledTimes(3)
   })
 
-  it("assigns AUTO master from real media playback once its beat grid is known", async () => {
+  it("keeps master ownership on the playing decks and returns to clock only when both stop", async () => {
     vi.stubGlobal("AudioContext", FakeContext)
-    const timeline: DecodedTimeline = {
-      durationSeconds: 180,
-      levels: [],
-      bpm: 126,
-      beatConfidence: 0.9,
-      rhythmCoverageSeconds: 180,
-      beats: new Float32Array([0, 0.5, 1]),
-      localTempo: new Float32Array([126, 126, 126]),
-    }
-    const engine = new PlaybackEngine(undefined, {
-      stretch: { createNode: vi.fn().mockRejectedValue(new Error("worklet failed")) },
-      stretchEligibility: vi.fn().mockResolvedValue({ ready: true, reason: null, timeline }),
-    })
-    const media = document.createElement("audio")
-    Object.defineProperty(media, "paused", { configurable: true, value: false })
-    engine.routeProgramElement(media, 9, "queue-9")
+    const engine = new PlaybackEngine()
+    const mediaA = document.createElement("audio")
+    const mediaB = document.createElement("audio")
+    Object.defineProperty(mediaA, "paused", { configurable: true, value: false })
+    Object.defineProperty(mediaB, "paused", { configurable: true, value: true })
+    engine.routeProgramElement(mediaA, 9, "queue-9")
+    engine.routeIncomingElement(mediaB, 10, "queue-10")
 
-    await engine.upgradeDeckSource("A", {
-      url: "blob:track-9", trackId: 9, blob: new Blob(["encoded"]),
-    })
+    // DJ activation routes an already-playing ordinary <audio>, so no new
+    // `play` event will arrive after the engine attaches its listeners.
+    expect(engine.getSnapshot().beatSync).toMatchObject({ auto: true, master: "A" })
+    await expect(engine.setClockMaster()).rejects.toThrow("unavailable while a deck is playing")
 
-    expect(engine.getSnapshot()).toMatchObject({
-      beatSync: { auto: true, master: "A", clockBpm: 126 },
-      decks: { A: { sourceKind: "media-element", transport: "playing" } },
-    })
+    Object.defineProperty(mediaB, "paused", { configurable: true, value: false })
+    mediaB.dispatchEvent(new Event("play"))
+    expect(engine.getSnapshot().beatSync.master).toBe("A")
+    await engine.setTempoMaster("B")
+    expect(engine.getSnapshot().beatSync.master).toBe("B")
 
-    Object.defineProperty(media, "paused", { configurable: true, value: true })
-    media.dispatchEvent(new Event("pause"))
+    Object.defineProperty(mediaB, "paused", { configurable: true, value: true })
+    mediaB.dispatchEvent(new Event("pause"))
+    expect(engine.getSnapshot().beatSync.master).toBe("A")
+
+    Object.defineProperty(mediaA, "paused", { configurable: true, value: true })
+    mediaA.dispatchEvent(new Event("pause"))
     expect(engine.getSnapshot().beatSync.master).toBe("clock")
   })
 

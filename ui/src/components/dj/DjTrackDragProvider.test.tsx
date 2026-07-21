@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const mocks = vi.hoisted(() => ({
   dndProps: null as Record<string, (event: unknown) => void> | null,
   openDjSurface: vi.fn(),
+  activateDj: vi.fn().mockResolvedValue(undefined),
   prepareDjDeck: vi.fn().mockResolvedValue(undefined),
 }))
 
@@ -29,7 +30,7 @@ vi.mock("@/store/uiStore", () => ({
   useUIStore: { getState: () => ({ openDjSurface: mocks.openDjSurface }) },
 }))
 vi.mock("@/store/playerStore", () => ({
-  usePlayerStore: { getState: () => ({ prepareDjDeck: mocks.prepareDjDeck }) },
+  usePlayerStore: { getState: () => ({ activateDj: mocks.activateDj, prepareDjDeck: mocks.prepareDjDeck }) },
 }))
 vi.mock("@/engine/playback", () => ({
   playerPlayback: { getEngineSnapshot: () => ({ programDeck: "A" }) },
@@ -61,7 +62,7 @@ describe("DjTrackDragProvider", () => {
     mocks.dndProps = null
   })
 
-  it("opens the DJ surface at drag start and loads a deck on drop", () => {
+  it("opens the DJ surface at drag start and loads a deck on drop", async () => {
     render(<DjTrackDragProvider><div>playlist</div></DjTrackDragProvider>)
     const data = trackData()
 
@@ -73,7 +74,9 @@ describe("DjTrackDragProvider", () => {
 
     expect(data.begin).toHaveBeenCalledOnce()
     expect(mocks.openDjSurface).toHaveBeenCalledOnce()
-    expect(mocks.prepareDjDeck).toHaveBeenCalledWith(42, "B")
+    // Дроп на деку включает движок, затем грузит трек в неё.
+    expect(mocks.activateDj).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(mocks.prepareDjDeck).toHaveBeenCalledWith(42, "B"))
     expect(data.finish).toHaveBeenCalledOnce()
   })
 })

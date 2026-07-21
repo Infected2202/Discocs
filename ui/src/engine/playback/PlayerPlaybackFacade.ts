@@ -64,6 +64,7 @@ export class PlayerPlaybackFacade {
   private activeBlob: Blob | null = null
   private readonly upgradePromises: Record<DeckId, Promise<DeckSourceUpgradeResult> | null> = { A: null, B: null }
   private djActivationPromise: Promise<void> | null = null
+  private djDeactivationPromise: Promise<void> | null = null
   private runtimeUnsubscribe: (() => void) | null = null
   private lastRuntimeTransport: TransportState | null = null
 
@@ -102,7 +103,11 @@ export class PlayerPlaybackFacade {
     // Новый элемент — Chrome гарантированно освобождает нативный PCM буфер
     // когда старый элемент теряет все ссылки и GC его собирает
     this.el = this.createElement()
-    this.runtime.routeProgramElement(this.el, trackId, queueItemId)
+    // Обычный режим (graphActive=false) НЕ заводит элемент в Web Audio: чистый
+    // <audio> надёжно играет в фоне/на локскрине, тогда как элемент, пропущенный
+    // через AudioContext, зависает вместе с суспендом контекста на мобиле.
+    // В граф элемент попадает только при активации DJ (activateDjMode).
+    if (this.graphActive) this.runtime.routeProgramElement(this.el, trackId, queueItemId)
     this.el.volume = prev.volume
     this.el.muted = prev.muted
     this.el.src = url
@@ -151,6 +156,11 @@ export class PlayerPlaybackFacade {
       if (this.prefetchTarget?.trackId !== trackId || this.prefetchTarget.profileKey !== profileKey) return
       const objectUrl = URL.createObjectURL(blob)
       this.prefetched = { trackId, queueItemId, profileKey, objectUrl, blob }
+      // Обычный режим: только держим blob наготове (consumePrefetched подставит
+      // его в чистый <audio>). Деку в графе не создаём — иначе следующий трек
+      // снова оказывается привязан к Web Audio. Активация DJ достроит деку из
+      // этого кеша через ensurePreparedDeckFromCache().
+      if (!this.graphActive) return
       const element = this.createElement()
       element.volume = this.el.volume
       element.muted = this.el.muted
@@ -159,9 +169,7 @@ export class PlayerPlaybackFacade {
       const deck = this.runtime.routeIncomingElement(element, trackId, queueItemId)
       if (deck) {
         this.prepared = { trackId, queueItemId, profileKey, objectUrl, blob, element, deck }
-        if (this.graphActive) {
-          await this.queueStretchUpgrade(deck, { url: objectUrl, trackId, queueItemId, blob })
-        }
+        await this.queueStretchUpgrade(deck, { url: objectUrl, trackId, queueItemId, blob })
       } else {
         element.src = ""
         element.load()
@@ -293,6 +301,7 @@ export class PlayerPlaybackFacade {
   private async activateDjModeInternal(): Promise<void> {
     await this.runtime.ensureReady()
     this.graphActive = true
+    this.runtime.routeProgramElement(this.el, this.activeTrackId, this.activeQueueItemId)
     this.runtime.setMasterGain(this.el.muted ? 0 : this.el.volume)
 
     const trackId = this.activeTrackId
@@ -315,6 +324,9 @@ export class PlayerPlaybackFacade {
       }
     }
 
+    // Обычный prefetch кеширует только blob — при активации достраиваем из него
+    // incoming-деку в графе.
+    this.ensurePreparedDeckFromCache()
     const incoming = this.prepared
     if (incoming) {
       await this.queueStretchUpgrade(incoming.deck, {
@@ -326,8 +338,109 @@ export class PlayerPlaybackFacade {
     }
   }
 
+  private ensurePreparedDeckFromCache(): void {
+    if (this.prepared || !this.prefetched) return
+    const { trackId, queueItemId, profileKey, objectUrl, blob } = this.prefetched
+    const element = this.createElement()
+    element.volume = this.el.volume
+    element.muted = this.el.muted
+    element.src = objectUrl
+    element.load()
+    const deck = this.runtime.routeIncomingElement(element, trackId, queueItemId)
+    if (deck) {
+      this.prepared = { trackId, queueItemId, profileKey, objectUrl, blob, element, deck }
+    } else {
+      element.src = ""
+      element.load()
+    }
+  }
+
+  deactivateDjMode(): Promise<void> {
+    if (this.djDeactivationPromise) return this.djDeactivationPromise
+    if (!this.graphActive) return Promise.resolve()
+    const pending = this.deactivateDjModeInternal()
+    this.djDeactivationPromise = pending
+    const clearPending = () => {
+      if (this.djDeactivationPromise === pending) this.djDeactivationPromise = null
+    }
+    void pending.then(clearPending, clearPending)
+    return pending
+  }
+
+  private async deactivateDjModeInternal(): Promise<void> {
+    // Дождаться незавершённой активации, чтобы разбирать полностью собранный граф.
+    await this.djActivationPromise?.catch(() => undefined)
+
+    // Позицию и статус читаем ДО destroy — currentTime/paused опрашивают рантайм.
+    const previous = this.el
+    const position = this.currentTime
+    const wasPlaying = !this.paused
+    // blob-трек, загруженный напрямую, не оседает в activeObjectUrl — тогда берём
+    // источник из самого элемента.
+    const sourceUrl = this.activeObjectUrl ?? this.activeNetworkUrl ?? previous.currentSrc ?? previous.src
+
+    // Свежий, НЕ заведённый в граф <audio> на той же позиции. При клике разрыв
+    // допустим: createMediaElementSource необратим, поэтому нужен новый элемент.
+    const next = this.createElement()
+    next.volume = previous.volume
+    next.muted = previous.muted
+    this.el = next
+    this.graphActive = false
+    this.djActivationPromise = null
+    this.lastRuntimeTransport = null
+    this.upgradePromises.A = null
+    this.upgradePromises.B = null
+
+    if (sourceUrl) {
+      next.src = sourceUrl
+      const resume = () => {
+        next.removeEventListener("loadedmetadata", resume)
+        if (next !== this.el) return
+        next.currentTime = Math.min(position, next.duration || position)
+        if (wasPlaying) {
+          void next.play().catch((error: Error) => {
+            this.callbacks?.onPlaybackStateChange("error")
+            this.callbacks?.onError(error.message)
+          })
+        }
+      }
+      next.addEventListener("loadedmetadata", resume)
+      next.load()
+    }
+
+    previous.pause()
+    previous.src = ""
+    previous.load()
+
+    // Деки графа больше не нужны — обычный prefetch пересоберёт blob-кеш.
+    if (this.prepared) {
+      this.prepared.element.pause()
+      this.prepared.element.src = ""
+      this.prepared.element.load()
+      this.prepared = null
+    }
+    if (this.retired) {
+      this.retired.element.pause()
+      this.retired.element.src = ""
+      this.retired.element.load()
+      if (this.retired.objectUrl && this.retired.objectUrl !== this.activeObjectUrl) {
+        URL.revokeObjectURL(this.retired.objectUrl)
+      }
+      this.retired = null
+    }
+
+    await this.runtime.destroy()
+    this.callbacks?.onPlaybackStateChange(wasPlaying ? "playing" : "paused")
+  }
+
+  get djModeActive(): boolean {
+    return this.graphActive
+  }
+
   async play(): Promise<void> {
-    await this.runtime.ensureReady()
+    // Обычный режим не трогает AudioContext — иначе создание/резюм контекста
+    // снова привязывает воспроизведение к суспендируемому в фоне графу.
+    if (this.graphActive) await this.runtime.ensureReady()
     const deck = this.runtime.programDeck
     await this.upgradePromises[deck]
     if (this.runtime.isStretchDeck(deck)) {
@@ -370,6 +483,7 @@ export class PlayerPlaybackFacade {
     this.fullyBufferedReported = false
     this.graphActive = false
     this.djActivationPromise = null
+    this.djDeactivationPromise = null
     this.lastRuntimeTransport = null
     this.upgradePromises.A = null
     this.upgradePromises.B = null

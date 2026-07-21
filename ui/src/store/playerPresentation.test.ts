@@ -11,14 +11,15 @@ describe("player presentation coordination", () => {
     useUIStore.setState({ djSurfaceOpen: false })
   })
 
-  it("opens DJ workspace and closes Expanded Player without touching transport state", () => {
+  it("opens the DJ panel without activating the engine or touching transport", () => {
     usePlayerStore.setState({ expanded: true, playbackState: "playing", currentTime: 42 })
 
     openDjPresentation()
 
+    // Панель и движок — независимые оси: открытие панели НЕ запускает граф.
     expect(usePlayerStore.getState()).toMatchObject({ expanded: false, playbackState: "playing", currentTime: 42 })
     expect(useUIStore.getState().djSurfaceOpen).toBe(true)
-    expect(playerPlayback.activateDjMode).toHaveBeenCalledOnce()
+    expect(playerPlayback.activateDjMode).not.toHaveBeenCalled()
   })
 
   it("opens Expanded Player and closes DJ workspace", () => {

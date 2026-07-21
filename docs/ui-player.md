@@ -44,6 +44,66 @@ changing the program role. The full deck panels use the same drop payload.
 
 The primary player UI lives in `ui/src/components/player/`.
 
+## Playback modes: ordinary vs DJ engine (two independent axes)
+
+Playback has two independent axes that must not be conflated:
+
+1. **Panel visibility** — `uiStore.djSurfaceOpen`. Purely presentational. Opening
+   or collapsing the DJ panel never starts or stops audio routing. The panel can
+   be collapsed while the engine keeps mixing.
+2. **DJ engine** — `playerStore.djEngineActive`, backed by
+   `PlayerPlaybackFacade.graphActive`. Controls whether audio flows through the
+   Web Audio mixer graph.
+
+### Ordinary mode (`graphActive === false`) — default
+
+Playback runs through a plain `<audio>` element that is **never** routed into an
+`AudioContext`. `load()` skips `routeProgramElement`, `play()` skips
+`ensureReady()`, and `prefetch()` only caches the next track's Blob (no graph
+deck). This is deliberate: on mobile (iOS/WebKit, aggressive WebViews such as
+Telegram) a `MediaElementAudioSourceNode` stalls together with the suspended
+`AudioContext` when the tab is backgrounded, which is what previously froze
+playback after one or two tracks. A bare `<audio>` element keeps playing in the
+background through the OS media pipeline. Auto-DJ / full mixing in the background
+is a platform impossibility on mobile and is deferred to a future native app;
+the browser only provides ordinary background playback plus manual mixing while
+in the foreground.
+
+Background reliability is reinforced by:
+
+- `navigator.mediaSession.playbackState` mirrored from the transport state
+  (`loading` is reported as `playing` so the lock screen does not flicker during
+  auto-advance), and `setPositionState` updated on every `timeupdate`.
+- `handleTrackEnded` fires the `completed` telemetry **fire-and-forget** and
+  advances immediately. A backgrounded tab throttles `fetch`; awaiting the POST
+  is what used to block the next track from starting.
+- A `visibilitychange` → foreground reconcile: if the store believes playback is
+  `playing` but the element is actually paused, it resumes it, or drives
+  `handleTrackEnded` when the current track ended in the background without the
+  auto-advance having fired.
+
+### DJ mode (`graphActive === true`) — activated by explicit gesture
+
+`playerStore.activateDj()` → `PlayerPlaybackFacade.activateDjMode()`. Activation
+is a one-time hand-off: the live `<audio>` element is routed into the graph
+(`createMediaElementSource`) at its current position, and, when the track is
+Signalsmith-eligible, upgraded to a stretch deck source starting at that same
+playhead. Any cached prefetch Blob is materialized into the incoming deck
+(`ensurePreparedDeckFromCache`). `createMediaElementSource` is irreversible, so
+`deactivateDj()` builds a **fresh, unrouted** `<audio>` element at the current
+position and calls `runtime.destroy()` to tear the graph down. A brief audible
+gap on activate/deactivate is accepted — both are explicit user actions.
+
+While the DJ engine is active, a deck finishing playback stops at its end
+position and the transport goes to `paused`: there is **no** auto-advance, since
+mixing is manual (`handleTrackEnded` returns early on `djEngineActive`).
+
+The DJ panel shows an activate/deactivate button (`toggle-dj-engine`). While the
+engine is inactive, the panel renders a deck-A mirror of the current track and
+position (visual only, no audio through the graph) plus an activate call to
+action, instead of the full mixer — the mixer controls require a live
+`AudioContext` and are only mounted once the engine is active.
+
 ## Compact player backdrop
 
 When the current track has artwork, the compact player bar renders a decorative
@@ -161,10 +221,15 @@ Seek, loop and handover/retirement paths re-evaluate phase and ownership; Group
 3 will add measured continuous drift correction and browser quality gates.
 
 AUTO follows the actual transport of both a routed media element and an
-upgraded Signalsmith source. A deck only needs a valid beat grid to be MASTER;
-Signalsmith is required on a follower that engages SYNC. MASTER/SYNC commands
-wait for an in-progress full-track decode instead of being silently blocked
-while the deck source is being prepared.
+upgraded Signalsmith source. With both decks stopped, the standalone clock is
+MASTER. Starting the first deck makes it MASTER unconditionally; while either
+deck is playing the standalone clock cannot be selected. If both decks play,
+MASTER can be moved between them. Stopping the current master transfers
+ownership to the other playing deck or returns it to the clock when both have
+stopped. Signalsmith and beat timelines are validation requirements for the
+SYNC operation itself, not UI prerequisites for pressing SYNC or selecting a
+playing deck as MASTER. MASTER/SYNC commands wait for an in-progress full-track
+decode.
 
 The per-user playback settings page can request MP3 transcoding at
 96/128/192/256/320 Kbit/s. The profile key is included in the audio URL and

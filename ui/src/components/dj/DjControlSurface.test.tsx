@@ -22,6 +22,8 @@ const playback = vi.hoisted(() => ({
   toggleDeckSync: vi.fn().mockResolvedValue(undefined),
   setVolume: vi.fn(),
   setMuted: vi.fn(),
+  activateDjMode: vi.fn().mockResolvedValue(undefined),
+  deactivateDjMode: vi.fn().mockResolvedValue(undefined),
   load: vi.fn(),
   play: vi.fn(),
   pause: vi.fn(),
@@ -139,6 +141,9 @@ describe("DjControlSurface", () => {
       playedHistory: [],
       playbackState: "playing",
       currentTime: 21,
+      // Полный микшер рендерится только при активном движке; выключенный движок
+      // проверяется отдельным тестом (inactive preview).
+      djEngineActive: true,
     })
   })
 
@@ -182,6 +187,8 @@ describe("DjControlSurface", () => {
     expect(playback.setMasterClockTempo).toHaveBeenCalledWith(128.5)
     fireEvent.click(screen.getByLabelText("Use automatic tempo master"))
     expect(playback.setAutoTempoMaster).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByLabelText("Use master clock"))
+    expect(playback.setClockTempoMaster).toHaveBeenCalledOnce()
   })
 
   it("zooms both detailed deck waveforms together and resets to 16 seconds", () => {
@@ -309,6 +316,10 @@ describe("DjControlSurface", () => {
     const base = snapshot()
     playback.getEngineSnapshot.mockReturnValue({
       ...base,
+      decks: {
+        A: { ...base.decks.A, transport: "playing" as never },
+        B: { ...base.decks.B, transport: "playing" as never },
+      },
       beatSync: {
         auto: true,
         master: "A",
@@ -319,17 +330,12 @@ describe("DjControlSurface", () => {
         },
       },
     })
-    useTimeline.mockReturnValue({
-      status: "ready",
-      timeline: {
-        durationSeconds: 180, levels: [], bpm: 126, beatConfidence: 0.8, rhythmCoverageSeconds: 180,
-        beats: new Float32Array([0, 0.5]), localTempo: new Float32Array([126, 126]),
-      },
-    } as never)
+    useTimeline.mockReturnValue({ status: "missing" } as never)
     useUIStore.setState({ djSurfaceOpen: true })
     render(<DjControlSurface />)
 
     expect(screen.getByLabelText("Master clock tempo")).toBeDisabled()
+    expect(screen.getByLabelText("Use master clock")).toBeDisabled()
     expect(screen.getByLabelText("Set Deck A as tempo master")).toHaveAttribute("data-active", "true")
     expect(screen.getByLabelText("Deck B pitch")).toBeDisabled()
     expect(screen.getByLabelText("Sync Deck B to tempo master")).toBeEnabled()
@@ -338,10 +344,46 @@ describe("DjControlSurface", () => {
     fireEvent.click(screen.getByLabelText("Sync Deck B to tempo master"))
     fireEvent.click(screen.getByLabelText("Set Deck B as tempo master"))
     fireEvent.click(screen.getByLabelText("Use automatic tempo master"))
-    fireEvent.click(screen.getByLabelText("Use master clock"))
     expect(playback.toggleDeckSync).toHaveBeenCalledWith("B")
     expect(playback.setDeckTempoMaster).toHaveBeenCalledWith("B")
     expect(playback.setAutoTempoMaster).toHaveBeenCalledOnce()
-    expect(playback.setClockTempoMaster).toHaveBeenCalledOnce()
+    expect(playback.setClockTempoMaster).not.toHaveBeenCalled()
+  })
+
+  it("shows the deck-A mirror with an activate button while the engine is off", () => {
+    usePlayerStore.setState({
+      djEngineActive: false,
+      currentTrack: {
+        id: 1,
+        title: "Mirror Track",
+        artists: [{ id: 7, name: "Mirror Artist" }],
+      } as never,
+      currentTime: 30,
+      duration: 120,
+      playbackState: "playing",
+    })
+    useUIStore.setState({ djSurfaceOpen: true })
+    render(<DjControlSurface />)
+
+    // Дека A зеркалит текущий трек; полный микшер не рендерится.
+    expect(screen.getByText("Mirror Track")).toBeInTheDocument()
+    expect(screen.queryByRole("region", { name: "Mixer" })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId("activate-dj-engine"))
+    expect(playback.activateDjMode).toHaveBeenCalledOnce()
+  })
+
+  it("deactivates the engine from the panel without closing it", () => {
+    useUIStore.setState({ djSurfaceOpen: true })
+    render(<DjControlSurface />)
+
+    const toggle = screen.getByTestId("toggle-dj-engine")
+    expect(toggle).toHaveAttribute("aria-label", "Deactivate DJ")
+    fireEvent.click(toggle)
+
+    expect(playback.deactivateDjMode).toHaveBeenCalledOnce()
+    // Панель остаётся открытой — деактивация не закрывает контролер.
+    expect(useUIStore.getState().djSurfaceOpen).toBe(true)
+    expect(screen.getByTestId("dj-control-surface")).toBeInTheDocument()
   })
 })

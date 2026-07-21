@@ -112,8 +112,12 @@ export default function DjTrackDragProvider({ children }: { readonly children: R
     }
     const overData = event.over?.data.current
     if (isDeckDropData(overData)) {
+      const player = usePlayerStore.getState()
       useUIStore.getState().openDjSurface()
-      void usePlayerStore.getState().prepareDjDeck(data.track.id, overData.deck)
+      // Перетаскивание на деку — явное намерение свести: включаем DJ-движок, затем
+      // грузим трек в свободную деку графа (при выключенном движке prefetch лишь
+      // кеширует blob и деку в графе не создаёт).
+      void player.activateDj().then(() => player.prepareDjDeck(data.track.id, overData.deck))
       finishDrag(data)
       return
     }
