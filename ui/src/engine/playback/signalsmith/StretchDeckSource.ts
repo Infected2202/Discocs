@@ -54,7 +54,7 @@ export class StretchDeckSource implements DeckSource {
     try {
       const blob = source.blob ?? await this.fetchBlob(source.url, signal)
       this.compressedBlob = blob
-      const encoded = await blob.arrayBuffer()
+      const encoded = await this.compressedBlob.arrayBuffer()
       if (signal.aborted) throw new DOMException("Audio load aborted", "AbortError")
       const decoded = await this.context.decodeAudioData(encoded)
       if (signal.aborted) throw new DOMException("Audio load aborted", "AbortError")
