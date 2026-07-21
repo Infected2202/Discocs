@@ -20,10 +20,16 @@ const playback = vi.hoisted(() => ({
   pause: vi.fn(),
   seek: vi.fn(),
 }))
+const useTimeline = vi.hoisted(() => vi.fn(() => ({ status: "missing" as const })))
 
 vi.mock("@/engine/playback", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/engine/playback")>()),
   playerPlayback: playback,
+}))
+
+vi.mock("@/engine/timeline", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/engine/timeline")>()),
+  useTimeline,
 }))
 
 vi.mock("@/components/media/ArtworkImage", () => ({
@@ -85,6 +91,7 @@ describe("DjControlSurface", () => {
     vi.clearAllMocks()
     playback.subscribeEngine.mockReturnValue(() => undefined)
     playback.getEngineSnapshot.mockReturnValue(snapshot())
+    useTimeline.mockClear()
     useUIStore.setState({ djSurfaceOpen: false })
     usePlayerStore.setState({
       expanded: false,
@@ -99,8 +106,11 @@ describe("DjControlSurface", () => {
 
   it("opens and closes as presentation-only state without transport commands", () => {
     render(<DjControlSurface />)
+    expect(screen.queryByTestId("dj-control-surface")).not.toBeInTheDocument()
+    expect(playback.subscribeEngine).not.toHaveBeenCalled()
     act(() => useUIStore.getState().openDjSurface())
     expect(screen.getByTestId("dj-control-surface")).toHaveAttribute("aria-hidden", "false")
+    expect(useTimeline).toHaveBeenCalledTimes(2)
 
     fireEvent.click(screen.getByTestId("close-dj-surface"))
 
@@ -109,6 +119,7 @@ describe("DjControlSurface", () => {
     expect(playback.play).not.toHaveBeenCalled()
     expect(playback.pause).not.toHaveBeenCalled()
     expect(playback.seek).not.toHaveBeenCalled()
+    expect(screen.queryByTestId("dj-control-surface")).not.toBeInTheDocument()
   })
 
   it("closes on Escape and restores focus", () => {

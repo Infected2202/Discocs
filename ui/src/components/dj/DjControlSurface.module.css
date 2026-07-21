@@ -296,6 +296,13 @@
   .surface { display: none; }
 }
 
+@media (pointer: coarse) {
+  .topPanel,
+  .waveforms,
+  .decksAndMixer,
+  .queuePanel { backdrop-filter: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .surface { transition: none; }
 }

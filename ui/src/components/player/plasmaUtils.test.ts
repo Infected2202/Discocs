@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   PLASMA_FRAME_INTERVAL_MS,
   parsePlasmaColor,
+  shouldAnimatePlasma,
   shouldAdvancePlasmaFrame,
 } from "./plasmaUtils"
 
@@ -29,6 +30,14 @@ describe("shouldAdvancePlasmaFrame (30fps cap)", () => {
   it("caps at roughly 30fps", () => {
     // Interval must be ~33ms; if it regressed to 60fps (16.7) this fails
     expect(PLASMA_FRAME_INTERVAL_MS).toBeCloseTo(33.33, 1)
+  })
+})
+
+describe("shouldAnimatePlasma", () => {
+  it("renders only for active playback that is not covered by the DJ surface", () => {
+    expect(shouldAnimatePlasma("playing", false)).toBe(true)
+    expect(shouldAnimatePlasma("paused", false)).toBe(false)
+    expect(shouldAnimatePlasma("playing", true)).toBe(false)
   })
 })
 

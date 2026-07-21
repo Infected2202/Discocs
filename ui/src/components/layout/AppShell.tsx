@@ -12,9 +12,11 @@ import { useTrackTitle } from "@/hooks/useTrackTitle"
 import { useArtworkTheme } from "@/hooks/useArtworkTheme"
 import { useNavidromeStore } from "@/store/navidromeStore"
 import { usePlayerStore } from "@/store/playerStore"
+import { useUIStore } from "@/store/uiStore"
 import { useUserSettings } from "@/api/hooks/useUserSettings"
 import { playbackProfile } from "@/api/settings"
 import PlasmaFBM from "@/components/player/PlasmaFBM"
+import { shouldAnimatePlasma } from "@/components/player/plasmaUtils"
 import { ScrollContext } from "@/contexts/ScrollContext"
 import DjControlSurface from "@/components/dj/DjControlSurface"
 
@@ -41,6 +43,8 @@ export default function AppShell() {
 
   const restoreSession = usePlayerStore((s) => s.restoreSession)
   const setPlaybackProfile = usePlayerStore((s) => s.setPlaybackProfile)
+  const playbackState = usePlayerStore((s) => s.playbackState)
+  const djSurfaceOpen = useUIStore((s) => s.djSurfaceOpen)
   const restoredSession = useRef(false)
   useEffect(() => {
     if (userSettings) setPlaybackProfile(playbackProfile(userSettings))
@@ -70,7 +74,13 @@ export default function AppShell() {
       <div className="flex flex-col h-svh overflow-hidden">
         {/* Plasma */}
         <div className="fixed inset-0 pointer-events-none z-0" style={{ filter: "blur(4px)" }}>
-          <PlasmaFBM active accent={plasmaAccent} speed={0.9} scale={1.0} opacity={0.9} />
+          <PlasmaFBM
+            active={shouldAnimatePlasma(playbackState, djSurfaceOpen)}
+            accent={plasmaAccent}
+            speed={0.9}
+            scale={1.0}
+            opacity={0.9}
+          />
         </div>
 
         {/* UI layers — above plasma */}

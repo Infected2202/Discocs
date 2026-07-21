@@ -6,6 +6,7 @@ const resize = vi.fn()
 const start = vi.fn()
 const stop = vi.fn()
 const destroy = vi.fn()
+const renderFrame = vi.fn()
 const tickerAdd = vi.fn()
 const tickerRemove = vi.fn()
 const stageAdd = vi.fn()
@@ -21,6 +22,7 @@ class ApplicationStub {
   start = start
   stop = stop
   destroy = destroy
+  render = renderFrame
   init = vi.fn().mockResolvedValue(undefined)
 }
 
@@ -93,20 +95,20 @@ describe("PixiWaveformRenderer lifecycle", () => {
     expect(tickerAdd).not.toHaveBeenCalled()
   })
 
-  it("stops its private ticker while hidden and restarts when visible", async () => {
+  it("renders only when mounted or given changed input", async () => {
     const app = new ApplicationStub()
     const renderer = new PixiWaveformRenderer(document.createElement("div"), input(), loader(app))
     await renderer.mount()
-    expect(app.ticker.maxFPS).toBe(60)
-    expect(start).toHaveBeenCalledTimes(1)
+    expect(renderFrame).toHaveBeenCalledTimes(1)
+    expect(start).not.toHaveBeenCalled()
+    expect(tickerAdd).not.toHaveBeenCalled()
 
-    Object.defineProperty(document, "hidden", { configurable: true, value: true })
-    document.dispatchEvent(new Event("visibilitychange"))
-    expect(stop).toHaveBeenCalledTimes(1)
+    const unchanged = input()
+    renderer.update(unchanged)
+    expect(renderFrame).toHaveBeenCalledTimes(2)
+    renderer.update(unchanged)
+    expect(renderFrame).toHaveBeenCalledTimes(2)
 
-    Object.defineProperty(document, "hidden", { configurable: true, value: false })
-    document.dispatchEvent(new Event("visibilitychange"))
-    expect(start).toHaveBeenCalledTimes(2)
     renderer.destroy()
   })
 
@@ -120,7 +122,7 @@ describe("PixiWaveformRenderer lifecycle", () => {
     renderer.destroy()
     renderer.destroy()
 
-    expect(tickerRemove).toHaveBeenCalledTimes(1)
+    expect(tickerRemove).not.toHaveBeenCalled()
     expect(ResizeObserverStub.disconnect).toHaveBeenCalledTimes(1)
     expect(destroy).toHaveBeenCalledTimes(1)
     expect(destroy).toHaveBeenCalledWith(true, { children: true, texture: true, textureSource: true })

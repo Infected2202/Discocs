@@ -25,27 +25,38 @@ export function useDragSlider({ onChange, onCommit }: UseDragSliderOptions) {
     e.preventDefault()
     e.stopPropagation()
     const pointerId = e.pointerId
+    let lastValue: number | null = null
 
     function valueFromClientX(clientX: number): number | null {
       const rect = trackRef.current?.getBoundingClientRect()
-      if (!rect) return null
+      if (!rect || rect.width <= 0) return null
       return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
     }
 
     const initial = valueFromClientX(e.clientX)
-    if (initial !== null) onChange(initial)
+    if (initial !== null) {
+      lastValue = initial
+      onChange(initial)
+    }
     e.currentTarget.setPointerCapture?.(pointerId)
 
     function onMove(ev: PointerEvent) {
       if (ev.pointerId !== pointerId) return
       const v = valueFromClientX(ev.clientX)
-      if (v !== null) onChange(v)
+      if (v !== null) {
+        lastValue = v
+        onChange(v)
+      }
     }
 
     function finish(ev: PointerEvent) {
       if (ev.pointerId !== pointerId) return
-      const v = valueFromClientX(ev.clientX)
-      if (v !== null) onCommit?.(v)
+      // Some mobile browsers report clientX=0 for pointerup after pointer
+      // capture. Committing that release coordinate restarts playback even
+      // though the drag preview was at the requested position. Pointermove is
+      // the authoritative drag stream; a tap already populated lastValue from
+      // pointerdown.
+      if (lastValue !== null) onCommit?.(lastValue)
       cleanup()
     }
 

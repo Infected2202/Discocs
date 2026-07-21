@@ -3,15 +3,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { TimelineLoadState } from "@/api/timeline"
 
 const loadTimeline = vi.hoisted(() => vi.fn())
+const loadTimelineStatus = vi.hoisted(() => vi.fn())
 vi.mock("@/api/timeline", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/timeline")>()),
   loadTimeline,
+  loadTimelineStatus,
 }))
 
 import { useTimeline } from "./useTimeline"
 
 describe("useTimeline", () => {
-  beforeEach(() => loadTimeline.mockReset())
+  beforeEach(() => {
+    loadTimeline.mockReset()
+    loadTimelineStatus.mockReset()
+  })
   afterEach(() => vi.useRealTimers())
 
   it("loads an enabled track and returns to idle when disabled", async () => {
@@ -50,6 +55,7 @@ describe("useTimeline", () => {
     loadTimeline
       .mockResolvedValueOnce({ status: "queued" } satisfies TimelineLoadState)
       .mockResolvedValueOnce(ready)
+    loadTimelineStatus.mockResolvedValueOnce({ status: "ready" } satisfies TimelineLoadState)
     const { result, unmount } = renderHook(() => useTimeline(11))
     await act(async () => { await Promise.resolve() })
     expect(result.current.status).toBe("queued")
@@ -58,6 +64,7 @@ describe("useTimeline", () => {
 
     expect(result.current).toBe(ready)
     expect(loadTimeline).toHaveBeenCalledTimes(2)
+    expect(loadTimelineStatus).toHaveBeenCalledTimes(1)
     unmount()
   })
 })

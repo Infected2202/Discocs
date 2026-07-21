@@ -168,9 +168,15 @@ export default function PlasmaFBM({
     const container = containerRef.current
     if (!container) return
 
+    const coarsePointer = globalThis.matchMedia?.("(pointer: coarse)").matches ?? false
     let renderer: Renderer
     try {
-      renderer = new Renderer({ webgl: 2, alpha: true, antialias: false, dpr: Math.min(devicePixelRatio, 1.25) })
+      renderer = new Renderer({
+        webgl: 2,
+        alpha: true,
+        antialias: false,
+        dpr: coarsePointer ? 0.75 : Math.min(devicePixelRatio, 1.25),
+      })
     } catch { return }
 
     const gl = renderer.gl
@@ -214,6 +220,10 @@ export default function PlasmaFBM({
 
       // Кап ~30 fps: медленный фон не нуждается в 60 fps, работа вдвое меньше.
       if (!shouldAdvancePlasmaFrame(time, lastFrameTime)) return
+      // Full-screen six-octave FBM is particularly expensive on phone GPUs.
+      // Fifteen frames per second preserves slow ambient motion without
+      // competing with scrolling, player controls and waveform rendering.
+      if (coarsePointer && time - lastFrameTime < 1000 / 15) return
       const delta = Math.min(100, time - lastFrameTime); lastFrameTime = time
       let dirty = false
 

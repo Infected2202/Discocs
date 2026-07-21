@@ -36,15 +36,12 @@ export class PixiWaveformRenderer {
   private app: Application | null = null
   private graphics: Graphics | null = null
   private cancelled = false
-  private dirty = true
   private resizeObserver: ResizeObserver | null = null
-  private readonly onVisibilityChange: () => void
 
   constructor(container: HTMLElement, input: WaveformRendererInput, loader: PixiLoader = loadPixi) {
     this.container = container
     this.input = input
     this.loader = loader
-    this.onVisibilityChange = () => this.setVisible(!document.hidden && !this.container.hidden)
   }
 
   async mount(): Promise<void> {
@@ -58,7 +55,13 @@ export class PixiWaveformRenderer {
       antialias: false,
       backgroundAlpha: 0,
       preference: "webgl",
-      resolution: Math.max(1, this.input.viewport.devicePixelRatio),
+      // Phone DPR is commonly 3-4, which multiplies the render target area by
+      // 9-16 for no useful waveform detail. Coarse-pointer devices render at
+      // CSS-pixel resolution; desktop is capped at 2x.
+      resolution: Math.min(
+        globalThis.matchMedia?.("(pointer: coarse)").matches ? 1 : 2,
+        Math.max(1, this.input.viewport.devicePixelRatio),
+      ),
       resizeTo: this.container,
       sharedTicker: false,
     })
@@ -70,8 +73,6 @@ export class PixiWaveformRenderer {
     this.app = app
     this.graphics = new Graphics()
     app.stage.addChild(this.graphics)
-    app.ticker.maxFPS = 60
-    app.ticker.add(this.onTick)
     app.canvas.style.cssText = "display:block;width:100%;height:100%;touch-action:none"
     this.container.appendChild(app.canvas)
 
@@ -80,31 +81,21 @@ export class PixiWaveformRenderer {
       this.draw()
     })
     this.resizeObserver.observe(this.container)
-    document.addEventListener("visibilitychange", this.onVisibilityChange)
     this.draw()
-    this.setVisible(!document.hidden && !this.container.hidden)
   }
 
   update(input: WaveformRendererInput): void {
+    if (sameInput(this.input, input)) return
     this.input = input
-    this.dirty = true
     this.draw()
-  }
-
-  setVisible(visible: boolean): void {
-    if (!this.app) return
-    if (visible) this.app.start()
-    else this.app.stop()
   }
 
   destroy(): void {
     if (this.cancelled) return
     this.cancelled = true
-    document.removeEventListener("visibilitychange", this.onVisibilityChange)
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
     if (!this.app) return
-    this.app.ticker.remove(this.onTick)
     this.app.stop()
     this.app.destroy(true, { children: true, texture: true, textureSource: true })
     this.app = null
@@ -145,10 +136,20 @@ export class PixiWaveformRenderer {
       graphics.moveTo(playheadX, 0).lineTo(playheadX, height)
         .stroke({ color: this.input.palette.playhead, width: 2 })
     }
-    this.dirty = false
+    // autoStart is disabled: render exactly one frame for an actual input or
+    // size change instead of keeping four independent 60 FPS tickers alive.
+    app.render()
   }
+}
 
-  private readonly onTick = (): void => {
-    if (this.dirty) this.draw()
-  }
+function sameInput(previous: WaveformRendererInput, next: WaveformRendererInput): boolean {
+  const a = previous.viewport
+  const b = next.viewport
+  return previous.timeline === next.timeline
+    && previous.playheadSeconds === next.playheadSeconds
+    && previous.follow === next.follow
+    && a.startSeconds === b.startSeconds
+    && a.endSeconds === b.endSeconds
+    && a.devicePixelRatio === b.devicePixelRatio
+    && previous.palette === next.palette
 }

@@ -13,6 +13,7 @@ import DjFader from "./DjFader"
 import { usePlaybackEngineSnapshot } from "./usePlaybackEngineSnapshot"
 import styles from "./DjControlSurface.module.css"
 import { useTimeline } from "@/engine/timeline"
+import type { TimelineLoadState } from "@/api/timeline"
 import { WaveformSurface } from "@/engine/waveform"
 import { resolveFollowWindow } from "@/engine/waveform/geometry"
 
@@ -49,8 +50,11 @@ function deckPlayhead(deck: DeckSnapshot): number {
   return deck.anchor?.mediaSeconds ?? 0
 }
 
-function DeckWaveform({ deck, track, open }: { readonly deck: DeckSnapshot; readonly track: TrackSummary | null; readonly open: boolean }) {
-  const state = useTimeline(deck.trackId, open)
+function DeckWaveform({ deck, track, state }: {
+  readonly deck: DeckSnapshot
+  readonly track: TrackSummary | null
+  readonly state: TimelineLoadState
+}) {
   const playhead = deckPlayhead(deck)
   const timeline = state.timeline
   let statusLabel = `Waveform · ${state.status}`
@@ -59,16 +63,25 @@ function DeckWaveform({ deck, track, open }: { readonly deck: DeckSnapshot; read
       ? `${Math.round(timeline.bpm)} BPM · beat grid`
       : "Waveform ready · no beat grid"
   }
-  const viewport = timeline
-    ? { width: 1, height: 1, devicePixelRatio: globalThis.devicePixelRatio || 1, ...resolveFollowWindow(timeline.durationSeconds, playhead, 30) }
-    : null
+  const input = useMemo(() => timeline ? {
+    timeline,
+    viewport: {
+      width: 1,
+      height: 1,
+      devicePixelRatio: globalThis.devicePixelRatio || 1,
+      ...resolveFollowWindow(timeline.durationSeconds, playhead, 30),
+    },
+    playheadSeconds: playhead,
+    follow: true,
+    palette: waveformPalette,
+  } : null, [playhead, timeline])
   return (
     <div className={styles.waveformRow} data-deck={deck.id}>
       <div className={styles.waveformDeckLabel}>{deck.id}</div>
       <div className={styles.waveformCanvas}>
-        {timeline && viewport && <WaveformSurface
+        {input && <WaveformSurface
           className={styles.waveformRenderer}
-          input={{ timeline, viewport, playheadSeconds: playhead, follow: true, palette: waveformPalette }}
+          input={input}
           onSeek={(seconds) => playerPlayback.seekDeckToSeconds(deck.id, seconds)}
         />}
         <div className={styles.waveformMessage}>
@@ -80,17 +93,26 @@ function DeckWaveform({ deck, track, open }: { readonly deck: DeckSnapshot; read
   )
 }
 
-function OverviewWaveform({ deck, open }: { readonly deck: DeckSnapshot; readonly open: boolean }) {
-  const state = useTimeline(deck.trackId, open)
+function OverviewWaveform({ deck, state }: { readonly deck: DeckSnapshot; readonly state: TimelineLoadState }) {
   const timeline = state.timeline
-  if (!timeline) return <div className={styles.overviewWaveform}><span>{state.status}</span></div>
+  const playhead = deckPlayhead(deck)
+  const input = useMemo(() => timeline ? {
+    timeline,
+    viewport: {
+      width: 1,
+      height: 1,
+      devicePixelRatio: globalThis.devicePixelRatio || 1,
+      startSeconds: 0,
+      endSeconds: timeline.durationSeconds,
+    },
+    playheadSeconds: playhead,
+    follow: false,
+    palette: waveformPalette,
+  } : null, [playhead, timeline])
+  if (!input) return <div className={styles.overviewWaveform}><span>{state.status}</span></div>
   return <div className={styles.overviewWaveform}><WaveformSurface
     className={styles.waveformRenderer}
-    input={{
-      timeline,
-      viewport: { width: 1, height: 1, devicePixelRatio: globalThis.devicePixelRatio || 1, startSeconds: 0, endSeconds: timeline.durationSeconds },
-      playheadSeconds: deckPlayhead(deck), follow: false, palette: waveformPalette,
-    }}
+    input={input}
     onSeek={(seconds) => playerPlayback.seekDeckToSeconds(deck.id, seconds)}
   /></div>
 }
@@ -125,10 +147,10 @@ interface DeckPanelProps {
   readonly isProgram: boolean
   readonly onToggle: () => void
   readonly onHandover: () => void
-  readonly open: boolean
+  readonly timelineState: TimelineLoadState
 }
 
-function DeckPanel({ deck, track, isProgram, onToggle, onHandover, open }: DeckPanelProps) {
+function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState }: DeckPanelProps) {
   const isPlaying = deck.transport === "playing"
   const canPlay = deck.trackId !== null && deck.preparation !== "loading" && deck.preparation !== "unavailable"
   const canHandover = !isProgram && deck.preparation === "ready"
@@ -162,7 +184,7 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, open }: DeckP
         </div>
       </header>
 
-      <OverviewWaveform deck={deck} open={open} />
+      <OverviewWaveform deck={deck} state={timelineState} />
 
       <div className={styles.deckControls}>
         <div className={styles.transportControls}>
@@ -322,9 +344,8 @@ function runPlayerCommand(command: () => Promise<void>): void {
   })
 }
 
-export default function DjControlSurface() {
+function OpenDjControlSurface() {
   const { t } = useTranslation("player")
-  const open = useUIStore((state) => state.djSurfaceOpen)
   const close = useUIStore((state) => state.closeDjSurface)
   const queue = usePlayerStore((state) => state.queue)
   const history = usePlayerStore((state) => state.playedHistory)
@@ -333,6 +354,9 @@ export default function DjControlSurface() {
   const toggleDeck = usePlayerStore((state) => state.toggleDjDeck)
   const skipNext = usePlayerStore((state) => state.skipNext)
   const snapshot = usePlaybackEngineSnapshot()
+  const timelineA = useTimeline(snapshot.decks.A.trackId)
+  const timelineB = useTimeline(snapshot.decks.B.trackId)
+  const timelines: Record<DeckId, TimelineLoadState> = { A: timelineA, B: timelineB }
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
   const queueItems = queue?.items ?? []
@@ -343,7 +367,6 @@ export default function DjControlSurface() {
   }), [snapshot.decks, queueItems, history, currentTrack])
 
   useEffect(() => {
-    if (!open) return
     restoreFocusRef.current = document.activeElement as HTMLElement | null
     closeButtonRef.current?.focus()
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -354,12 +377,12 @@ export default function DjControlSurface() {
       document.removeEventListener("keydown", onKeyDown)
       restoreFocusRef.current?.focus()
     }
-  }, [close, open])
+  }, [close])
 
   return (
     <div
-      className={cn(styles.surface, open ? styles.open : styles.closed)}
-      aria-hidden={!open}
+      className={cn(styles.surface, styles.open)}
+      aria-hidden="false"
       data-testid="dj-control-surface"
     >
       <div className={styles.backdrop} />
@@ -400,7 +423,7 @@ export default function DjControlSurface() {
 
         <section className={styles.waveforms} aria-label="Deck waveforms">
           {deckIds.map((deck) => (
-            <DeckWaveform key={deck} deck={snapshot.decks[deck]} track={tracks[deck]} open={open} />
+            <DeckWaveform key={deck} deck={snapshot.decks[deck]} track={tracks[deck]} state={timelines[deck]} />
           ))}
         </section>
 
@@ -411,7 +434,7 @@ export default function DjControlSurface() {
             isProgram={snapshot.programDeck === "A"}
             onToggle={() => runPlayerCommand(() => toggleDeck("A"))}
             onHandover={() => runPlayerCommand(skipNext)}
-            open={open}
+            timelineState={timelines.A}
           />
 
           <section className={styles.mixerPanel} aria-label="Mixer">
@@ -437,7 +460,7 @@ export default function DjControlSurface() {
             isProgram={snapshot.programDeck === "B"}
             onToggle={() => runPlayerCommand(() => toggleDeck("B"))}
             onHandover={() => runPlayerCommand(skipNext)}
-            open={open}
+            timelineState={timelines.B}
           />
         </section>
 
@@ -466,4 +489,9 @@ export default function DjControlSurface() {
       </div>
     </div>
   )
+}
+
+export default function DjControlSurface() {
+  const open = useUIStore((state) => state.djSurfaceOpen)
+  return open ? <OpenDjControlSurface /> : null
 }

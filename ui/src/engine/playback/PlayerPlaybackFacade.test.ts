@@ -33,6 +33,31 @@ function runtime() {
 }
 
 describe("PlayerPlaybackFacade routing", () => {
+  it("defers a fractional seek until replacement media metadata is ready", () => {
+    const audio: MockAudio[] = []
+    vi.stubGlobal("Audio", function () {
+      const instance = new MockAudio()
+      audio.push(instance)
+      return instance
+    })
+    const engine = runtime()
+    const facade = new PlayerPlaybackFacade(engine)
+    facade.load("/audio/1", 1)
+    const element = audio.at(-1)!
+    element.duration = Number.NaN
+
+    facade.seek(0.4)
+    expect(element.currentTime).toBe(0)
+    const loadedMetadata = element.addEventListener.mock.calls
+      .filter(([event]) => event === "loadedmetadata")
+      .at(-1)?.[1]
+    expect(loadedMetadata).toBeTypeOf("function")
+
+    element.duration = 200
+    ;(loadedMetadata as EventListener)(new Event("loadedmetadata"))
+    expect(element.currentTime).toBe(80)
+  })
+
   it("seeks the requested physical deck and clamps to its media duration", async () => {
     const audio: MockAudio[] = []
     vi.stubGlobal("Audio", function () {

@@ -5,6 +5,15 @@ Both views share decoded typed arrays, follow the authoritative deck playhead,
 and seek the physical deck selected by the pointer. Missing or stale analysis
 is non-blocking; see [`timeline-waveforms.md`](timeline-waveforms.md).
 
+The closed DJ surface is not kept behind the page as an off-screen React tree:
+it is fully unmounted, including player subscriptions, queue rows, timeline
+hooks, canvases and GPU resources. While open, detailed and overview views use
+one timeline lifecycle per physical deck. Queued/running analysis polls only
+the lightweight status endpoint; manifest and payload are fetched once when the
+artifact becomes ready. Each Pixi surface has an explicitly stopped ticker and
+renders one frame only for changed input or size. Coarse-pointer devices use
+CSS-pixel canvas resolution and disable panel backdrop blur.
+
 The primary player UI lives in `ui/src/components/player/`.
 
 ## Compact player backdrop
@@ -42,6 +51,9 @@ plasma share the same accent transition timing via `--track-accent-transition-*`
 variables, so buttons, progress accents, and the plasma tint fade together. It
 renders at `0.1x` speed, scale `30`, and 30% opacity. The background artwork
 uses 30% opacity (70% transparency).
+The full-screen plasma is active only during playback, pauses while the DJ
+surface covers it, and uses reduced resolution and a 15 FPS cap on
+coarse-pointer devices.
 
 The backdrop is non-interactive and hidden from assistive technology. If artwork
 is unavailable, the compact player keeps its normal card background.
@@ -85,7 +97,11 @@ aborted.
 The seek bar renders every browser `TimeRanges` segment separately, so a gap
 created by an unbuffered seek is not shown as downloaded. Dragging uses Pointer
 Events and pointer capture, giving mouse, touch, and pen the same commit path;
-`pointercancel` never seeks to a bogus fallback position.
+`pointercancel` never seeks to a bogus fallback position. The commit uses the
+last pointerdown/pointermove value rather than `pointerup.clientX`, because
+mobile pointer capture can report a zero release coordinate. If media metadata
+is temporarily unavailable during a source swap, fractional seek is deferred
+until `loadedmetadata` instead of being discarded.
 After that signal, `playerStore` fetches the next queue item as a `Blob`.
 A completed Blob is consumed through a local `blob:` URL at transition time;
 an unfinished or stale prefetch is aborted and playback falls back immediately

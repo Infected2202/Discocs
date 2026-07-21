@@ -14,6 +14,10 @@ export const plasmaShaderInitializers = `
 // вдвое меньше работы GPU/CPU при незаметной глазу разнице.
 export const PLASMA_FRAME_INTERVAL_MS = 1000 / 30
 
+export function shouldAnimatePlasma(playbackState: string, djSurfaceOpen: boolean): boolean {
+  return playbackState === "playing" && !djSurfaceOpen
+}
+
 // Возвращает true, если с прошлого отрендеренного кадра прошло достаточно
 // времени, чтобы считать/рисовать новый. rAF дёргается ~60 раз/сек, но лишние
 // кадры мы пропускаем. Порог inclusive, чтобы ровно попавший в интервал кадр

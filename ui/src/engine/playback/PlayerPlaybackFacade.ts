@@ -293,8 +293,16 @@ export class PlayerPlaybackFacade {
   }
 
   seek(fraction: number) {
-    if (!Number.isFinite(this.el.duration)) return
-    this.el.currentTime = fraction * this.el.duration
+    if (!Number.isFinite(fraction)) return
+    const clamped = Math.min(1, Math.max(0, fraction))
+    const el = this.el
+    const apply = () => {
+      el.removeEventListener("loadedmetadata", apply)
+      if (el !== this.el || !Number.isFinite(el.duration) || el.duration <= 0) return
+      el.currentTime = clamped * el.duration
+    }
+    if (Number.isFinite(el.duration) && el.duration > 0) apply()
+    else el.addEventListener("loadedmetadata", apply)
   }
 
   seekToSeconds(seconds: number) {
