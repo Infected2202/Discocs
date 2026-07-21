@@ -133,6 +133,16 @@ def test_local_worker_receives_service_token_from_environment():
     assert "DISCOCS_SERVICE_TOKEN: ${DISCOCS_SERVICE_TOKEN:-}" in config
 
 
+def test_local_worker_keeps_cpu_bounded_while_buffering_pipeline_stages():
+    config = WORKER_COMPOSE.read_text(encoding="utf-8")
+
+    assert "DISCOCS_WORKER_CLAIM_BATCH_SIZE:-4" in config
+    assert "DISCOCS_WORKER_MAX_INFLIGHT_TASKS:-4" in config
+    assert "DISCOCS_WORKER_SUBMIT_BATCH_SIZE:-4" in config
+    assert "DISCOCS_WORKER_CPU_WORKERS:-2" in config
+    assert "DISCOCS_WORKER_DOWNLOAD_CONCURRENCY:-1" in config
+
+
 def test_production_sharing_is_enabled_unless_explicitly_disabled():
     config = PRODUCTION_COMPOSE.read_text(encoding="utf-8")
 
