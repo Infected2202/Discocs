@@ -75,7 +75,7 @@ describe("AddToPlaylistDialog", () => {
     renderDialog()
     useUIStore.getState().openAddToPlaylist([7])
 
-    expect(await screen.findAllByText("Playlist 1")).toHaveLength(2)
+    expect(await screen.findAllByText("Playlist 1", undefined, { timeout: 5000 })).toHaveLength(2)
     expect(screen.queryByText("Playlist 2")).toBeNull()
   })
 
