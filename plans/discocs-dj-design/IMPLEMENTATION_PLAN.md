@@ -1,6 +1,6 @@
 # Discocs DJ implementation plan
 
-**Status:** Phase 0 complete; Phases 1-3 implemented and Jenkins verified; Phase 4 implemented, Jenkins verification pending
+**Status:** Phases 0-5 implemented; Phase 3/4 interaction and mixer correction is implemented with Jenkins verification pending; the Phase 5 production backfill is running
 **Delivery rule:** one complete logical slice includes code, meaningful tests, affected docs, one commit and pushes to both configured remotes; Jenkins is the verification environment.
 
 ## 1. Readiness
@@ -40,7 +40,7 @@ Work:
 
 Tests to author:
 
-- equal-power endpoints and centre;
+- DJ crossfader endpoints, centre-unity overlap and input clamping;
 - clamping and ramp mapping;
 - stale source generation cannot attach;
 - release is idempotent;
@@ -134,7 +134,7 @@ Exit:
 
 This is the first production vertical slice. It must not introduce a visible DJ feature.
 
-**Implementation:** complete; Jenkins verification pending. Deck A now owns
+**Implementation:** complete and Jenkins verified. Deck A now owns
 ordinary playback through the neutral Web Audio graph while the compatibility
 facade preserves existing player selectors, persisted keys and UI behavior.
 
@@ -171,7 +171,8 @@ Push once the slice is complete, then inspect Jenkins. A failed pipeline is diag
 
 ## 4. Phase 2 — Deck B, mixer and canonical handover
 
-**Implementation:** complete; Jenkins verified in build #268.
+**Implementation:** foundation verified in build #268; mixer correction pass in
+progress after real UI validation exposed incorrect defaults and curve semantics.
 
 ### Backend work
 
@@ -186,7 +187,9 @@ Push once the slice is complete, then inspect Jenkins. A failed pipeline is diag
 - create the second persistent deck strip;
 - turn next-track Blob prefetch into free-deck preparation;
 - add deck role reducer, preparation states and resource rotation;
-- implement channel trim/EQ/filter/fader, equal-power crossfader, master protection and meters;
+- implement channel trim/EQ/filter/fader, a centre-unity DJ crossfader
+  (`A=100%, B=100%` at centre), explicit near-peak master protection and
+  pre-crossfader deck meters;
 - implement handover reconciliation without `load()` on incoming;
 - implement global Next as fast protected handover;
 - preserve single-deck behaviour when no incoming deck is ready.
@@ -197,7 +200,10 @@ Push once the slice is complete, then inspect Jenkins. A failed pipeline is diag
 - starting incoming does not advance queue;
 - handover advances exactly once and does not reload incoming;
 - outgoing cleanup occurs only after safe retirement;
-- mixer neutral/end/centre mappings;
+- mixer neutral/end/centre mappings, including visually centred unity EQ and
+  crossfader defaults;
+- explicit protection coefficients so browser compressor defaults cannot alter
+  ordinary single-deck playback;
 - unavailable incoming falls back without breaking program playback;
 - profile changes apply only to later loads during an active mix.
 
@@ -207,7 +213,8 @@ Two real locally buffered tracks can overlap and switch program role while the s
 
 ## 5. Phase 3 — expanded DJ control surface
 
-**Implementation:** complete; Jenkins verified in build #272. The accepted
+**Implementation:** visual foundation verified in build #272; interaction
+and mixer correction implemented with Jenkins verification pending. The accepted
 visual direction keeps the Discocs palette, typography,
 backdrop and expanded-player transition while borrowing only the control set,
 information hierarchy and placement from the supplied Traktor reference.
@@ -241,6 +248,15 @@ The surface follows the current Expanded Player open/close transition and focus 
 - connect controls to real engine commands/snapshots;
 - show physical deck identity, runtime role, preparation/error state and active program deck;
 - show a compact active-mix indicator when the surface is closed;
+- isolate live physical-deck clock projections so time/readouts update without
+  rerendering the complete DJ workspace;
+- define one app-level track-drag payload and physical-deck drop contract shared
+  by queue and playlist sources; while a playlist drag is active, a compact
+  physical-deck dock keeps the source, the existing reorder targets and the
+  eligible free deck visible at the same time;
+- a successful deck drop opens the workspace, makes that track the canonical
+  next queue occurrence and prepares the free physical deck; it must not change
+  the program role, start transport or overwrite the on-air deck;
 - omit unimplemented Auto DJ controls rather than exposing non-functional placeholders.
 
 ### Tests
@@ -251,11 +267,15 @@ The surface follows the current Expanded Player open/close transition and focus 
 - compact player projects program deck after handover;
 - keyboard/focus/Escape behaviour;
 - pointer controls clamp, commit and expose accessible labels;
+- dragging a track onto a physical deck positions it next and prepares that
+  deck without changing program role, advancing the current queue item or
+  starting transport;
 - phone layout keeps the compact player and does not render an unusable dense surface.
 
 ## 6. Phase 4 — waveform artifact and renderer
 
-**Implementation:** complete; Jenkins verification pending. The frozen v1
+**Implementation:** artifact/backend complete; renderer interaction correction
+implemented with Jenkins verification pending. The frozen v1
 foundation artifact is published atomically for local and Navidrome-backed
 tracks, exposed through authenticated manifest/payload/status endpoints,
 and rendered in both DJ deck waveform regions from one shared decoded payload.
@@ -274,19 +294,27 @@ Artifact availability never blocks manual audio transport.
 
 - add manifest/payload client and TypeScript decoder;
 - share decoded arrays between overview/detailed views;
-- connect Pixi renderer to both deck snapshots and pointer seek;
+- connect Pixi renderer to a live physical-deck clock rather than a static
+  transport anchor;
+- keep the detailed playhead fixed at centre and render empty tape before zero
+  and after track duration;
+- support click seek plus captured mouse/touch tape drag on detailed waveforms,
+  and captured cursor drag on overview waveforms;
 - expose loading/missing/stale/failed states without blocking manual audio.
 - poll only already queued/running jobs so the DJ surface remains a read-only
   consumer and never triggers analysis itself.
 
 ### Gate
 
-The complete waveform vertical slice works for real queue tracks before adding the rest of timeline analysis.
+The complete waveform vertical slice works for real queue tracks before adding
+the rest of timeline analysis: time and waveform advance during playback, the
+detailed playhead remains centred at track edges, and both detailed and overview
+surfaces support continuous mouse/touch dragging.
 
 ## 7. Phase 5 — full timeline analysis
 
-**Implementation:** corrected production scope implemented; Jenkins verification
-pending. `audio_features_v2` is one durable local/remote worker task that
+**Implementation:** corrected production scope deployed; the explicit production
+backfill is running. `audio_features_v2` is one durable local/remote worker task that
 publishes scalar features and `timeline_foundation_v2` together. The timeline
 adds waveform data, beat timestamps, global rhythm confidence, coverage and
 interval-derived local tempo without a second analysis job. The DJ renders a
@@ -378,8 +406,10 @@ Every implementation slice:
 
 ## 12. Current next action
 
-Verify Phase 4 in Jenkins, then begin Phase 5 by extending the frozen payload
-with beat, tempo, energy and structure observations.
+Verify the Phase 3/4 correction in Jenkins, let the explicit Phase 5 production
+analysis finish, and validate real waveform/beat artifacts in the deployed DJ
+workspace. Phase 6 starts only after that validation; energy/structure remain
+deferred until their payload contracts and actual UI consumers are designed.
 
 Primary external references reviewed for the spike:
 

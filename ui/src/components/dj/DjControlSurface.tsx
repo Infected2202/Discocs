@@ -16,6 +16,10 @@ import { useTimeline } from "@/engine/timeline"
 import type { TimelineLoadState } from "@/api/timeline"
 import { WaveformSurface } from "@/engine/waveform"
 import { resolveFollowWindow } from "@/engine/waveform/geometry"
+import { useDeckPosition } from "./useDeckPosition"
+import { useMixerMeter } from "./useMixerMeter"
+import { useDroppable } from "@dnd-kit/core"
+import type { DjDeckDropData } from "./DjTrackDragProvider"
 
 const deckIds: DeckId[] = ["A", "B"]
 
@@ -46,16 +50,12 @@ function trackForDeck(
 
 const waveformPalette = { low: 0x2ed7ff, mid: 0xc738ff, high: 0xff6b3d, beat: 0x94a3b8, playhead: 0xffffff }
 
-function deckPlayhead(deck: DeckSnapshot): number {
-  return deck.anchor?.mediaSeconds ?? 0
-}
-
 function DeckWaveform({ deck, track, state }: {
   readonly deck: DeckSnapshot
   readonly track: TrackSummary | null
   readonly state: TimelineLoadState
 }) {
-  const playhead = deckPlayhead(deck)
+  const playhead = useDeckPosition(deck)
   const timeline = state.timeline
   let statusLabel = `Waveform · ${state.status}`
   if (state.status === "ready" && timeline) {
@@ -69,7 +69,7 @@ function DeckWaveform({ deck, track, state }: {
       width: 1,
       height: 1,
       devicePixelRatio: globalThis.devicePixelRatio || 1,
-      ...resolveFollowWindow(timeline.durationSeconds, playhead, 30),
+      ...resolveFollowWindow(playhead, 30),
     },
     playheadSeconds: playhead,
     follow: true,
@@ -82,6 +82,7 @@ function DeckWaveform({ deck, track, state }: {
         {input && <WaveformSurface
           className={styles.waveformRenderer}
           input={input}
+          interaction="tape"
           onSeek={(seconds) => playerPlayback.seekDeckToSeconds(deck.id, seconds)}
         />}
         <div className={styles.waveformMessage}>
@@ -95,7 +96,7 @@ function DeckWaveform({ deck, track, state }: {
 
 function OverviewWaveform({ deck, state }: { readonly deck: DeckSnapshot; readonly state: TimelineLoadState }) {
   const timeline = state.timeline
-  const playhead = deckPlayhead(deck)
+  const playhead = useDeckPosition(deck)
   const input = useMemo(() => timeline ? {
     timeline,
     viewport: {
@@ -115,6 +116,16 @@ function OverviewWaveform({ deck, state }: { readonly deck: DeckSnapshot; readon
     input={input}
     onSeek={(seconds) => playerPlayback.seekDeckToSeconds(deck.id, seconds)}
   /></div>
+}
+
+function DeckTimeReadout({ deck }: { readonly deck: DeckSnapshot }) {
+  const position = useDeckPosition(deck)
+  return (
+    <div className={styles.deckReadout}>
+      <strong>-{formatTime(deck.duration ? deck.duration - position : null)}</strong>
+      <span>{formatTime(position)} / {formatTime(deck.duration)}</span>
+    </div>
+  )
 }
 
 function EffectRack({ side }: { readonly side: DeckId }) {
@@ -154,9 +165,20 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
   const isPlaying = deck.transport === "playing"
   const canPlay = deck.trackId !== null && deck.preparation !== "loading" && deck.preparation !== "unavailable"
   const canHandover = !isProgram && deck.preparation === "ready"
+  const dropData: DjDeckDropData = { kind: "dj-deck", deck: deck.id }
+  const { isOver, setNodeRef } = useDroppable({
+    id: `dj-deck-${deck.id}`,
+    data: dropData,
+    disabled: isProgram || isPlaying,
+  })
 
   return (
-    <section className={styles.deckPanel} aria-label={`Deck ${deck.id}`} data-deck={deck.id}>
+    <section
+      ref={setNodeRef}
+      className={cn(styles.deckPanel, isOver && styles.deckDropTarget)}
+      aria-label={`Deck ${deck.id}`}
+      data-deck={deck.id}
+    >
       <header className={styles.deckHeader}>
         <ArtworkImage
           src={track?.artwork?.url}
@@ -173,10 +195,7 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
             <button type="button" disabled>MASTER</button>
           </div>
         </div>
-        <div className={styles.deckReadout}>
-          <strong>-{formatTime(deck.duration && deck.anchor ? deck.duration - deck.anchor.mediaSeconds : null)}</strong>
-          <span>{formatTime(deck.duration)}</span>
-        </div>
+        <DeckTimeReadout deck={deck} />
         <div className={styles.deckIdentity}>
           <b>{deck.id}</b>
           <span className={cn(styles.roleBadge, isProgram && styles.roleProgram)}>{roleLabel(deck.role)}</span>
@@ -237,7 +256,12 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
   )
 }
 
-function LevelMeter({ value, label, className }: { readonly value: number; readonly label: string; readonly className?: string }) {
+function LevelMeter({ meter, label, className }: {
+  readonly meter: DeckId | "master"
+  readonly label: string
+  readonly className?: string
+}) {
+  const value = useMixerMeter(meter)
   return (
     <meter className={cn(styles.meter, className)} aria-label={label} min={0} max={1} value={value}>
       <span style={{ height: `${Math.min(1, Math.max(0, value)) * 100}%` }} />
@@ -308,7 +332,7 @@ function MixerChannel({ deck, mixer }: MixerChannelProps) {
           />
         </div>
         <LevelMeter
-          value={mixer.meters[deck]}
+          meter={deck}
           label={`Deck ${deck} output level`}
           className={styles.channelMeter}
         />
@@ -320,7 +344,7 @@ function MixerChannel({ deck, mixer }: MixerChannelProps) {
               displayLabel={band === "high" ? "HI" : band.toUpperCase()}
               labelAccessory={<MixerToggle label={`Mute Deck ${deck} ${band}`} />}
               value={mixer.eq[deck][band]}
-              defaultValue={0.8}
+              defaultValue={0.5}
               onChange={(value) => playerPlayback.setDeckEq(deck, band, value)}
             />
           ))}
@@ -357,6 +381,7 @@ function OpenDjControlSurface() {
   const timelineA = useTimeline(snapshot.decks.A.trackId)
   const timelineB = useTimeline(snapshot.decks.B.trackId)
   const timelines: Record<DeckId, TimelineLoadState> = { A: timelineA, B: timelineB }
+  const programTimeline = timelines[snapshot.programDeck]
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
   const queueItems = queue?.items ?? []
@@ -394,8 +419,8 @@ function OpenDjControlSurface() {
             <div className={styles.masterControls}>
               <div className={styles.masterReadout}>
                 <span>MASTER BPM</span>
-                <strong>--.--</strong>
-                <small>Timeline pending</small>
+                <strong>{programTimeline.timeline ? programTimeline.timeline.bpm.toFixed(1) : "--.--"}</strong>
+                <small>Timeline {programTimeline.status}</small>
               </div>
               <DjKnob
                 label="Master gain"
@@ -404,7 +429,7 @@ function OpenDjControlSurface() {
                 defaultValue={1}
                 onChange={(value) => playerPlayback.setMasterGain(value)}
               />
-              <LevelMeter value={snapshot.mixer.meters.master} label="Master output level" />
+              <LevelMeter meter="master" label="Master output level" />
             </div>
             <span className={styles.limiter}><Gauge size={12} /> protected</span>
           </div>

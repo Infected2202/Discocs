@@ -97,6 +97,13 @@ describe("player queue actions", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(audioEngine.hasPrepared).mockReturnValue(false)
+    vi.mocked(audioEngine.getEngineSnapshot).mockReturnValue({
+      programDeck: "A",
+      decks: {
+        A: { id: "A", transport: "playing", trackId: 10, queueItemId: "current" },
+        B: { id: "B", transport: "paused", trackId: 20, queueItemId: "next" },
+      },
+    } as ReturnType<typeof audioEngine.getEngineSnapshot>)
     localStorage.clear()
     usePlayerStore.setState({
       session: null,
@@ -202,6 +209,48 @@ describe("player queue actions", () => {
     await usePlayerStore.getState().playTrack(20, { queueItemId: "next", recordStarted: false })
 
     expect(audioEngine.load).toHaveBeenCalledWith("blob:track-20", 20, "mp3-128", true, "next")
+  })
+
+  it("moves a dropped playlist track next and prepares the free physical deck", async () => {
+    const current = makeItem("current", 10)
+    const oldNext = makeItem("old-next", 20)
+    const dropped = makeItem("dropped", 30)
+    const initial = makeEnvelope("session", [current, oldNext], current.id)
+    const appended = makeEnvelope("session", [current, oldNext, dropped], current.id)
+    const moved = makeEnvelope("session", [current, dropped, oldNext], current.id)
+    usePlayerStore.setState({
+      session: initial.session,
+      queue: initial.queue,
+      currentTrackId: 10,
+      currentQueueItemId: current.id,
+      currentTrack: current.track,
+    })
+    vi.mocked(patchQueue).mockResolvedValueOnce(appended).mockResolvedValueOnce(moved)
+
+    await usePlayerStore.getState().prepareDjDeck(30, "B")
+
+    expect(patchQueue).toHaveBeenNthCalledWith(1, "session", { operation: "add", track_id: 30 })
+    expect(patchQueue).toHaveBeenNthCalledWith(2, "session", {
+      operation: "move",
+      queue_item_id: "dropped",
+      position: 1,
+    })
+    expect(audioEngine.cancelPrefetch).toHaveBeenCalled()
+    expect(audioEngine.clearPrefetched).toHaveBeenCalled()
+    expect(audioEngine.prefetch).toHaveBeenCalledWith(30, "/audio/30", "raw", "dropped")
+    expect(usePlayerStore.getState().queue?.items.map((item) => item.track_id)).toEqual([10, 30, 20])
+  })
+
+  it("does not overwrite the program deck from a playlist drop", async () => {
+    const current = makeItem("current", 10)
+    const initial = makeEnvelope("session", [current], current.id)
+    usePlayerStore.setState({ session: initial.session, queue: initial.queue, currentQueueItemId: current.id })
+
+    await usePlayerStore.getState().prepareDjDeck(30, "A")
+
+    expect(patchQueue).not.toHaveBeenCalled()
+    expect(audioEngine.prefetch).not.toHaveBeenCalled()
+    expect(usePlayerStore.getState().error).toBe("Deck A is currently on air")
   })
 
   it("starts a prepared physical deck and reports incoming_started for its queue item", async () => {

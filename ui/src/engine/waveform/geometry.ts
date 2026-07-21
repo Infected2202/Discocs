@@ -24,14 +24,21 @@ export function pointerXToTime(
 }
 
 export function resolveFollowWindow(
-  durationSeconds: number,
   playheadSeconds: number,
   visibleSeconds: number,
 ): Pick<WaveformViewport, "startSeconds" | "endSeconds"> {
-  const span = Math.min(Math.max(0.001, visibleSeconds), durationSeconds)
-  const startSeconds = Math.min(
-    Math.max(0, playheadSeconds - span / 2),
-    Math.max(0, durationSeconds - span),
-  )
+  const span = Math.max(0.001, visibleSeconds)
+  const startSeconds = playheadSeconds - span / 2
   return { startSeconds, endSeconds: startSeconds + span }
+}
+
+export function tapeDragTime(
+  initialSeconds: number,
+  deltaPixels: number,
+  viewport: Pick<WaveformViewport, "width" | "startSeconds" | "endSeconds">,
+  durationSeconds: number,
+): number {
+  const visibleSeconds = viewport.endSeconds - viewport.startSeconds
+  const next = initialSeconds - deltaPixels * visibleSeconds / Math.max(1, viewport.width)
+  return Math.min(Math.max(0, next), Math.max(0, durationSeconds))
 }

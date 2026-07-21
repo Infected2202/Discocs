@@ -3,7 +3,7 @@ import {
   channelFaderGain,
   clampBipolar,
   clampNormalized,
-  equalPowerCrossfader,
+  djCrossfaderGains,
   eqGainDb,
   filterFrequencies,
   parameterRampWindow,
@@ -11,19 +11,21 @@ import {
 } from "./curves"
 
 describe("playback parameter curves", () => {
-  it("maps equal-power endpoints and centre", () => {
-    expect(equalPowerCrossfader(-1)).toEqual({ A: 1, B: 0 })
-    expect(equalPowerCrossfader(0).A).toBeCloseTo(Math.SQRT1_2)
-    expect(equalPowerCrossfader(0).B).toBeCloseTo(Math.SQRT1_2)
-    expect(equalPowerCrossfader(1).A).toBeCloseTo(0)
-    expect(equalPowerCrossfader(1).B).toBe(1)
+  it("keeps both decks at unity in the centre and fades only toward an edge", () => {
+    expect(djCrossfaderGains(-1)).toEqual({ A: 1, B: 0 })
+    expect(djCrossfaderGains(-0.5)).toEqual({ A: 1, B: 0.5 })
+    expect(djCrossfaderGains(0)).toEqual({ A: 1, B: 1 })
+    expect(djCrossfaderGains(0.5)).toEqual({ A: 0.5, B: 1 })
+    expect(djCrossfaderGains(1)).toEqual({ A: 0, B: 1 })
   })
 
   it("keeps the filter centre neutral and maps both directions", () => {
     expect(filterFrequencies(0)).toEqual({ lowpassHz: 20_000, highpassHz: 20 })
     expect(filterFrequencies(-1).lowpassHz).toBeCloseTo(20)
     expect(filterFrequencies(1).highpassHz).toBeCloseTo(20_000)
-    expect(eqGainDb("mid", 0.8)).toBeCloseTo(0)
+    expect(eqGainDb("mid", 0.5)).toBe(0)
+    expect(eqGainDb("mid", 0)).toBe(-24)
+    expect(eqGainDb("mid", 1)).toBe(6)
   })
 
   it("clamps public normalized and bipolar parameters", () => {

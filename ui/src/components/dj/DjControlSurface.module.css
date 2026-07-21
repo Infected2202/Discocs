@@ -117,6 +117,7 @@
 
 .decksAndMixer { display: grid; grid-template-columns: minmax(0, 1fr) 190px minmax(0, 1fr); min-height: 0; overflow: hidden; }
 .deckPanel { position: relative; display: grid; grid-template-rows: 68px 33px minmax(0, 1fr); min-width: 0; padding-right: 38px; background: rgb(0 0 0 / 8%); }
+.deckDropTarget { outline: 2px solid color-mix(in srgb, var(--primary) 80%, white); outline-offset: -2px; background: color-mix(in srgb, var(--primary) 10%, transparent); }
 .deckHeader { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 .deckArtwork { width: 47px; height: 47px; border-radius: 5px; object-fit: cover; }
 .deckMeta { display: grid; align-content: center; min-width: 0; flex: 1; }

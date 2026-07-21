@@ -173,7 +173,9 @@ mix bus
 
 Decisions for the foundation:
 
-- Crossfader uses an equal-power curve: `gainA = cos((x + 1) * pi / 4)`, `gainB = sin((x + 1) * pi / 4)` for `x` in `[-1, 1]`.
+- Crossfader uses a centre-unity DJ mix curve for `x` in `[-1, 1]`:
+  `gainA = clamp(1 - x, 0, 1)`, `gainB = clamp(1 + x, 0, 1)`. Both decks are
+  unity at centre; only the deck opposite the approached edge fades.
 - Parameter changes use short `AudioParam` ramps to avoid zipper noise and clicks.
 - Initial EQ is a bounded three-filter approximation. A true isolator is a later DSP improvement and must not be labelled as full kill unless measured.
 - The bipolar DJ filter has a neutral centre, low-pass movement to the left and high-pass movement to the right.
@@ -299,7 +301,7 @@ No local self-check commands are run; tests are authored and executed by Jenkins
 ## 14. Phase 0 spike exit criteria
 
 - A playing media element routes through a persistent neutral graph with no reload when the second strip is created.
-- Two sources overlap and equal-power crossfading schedules successfully.
+- Two sources overlap and centre-unity DJ crossfading schedules successfully.
 - Old media/source resources are demonstrably released across repeated loads.
 - Signalsmith assets load under the production Vite/static-serving model; schedule, seek, loop, rate, latency and buffer dropping are exercised.
 - The source interface above can represent both implementations without UI-specific branches.
@@ -307,7 +309,7 @@ No local self-check commands are run; tests are authored and executed by Jenkins
 
 ### Slice 0.1 confirmation
 
-The shared-context graph, stable physical deck identity, equal-power curve and
+The shared-context graph, stable physical deck identity, centre-unity curve and
 generation-guarded source replacement are now represented by production
 modules under `ui/src/engine/playback/`. `PlaybackEngine` remains lazy: merely
 importing or constructing it does not create or resume an `AudioContext`.
@@ -345,7 +347,7 @@ reported without calling `HTMLMediaElement.play()`.
 Next-track Blob prefetch now prepares the free physical deck and retains the
 program deck unchanged. The deck-role reducer alternates A/B only after an
 audible handover. The mixer graph contains trim, bounded three-band EQ,
-bipolar filter stages, channel faders, the equal-power crossfader, master
+bipolar filter stages, channel faders, the centre-unity DJ crossfader, master
 gain/protection and bounded analyser reads.
 
 `PATCH /api/v1/playback/sessions/{id}/queue` accepts `handover` with

@@ -3083,7 +3083,7 @@
         statCard("Audio features + DJ timeline", audio.missing_tracks ?? data.audio_features_missing_tracks, "need unified audio analysis", [
           detailLine(`${countText(audio.complete_tracks || 0)} ready / ${countText(data.tracks)} total`),
           detailLine(`${formatBytes(timeline.storage_bytes || 0)} waveform and beat-grid payloads`)
-        ].join(""), `<button id="analyzeAudioFeaturesBtn" onclick="startAnalyzeAudioFeatures()" title="Analyze missing audio features and DJ timelines"${disabledAttr("analyze-audio-features")}>Analyze missing</button><button id="rebuildAudioFeaturesBtn" onclick="startAnalyzeAudioFeatures(true)" title="Rebuild audio features and DJ timelines">Rebuild</button>`),
+        ].join(""), `<button id="analyzeAudioFeaturesBtn" onclick="startAnalyzeAudioFeatures()" title="Analyze missing audio features and DJ timelines"${disabledAttr("analyze-audio-features")}>Analyze missing</button>`),
         statCard("Discogs-EffNet heads", headPack.missing_tracks ?? data.head_pack_missing_tracks, "need head outputs", detailLine(`${countText(headPack.complete_tracks || 0)} ready / ${countText(data.tracks)} total`), `<button id="analyzeHeadsBtn" onclick="startAnalyzeHeads()" title="Analyze Discogs-EffNet heads"${disabledAttr("analyze-heads")}>Analyze missing</button>`),
         statCard("Lost files", data.missing_files, "missing on disk", detailLine("Check unavailable paths"), `<button onclick="routeTo({view: 'lostFiles', model: model()}, {reset: true})">Open</button>`),
         statCard("Errored files", data.analysis_error_count || 0, "analysis errors", detailLine("Latest failed track/model pairs"), `<button onclick="routeTo({view: 'erroredFiles', model: model()}, {reset: true})">Open</button>`),

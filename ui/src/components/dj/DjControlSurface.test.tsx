@@ -6,6 +6,7 @@ import { useUIStore } from "@/store/uiStore"
 const playback = vi.hoisted(() => ({
   init: vi.fn(),
   getEngineSnapshot: vi.fn(),
+  getMixerMeters: vi.fn(() => ({ A: 0.2, B: 0.1, master: 0.3 })),
   subscribeEngine: vi.fn(() => () => undefined),
   setDeckTrim: vi.fn(),
   setDeckEq: vi.fn(),
@@ -30,6 +31,11 @@ vi.mock("@/engine/playback", async (importOriginal) => ({
 vi.mock("@/engine/timeline", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/engine/timeline")>()),
   useTimeline,
+}))
+
+vi.mock("@/engine/waveform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/engine/waveform")>()),
+  WaveformSurface: () => <canvas data-testid="waveform-canvas" />,
 }))
 
 vi.mock("@/components/media/ArtworkImage", () => ({
@@ -72,11 +78,11 @@ function snapshot(programDeck: "A" | "B" = "A") {
       },
     },
     mixer: {
-      crossfader: programDeck === "A" ? -1 : 1,
+      crossfader: 0,
       masterGain: 1,
       channelFaders: { A: 1, B: 1 },
       trims: { A: 0.5, B: 0.5 },
-      eq: { A: { low: 0.8, mid: 0.8, high: 0.8 }, B: { low: 0.8, mid: 0.8, high: 0.8 } },
+      eq: { A: { low: 0.5, mid: 0.5, high: 0.5 }, B: { low: 0.5, mid: 0.5, high: 0.5 } },
       filters: { A: 0, B: 0 },
       meters: { A: 0.2, B: 0.1, master: 0.3 },
     },
@@ -90,6 +96,7 @@ describe("DjControlSurface", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     playback.subscribeEngine.mockReturnValue(() => undefined)
+    playback.getMixerMeters.mockReturnValue({ A: 0.2, B: 0.1, master: 0.3 })
     playback.getEngineSnapshot.mockReturnValue(snapshot())
     useTimeline.mockClear()
     useUIStore.setState({ djSurfaceOpen: false })
@@ -120,6 +127,28 @@ describe("DjControlSurface", () => {
     expect(playback.pause).not.toHaveBeenCalled()
     expect(playback.seek).not.toHaveBeenCalled()
     expect(screen.queryByTestId("dj-control-surface")).not.toBeInTheDocument()
+  })
+
+  it("shows the ready program timeline instead of a permanent pending placeholder", () => {
+    useTimeline.mockImplementationOnce(() => ({
+      status: "ready",
+      timeline: {
+        durationSeconds: 180,
+        levels: [],
+        bpm: 118.26,
+        beatConfidence: 0.8,
+        rhythmCoverageSeconds: 180,
+        beats: new Float32Array([0.5]),
+        localTempo: new Float32Array([118.26]),
+      },
+    }) as never)
+    useUIStore.setState({ djSurfaceOpen: true })
+
+    render(<DjControlSurface />)
+
+    expect(screen.getByText("118.3")).toBeInTheDocument()
+    expect(screen.getByText("Timeline ready")).toBeInTheDocument()
+    expect(screen.queryByText("Timeline pending")).not.toBeInTheDocument()
   })
 
   it("closes on Escape and restores focus", () => {
@@ -156,6 +185,7 @@ describe("DjControlSurface", () => {
     expect(within(mixer).getByRole("slider", { name: "Deck B filter" })).toBeInTheDocument()
     expect(within(mixer).getByRole("slider", { name: "Crossfader" })).toBeInTheDocument()
     expect(within(deckA).queryByRole("slider", { name: "Deck A gain" })).not.toBeInTheDocument()
+    expect(within(mixer).getByRole("slider", { name: "Crossfader" })).toHaveAttribute("aria-valuenow", "0")
   })
 
   it("places Deck B effect controls in the wide grid column before its edge label", () => {

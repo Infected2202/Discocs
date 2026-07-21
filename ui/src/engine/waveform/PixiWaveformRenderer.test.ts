@@ -133,6 +133,22 @@ describe("PixiWaveformRenderer lifecycle", () => {
     renderer.destroy()
   })
 
+  it("redraws only the playhead when an overview viewport stays fixed", async () => {
+    const app = new ApplicationStub()
+    const initial = input()
+    const renderer = new PixiWaveformRenderer(document.createElement("div"), initial, loader(app))
+    await renderer.mount()
+    graphicsClear.mockClear()
+    graphicsStroke.mockClear()
+
+    renderer.update({ ...initial, playheadSeconds: 1.2 })
+
+    expect(graphicsClear).toHaveBeenCalledTimes(1)
+    expect(graphicsStroke).toHaveBeenCalledTimes(1)
+    expect(graphicsStroke).toHaveBeenCalledWith({ color: 4, width: 2 })
+    renderer.destroy()
+  })
+
   it("removes ticker work, observers, canvas and GPU resources on teardown", async () => {
     const app = new ApplicationStub()
     const container = document.createElement("div")

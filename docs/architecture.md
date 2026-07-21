@@ -237,7 +237,7 @@ Blob prefetch also creates and routes the free deck without changing the
 compact-player projection or canonical queue item.
 
 Global Next uses the prepared deck when available: it starts incoming, applies
-the equal-power crossfader endpoint, immediately projects that physical deck
+the DJ crossfader endpoint, immediately projects that physical deck
 as program, and submits the idempotent server handover. A failed server update
 remains visible and is retried with the same client id without replaying the
 audio action. The muted outgoing element, source node and object URL remain
@@ -247,8 +247,10 @@ retains the established `jump` plus ordinary network/Blob load path.
 
 Each mixer strip contains trim, bounded low/mid/high EQ, bipolar low/high-pass
 filter stages, channel and crossfader gains, and a non-critical analyser tap.
-The shared master passes through gain, dynamics-compressor protection and a
-master analyser. Crossfader endpoints and centre use the equal-power curve;
+The shared master passes through gain, explicitly configured near-peak
+dynamics-compressor protection and a master analyser. Deck meters tap the
+post-channel signal before crossfading. The crossfader keeps both decks at
+unity in the centre and fades only the opposite deck toward either edge;
 parameter changes use short audio-time ramps. Playback profile changes do not
 replace an already prepared deck and apply to subsequent loads.
 
@@ -267,8 +269,8 @@ of the central mixer. Each strip follows the reference's outer
 Gain/Filter/FX/Key and inner HI/MID/LO/fader grouping, with a segmented meter
 between them. Compact per-control switches, the filter-type selector and FX 1/2
 routing preserve the reference hierarchy while remaining disabled placeholders.
-Deck panels contain track, transport and disabled Phase-placeholder
-pitch/performance controls. Knob pointers place the neutral/default value at
+Deck panels contain live track, transport, time and waveform state plus disabled
+future pitch/performance controls. Knob pointers place the neutral/default value at
 twelve o'clock, including controls whose audio range is asymmetric, and their
 arcs render the actual value outward from that centre with no coloured fill at
 neutral. The top panel uses shrink-safe effect regions around an isolated
@@ -276,13 +278,18 @@ master block; compact landscape widths remove secondary effect names before
 they can overlap the master controls. The Deck B effect rack mirrors its DOM
 and grid columns explicitly, so its controls occupy the wide outer column
 rather than the narrow label column next to the master. Channel and crossfader
-slots include scales and a high-contrast cap. The
-effect, cue, loop, BPM and waveform regions are explicitly unavailable or
-marked pending until their owning phases; they never simulate a successful
-command. Gain, three-band EQ, filter, channel faders, crossfader, master gain,
+slots include scales and a high-contrast cap. Effects, cue, loop, sync, pitch
+and performance-pad regions are explicitly unavailable until their owning
+phases; they never simulate a successful command. BPM and waveform regions
+consume the published timeline artifact. Gain, three-band EQ, filter, channel
+faders, crossfader, master gain,
 deck transport and explicit prepared-deck handover issue real facade/engine
 commands. Knobs use vertical Pointer Event dragging, keyboard arrows and
-double-click reset. Engine snapshots expose stable physical identity, role,
+double-click reset. Playlist rows and the physical decks share the AppShell
+drag context: a temporary A/B dock keeps the source list and free-deck target
+visible together, while the program deck is locked. A free-deck drop makes the
+track the next canonical queue occurrence and prepares it without changing the
+current item, starting transport or switching program role. Engine snapshots expose stable physical identity, role,
 preparation, media transport and meters, so controls remain attached to Deck A
 and Deck B after the program role alternates. Starting an incoming deck records
 the preference-neutral `incoming_started` event once per queue occurrence.
@@ -542,8 +549,8 @@ Implementation files: `app/api/map.py`, `app/projection.py`,
 `ui/src/engine/waveform/` owns the PixiJS v8 rendering boundary for detailed deck
 waveforms. React owns each container and passes an immutable decoded timeline plus viewport,
 DPR, authoritative playhead, zoom/follow state and palette. Pixi owns its canvas, cached draw
-geometry and private 60 FPS ticker. The ticker stops while the document or surface is hidden;
-unmount removes ticker work, resize observation, canvas and GPU resources.
+geometry. Pixi's ticker stays stopped; React's shared physical-deck clock requests a render
+only when input or size changes. Unmount removes resize observation, canvas and GPU resources.
 
 Each deck uses a separate Pixi application. Decoded timeline arrays remain shareable and are
 not copied by the renderer. Level-of-detail selection chooses the coarsest pyramid level that
@@ -566,8 +573,8 @@ the waveform payload.
 Timeline v1 uses little-endian arrays with 4-byte-aligned descriptors, a
 512-sample base bucket and a factor-4 extrema-preserving pyramid. Signed peaks
 are `int16` with scale `1/32767`; normalized band energies are `uint16` with
-scale `1/65535`. Phase 4 will add persistence, publication and authenticated
-delivery around this frozen codec. Format evidence is in
+scale `1/65535`. Phase 4 added atomic persistence, publication and authenticated
+manifest/payload delivery around this frozen codec. Format evidence is in
 `plans/discocs-dj-design/SLICE_0_4_FORMAT_RESULTS.md`.
 
 ### Signalsmith tempo adapter foundation

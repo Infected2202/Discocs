@@ -66,6 +66,11 @@ describe("PlaybackEngine Phase 1 routing", () => {
     expect(context.mediaElements).toEqual([first, second])
     expect(context.resume).toHaveBeenCalledTimes(1)
     expect(context.mediaNodes[0]?.disconnect).toHaveBeenCalled()
+    expect(engine.getSnapshot().mixer).toMatchObject({
+      crossfader: 0,
+      trims: { A: 0.5, B: 0.5 },
+      eq: { A: { low: 0.5, mid: 0.5, high: 0.5 }, B: { low: 0.5, mid: 0.5, high: 0.5 } },
+    })
   })
 
   it("propagates context-resume failure and never calls media playback itself", async () => {
@@ -133,6 +138,11 @@ describe("PlaybackEngine Phase 1 routing", () => {
     media.dispatchEvent(new Event("play"))
     expect(engine.getSnapshot().decks.A.transport).toBe("playing")
     expect(listener).toHaveBeenCalledTimes(2)
+
+    Object.defineProperty(media, "currentTime", { configurable: true, value: 48, writable: true })
+    media.dispatchEvent(new Event("seeked"))
+    expect(engine.getSnapshot().decks.A.anchor?.mediaSeconds).toBe(48)
+    expect(listener).toHaveBeenCalledTimes(3)
   })
 
   it("projects ended and failed external media states", () => {

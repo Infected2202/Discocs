@@ -4,7 +4,10 @@ The DJ surface renders detailed and overview waveform artifacts with PixiJS.
 The renderer loads Pixi's static CSP compatibility implementations before
 initialization, so the production policy does not need to allow `unsafe-eval`.
 Both views share decoded typed arrays, follow the authoritative deck playhead,
-and seek the physical deck selected by the pointer. Missing or stale analysis
+and seek the physical deck selected by the pointer. Detailed waveforms behave
+as a tape under a fixed centre playhead, including empty space before zero and
+after duration; overview cursors and detailed tape both use captured pointer
+drag for mouse, pen and touch. Missing or stale analysis
 is non-blocking; see [`timeline-waveforms.md`](timeline-waveforms.md).
 
 The closed DJ surface is not kept behind the page as an off-screen React tree:
@@ -15,6 +18,19 @@ the lightweight status endpoint; manifest and payload are fetched once when the
 artifact becomes ready. Each Pixi surface has an explicitly stopped ticker and
 renders one frame only for changed input or size. Coarse-pointer devices use
 CSS-pixel canvas resolution and disable panel backdrop blur.
+
+While the DJ surface is open, one shared 30 FPS deck clock updates only the
+waveform/time leaves; the complete workspace does not subscribe to transport
+ticks. A separate 20 FPS analyser clock updates only the three level meters.
+Overview waveforms keep their static geometry and redraw only the playhead when
+time changes.
+
+Virtual playlist rows and the DJ decks share one application-level drag
+context. Starting a playlist drag leaves playlist reordering available and
+reveals a compact A/B deck dock above the player; the on-air deck is locked.
+Dropping on the free deck opens the DJ workspace, moves or adds that track to
+the next canonical queue position and prepares it without starting playback or
+changing the program role. The full deck panels use the same drop payload.
 
 The primary player UI lives in `ui/src/components/player/`.
 

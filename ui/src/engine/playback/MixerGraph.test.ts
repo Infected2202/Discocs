@@ -41,6 +41,14 @@ class FakeGain extends FakeNode {
   gain = new FakeParam()
 }
 
+class FakeCompressor extends FakeNode {
+  threshold = new FakeParam()
+  knee = new FakeParam()
+  ratio = new FakeParam()
+  attack = new FakeParam()
+  release = new FakeParam()
+}
+
 function makeContext() {
   const destination = new FakeNode()
   return {
@@ -48,26 +56,56 @@ function makeContext() {
     state: "running" as AudioContextState,
     destination,
     createGain: vi.fn(() => new FakeGain()),
-    createDynamicsCompressor: vi.fn(() => new FakeNode()),
+    createDynamicsCompressor: vi.fn(() => new FakeCompressor()),
     createBiquadFilter: vi.fn(() => new FakeBiquad()),
     createAnalyser: vi.fn(() => new FakeAnalyser()),
   } as unknown as AudioContext
 }
 
 describe("MixerGraph", () => {
-  it("uses one context and schedules clamped equal-power ramps", () => {
+  it("keeps both decks at unity in the centre and clamps edge ramps", () => {
     const events: MixerGraphEvent[] = []
     const context = makeContext()
     const graph = new MixerGraph(context, (event) => events.push(event))
     events.length = 0
 
+    graph.setCrossfader(0)
+    let ramps = events.filter((event) => event.type === "parameter-ramp")
+    expect(ramps.map((event) => event.value)).toEqual([1, 1])
+
+    events.length = 0
     graph.setCrossfader(3, 6)
 
-    const ramps = events.filter((event) => event.type === "parameter-ramp")
-    expect(ramps[0]?.value).toBeCloseTo(0)
+    ramps = events.filter((event) => event.type === "parameter-ramp")
+    expect(ramps[0]?.value).toBe(0)
     expect(ramps[1]?.value).toBe(1)
     expect(ramps.every((event) => event.startTime === 6 && event.endTime === 6.015)).toBe(true)
     expect(ramps.every((event) => event.contextState === "running")).toBe(true)
+  })
+
+  it("configures explicit peak protection instead of the compressor defaults", () => {
+    const context = makeContext()
+    new MixerGraph(context)
+    const protection = vi.mocked(context.createDynamicsCompressor).mock.results[0]?.value as FakeCompressor
+
+    expect(protection.threshold.value).toBe(-1)
+    expect(protection.knee.value).toBe(0)
+    expect(protection.ratio.value).toBe(20)
+    expect(protection.attack.value).toBe(0.003)
+    expect(protection.release.value).toBe(0.1)
+  })
+
+  it("reuses analyser buffers across meter ticks", () => {
+    const context = makeContext()
+    const graph = new MixerGraph(context)
+    graph.readMeters()
+    graph.readMeters()
+    const analyser = vi.mocked(context.createAnalyser).mock.results[0]?.value as FakeAnalyser
+
+    expect(analyser.getFloatTimeDomainData).toHaveBeenCalledTimes(2)
+    expect(analyser.getFloatTimeDomainData.mock.calls[0]?.[0]).toBe(
+      analyser.getFloatTimeDomainData.mock.calls[1]?.[0],
+    )
   })
 
   it("does not disconnect Deck A while Deck B is attached", () => {

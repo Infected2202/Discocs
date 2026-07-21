@@ -28,6 +28,7 @@ function runtime() {
     handover: vi.fn().mockResolvedValue({ outgoingDeck: "A", programDeck: "B", clientHandoverId: "h-1" }),
     confirmRetirement: vi.fn().mockResolvedValue(undefined),
     cancelIncoming: vi.fn(),
+    getMeterLevels: vi.fn().mockReturnValue({ A: 0.2, B: 0.1, master: 0.25 }),
     destroy: vi.fn().mockResolvedValue(undefined),
   } as unknown as PlaybackEngine
 }
@@ -75,6 +76,8 @@ describe("PlayerPlaybackFacade routing", () => {
 
     expect(audio[2]?.currentTime).toBe(120)
     expect(audio[1]?.currentTime).toBe(0)
+    expect(facade.getDeckCurrentTime("B")).toBe(120)
+    expect(facade.getDeckCurrentTime("A")).toBe(0)
   })
 
   it("forwards physical deck and mixer controls to the shared runtime", () => {
@@ -102,6 +105,7 @@ describe("PlayerPlaybackFacade routing", () => {
     expect(engine.setChannelFader).toHaveBeenCalledWith("A", 0.4)
     expect(engine.setCrossfader).toHaveBeenCalledWith(0.2)
     expect(engine.setMasterGain).toHaveBeenCalledWith(0.9)
+    expect(facade.getMixerMeters()).toEqual({ A: 0.2, B: 0.1, master: 0.25 })
   })
 
   it("routes every loaded element and resumes Web Audio before media playback", async () => {

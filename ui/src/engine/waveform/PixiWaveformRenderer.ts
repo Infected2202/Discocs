@@ -50,6 +50,7 @@ export class PixiWaveformRenderer {
   private input: WaveformRendererInput
   private app: Application | null = null
   private graphics: Graphics | null = null
+  private playheadGraphics: Graphics | null = null
   private cancelled = false
   private resizeObserver: ResizeObserver | null = null
 
@@ -87,7 +88,9 @@ export class PixiWaveformRenderer {
 
     this.app = app
     this.graphics = new Graphics()
+    this.playheadGraphics = new Graphics()
     app.stage.addChild(this.graphics)
+    app.stage.addChild(this.playheadGraphics)
     app.canvas.style.cssText = "display:block;width:100%;height:100%;touch-action:none"
     this.container.appendChild(app.canvas)
 
@@ -101,8 +104,9 @@ export class PixiWaveformRenderer {
 
   update(input: WaveformRendererInput): void {
     if (sameInput(this.input, input)) return
+    const redrawWaveform = waveformInputChanged(this.input, input)
     this.input = input
-    this.draw()
+    this.draw(redrawWaveform)
   }
 
   destroy(): void {
@@ -115,12 +119,14 @@ export class PixiWaveformRenderer {
     this.app.destroy(true, { children: true, texture: true, textureSource: true })
     this.app = null
     this.graphics = null
+    this.playheadGraphics = null
   }
 
-  private readonly draw = (): void => {
+  private readonly draw = (redrawWaveform = true): void => {
     const graphics = this.graphics
+    const playheadGraphics = this.playheadGraphics
     const app = this.app
-    if (!graphics || !app) return
+    if (!graphics || !playheadGraphics || !app) return
     const { timeline, viewport, playheadSeconds } = this.input
     const width = Math.max(1, app.screen.width)
     const height = Math.max(1, app.screen.height)
@@ -130,31 +136,41 @@ export class PixiWaveformRenderer {
     const firstBucket = Math.max(0, Math.floor(viewport.startSeconds / level.bucketDurationSeconds))
     const lastBucket = Math.min(level.maximum.length - 1, Math.ceil(viewport.endSeconds / level.bucketDurationSeconds))
 
-    graphics.clear()
-    const beats = timeline.beats ?? EMPTY_EVENTS
-    for (let index = firstEventAtOrAfter(beats, viewport.startSeconds); index < beats.length; index += 1) {
-      const beat = beats[index]
-      if (beat > viewport.endSeconds) break
-      const x = ((beat - viewport.startSeconds) / visibleSeconds) * width
-      graphics.moveTo(x, 0).lineTo(x, height)
-        .stroke({ color: this.input.palette.beat ?? 0xffffff, width: 1, alpha: 0.2 })
+    if (redrawWaveform) {
+      graphics.clear()
+      const beats = timeline.beats ?? EMPTY_EVENTS
+      for (let index = firstEventAtOrAfter(beats, viewport.startSeconds); index < beats.length; index += 1) {
+        const beat = beats[index]
+        if (beat > viewport.endSeconds) break
+        const x = ((beat - viewport.startSeconds) / visibleSeconds) * width
+        graphics.moveTo(x, 0).lineTo(x, height)
+          .stroke({ color: this.input.palette.beat ?? 0xffffff, width: 1, alpha: 0.2 })
+      }
+      for (let index = firstBucket; index <= lastBucket; index += 1) {
+        const x = ((index * level.bucketDurationSeconds - viewport.startSeconds) / visibleSeconds) * width
+        const top = centre - (level.maximum[index] / 32_767) * centre
+        const bottom = centre - (level.minimum[index] / 32_767) * centre
+        const colour = energyColour(this.input, level.low[index], level.mid[index], level.high[index])
+        graphics.moveTo(x, top).lineTo(x, bottom).stroke({ color: colour, width: 1 })
+      }
     }
-    for (let index = firstBucket; index <= lastBucket; index += 1) {
-      const x = ((index * level.bucketDurationSeconds - viewport.startSeconds) / visibleSeconds) * width
-      const top = centre - (level.maximum[index] / 32_767) * centre
-      const bottom = centre - (level.minimum[index] / 32_767) * centre
-      const colour = energyColour(this.input, level.low[index], level.mid[index], level.high[index])
-      graphics.moveTo(x, top).lineTo(x, bottom).stroke({ color: colour, width: 1 })
-    }
+    playheadGraphics.clear()
     const playheadX = ((playheadSeconds - viewport.startSeconds) / visibleSeconds) * width
     if (playheadX >= 0 && playheadX <= width) {
-      graphics.moveTo(playheadX, 0).lineTo(playheadX, height)
+      playheadGraphics.moveTo(playheadX, 0).lineTo(playheadX, height)
         .stroke({ color: this.input.palette.playhead, width: 2 })
     }
     // autoStart is disabled: render exactly one frame for an actual input or
     // size change instead of keeping four independent 60 FPS tickers alive.
     app.render()
   }
+}
+
+function waveformInputChanged(previous: WaveformRendererInput, next: WaveformRendererInput): boolean {
+  return previous.timeline !== next.timeline
+    || previous.viewport.startSeconds !== next.viewport.startSeconds
+    || previous.viewport.endSeconds !== next.viewport.endSeconds
+    || previous.palette !== next.palette
 }
 
 function sameInput(previous: WaveformRendererInput, next: WaveformRendererInput): boolean {

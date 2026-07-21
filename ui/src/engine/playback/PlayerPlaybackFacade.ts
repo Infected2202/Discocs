@@ -312,7 +312,10 @@ export class PlayerPlaybackFacade {
   seekDeckToSeconds(deck: DeckId, seconds: number): void {
     const element = this.elementForDeck(deck)
     if (!element || !Number.isFinite(seconds)) return
-    element.currentTime = Math.min(Math.max(0, seconds), element.duration || seconds)
+    const maximum = Number.isFinite(element.duration) && element.duration > 0
+      ? element.duration
+      : Number.POSITIVE_INFINITY
+    element.currentTime = Math.min(Math.max(0, seconds), maximum)
   }
 
   /**
@@ -358,6 +361,15 @@ export class PlayerPlaybackFacade {
 
   getEngineSnapshot(): PlaybackEngineSnapshot {
     return this.runtime.getSnapshot()
+  }
+
+  getDeckCurrentTime(deck: DeckId): number | null {
+    const element = this.elementForDeck(deck)
+    return element && Number.isFinite(element.currentTime) ? element.currentTime : null
+  }
+
+  getMixerMeters(): Record<DeckId | "master", number> {
+    return this.runtime.getMeterLevels()
   }
 
   subscribeEngine(listener: () => void): () => void {

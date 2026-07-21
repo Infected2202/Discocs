@@ -2,7 +2,7 @@ import {
   channelFaderGain,
   clampNormalized,
   eqGainDb,
-  equalPowerCrossfader,
+  djCrossfaderGains,
   filterFrequencies,
   parameterRampWindow,
   trimGain,
@@ -54,6 +54,7 @@ export class MixerGraph {
   private readonly protection: DynamicsCompressorNode
   private readonly masterMeter: AnalyserNode
   private readonly strips: Record<DeckId, DeckStrip>
+  private readonly meterBuffers = new WeakMap<AnalyserNode, Float32Array>()
   private readonly handleContextStateChange = () => this.logContextState()
   private destroyed = false
 
@@ -66,6 +67,11 @@ export class MixerGraph {
     this.mixBus = context.createGain()
     this.master = context.createGain()
     this.protection = context.createDynamicsCompressor()
+    this.protection.threshold.value = -1
+    this.protection.knee.value = 0
+    this.protection.ratio.value = 20
+    this.protection.attack.value = 0.003
+    this.protection.release.value = 0.1
     this.masterMeter = context.createAnalyser()
     this.mixBus.connect(this.master)
     this.master.connect(this.protection)
@@ -102,7 +108,7 @@ export class MixerGraph {
   }
 
   setCrossfader(value: number, when?: number): void {
-    const gains = equalPowerCrossfader(value)
+    const gains = djCrossfaderGains(value)
     this.schedule(this.strips.A.crossfader.gain, gains.A, "crossfader", "A", when)
     this.schedule(this.strips.B.crossfader.gain, gains.B, "crossfader", "B", when)
   }
@@ -209,7 +215,7 @@ export class MixerGraph {
     highpass.connect(channel)
     channel.connect(crossfader)
     crossfader.connect(this.mixBus)
-    crossfader.connect(meter)
+    channel.connect(meter)
     trim.gain.value = 1
     channel.gain.value = 1
     return {
@@ -240,7 +246,11 @@ export class MixerGraph {
   }
 
   private readMeter(analyser: AnalyserNode): number {
-    const samples = new Float32Array(analyser.fftSize)
+    let samples = this.meterBuffers.get(analyser)
+    if (!samples || samples.length !== analyser.fftSize) {
+      samples = new Float32Array(analyser.fftSize)
+      this.meterBuffers.set(analyser, samples)
+    }
     analyser.getFloatTimeDomainData(samples)
     let peak = 0
     for (const sample of samples) peak = Math.max(peak, Math.abs(sample))

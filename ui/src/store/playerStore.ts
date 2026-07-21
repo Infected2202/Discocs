@@ -118,6 +118,7 @@ interface PlayerState {
   playFromEnvelope(envelope: PlaybackEnvelope, preferredTrackId?: number): Promise<void>
   adoptInstantMix(envelope: PlaybackEnvelope): Promise<void>
   playNext(trackId: number, sourceLabel?: string): Promise<void>
+  prepareDjDeck(trackId: number, deck: DeckId): Promise<void>
   toggleExpanded(): void
 
   restoreSession(): Promise<void>
@@ -829,6 +830,60 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           position: targetPosition,
         })
         applyEnvelope(moved)
+      } catch (err) {
+        set({ error: (err as Error).message })
+      }
+    },
+
+    async prepareDjDeck(trackId, deck) {
+      const { session, queue, currentQueueItemId, playbackProfile } = get()
+      const snapshot = audioEngine.getEngineSnapshot()
+      if (snapshot.programDeck === deck || snapshot.decks[deck].transport === "playing") {
+        set({ error: `Deck ${deck} is currently on air` })
+        return
+      }
+      if (!session?.id || !queue || !currentQueueItemId) {
+        set({ error: "Start a playback session before loading a DJ deck" })
+        return
+      }
+
+      try {
+        const currentIndex = queue.items.findIndex((item) => item.id === currentQueueItemId)
+        if (currentIndex < 0) throw new Error("Current queue item is unavailable")
+        let envelope: PlaybackEnvelope
+        let target = queue.items.slice(currentIndex + 1).find((item) => item.track_id === trackId)
+
+        if (target) {
+          envelope = { session, queue } as PlaybackEnvelope
+        } else {
+          const existingIds = new Set(queue.items.map((item) => item.id))
+          envelope = await patchQueue(session.id, { operation: "add", track_id: trackId })
+          target = envelope.queue.items.find((item) => !existingIds.has(item.id))
+        }
+        if (!target) throw new Error("Could not add the track to the playback queue")
+
+        const targetPosition = currentIndex + 1
+        if (envelope.queue.items[targetPosition]?.id !== target.id) {
+          envelope = await patchQueue(session.id, {
+            operation: "move",
+            queue_item_id: target.id,
+            position: targetPosition,
+          })
+          target = envelope.queue.items.find((item) => item.id === target?.id) ?? target
+        }
+
+        applyEnvelope(envelope, false, false)
+        if (!audioEngine.hasPrepared(trackId, target.id)) {
+          audioEngine.cancelPrefetch()
+          audioEngine.clearPrefetched()
+          await audioEngine.prefetch(
+            trackId,
+            trackAudioUrl(trackId, playbackProfile.key),
+            playbackProfile.key,
+            target.id,
+          )
+        }
+        set({ error: null })
       } catch (err) {
         set({ error: (err as Error).message })
       }

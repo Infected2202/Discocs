@@ -1346,7 +1346,8 @@ def test_test_ui_loads():
     assert "listenerDashboardShelves" in response.text
     assert "/api/v1/dashboard?limit=8" in response.text
     assert "Audio features + DJ timeline" in response.text
-    assert "startAnalyzeAudioFeatures(true)" in response.text
+    assert 'id="rebuildAudioFeaturesBtn"' not in response.text
+    assert "startAnalyzeAudioFeatures(true)" not in response.text
     assert '\"/api/v1/jobs/analyze-timeline\"' not in response.text
     assert "listenerSearch" in response.text
     assert "/api/v1/search" in response.text

@@ -29,6 +29,18 @@ const emptyDeck = (id: DeckId) => ({
   buffered: [],
 })
 
+const defaultMixerState = () => ({
+  crossfader: 0,
+  masterGain: 1,
+  channelFaders: { A: 1, B: 1 },
+  trims: { A: 0.5, B: 0.5 },
+  eq: {
+    A: { low: 0.5, mid: 0.5, high: 0.5 },
+    B: { low: 0.5, mid: 0.5, high: 0.5 },
+  },
+  filters: { A: 0, B: 0 },
+})
+
 function externalTransport(element: HTMLMediaElement): TransportState {
   if (element.error) return "error"
   if (element.ended) return "ended"
@@ -51,17 +63,7 @@ export class PlaybackEngine {
   private roles: DeckRoleState = initialDeckRoleState()
   private revision = 0
   private readonly listeners = new Set<() => void>()
-  private readonly mixer = {
-    crossfader: -1,
-    masterGain: 1,
-    channelFaders: { A: 1, B: 1 },
-    trims: { A: 0.5, B: 0.5 },
-    eq: {
-      A: { low: 0.8, mid: 0.8, high: 0.8 },
-      B: { low: 0.8, mid: 0.8, high: 0.8 },
-    },
-    filters: { A: 0, B: 0 },
-  }
+  private mixer = defaultMixerState()
 
   constructor(log: MixerGraphLogger = () => undefined) {
     this.log = log
@@ -228,11 +230,15 @@ export class PlaybackEngine {
       contextState: this.context?.state ?? "uninitialized",
       programDeck: this.roles.program,
       decks,
-      mixer: { ...this.mixer, meters: this.graph?.readMeters() ?? { A: 0, B: 0, master: 0 } },
+      mixer: { ...this.mixer, meters: this.getMeterLevels() },
       automation: { owner: "none" },
       capabilities,
       error: null,
     }
+  }
+
+  getMeterLevels(): Record<DeckId | "master", number> {
+    return this.graph?.readMeters() ?? { A: 0, B: 0, master: 0 }
   }
 
   subscribe(listener: () => void): () => void {
@@ -252,6 +258,7 @@ export class PlaybackEngine {
     this.context = null
     if (context && context.state !== "closed") await context.close()
     this.roles = initialDeckRoleState()
+    this.mixer = defaultMixerState()
     this.changed()
   }
 
@@ -259,7 +266,7 @@ export class PlaybackEngine {
     if (this.context) return
     this.context = new AudioContext()
     this.graph = new MixerGraph(this.context, this.log)
-    this.graph.setCrossfader(-1)
+    this.graph.setCrossfader(this.mixer.crossfader)
     this.decks = {
       A: new DeckRuntime("A", this.graph, () => new HtmlMediaDeckSource(this.context!)),
       B: new DeckRuntime("B", this.graph, () => new HtmlMediaDeckSource(this.context!)),
@@ -301,7 +308,9 @@ export class PlaybackEngine {
   private watchExternalElement(deck: DeckId, element: HTMLMediaElement): void {
     this.externalListenerCleanup[deck]?.()
     const notify = () => this.changed()
-    const events = ["play", "playing", "pause", "waiting", "ended", "error", "loadedmetadata"] as const
+    const events = [
+      "play", "playing", "pause", "waiting", "ended", "error", "loadedmetadata", "seeked", "ratechange",
+    ] as const
     events.forEach((event) => element.addEventListener(event, notify))
     this.externalElements[deck] = element
     this.externalListenerCleanup[deck] = () => {

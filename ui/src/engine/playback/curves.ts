@@ -15,10 +15,12 @@ export function clampBipolar(value: number): number {
   return clamp(value, -1, 1)
 }
 
-export function equalPowerCrossfader(value: number): Record<DeckId, number> {
+export function djCrossfaderGains(value: number): Record<DeckId, number> {
   const x = clampBipolar(value)
-  const angle = ((x + 1) * Math.PI) / 4
-  return { A: Math.cos(angle), B: Math.sin(angle) }
+  return {
+    A: clampNormalized(1 - x),
+    B: clampNormalized(1 + x),
+  }
 }
 
 export function channelFaderGain(value: number): number {
@@ -38,7 +40,10 @@ export function eqGainDb(band: EqBand, value: number): number {
     high: [-24, 6],
   }
   const [minimum, maximum] = range[band]
-  return minimum + clampNormalized(value) * (maximum - minimum)
+  const normalized = clampNormalized(value)
+  return normalized <= 0.5
+    ? minimum + normalized * 2 * -minimum
+    : (normalized - 0.5) * 2 * maximum
 }
 
 export interface FilterFrequencies {

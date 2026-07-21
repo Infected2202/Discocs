@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { pointerXToTime, resolveFollowWindow, selectWaveformLevel } from "./geometry"
+import { pointerXToTime, resolveFollowWindow, selectWaveformLevel, tapeDragTime } from "./geometry"
 import type { WaveformLevel } from "./types"
 
 function level(bucketDurationSeconds: number): WaveformLevel {
@@ -31,8 +31,17 @@ describe("waveform viewport geometry", () => {
     expect(pointerXToTime(1_500, viewport)).toBe(60)
   })
 
-  it("keeps a follow window centred until it reaches track edges", () => {
-    expect(resolveFollowWindow(240, 120, 20)).toEqual({ startSeconds: 110, endSeconds: 130 })
-    expect(resolveFollowWindow(240, 238, 20)).toEqual({ startSeconds: 220, endSeconds: 240 })
+  it("keeps the playhead centred and leaves empty tape outside the track", () => {
+    expect(resolveFollowWindow(120, 20)).toEqual({ startSeconds: 110, endSeconds: 130 })
+    expect(resolveFollowWindow(0, 20)).toEqual({ startSeconds: -10, endSeconds: 10 })
+    expect(resolveFollowWindow(240, 20)).toEqual({ startSeconds: 230, endSeconds: 250 })
+  })
+
+  it("maps tape drag distance around the fixed playhead and clamps to the track", () => {
+    const viewport = { width: 1_000, startSeconds: 40, endSeconds: 60 }
+
+    expect(tapeDragTime(50, -250, viewport, 240)).toBe(55)
+    expect(tapeDragTime(2, 250, viewport, 240)).toBe(0)
+    expect(tapeDragTime(238, -250, viewport, 240)).toBe(240)
   })
 })

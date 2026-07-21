@@ -474,7 +474,8 @@ Development proceeds as gated vertical slices. Each slice must leave the ordinar
 ### Phase 2 — second deck, mixer and handover
 
 - turn the current next-track prefetch into preparation of the free physical deck;
-- add Deck B, mixer graph, metering, equal-power crossfader and protected master output;
+- add Deck B, mixer graph, pre-crossfader deck metering, centre-unity DJ
+  crossfader and explicitly configured protected master output;
 - add explicit idempotent handover without reloading the incoming source;
 - release the outgoing payload and prepare the following queue item;
 - implement fast protected Next and browser-local deck preparation states.
@@ -496,7 +497,8 @@ Development proceeds as gated vertical slices. Each slice must leave the ordinar
 - implement the versioned multi-resolution waveform and frequency-band artifact;
 - add manifest/payload/status API and lifecycle management;
 - render detailed and overview waveforms for both decks;
-- implement follow, zoom and pointer seek using engine time as the source of truth.
+- implement live follow, fixed-centre tape geometry, click/drag seeking and
+  overview cursor dragging using engine time as the source of truth.
 
 **Gate:** real tracks render smoothly on both decks, seeking remains synchronized, and stale artifacts are rejected and rebuildable.
 

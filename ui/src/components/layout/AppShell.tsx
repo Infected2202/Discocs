@@ -19,6 +19,7 @@ import PlasmaFBM from "@/components/player/PlasmaFBM"
 import { shouldAnimatePlasma } from "@/components/player/plasmaUtils"
 import { ScrollContext } from "@/contexts/ScrollContext"
 import DjControlSurface from "@/components/dj/DjControlSurface"
+import DjTrackDragProvider from "@/components/dj/DjTrackDragProvider"
 
 export default function AppShell() {
   useKeyboardShortcuts()
@@ -71,7 +72,8 @@ export default function AppShell() {
 
   return (
     <ScrollContext.Provider value={mainRef}>
-      <div className="flex flex-col h-svh overflow-hidden">
+      <DjTrackDragProvider>
+        <div className="flex flex-col h-svh overflow-hidden">
         {/* Plasma */}
         <div className="fixed inset-0 pointer-events-none z-0" style={{ filter: "blur(4px)" }}>
           <PlasmaFBM
@@ -109,7 +111,8 @@ export default function AppShell() {
           <DjControlSurface />
           <PlaylistDialogs />
         </div>
-      </div>
+        </div>
+      </DjTrackDragProvider>
     </ScrollContext.Provider>
   )
 }
