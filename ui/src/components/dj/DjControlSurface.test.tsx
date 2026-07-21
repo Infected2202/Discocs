@@ -159,7 +159,7 @@ describe("DjControlSurface", () => {
     expect(screen.queryByText("Timeline pending")).not.toBeInTheDocument()
   })
 
-  it("zooms each detailed deck waveform through fixed windows and resets to 16 seconds", () => {
+  it("zooms both detailed deck waveforms together and resets to 16 seconds", () => {
     useTimeline.mockImplementation(() => ({
       status: "ready",
       timeline: {
@@ -175,26 +175,31 @@ describe("DjControlSurface", () => {
     useUIStore.setState({ djSurfaceOpen: true })
     render(<DjControlSurface />)
 
-    const latestDeckAWindow = () => {
+    const latestDeckWindow = (deck: "A" | "B") => {
       const calls = renderWaveform.mock.calls
         .map(([props]) => props)
-        .filter((candidate) => candidate.ariaLabel === "Deck A detailed waveform")
+        .filter((candidate) => candidate.ariaLabel === `Deck ${deck} detailed waveform`)
       const viewport = calls[calls.length - 1].input.viewport
       return viewport.endSeconds - viewport.startSeconds
     }
 
-    expect(latestDeckAWindow()).toBe(16)
-    expect(screen.getByLabelText("Reset Deck A waveform zoom")).toBeDisabled()
+    expect(latestDeckWindow("A")).toBe(16)
+    expect(latestDeckWindow("B")).toBe(16)
+    expect(screen.getAllByLabelText("Deck waveforms zoom")).toHaveLength(1)
+    expect(screen.getByLabelText("Reset deck waveforms zoom")).toBeDisabled()
 
-    fireEvent.click(screen.getByLabelText("Zoom in Deck A waveform"))
-    expect(latestDeckAWindow()).toBe(8)
-    expect(screen.getByLabelText("Zoom in Deck A waveform")).toBeDisabled()
+    fireEvent.click(screen.getByLabelText("Zoom in deck waveforms"))
+    expect(latestDeckWindow("A")).toBe(8)
+    expect(latestDeckWindow("B")).toBe(8)
+    expect(screen.getByLabelText("Zoom in deck waveforms")).toBeDisabled()
 
-    fireEvent.click(screen.getByLabelText("Reset Deck A waveform zoom"))
-    expect(latestDeckAWindow()).toBe(16)
+    fireEvent.click(screen.getByLabelText("Reset deck waveforms zoom"))
+    expect(latestDeckWindow("A")).toBe(16)
+    expect(latestDeckWindow("B")).toBe(16)
 
-    fireEvent.click(screen.getByLabelText("Zoom out Deck A waveform"))
-    expect(latestDeckAWindow()).toBe(30)
+    fireEvent.click(screen.getByLabelText("Zoom out deck waveforms"))
+    expect(latestDeckWindow("A")).toBe(30)
+    expect(latestDeckWindow("B")).toBe(30)
   })
 
   it("renders an uninitialized engine snapshot without indexing a null program deck", () => {

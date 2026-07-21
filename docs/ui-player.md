@@ -10,14 +10,15 @@ after duration. The detailed waveform stays fully bright around its fixed
 playhead, while the compact whole-track overview darkens played audio to the
 left of its moving cursor. Uniform beat lines remain above the detailed
 waveform; bar/downbeat emphasis is intentionally deferred until the analyzer
-produces validated bar indices. Hover controls select an 8, 16, 30 or 60 second
-detailed window and reset to the 16 second default. Overview cursors and
+produces validated bar indices. One shared set of hover controls selects an 8,
+16, 30 or 60 second window for both detailed deck waveforms and resets both to
+the 16 second default. Overview cursors and
 detailed tape both use captured pointer drag for mouse, pen and touch. Missing
 or stale analysis is non-blocking; see
 [`timeline-waveforms.md`](timeline-waveforms.md).
-The compact whole-track overview uses short subdued beat ticks instead of
-full-height lines, preventing dense tracks from turning the waveform into a
-barcode; beat-to-transient alignment is inspected in the detailed view.
+The compact whole-track overview omits the beat grid, preventing dense tracks
+from turning the waveform into a barcode; beat-to-transient alignment is
+inspected in the detailed view.
 
 The closed DJ surface is not kept behind the page as an off-screen React tree:
 it is fully unmounted, including player subscriptions, queue rows, timeline

@@ -189,16 +189,16 @@ describe("PixiWaveformRenderer lifecycle", () => {
     renderer.destroy()
   })
 
-  it("keeps overview beats as subdued ticks instead of a full-height barcode", async () => {
+  it("omits the beat grid from the compact overview", async () => {
     const app = new ApplicationStub()
     const overview = { ...input(), follow: false }
     const renderer = new PixiWaveformRenderer(document.createElement("div"), overview, loader(app))
 
     await renderer.mount()
 
-    expect(graphicsStroke).toHaveBeenCalledWith({ color: 0x05070a, width: 3, alpha: 0.38 })
-    expect(graphicsStroke).toHaveBeenCalledWith({ color: 0xffffff, width: 1, alpha: 0.32 })
-    expect(graphicsLineTo).toHaveBeenCalledWith(200, 6)
+    expect(graphicsStroke).not.toHaveBeenCalledWith({ color: 0x05070a, width: 3, alpha: 0.62 })
+    expect(graphicsStroke).not.toHaveBeenCalledWith({ color: 0xffffff, width: 1, alpha: 0.55 })
+    expect(graphicsLineTo).not.toHaveBeenCalledWith(200, 160)
     renderer.destroy()
   })
 })

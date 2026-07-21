@@ -52,13 +52,13 @@ function trackForDeck(
 
 const waveformPalette = { low: 0x2ed7ff, mid: 0xc738ff, high: 0xff6b3d, beat: 0xf8fafc, playhead: 0xff3b30 }
 
-function DeckWaveform({ deck, track, state }: {
+function DeckWaveform({ deck, track, state, windowSeconds }: {
   readonly deck: DeckSnapshot
   readonly track: TrackSummary | null
   readonly state: TimelineLoadState
+  readonly windowSeconds: number
 }) {
   const playhead = useDeckPosition(deck)
-  const [windowSeconds, setWindowSeconds] = useState<number>(defaultWaveformWindow)
   const timeline = state.timeline
   let statusLabel = `Waveform · ${state.status}`
   if (state.status === "ready" && timeline) {
@@ -78,13 +78,6 @@ function DeckWaveform({ deck, track, state }: {
     follow: true,
     palette: waveformPalette,
   } : null, [playhead, timeline, windowSeconds])
-  const windowIndex = waveformWindowSteps.indexOf(windowSeconds as typeof waveformWindowSteps[number])
-  const zoomIn = () => setWindowSeconds(
-    waveformWindowSteps[Math.max(0, windowIndex - 1)] ?? defaultWaveformWindow,
-  )
-  const zoomOut = () => setWindowSeconds(
-    waveformWindowSteps[Math.min(waveformWindowSteps.length - 1, windowIndex + 1)] ?? defaultWaveformWindow,
-  )
   return (
     <div className={styles.waveformRow} data-deck={deck.id}>
       <div className={styles.waveformDeckLabel}>{deck.id}</div>
@@ -96,26 +89,6 @@ function DeckWaveform({ deck, track, state }: {
           interaction="tape"
           onSeek={(seconds) => playerPlayback.seekDeckToSeconds(deck.id, seconds)}
         />}
-        {input && <div className={styles.waveformZoomControls} aria-label={`Deck ${deck.id} waveform zoom`}>
-          <button
-            type="button"
-            aria-label={`Zoom in Deck ${deck.id} waveform`}
-            disabled={windowIndex === 0}
-            onClick={zoomIn}
-          >+</button>
-          <button
-            type="button"
-            aria-label={`Reset Deck ${deck.id} waveform zoom`}
-            disabled={windowSeconds === defaultWaveformWindow}
-            onClick={() => setWindowSeconds(defaultWaveformWindow)}
-          >=</button>
-          <button
-            type="button"
-            aria-label={`Zoom out Deck ${deck.id} waveform`}
-            disabled={windowIndex === waveformWindowSteps.length - 1}
-            onClick={zoomOut}
-          >−</button>
-        </div>}
         <div className={styles.waveformMessage}>
           <span>{track?.title ?? `Deck ${deck.id}`}</span>
           <small>{statusLabel}</small>
@@ -418,7 +391,11 @@ function OpenDjControlSurface() {
     : { status: "missing" }
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
+  const [waveformWindowSeconds, setWaveformWindowSeconds] = useState<number>(defaultWaveformWindow)
   const queueItems = queue?.items ?? []
+  const waveformWindowIndex = waveformWindowSteps.indexOf(
+    waveformWindowSeconds as typeof waveformWindowSteps[number],
+  )
 
   const tracks = useMemo(() => ({
     A: trackForDeck(snapshot.decks.A, queueItems, history, currentTrack),
@@ -482,8 +459,42 @@ function OpenDjControlSurface() {
 
         <section className={styles.waveforms} aria-label="Deck waveforms">
           {deckIds.map((deck) => (
-            <DeckWaveform key={deck} deck={snapshot.decks[deck]} track={tracks[deck]} state={timelines[deck]} />
+            <DeckWaveform
+              key={deck}
+              deck={snapshot.decks[deck]}
+              track={tracks[deck]}
+              state={timelines[deck]}
+              windowSeconds={waveformWindowSeconds}
+            />
           ))}
+          {(timelineA.timeline || timelineB.timeline) && <div
+            className={styles.waveformZoomControls}
+            aria-label="Deck waveforms zoom"
+          >
+            <button
+              type="button"
+              aria-label="Zoom in deck waveforms"
+              disabled={waveformWindowIndex === 0}
+              onClick={() => setWaveformWindowSeconds(
+                waveformWindowSteps[Math.max(0, waveformWindowIndex - 1)] ?? defaultWaveformWindow,
+              )}
+            >+</button>
+            <button
+              type="button"
+              aria-label="Reset deck waveforms zoom"
+              disabled={waveformWindowSeconds === defaultWaveformWindow}
+              onClick={() => setWaveformWindowSeconds(defaultWaveformWindow)}
+            >=</button>
+            <button
+              type="button"
+              aria-label="Zoom out deck waveforms"
+              disabled={waveformWindowIndex === waveformWindowSteps.length - 1}
+              onClick={() => setWaveformWindowSeconds(
+                waveformWindowSteps[Math.min(waveformWindowSteps.length - 1, waveformWindowIndex + 1)]
+                  ?? defaultWaveformWindow,
+              )}
+            >−</button>
+          </div>}
         </section>
 
         <section className={styles.decksAndMixer}>

@@ -157,16 +157,17 @@ export class PixiWaveformRenderer {
       }
 
       beatGraphics.clear()
-      const beats = timeline.beats ?? EMPTY_EVENTS
-      for (let index = firstEventAtOrAfter(beats, viewport.startSeconds); index < beats.length; index += 1) {
-        const beat = beats[index]
-        if (beat > viewport.endSeconds) break
-        const x = ((beat - viewport.startSeconds) / visibleSeconds) * width
-        const beatHeight = this.input.follow ? height : Math.min(6, height)
-        beatGraphics.moveTo(x, 0).lineTo(x, beatHeight)
-          .stroke({ color: 0x05070a, width: 3, alpha: this.input.follow ? 0.62 : 0.38 })
-        beatGraphics.moveTo(x, 0).lineTo(x, beatHeight)
-          .stroke({ color: this.input.palette.beat ?? 0xffffff, width: 1, alpha: this.input.follow ? 0.55 : 0.32 })
+      if (this.input.follow) {
+        const beats = timeline.beats ?? EMPTY_EVENTS
+        for (let index = firstEventAtOrAfter(beats, viewport.startSeconds); index < beats.length; index += 1) {
+          const beat = beats[index]
+          if (beat > viewport.endSeconds) break
+          const x = ((beat - viewport.startSeconds) / visibleSeconds) * width
+          beatGraphics.moveTo(x, 0).lineTo(x, height)
+            .stroke({ color: 0x05070a, width: 3, alpha: 0.62 })
+          beatGraphics.moveTo(x, 0).lineTo(x, height)
+            .stroke({ color: this.input.palette.beat ?? 0xffffff, width: 1, alpha: 0.55 })
+        }
       }
     }
 
