@@ -157,11 +157,13 @@ selects the other playing deck or the clock. AUTO observes both routed
 media-element transport and the upgraded Signalsmith source. CLOCK can own
 MASTER only while both decks are stopped. Deck MASTER is an explicit override
 between playing decks and has no beat-grid or source-kind prerequisite; only
-the SYNC operation validates beat timelines and Signalsmith. A synced follower
-derives its ratio from the master's effective BPM,
+the SYNC operation validates beat timelines and Signalsmith. SYNC remains
+clickable on both loaded decks, including MASTER, and engagement survives a
+master switch so the old master can become a follower immediately. A synced
+follower derives its ratio from the master's effective BPM,
 maps the master's current beat phase onto its nearest beat interval and
 schedules rate/seek/start at one common latency-compensated AudioContext time.
-Follower pitch is locked while SYNC is engaged; disengagement keeps the reached
+Only the MASTER pitch control is unlocked; disengagement keeps the reached
 tempo. Seek, loop, master-tempo change and ownership transfer invoke the same
 event-driven realignment. Periodic drift measurement/correction is Group 3.
 

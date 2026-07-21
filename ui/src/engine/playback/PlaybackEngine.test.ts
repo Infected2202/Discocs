@@ -302,6 +302,9 @@ describe("PlaybackEngine Phase 1 routing", () => {
     await engine.playDeck("A")
     expect(engine.getSnapshot().beatSync).toMatchObject({ auto: true, master: "A", clockBpm: 126 })
 
+    await engine.toggleSync("A")
+    expect(engine.getSnapshot().beatSync.decks.A).toMatchObject({ enabled: true, phase: "aligned", reason: null })
+
     await engine.toggleSync("B")
     expect(engine.getSnapshot()).toMatchObject({
       beatSync: { decks: { B: { enabled: true, phase: "aligned", reason: null } } },
@@ -331,7 +334,10 @@ describe("PlaybackEngine Phase 1 routing", () => {
     expect(engine.getSnapshot().beatSync).toMatchObject({
       auto: true,
       master: "B",
-      decks: { B: { enabled: false, phase: "off" } },
+      decks: {
+        A: { enabled: true, phase: "aligned" },
+        B: { enabled: true, phase: "aligned" },
+      },
     })
     await engine.handover({ incomingDeck: "B", clientHandoverId: "sync-handover" })
     expect(engine.getSnapshot()).toMatchObject({ programDeck: "B", beatSync: { master: "B" } })

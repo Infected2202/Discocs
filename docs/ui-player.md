@@ -203,20 +203,23 @@ Opening the DJ workspace upgrades eligible physical decks from their native
 media-element source to Signalsmith Stretch. The existing complete Blob is
 decoded in the browser and transferred to the deck worklet in full; there is
 no PCM stream and the backend is not part of playback after preparation. The
-pitch fader controls pitch-preserving tempo over the agreed ±8% range. Missing
+MASTER deck's pitch fader controls pitch-preserving tempo over the agreed ±8%
+range; pitch stays locked on every non-master deck. Missing
 timeline data, unsupported AudioWorklet/WASM, or source initialization failure
 keeps that deck on native media playback and exposes the degraded mode in the
 deck status. Retiring a deck releases its compressed Blob, decoded/worklet
 buffer, object URL, and source references.
 
 The DJ header contains Traktor-style `AUTO` and `MASTER` clock controls. With
-AUTO active, the first eligible deck that starts becomes tempo master; if that
-deck stops, ownership moves to the other playing eligible deck or back to the
-editable master clock. Each deck has live `MASTER` and `SYNC` buttons. BeatSync
-matches the follower to the master BPM and beat phase, disables only the
-follower's pitch fader, and leaves the matched tempo in place when SYNC is
-disengaged. Master tempo changes propagate to engaged followers. Sync requires
-Signalsmith plus a valid beat timeline and respects the agreed ±8% deck range.
+AUTO active, the first deck that starts becomes tempo master; if that deck
+stops, ownership moves to the other playing deck or back to the
+editable master clock. Each loaded deck has a clickable `SYNC` button,
+including the current MASTER deck. On MASTER it records the deck's SYNC state;
+if MASTER later moves, an engaged former master immediately becomes a follower.
+BeatSync matches each engaged non-master deck to the master BPM and beat phase
+and leaves the matched tempo in place when SYNC is disengaged. Master tempo
+changes propagate to engaged followers. Following requires Signalsmith plus a
+valid beat timeline and respects the agreed ±8% deck range.
 Seek, loop and handover/retirement paths re-evaluate phase and ownership; Group
 3 will add measured continuous drift correction and browser quality gates.
 

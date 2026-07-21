@@ -377,8 +377,10 @@ playback.
 **Implementation:** complete. The accepted interaction model follows Traktor:
 an editable master clock owns tempo while no deck is master; AUTO promotes the
 first playing deck and transfers ownership when it stops; either deck
-can be selected explicitly with its MASTER button; an engaged SYNC deck is a
-tempo/phase follower and its pitch fader is locked. Disengaging SYNC preserves
+can be selected explicitly with its MASTER button. SYNC is clickable and keeps
+its engagement state on every loaded deck, including the current master; an
+engaged non-master deck is a tempo/phase follower. Only the MASTER deck has an
+unlocked pitch fader. Disengaging SYNC preserves
 the currently matched tempo. AUTO observes the physical deck's actual
 transport before and after its full-track Signalsmith upgrade. CLOCK owns
 MASTER only while both decks are stopped. The first playing deck becomes

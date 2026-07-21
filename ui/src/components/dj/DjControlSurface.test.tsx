@@ -290,7 +290,7 @@ describe("DjControlSurface", () => {
     expect(rack).toHaveAttribute("data-side", "B")
   })
 
-  it("keeps Traktor-style routing in place and sends physical-deck tempo commands", () => {
+  it("keeps pitch locked until a deck owns MASTER", () => {
     useUIStore.setState({ djSurfaceOpen: true })
     render(<DjControlSurface />)
 
@@ -305,15 +305,12 @@ describe("DjControlSurface", () => {
     const deckA = screen.getByRole("region", { name: "Deck A" })
     const deckB = screen.getByRole("region", { name: "Deck B" })
     const pitchA = within(deckA).getByRole("slider", { name: "Deck A pitch" })
-    expect(pitchA).toBeEnabled()
-    expect(within(deckB).getByRole("slider", { name: "Deck B pitch" })).toBeEnabled()
-
-    fireEvent.keyDown(pitchA, { key: "End" })
-
-    expect(playback.setDeckTempo).toHaveBeenCalledWith("A", 1.08)
+    expect(pitchA).toBeDisabled()
+    expect(within(deckB).getByRole("slider", { name: "Deck B pitch" })).toBeDisabled()
+    expect(playback.setDeckTempo).not.toHaveBeenCalled()
   })
 
-  it("exposes deck MASTER/SYNC ownership and locks the synced follower pitch", () => {
+  it("enables SYNC on every loaded deck and unlocks pitch only on MASTER", () => {
     const base = snapshot()
     playback.getEngineSnapshot.mockReturnValue({
       ...base,
@@ -338,14 +335,20 @@ describe("DjControlSurface", () => {
     expect(screen.getByLabelText("Master clock tempo")).toBeDisabled()
     expect(screen.getByLabelText("Use master clock")).toBeDisabled()
     expect(screen.getByLabelText("Set Deck A as tempo master")).toHaveAttribute("data-active", "true")
+    expect(screen.getByLabelText("Deck A pitch")).toBeEnabled()
     expect(screen.getByLabelText("Deck B pitch")).toBeDisabled()
+    expect(screen.getByLabelText("Sync Deck A to tempo master")).toBeEnabled()
     expect(screen.getByLabelText("Sync Deck B to tempo master")).toBeEnabled()
     expect(screen.getByLabelText("Set Deck B as tempo master")).toBeEnabled()
 
+    fireEvent.click(screen.getByLabelText("Sync Deck A to tempo master"))
     fireEvent.click(screen.getByLabelText("Sync Deck B to tempo master"))
+    fireEvent.keyDown(screen.getByLabelText("Deck A pitch"), { key: "End" })
     fireEvent.click(screen.getByLabelText("Set Deck B as tempo master"))
     fireEvent.click(screen.getByLabelText("Use automatic tempo master"))
+    expect(playback.toggleDeckSync).toHaveBeenCalledWith("A")
     expect(playback.toggleDeckSync).toHaveBeenCalledWith("B")
+    expect(playback.setDeckTempo).toHaveBeenCalledWith("A", 1.08)
     expect(playback.setDeckTempoMaster).toHaveBeenCalledWith("B")
     expect(playback.setAutoTempoMaster).toHaveBeenCalledOnce()
     expect(playback.setClockTempoMaster).not.toHaveBeenCalled()

@@ -285,7 +285,7 @@ export class PlaybackEngine {
   }
 
   async setTempo(deck: DeckId, ratio: number, when?: number): Promise<void> {
-    if (this.isSyncedFollower(deck)) throw new Error(`Deck ${deck} tempo is controlled by the tempo master`)
+    if (this.beatSync.master !== deck) throw new Error(`Deck ${deck} tempo is controlled by the tempo master`)
     const clamped = Math.max(0.5, Math.min(2, ratio))
     const runtime = this.decks?.[deck]
     const scheduled = this.beatSync.master === deck && this.hasSyncedFollowers()
@@ -351,11 +351,17 @@ export class PlaybackEngine {
   }
 
   async toggleSync(deck: DeckId): Promise<void> {
-    if (this.beatSync.master === deck) return
     const state = this.beatSync.decks[deck]
     if (state.enabled) {
       state.enabled = false
       state.phase = "off"
+      state.reason = null
+      this.changed()
+      return
+    }
+    if (this.beatSync.master === deck) {
+      state.enabled = true
+      state.phase = "aligned"
       state.reason = null
       this.changed()
       return
@@ -593,7 +599,6 @@ export class PlaybackEngine {
   private assignTempoMaster(master: TempoMaster): void {
     this.beatSync.master = master
     if (master !== "clock") {
-      this.beatSync.decks[master] = { enabled: false, phase: "off", reason: null }
       const bpm = this.deckEffectiveBpm(master)
       if (bpm !== null) this.beatSync.clockBpm = bpm
     }
@@ -611,7 +616,6 @@ export class PlaybackEngine {
   }
 
   private syncUnavailableReason(deck: DeckId): string | null {
-    if (this.beatSync.master === deck) return `Deck ${deck} is the tempo master`
     if (!this.hasBeatTimeline(deck)) return `Deck ${deck} requires a beat timeline`
     if (this.decks?.[deck].sourceKind !== "signalsmith") return `Deck ${deck} requires Signalsmith for tempo sync`
     if (this.beatSync.master !== "clock" && !this.hasBeatTimeline(this.beatSync.master)) {
@@ -775,8 +779,7 @@ export class PlaybackEngine {
   private reconcileAutoMaster(changedDeck: DeckId): void {
     if (this.beatSync.master === "clock") {
       if (
-        !this.beatSync.decks[changedDeck].enabled
-        && this.deckTransport(changedDeck) === "playing"
+        this.deckTransport(changedDeck) === "playing"
       ) {
         this.beatSync.auto = true
         this.assignTempoMaster(changedDeck)

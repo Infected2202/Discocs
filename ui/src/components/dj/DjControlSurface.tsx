@@ -210,7 +210,7 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
             <button
               type="button"
               data-active={syncState.enabled || undefined}
-              disabled={deck.trackId === null || isTempoMaster}
+              disabled={deck.trackId === null}
               onClick={() => runPlayerCommand(() => playerPlayback.toggleDeckSync(deck.id))}
               aria-label={`Sync Deck ${deck.id} to tempo master`}
             >SYNC</button>
@@ -277,7 +277,7 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
           value={pitchValue}
           min={-1}
           max={1}
-          disabled={!canPlay || (syncState.enabled && !isTempoMaster)}
+          disabled={!canPlay || !isTempoMaster}
           onChange={(value) => runPlayerCommand(() => playerPlayback.setDeckTempo(deck.id, 1 + value * 0.08))}
         />
       </div>
