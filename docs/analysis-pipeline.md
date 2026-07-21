@@ -141,6 +141,13 @@ serialization. Result-submit logs include request duration. These measurements
 are used for queue tuning; they are not stored as audio features and do not
 affect accepted analysis data.
 
+The five-container worker Compose profile keeps at most two CPU analyses
+running in each container while allowing four claimed tasks in flight. The
+extra tasks remain buffered around the serial download and submit stages, so
+stage transitions do not starve the two analysis slots. Downloads and result
+submissions remain unbatched (`1`) to avoid increasing backend and storage
+bursts.
+
 `audio_features_v1` rows are legacy scalar-only results. They do not satisfy
 v2 readiness and are removed per track only after a complete v2 result has
 been accepted. Consequently the first v2 deployment intentionally queues all
