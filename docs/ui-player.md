@@ -1,6 +1,8 @@
 # Player UI
 
 The DJ surface renders detailed and overview waveform artifacts with PixiJS.
+The renderer loads Pixi's static CSP compatibility implementations before
+initialization, so the production policy does not need to allow `unsafe-eval`.
 Both views share decoded typed arrays, follow the authoritative deck playhead,
 and seek the physical deck selected by the pointer. Missing or stale analysis
 is non-blocking; see [`timeline-waveforms.md`](timeline-waveforms.md).

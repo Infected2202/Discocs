@@ -2,14 +2,29 @@ import type { Application, Graphics } from "pixi.js"
 import { selectWaveformLevel } from "./geometry"
 import type { WaveformRendererInput } from "./types"
 
-interface PixiModule {
+export interface PixiModule {
   readonly Application: new () => Application
   readonly Graphics: new () => Graphics
 }
 
 export type PixiLoader = () => Promise<PixiModule>
 
-const loadPixi: PixiLoader = async () => import("pixi.js")
+type PixiCspInstaller = () => Promise<unknown>
+
+const installPixiCspSupport: PixiCspInstaller = async () => import("pixi.js/unsafe-eval")
+const importPixi: PixiLoader = async () => import("pixi.js")
+
+export async function loadPixiWithCspSupport(
+  installCspSupport: PixiCspInstaller = installPixiCspSupport,
+  loader: PixiLoader = importPixi,
+): Promise<PixiModule> {
+  // Despite its package path, this module installs static implementations that
+  // avoid eval when the application Content-Security-Policy forbids it.
+  await installCspSupport()
+  return loader()
+}
+
+const loadPixi: PixiLoader = loadPixiWithCspSupport
 const EMPTY_EVENTS = new Float32Array()
 
 function energyColour(input: WaveformRendererInput, low: number, mid: number, high: number): number {

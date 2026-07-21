@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { PixiWaveformRenderer, type PixiLoader } from "./PixiWaveformRenderer"
+import {
+  loadPixiWithCspSupport,
+  PixiWaveformRenderer,
+  type PixiLoader,
+  type PixiModule,
+} from "./PixiWaveformRenderer"
 import type { WaveformLevel, WaveformRendererInput } from "./types"
 
 const resize = vi.fn()
@@ -75,6 +80,22 @@ describe("PixiWaveformRenderer lifecycle", () => {
     vi.clearAllMocks()
     vi.stubGlobal("ResizeObserver", ResizeObserverStub)
     Object.defineProperty(document, "hidden", { configurable: true, value: false })
+  })
+
+  it("installs Pixi CSP support before importing the renderer", async () => {
+    const order: string[] = []
+    const pixiModule = {
+      Application: ApplicationStub,
+      Graphics: GraphicsStub,
+    } as unknown as PixiModule
+
+    const loaded = await loadPixiWithCspSupport(
+      async () => { order.push("csp") },
+      async () => { order.push("pixi"); return pixiModule },
+    )
+
+    expect(order).toEqual(["csp", "pixi"])
+    expect(loaded).toBe(pixiModule)
   })
 
   it("destroys an application whose asynchronous initialization completes after cancellation", async () => {
