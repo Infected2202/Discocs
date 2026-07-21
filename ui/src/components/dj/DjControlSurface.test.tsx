@@ -326,7 +326,7 @@ describe("DjControlSurface", () => {
         durationSeconds: 180, levels: [], bpm: 126, beatConfidence: 0.8, rhythmCoverageSeconds: 180,
         beats: new Float32Array([0, 0.5]), localTempo: new Float32Array([126, 126]),
       },
-    })
+    } as never)
     useUIStore.setState({ djSurfaceOpen: true })
     render(<DjControlSurface />)
 
