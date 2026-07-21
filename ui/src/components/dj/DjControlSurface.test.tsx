@@ -309,7 +309,6 @@ describe("DjControlSurface", () => {
     const base = snapshot()
     playback.getEngineSnapshot.mockReturnValue({
       ...base,
-      decks: { ...base.decks, B: { ...base.decks.B, sourceKind: "signalsmith", tempoMode: "pitch-preserving" } },
       beatSync: {
         auto: true,
         master: "A",
@@ -333,10 +332,16 @@ describe("DjControlSurface", () => {
     expect(screen.getByLabelText("Master clock tempo")).toBeDisabled()
     expect(screen.getByLabelText("Set Deck A as tempo master")).toHaveAttribute("data-active", "true")
     expect(screen.getByLabelText("Deck B pitch")).toBeDisabled()
+    expect(screen.getByLabelText("Sync Deck B to tempo master")).toBeEnabled()
+    expect(screen.getByLabelText("Set Deck B as tempo master")).toBeEnabled()
 
     fireEvent.click(screen.getByLabelText("Sync Deck B to tempo master"))
     fireEvent.click(screen.getByLabelText("Set Deck B as tempo master"))
+    fireEvent.click(screen.getByLabelText("Use automatic tempo master"))
+    fireEvent.click(screen.getByLabelText("Use master clock"))
     expect(playback.toggleDeckSync).toHaveBeenCalledWith("B")
     expect(playback.setDeckTempoMaster).toHaveBeenCalledWith("B")
+    expect(playback.setAutoTempoMaster).toHaveBeenCalledOnce()
+    expect(playback.setClockTempoMaster).toHaveBeenCalledOnce()
   })
 })

@@ -187,7 +187,7 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
   const pitchPercent = (deck.tempoRatio - 1) * 100
   const isTempoMaster = beatSync.master === deck.id
   const syncState = beatSync.decks[deck.id]
-  const canUseBeatSync = deck.sourceKind === "signalsmith" && timelineState.status === "ready"
+  const hasBeatGrid = timelineState.status === "ready" && (timelineState.timeline?.beats.length ?? 0) >= 2
 
   return (
     <section
@@ -211,14 +211,14 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
             <button
               type="button"
               data-active={syncState.enabled || undefined}
-              disabled={!canUseBeatSync || isTempoMaster}
+              disabled={!hasBeatGrid || isTempoMaster}
               onClick={() => runPlayerCommand(() => playerPlayback.toggleDeckSync(deck.id))}
               aria-label={`Sync Deck ${deck.id} to tempo master`}
             >SYNC</button>
             <button
               type="button"
               data-active={isTempoMaster || undefined}
-              disabled={!canUseBeatSync}
+              disabled={!hasBeatGrid}
               onClick={() => runPlayerCommand(() => playerPlayback.setDeckTempoMaster(deck.id))}
               aria-label={`Set Deck ${deck.id} as tempo master`}
             >MASTER</button>
@@ -467,11 +467,13 @@ function OpenDjControlSurface() {
                     type="button"
                     data-active={snapshot.beatSync.auto || undefined}
                     onClick={() => runPlayerCommand(() => playerPlayback.setAutoTempoMaster())}
+                    aria-label="Use automatic tempo master"
                   >AUTO</button>
                   <button
                     type="button"
                     data-active={snapshot.beatSync.master === "clock" || undefined}
                     onClick={() => runPlayerCommand(() => playerPlayback.setClockTempoMaster())}
+                    aria-label="Use master clock"
                   >MASTER</button>
                 </div>
               </div>

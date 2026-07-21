@@ -153,8 +153,10 @@ The Signalsmith source must implement the same interface and compensate its repo
 Group 2 follows the accepted Traktor ownership model. The engine snapshot owns
 one tempo master (`clock`, Deck A or Deck B), AUTO state and per-deck SYNC phase.
 The first eligible playing deck becomes master in AUTO; stopping/retiring it
-selects the other playing eligible deck or the clock. Deck MASTER is an explicit
-override. A synced follower derives its ratio from the master's effective BPM,
+selects the other playing eligible deck or the clock. AUTO observes both routed
+media-element transport and the upgraded Signalsmith source. Deck MASTER is an
+explicit override and requires a valid beat grid, while only a SYNC follower
+requires Signalsmith. A synced follower derives its ratio from the master's effective BPM,
 maps the master's current beat phase onto its nearest beat interval and
 schedules rate/seek/start at one common latency-compensated AudioContext time.
 Follower pitch is locked while SYNC is engaged; disengagement keeps the reached

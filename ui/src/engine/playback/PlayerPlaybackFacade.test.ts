@@ -72,6 +72,32 @@ describe("PlayerPlaybackFacade routing", () => {
     expect(engine.toggleSync).toHaveBeenCalledWith("B")
   })
 
+  it("waits for an in-progress full-track deck upgrade before engaging SYNC", async () => {
+    const audio: MockAudio[] = []
+    vi.stubGlobal("Audio", function () {
+      const instance = new MockAudio()
+      audio.push(instance)
+      return instance
+    })
+    let finishUpgrade!: (result: { upgraded: true; kind: "signalsmith"; reason: null }) => void
+    const upgrade = new Promise<{ upgraded: true; kind: "signalsmith"; reason: null }>((resolve) => {
+      finishUpgrade = resolve
+    })
+    const engine = runtime()
+    vi.mocked(engine.upgradeDeckSource).mockReturnValueOnce(upgrade)
+    const facade = new PlayerPlaybackFacade(engine)
+    facade.load("/audio/7", 7, "raw", true)
+
+    const activation = facade.activateDjMode()
+    const sync = facade.toggleDeckSync("A")
+    expect(engine.toggleSync).not.toHaveBeenCalled()
+
+    finishUpgrade({ upgraded: true, kind: "signalsmith", reason: null })
+    await activation
+    await sync
+    expect(engine.toggleSync).toHaveBeenCalledWith("A")
+  })
+
   it("defers a fractional seek until replacement media metadata is ready", () => {
     const audio: MockAudio[] = []
     vi.stubGlobal("Audio", function () {

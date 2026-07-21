@@ -209,6 +209,7 @@ export class PlaybackEngine {
       return { upgraded: false, kind: "media-element", reason: eligibility.reason }
     }
     this.timelines[deck] = eligibility.timeline ?? null
+    this.reconcileAutoMaster(deck)
     try {
       this.decks[deck].advanceGenerationFloor(this.generations[deck])
       await this.decks[deck].load(source, options)
@@ -530,12 +531,12 @@ export class PlaybackEngine {
       A: new DeckRuntime(
         "A", this.graph,
         () => new StretchDeckSource(this.context!, this.stretchDependencies),
-        () => this.changed(),
+        () => this.handleDeckRuntimeChange("A"),
       ),
       B: new DeckRuntime(
         "B", this.graph,
         () => new StretchDeckSource(this.context!, this.stretchDependencies),
-        () => this.changed(),
+        () => this.handleDeckRuntimeChange("B"),
       ),
     }
   }
@@ -551,7 +552,7 @@ export class PlaybackEngine {
   }
 
   private canBeTempoMaster(deck: DeckId): boolean {
-    return this.decks?.[deck].sourceKind === "signalsmith" && (this.timelines[deck]?.beats.length ?? 0) >= 2
+    return (this.timelines[deck]?.beats.length ?? 0) >= 2
   }
 
   private isSyncedFollower(deck: DeckId): boolean {
@@ -564,9 +565,16 @@ export class PlaybackEngine {
 
   private findPlayingDeck(exclude?: DeckId): DeckId | null {
     for (const deck of ["A", "B"] as const) {
-      if (deck !== exclude && this.canBeTempoMaster(deck) && this.decks?.[deck].currentTransport === "playing") return deck
+      if (deck !== exclude && this.canBeTempoMaster(deck) && this.deckTransport(deck) === "playing") return deck
     }
     return null
+  }
+
+  private deckTransport(deck: DeckId): TransportState {
+    const runtime = this.decks?.[deck]
+    if (runtime?.sourceKind) return runtime.currentTransport
+    const element = this.externalElements[deck]
+    return element ? externalTransport(element) : "idle"
   }
 
   private assignTempoMaster(master: TempoMaster): void {
@@ -591,7 +599,8 @@ export class PlaybackEngine {
 
   private syncUnavailableReason(deck: DeckId): string | null {
     if (this.beatSync.master === deck) return `Deck ${deck} is the tempo master`
-    if (!this.canBeTempoMaster(deck)) return `Deck ${deck} requires Signalsmith and a beat timeline`
+    if (!this.canBeTempoMaster(deck)) return `Deck ${deck} requires a beat timeline`
+    if (this.decks?.[deck].sourceKind !== "signalsmith") return `Deck ${deck} requires Signalsmith for tempo sync`
     const target = tempoRatioFor(this.currentMasterBpm(), this.timelines[deck]!.bpm)
     return target === null ? "Master tempo is outside the ±8% deck range" : null
   }
@@ -654,7 +663,7 @@ export class PlaybackEngine {
       return ((audioTime * this.beatSync.clockBpm / 60) % 1 + 1) % 1
     }
     const deck = this.beatSync.master
-    const anchor = this.decks?.[deck].anchor
+    const anchor = this.deckSnapshot(deck).anchor
     if (!anchor) return 0
     const position = projectPlayhead(anchor.mediaSeconds, anchor.audioTime, anchor.rate, audioTime)
     return this.phaseForDeckPosition(deck, position)
@@ -733,7 +742,10 @@ export class PlaybackEngine {
 
   private watchExternalElement(deck: DeckId, element: HTMLMediaElement): void {
     this.externalListenerCleanup[deck]?.()
-    const notify = () => this.changed()
+    const notify = () => {
+      this.reconcileAutoMaster(deck)
+      this.changed()
+    }
     const events = [
       "play", "playing", "pause", "waiting", "ended", "error", "loadedmetadata", "seeked", "ratechange",
     ] as const
@@ -742,6 +754,30 @@ export class PlaybackEngine {
     this.externalListenerCleanup[deck] = () => {
       events.forEach((event) => element.removeEventListener(event, notify))
     }
+  }
+
+  private reconcileAutoMaster(changedDeck: DeckId): void {
+    if (!this.beatSync.auto) return
+    if (this.beatSync.master === "clock") {
+      if (
+        !this.beatSync.decks[changedDeck].enabled
+        && this.canBeTempoMaster(changedDeck)
+        && this.deckTransport(changedDeck) === "playing"
+      ) {
+        this.assignTempoMaster(changedDeck)
+        void this.synchronizeFollowers().catch(() => undefined)
+      }
+      return
+    }
+    if (this.beatSync.master === changedDeck && this.deckTransport(changedDeck) !== "playing") {
+      this.assignTempoMaster(this.findPlayingDeck(changedDeck) ?? "clock")
+      void this.synchronizeFollowers().catch(() => undefined)
+    }
+  }
+
+  private handleDeckRuntimeChange(deck: DeckId): void {
+    this.reconcileAutoMaster(deck)
+    this.changed()
   }
 
   private requireGraph(): MixerGraph {

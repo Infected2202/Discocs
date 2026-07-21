@@ -63,6 +63,7 @@ export class PlayerPlaybackFacade {
   private graphActive = false
   private activeBlob: Blob | null = null
   private readonly upgradePromises: Record<DeckId, Promise<DeckSourceUpgradeResult> | null> = { A: null, B: null }
+  private djActivationPromise: Promise<void> | null = null
   private runtimeUnsubscribe: (() => void) | null = null
   private lastRuntimeTransport: TransportState | null = null
 
@@ -278,8 +279,18 @@ export class PlayerPlaybackFacade {
     await this.runtime.confirmRetirement(retired.deck)
   }
 
-  async activateDjMode(): Promise<void> {
-    if (this.graphActive) return
+  activateDjMode(): Promise<void> {
+    if (this.djActivationPromise) return this.djActivationPromise
+    if (this.graphActive) return Promise.resolve()
+    const pending = this.activateDjModeInternal()
+    this.djActivationPromise = pending
+    void pending.catch(() => {
+      if (this.djActivationPromise === pending) this.djActivationPromise = null
+    })
+    return pending
+  }
+
+  private async activateDjModeInternal(): Promise<void> {
     await this.runtime.ensureReady()
     this.graphActive = true
     this.runtime.setMasterGain(this.el.muted ? 0 : this.el.volume)
@@ -358,6 +369,7 @@ export class PlayerPlaybackFacade {
     this.activeQueueItemId = null
     this.fullyBufferedReported = false
     this.graphActive = false
+    this.djActivationPromise = null
     this.lastRuntimeTransport = null
     this.upgradePromises.A = null
     this.upgradePromises.B = null
@@ -549,7 +561,9 @@ export class PlayerPlaybackFacade {
     return this.runtime.setClockMaster()
   }
 
-  setDeckTempoMaster(deck: DeckId): Promise<void> {
+  async setDeckTempoMaster(deck: DeckId): Promise<void> {
+    await this.djActivationPromise
+    await this.upgradePromises[deck]
     return this.runtime.setTempoMaster(deck)
   }
 
@@ -557,7 +571,9 @@ export class PlayerPlaybackFacade {
     return this.runtime.setClockTempo(bpm)
   }
 
-  toggleDeckSync(deck: DeckId): Promise<void> {
+  async toggleDeckSync(deck: DeckId): Promise<void> {
+    await this.djActivationPromise
+    await this.upgradePromises[deck]
     return this.runtime.toggleSync(deck)
   }
 

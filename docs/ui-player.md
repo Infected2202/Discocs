@@ -160,6 +160,12 @@ Signalsmith plus a valid beat timeline and respects the agreed ±8% deck range.
 Seek, loop and handover/retirement paths re-evaluate phase and ownership; Group
 3 will add measured continuous drift correction and browser quality gates.
 
+AUTO follows the actual transport of both a routed media element and an
+upgraded Signalsmith source. A deck only needs a valid beat grid to be MASTER;
+Signalsmith is required on a follower that engages SYNC. MASTER/SYNC commands
+wait for an in-progress full-track decode instead of being silently blocked
+while the deck source is being prepared.
+
 The per-user playback settings page can request MP3 transcoding at
 96/128/192/256/320 Kbit/s. The profile key is included in the audio URL and
 the backend validates it against the saved settings before forwarding

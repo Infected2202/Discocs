@@ -159,6 +159,39 @@ describe("PlaybackEngine Phase 1 routing", () => {
     expect(listener).toHaveBeenCalledTimes(3)
   })
 
+  it("assigns AUTO master from real media playback once its beat grid is known", async () => {
+    vi.stubGlobal("AudioContext", FakeContext)
+    const timeline: DecodedTimeline = {
+      durationSeconds: 180,
+      levels: [],
+      bpm: 126,
+      beatConfidence: 0.9,
+      rhythmCoverageSeconds: 180,
+      beats: new Float32Array([0, 0.5, 1]),
+      localTempo: new Float32Array([126, 126, 126]),
+    }
+    const engine = new PlaybackEngine(undefined, {
+      stretch: { createNode: vi.fn().mockRejectedValue(new Error("worklet failed")) },
+      stretchEligibility: vi.fn().mockResolvedValue({ ready: true, reason: null, timeline }),
+    })
+    const media = document.createElement("audio")
+    Object.defineProperty(media, "paused", { configurable: true, value: false })
+    engine.routeProgramElement(media, 9, "queue-9")
+
+    await engine.upgradeDeckSource("A", {
+      url: "blob:track-9", trackId: 9, blob: new Blob(["encoded"]),
+    })
+
+    expect(engine.getSnapshot()).toMatchObject({
+      beatSync: { auto: true, master: "A", clockBpm: 126 },
+      decks: { A: { sourceKind: "media-element", transport: "playing" } },
+    })
+
+    Object.defineProperty(media, "paused", { configurable: true, value: true })
+    media.dispatchEvent(new Event("pause"))
+    expect(engine.getSnapshot().beatSync.master).toBe("clock")
+  })
+
   it("projects ended and failed external media states", () => {
     vi.stubGlobal("AudioContext", FakeContext)
     const engine = new PlaybackEngine()

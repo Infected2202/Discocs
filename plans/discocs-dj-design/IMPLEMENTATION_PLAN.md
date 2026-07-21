@@ -379,7 +379,11 @@ an editable master clock owns tempo while no deck is master; AUTO promotes the
 first eligible playing deck and transfers ownership when it stops; either deck
 can be selected explicitly with its MASTER button; an engaged SYNC deck is a
 tempo/phase follower and its pitch fader is locked. Disengaging SYNC preserves
-the currently matched tempo.
+the currently matched tempo. AUTO observes the physical deck's actual
+transport before and after its full-track Signalsmith upgrade. A valid beat
+grid is sufficient for MASTER ownership; a SYNC follower waits for its pending
+Signalsmith preparation and reports a concrete failure if that preparation
+cannot complete.
 
 - implement beat-timeline mapping and master/follower ownership;
 - implement sync engagement/disengagement and initial beat-phase alignment;
