@@ -180,7 +180,7 @@ describe("DjControlSurface", () => {
     expect(screen.getByLabelText("Master clock tempo")).toHaveValue(126)
     fireEvent.change(screen.getByLabelText("Master clock tempo"), { target: { value: "128.5" } })
     expect(playback.setMasterClockTempo).toHaveBeenCalledWith(128.5)
-    fireEvent.click(screen.getByRole("button", { name: "AUTO" }))
+    fireEvent.click(screen.getByLabelText("Use automatic tempo master"))
     expect(playback.setAutoTempoMaster).toHaveBeenCalledOnce()
   })
 
