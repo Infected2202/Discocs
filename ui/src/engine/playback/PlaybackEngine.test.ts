@@ -12,6 +12,11 @@ class FakeNode {
   gain = new FakeParam()
   frequency = new FakeParam()
   Q = new FakeParam()
+  threshold = new FakeParam()
+  knee = new FakeParam()
+  ratio = new FakeParam()
+  attack = new FakeParam()
+  release = new FakeParam()
   type = "peaking"
   fftSize = 32
   connect = vi.fn()

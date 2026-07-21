@@ -22,6 +22,7 @@ class MockAudio {
 
 function runtime() {
   return {
+    programDeck: "A",
     routeProgramElement: vi.fn().mockReturnValue(true),
     routeIncomingElement: vi.fn().mockReturnValue("B"),
     ensureReady: vi.fn().mockResolvedValue({}),
