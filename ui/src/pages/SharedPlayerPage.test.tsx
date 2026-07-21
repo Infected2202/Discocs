@@ -98,7 +98,8 @@ describe("SharedPlayerPage", () => {
     expect(audio.currentTime).toBe(0)
     expect(seek).toHaveAttribute("aria-valuenow", "30")
 
-    fireEvent.pointerUp(window, { pointerId: 4, clientX: 260 })
+    fireEvent.pointerMove(window, { pointerId: 4, clientX: 260 })
+    fireEvent.pointerUp(window, { pointerId: 4, clientX: 0 })
 
     expect(audio.currentTime).toBe(48)
     expect(seek).toHaveAttribute("aria-valuenow", "48")
