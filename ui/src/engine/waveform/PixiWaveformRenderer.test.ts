@@ -17,6 +17,8 @@ const tickerRemove = vi.fn()
 const stageAdd = vi.fn()
 const graphicsClear = vi.fn()
 const graphicsStroke = vi.fn()
+const graphicsRect = vi.fn()
+const graphicsFill = vi.fn()
 
 class ApplicationStub {
   canvas = document.createElement("canvas")
@@ -36,6 +38,8 @@ class GraphicsStub {
   moveTo = vi.fn().mockReturnThis()
   lineTo = vi.fn().mockReturnThis()
   stroke = graphicsStroke.mockReturnThis()
+  rect = graphicsRect.mockReturnThis()
+  fill = graphicsFill.mockReturnThis()
 }
 
 class ResizeObserverStub {
@@ -133,18 +137,23 @@ describe("PixiWaveformRenderer lifecycle", () => {
     renderer.destroy()
   })
 
-  it("redraws only the playhead when an overview viewport stays fixed", async () => {
+  it("redraws only the moving history and playhead overlays when an overview viewport stays fixed", async () => {
     const app = new ApplicationStub()
     const initial = input()
     const renderer = new PixiWaveformRenderer(document.createElement("div"), initial, loader(app))
     await renderer.mount()
     graphicsClear.mockClear()
     graphicsStroke.mockClear()
+    graphicsRect.mockClear()
+    graphicsFill.mockClear()
 
     renderer.update({ ...initial, playheadSeconds: 1.2 })
 
-    expect(graphicsClear).toHaveBeenCalledTimes(1)
-    expect(graphicsStroke).toHaveBeenCalledTimes(1)
+    expect(graphicsClear).toHaveBeenCalledTimes(2)
+    expect(graphicsRect).toHaveBeenCalledWith(0, 0, 480, 160)
+    expect(graphicsFill).toHaveBeenCalledWith({ color: 0x030508, alpha: 0.42 })
+    expect(graphicsStroke).toHaveBeenCalledTimes(2)
+    expect(graphicsStroke).toHaveBeenCalledWith({ color: 0x05070a, width: 4, alpha: 0.72 })
     expect(graphicsStroke).toHaveBeenCalledWith({ color: 4, width: 2 })
     renderer.destroy()
   })
@@ -165,13 +174,16 @@ describe("PixiWaveformRenderer lifecycle", () => {
     expect(destroy).toHaveBeenCalledWith(true, { children: true, texture: true, textureSource: true })
   })
 
-  it("draws beat events from the offline timeline artifact", async () => {
+  it("draws uniform beat events above waveform history with a contrast halo", async () => {
     const app = new ApplicationStub()
     const renderer = new PixiWaveformRenderer(document.createElement("div"), input(), loader(app))
 
     await renderer.mount()
 
-    expect(graphicsStroke).toHaveBeenCalledWith({ color: 0xffffff, width: 1, alpha: 0.2 })
+    expect(stageAdd).toHaveBeenCalledTimes(4)
+    expect(graphicsStroke).toHaveBeenCalledWith({ color: 0x05070a, width: 3, alpha: 0.62 })
+    expect(graphicsStroke).toHaveBeenCalledWith({ color: 0xffffff, width: 1, alpha: 0.55 })
+    expect(graphicsRect).toHaveBeenCalledWith(0, 0, 400, 160)
     renderer.destroy()
   })
 })

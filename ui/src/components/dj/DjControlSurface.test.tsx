@@ -22,6 +22,7 @@ const playback = vi.hoisted(() => ({
   seek: vi.fn(),
 }))
 const useTimeline = vi.hoisted(() => vi.fn(() => ({ status: "missing" as const })))
+const renderWaveform = vi.hoisted(() => vi.fn())
 
 vi.mock("@/engine/playback", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/engine/playback")>()),
@@ -35,7 +36,13 @@ vi.mock("@/engine/timeline", async (importOriginal) => ({
 
 vi.mock("@/engine/waveform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/engine/waveform")>()),
-  WaveformSurface: () => <canvas data-testid="waveform-canvas" />,
+  WaveformSurface: (props: {
+    ariaLabel?: string
+    input: { follow: boolean; viewport: { startSeconds: number; endSeconds: number } }
+  }) => {
+    renderWaveform(props)
+    return <canvas data-testid="waveform-canvas" />
+  },
 }))
 
 vi.mock("@/components/media/ArtworkImage", () => ({
@@ -99,6 +106,7 @@ describe("DjControlSurface", () => {
     playback.getMixerMeters.mockReturnValue({ A: 0.2, B: 0.1, master: 0.3 })
     playback.getEngineSnapshot.mockReturnValue(snapshot())
     useTimeline.mockClear()
+    renderWaveform.mockClear()
     useUIStore.setState({ djSurfaceOpen: false })
     usePlayerStore.setState({
       expanded: false,
@@ -149,6 +157,44 @@ describe("DjControlSurface", () => {
     expect(screen.getByText("118.3")).toBeInTheDocument()
     expect(screen.getByText("Timeline ready")).toBeInTheDocument()
     expect(screen.queryByText("Timeline pending")).not.toBeInTheDocument()
+  })
+
+  it("zooms each detailed deck waveform through fixed windows and resets to 16 seconds", () => {
+    useTimeline.mockImplementation(() => ({
+      status: "ready",
+      timeline: {
+        durationSeconds: 180,
+        levels: [],
+        bpm: 120,
+        beatConfidence: 0.8,
+        rhythmCoverageSeconds: 180,
+        beats: new Float32Array([0.5]),
+        localTempo: new Float32Array([120]),
+      },
+    }) as never)
+    useUIStore.setState({ djSurfaceOpen: true })
+    render(<DjControlSurface />)
+
+    const latestDeckAWindow = () => {
+      const calls = renderWaveform.mock.calls
+        .map(([props]) => props)
+        .filter((candidate) => candidate.ariaLabel === "Deck A detailed waveform")
+      const viewport = calls[calls.length - 1].input.viewport
+      return viewport.endSeconds - viewport.startSeconds
+    }
+
+    expect(latestDeckAWindow()).toBe(16)
+    expect(screen.getByLabelText("Reset Deck A waveform zoom")).toBeDisabled()
+
+    fireEvent.click(screen.getByLabelText("Zoom in Deck A waveform"))
+    expect(latestDeckAWindow()).toBe(8)
+    expect(screen.getByLabelText("Zoom in Deck A waveform")).toBeDisabled()
+
+    fireEvent.click(screen.getByLabelText("Reset Deck A waveform zoom"))
+    expect(latestDeckAWindow()).toBe(16)
+
+    fireEvent.click(screen.getByLabelText("Zoom out Deck A waveform"))
+    expect(latestDeckAWindow()).toBe(30)
   })
 
   it("renders an uninitialized engine snapshot without indexing a null program deck", () => {

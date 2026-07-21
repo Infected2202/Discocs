@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { ChevronDown, Gauge, Pause, Play, SkipForward, SlidersHorizontal, Sparkles } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
@@ -22,6 +22,8 @@ import { useDroppable } from "@dnd-kit/core"
 import type { DjDeckDropData } from "./DjTrackDragProvider"
 
 const deckIds: DeckId[] = ["A", "B"]
+const waveformWindowSteps = [8, 16, 30, 60] as const
+const defaultWaveformWindow = 16
 
 function roleLabel(role: DeckSnapshot["role"]): string {
   return role.toUpperCase()
@@ -48,7 +50,7 @@ function trackForDeck(
   return null
 }
 
-const waveformPalette = { low: 0x2ed7ff, mid: 0xc738ff, high: 0xff6b3d, beat: 0x94a3b8, playhead: 0xffffff }
+const waveformPalette = { low: 0x2ed7ff, mid: 0xc738ff, high: 0xff6b3d, beat: 0xf8fafc, playhead: 0xff3b30 }
 
 function DeckWaveform({ deck, track, state }: {
   readonly deck: DeckSnapshot
@@ -56,6 +58,7 @@ function DeckWaveform({ deck, track, state }: {
   readonly state: TimelineLoadState
 }) {
   const playhead = useDeckPosition(deck)
+  const [windowSeconds, setWindowSeconds] = useState<number>(defaultWaveformWindow)
   const timeline = state.timeline
   let statusLabel = `Waveform · ${state.status}`
   if (state.status === "ready" && timeline) {
@@ -69,22 +72,50 @@ function DeckWaveform({ deck, track, state }: {
       width: 1,
       height: 1,
       devicePixelRatio: globalThis.devicePixelRatio || 1,
-      ...resolveFollowWindow(playhead, 30),
+      ...resolveFollowWindow(playhead, windowSeconds),
     },
     playheadSeconds: playhead,
     follow: true,
     palette: waveformPalette,
-  } : null, [playhead, timeline])
+  } : null, [playhead, timeline, windowSeconds])
+  const windowIndex = waveformWindowSteps.indexOf(windowSeconds as typeof waveformWindowSteps[number])
+  const zoomIn = () => setWindowSeconds(
+    waveformWindowSteps[Math.max(0, windowIndex - 1)] ?? defaultWaveformWindow,
+  )
+  const zoomOut = () => setWindowSeconds(
+    waveformWindowSteps[Math.min(waveformWindowSteps.length - 1, windowIndex + 1)] ?? defaultWaveformWindow,
+  )
   return (
     <div className={styles.waveformRow} data-deck={deck.id}>
       <div className={styles.waveformDeckLabel}>{deck.id}</div>
       <div className={styles.waveformCanvas}>
         {input && <WaveformSurface
           className={styles.waveformRenderer}
+          ariaLabel={`Deck ${deck.id} detailed waveform`}
           input={input}
           interaction="tape"
           onSeek={(seconds) => playerPlayback.seekDeckToSeconds(deck.id, seconds)}
         />}
+        {input && <div className={styles.waveformZoomControls} aria-label={`Deck ${deck.id} waveform zoom`}>
+          <button
+            type="button"
+            aria-label={`Zoom in Deck ${deck.id} waveform`}
+            disabled={windowIndex === 0}
+            onClick={zoomIn}
+          >+</button>
+          <button
+            type="button"
+            aria-label={`Reset Deck ${deck.id} waveform zoom`}
+            disabled={windowSeconds === defaultWaveformWindow}
+            onClick={() => setWindowSeconds(defaultWaveformWindow)}
+          >=</button>
+          <button
+            type="button"
+            aria-label={`Zoom out Deck ${deck.id} waveform`}
+            disabled={windowIndex === waveformWindowSteps.length - 1}
+            onClick={zoomOut}
+          >−</button>
+        </div>}
         <div className={styles.waveformMessage}>
           <span>{track?.title ?? `Deck ${deck.id}`}</span>
           <small>{statusLabel}</small>
@@ -113,6 +144,7 @@ function OverviewWaveform({ deck, state }: { readonly deck: DeckSnapshot; readon
   if (!input) return <div className={styles.overviewWaveform}><span>{state.status}</span></div>
   return <div className={styles.overviewWaveform}><WaveformSurface
     className={styles.waveformRenderer}
+    ariaLabel={`Deck ${deck.id} overview waveform`}
     input={input}
     onSeek={(seconds) => playerPlayback.seekDeckToSeconds(deck.id, seconds)}
   /></div>

@@ -49,7 +49,9 @@ export class PixiWaveformRenderer {
   private readonly loader: PixiLoader
   private input: WaveformRendererInput
   private app: Application | null = null
-  private graphics: Graphics | null = null
+  private waveformGraphics: Graphics | null = null
+  private historyGraphics: Graphics | null = null
+  private beatGraphics: Graphics | null = null
   private playheadGraphics: Graphics | null = null
   private cancelled = false
   private resizeObserver: ResizeObserver | null = null
@@ -87,9 +89,13 @@ export class PixiWaveformRenderer {
     }
 
     this.app = app
-    this.graphics = new Graphics()
+    this.waveformGraphics = new Graphics()
+    this.historyGraphics = new Graphics()
+    this.beatGraphics = new Graphics()
     this.playheadGraphics = new Graphics()
-    app.stage.addChild(this.graphics)
+    app.stage.addChild(this.waveformGraphics)
+    app.stage.addChild(this.historyGraphics)
+    app.stage.addChild(this.beatGraphics)
     app.stage.addChild(this.playheadGraphics)
     app.canvas.style.cssText = "display:block;width:100%;height:100%;touch-action:none"
     this.container.appendChild(app.canvas)
@@ -118,15 +124,19 @@ export class PixiWaveformRenderer {
     this.app.stop()
     this.app.destroy(true, { children: true, texture: true, textureSource: true })
     this.app = null
-    this.graphics = null
+    this.waveformGraphics = null
+    this.historyGraphics = null
+    this.beatGraphics = null
     this.playheadGraphics = null
   }
 
   private readonly draw = (redrawWaveform = true): void => {
-    const graphics = this.graphics
+    const waveformGraphics = this.waveformGraphics
+    const historyGraphics = this.historyGraphics
+    const beatGraphics = this.beatGraphics
     const playheadGraphics = this.playheadGraphics
     const app = this.app
-    if (!graphics || !playheadGraphics || !app) return
+    if (!waveformGraphics || !historyGraphics || !beatGraphics || !playheadGraphics || !app) return
     const { timeline, viewport, playheadSeconds } = this.input
     const width = Math.max(1, app.screen.width)
     const height = Math.max(1, app.screen.height)
@@ -137,26 +147,40 @@ export class PixiWaveformRenderer {
     const lastBucket = Math.min(level.maximum.length - 1, Math.ceil(viewport.endSeconds / level.bucketDurationSeconds))
 
     if (redrawWaveform) {
-      graphics.clear()
-      const beats = timeline.beats ?? EMPTY_EVENTS
-      for (let index = firstEventAtOrAfter(beats, viewport.startSeconds); index < beats.length; index += 1) {
-        const beat = beats[index]
-        if (beat > viewport.endSeconds) break
-        const x = ((beat - viewport.startSeconds) / visibleSeconds) * width
-        graphics.moveTo(x, 0).lineTo(x, height)
-          .stroke({ color: this.input.palette.beat ?? 0xffffff, width: 1, alpha: 0.2 })
-      }
+      waveformGraphics.clear()
       for (let index = firstBucket; index <= lastBucket; index += 1) {
         const x = ((index * level.bucketDurationSeconds - viewport.startSeconds) / visibleSeconds) * width
         const top = centre - (level.maximum[index] / 32_767) * centre
         const bottom = centre - (level.minimum[index] / 32_767) * centre
         const colour = energyColour(this.input, level.low[index], level.mid[index], level.high[index])
-        graphics.moveTo(x, top).lineTo(x, bottom).stroke({ color: colour, width: 1 })
+        waveformGraphics.moveTo(x, top).lineTo(x, bottom).stroke({ color: colour, width: 1 })
+      }
+
+      beatGraphics.clear()
+      const beats = timeline.beats ?? EMPTY_EVENTS
+      for (let index = firstEventAtOrAfter(beats, viewport.startSeconds); index < beats.length; index += 1) {
+        const beat = beats[index]
+        if (beat > viewport.endSeconds) break
+        const x = ((beat - viewport.startSeconds) / visibleSeconds) * width
+        beatGraphics.moveTo(x, 0).lineTo(x, height)
+          .stroke({ color: 0x05070a, width: 3, alpha: 0.62 })
+        beatGraphics.moveTo(x, 0).lineTo(x, height)
+          .stroke({ color: this.input.palette.beat ?? 0xffffff, width: 1, alpha: 0.55 })
       }
     }
-    playheadGraphics.clear()
+
     const playheadX = ((playheadSeconds - viewport.startSeconds) / visibleSeconds) * width
+    const historyWidth = Math.min(width, Math.max(0, playheadX))
+    historyGraphics.clear()
+    if (historyWidth > 0) {
+      historyGraphics.rect(0, 0, historyWidth, height)
+        .fill({ color: 0x030508, alpha: 0.42 })
+    }
+
+    playheadGraphics.clear()
     if (playheadX >= 0 && playheadX <= width) {
+      playheadGraphics.moveTo(playheadX, 0).lineTo(playheadX, height)
+        .stroke({ color: 0x05070a, width: 4, alpha: 0.72 })
       playheadGraphics.moveTo(playheadX, 0).lineTo(playheadX, height)
         .stroke({ color: this.input.palette.playhead, width: 2 })
     }

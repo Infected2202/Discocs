@@ -6,6 +6,7 @@ import type { WaveformRendererInput } from "./types"
 export interface WaveformSurfaceProps {
   readonly input: WaveformRendererInput
   readonly className?: string
+  readonly ariaLabel?: string
   readonly onSeek?: (seconds: number) => void
   readonly interaction?: "absolute" | "tape"
 }
@@ -18,7 +19,7 @@ interface WaveformDrag {
   lastSeconds: number
 }
 
-export function WaveformSurface({ input, className, onSeek, interaction = "absolute" }: WaveformSurfaceProps) {
+export function WaveformSurface({ input, className, ariaLabel, onSeek, interaction = "absolute" }: WaveformSurfaceProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<PixiWaveformRenderer | null>(null)
   const dragRef = useRef<WaveformDrag | null>(null)
@@ -47,6 +48,7 @@ export function WaveformSurface({ input, className, onSeek, interaction = "absol
     <div
       ref={containerRef}
       className={className}
+      aria-label={ariaLabel}
       onPointerDown={(event) => {
         if (!onSeek) return
         event.preventDefault()

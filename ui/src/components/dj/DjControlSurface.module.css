@@ -99,6 +99,40 @@
 .waveformCanvas { position: relative; overflow: hidden; background: rgb(4 6 8 / 74%); }
 .waveformRenderer { position: absolute; inset: 0; touch-action: none; }
 .waveformRenderer canvas { display: block; width: 100%; height: 100%; }
+.waveformZoomControls {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  z-index: 2;
+  display: grid;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 3px;
+  opacity: 0;
+  background: rgb(8 10 12 / 78%);
+  box-shadow: 0 3px 12px rgb(0 0 0 / 38%);
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity 120ms ease-out;
+}
+.waveformCanvas:hover .waveformZoomControls,
+.waveformZoomControls:focus-within { opacity: 1; pointer-events: auto; }
+.waveformZoomControls button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border-bottom: 1px solid rgb(255 255 255 / 9%);
+  color: rgb(255 255 255 / 82%);
+  background: transparent;
+  font-size: 14px;
+  line-height: 1;
+}
+.waveformZoomControls button:last-child { border-bottom: 0; }
+.waveformZoomControls button:hover,
+.waveformZoomControls button:focus-visible { color: white; background: rgb(255 255 255 / 12%); outline: none; }
+.waveformZoomControls button:disabled { color: rgb(255 255 255 / 24%); }
 .waveformPattern,
 .overviewPattern {
   position: absolute;
