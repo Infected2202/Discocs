@@ -412,3 +412,39 @@ def test_autoplay_filters_unavailable_tracks_from_candidates_and_pool(tmp_path: 
     assert [item.track_id for item in result.added_items] == [available_id]
     assert result.debug is not None
     assert result.debug["unavailable_candidate_count"] == 1
+
+
+def test_autoplay_pool_serialization_excludes_tracks_already_in_queue(tmp_path: Path):
+    from app.serializers.playback import playback_queue_dict
+
+    store = Store(tmp_path / "app.db")
+    store.init()
+    seed_id = add_track(store, tmp_path, "seed", [1.0, 0.0], album="Seed")
+    promoted_id = add_track(store, tmp_path, "promoted", [0.9, 0.1], album="One")
+    remaining_id = add_track(store, tmp_path, "remaining", [0.8, 0.2], album="Two")
+    session, _queue = store.create_playback_session(
+        source_type="track",
+        source_id=seed_id,
+        track_ids=[seed_id],
+        autoplay_enabled=True,
+        state={
+            "autoplay_pool": [
+                {"track_id": promoted_id, "origin": "autoplay"},
+                {"track_id": remaining_id, "origin": "autoplay"},
+            ]
+        },
+    )
+
+    # Jumping to a pool item copies preceding pool tracks into the queue.
+    store.append_queue_items(session.id, [{"track_id": promoted_id, "origin": "autoplay"}])
+    session = store.get_playback_session(session.id)
+    assert session is not None
+    items = store.list_queue_items(session.id)
+
+    queue = playback_queue_dict(store, session, items)
+
+    pool_track_ids = [item["track_id"] for item in queue["autoplay_pool"]]
+    # The promoted track now lives in the queue and must not linger in the pool;
+    # the untouched track still shows under "Автовоспроизведение".
+    assert promoted_id not in pool_track_ids
+    assert pool_track_ids == [remaining_id]

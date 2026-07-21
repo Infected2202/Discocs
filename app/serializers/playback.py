@@ -112,11 +112,25 @@ def playback_queue_dict(store: Store, session, items, include_debug: bool = Fals
             for item in items
             if item.origin in {"autoplay", "flow", "generated_mix"}
         ],
-        "autoplay_pool": autoplay_pool_dict(store, session, include_debug=include_debug),
+        "autoplay_pool": autoplay_pool_dict(
+            store,
+            session,
+            include_debug=include_debug,
+            exclude_track_ids={item.track_id for item in items if item.status != "removed"},
+        ),
     }
 
 
-def autoplay_pool_dict(store: Store, session, include_debug: bool = False) -> list[dict[str, object]]:
+def autoplay_pool_dict(
+    store: Store,
+    session,
+    include_debug: bool = False,
+    exclude_track_ids: set[int] | None = None,
+) -> list[dict[str, object]]:
+    # Tracks already promoted into the queue must not linger in the autoplay
+    # pool — otherwise jumping to a pool item (which copies every preceding pool
+    # track into the queue) leaves duplicates showing under "Автовоспроизведение".
+    excluded = exclude_track_ids or set()
     state = _json_object(session.state_json)
     raw_pool = state.get("autoplay_pool")
     if not isinstance(raw_pool, list):
@@ -137,6 +151,8 @@ def autoplay_pool_dict(store: Store, session, include_debug: bool = False) -> li
         try:
             track_id = int(raw_item["track_id"])
         except (KeyError, TypeError, ValueError):
+            continue
+        if track_id in excluded:
             continue
         track = store.get_track(track_id)
         if track is None:
