@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from time import perf_counter
 
 import numpy as np
 
@@ -37,7 +36,6 @@ class AudioFeatureAnalysis:
     features: list[TrackFeature]
     timeline_manifest: dict[str, object]
     timeline_payload: bytes
-    timings: dict[str, float] | None = None
 
 
 class AudioFeatureAnalyzer:
@@ -53,24 +51,9 @@ class AudioFeatureAnalyzer:
 
         configure_tensorflow_logging()
         logger.info("Analyzing audio bundle path=%s extractor=%s", path, AUDIO_FEATURE_EXTRACTOR)
-        started = perf_counter()
+        audio = load_audio_with_ffmpeg(path, sample_rate=EMBEDDING_SAMPLE_RATE)
         rhythm_audio = load_audio_with_ffmpeg(path, sample_rate=ESSENTIA_RHYTHM_SAMPLE_RATE)
-        decoded_at = perf_counter()
-        audio = resample_audio(
-            rhythm_audio,
-            input_sample_rate=ESSENTIA_RHYTHM_SAMPLE_RATE,
-            output_sample_rate=EMBEDDING_SAMPLE_RATE,
-        )
-        resampled_at = perf_counter()
         rhythm = analyze_rhythm(rhythm_audio)
-        rhythm_at = perf_counter()
-        key_features = extract_key_features(audio)
-        key_at = perf_counter()
-        loudness_features = extract_loudness_features(audio)
-        del audio
-        loudness_at = perf_counter()
-        dynamic_features = extract_dynamic_features(rhythm_audio)
-        dynamic_at = perf_counter()
         features = [
             TrackFeature(
                 name="bpm",
@@ -79,9 +62,9 @@ class AudioFeatureAnalyzer:
                 confidence=rhythm.confidence,
                 extractor=AUDIO_FEATURE_EXTRACTOR,
             ),
-            *key_features,
-            *loudness_features,
-            *dynamic_features,
+            *extract_key_features(audio),
+            *extract_loudness_features(audio),
+            *extract_dynamic_features(rhythm_audio),
         ]
         manifest, payload = encode_audio_timeline(
             rhythm_audio,
@@ -89,41 +72,7 @@ class AudioFeatureAnalyzer:
             source=source,
             rhythm=rhythm,
         )
-        finished_at = perf_counter()
-        return AudioFeatureAnalysis(
-            features=features,
-            timeline_manifest=manifest,
-            timeline_payload=payload,
-            timings={
-                "decode": decoded_at - started,
-                "resample": resampled_at - decoded_at,
-                "rhythm": rhythm_at - resampled_at,
-                "key": key_at - rhythm_at,
-                "loudness": loudness_at - key_at,
-                "dynamic": dynamic_at - loudness_at,
-                "timeline": finished_at - dynamic_at,
-                "total": finished_at - started,
-            },
-        )
-
-
-def resample_audio(
-    audio: np.ndarray,
-    *,
-    input_sample_rate: int,
-    output_sample_rate: int,
-) -> np.ndarray:
-    """Derive the feature-rate PCM from the shared high-rate decode."""
-    try:
-        from essentia.standard import Resample
-    except ImportError as exc:
-        raise RuntimeError("essentia-tensorflow is required for audio resampling") from exc
-    resampled = Resample(
-        inputSampleRate=input_sample_rate,
-        outputSampleRate=output_sample_rate,
-        quality=1,
-    )(np.asarray(audio, dtype=np.float32))
-    return np.asarray(resampled, dtype=np.float32)
+        return AudioFeatureAnalysis(features=features, timeline_manifest=manifest, timeline_payload=payload)
 
 
 def analyze_rhythm(audio: np.ndarray) -> RhythmAnalysis:

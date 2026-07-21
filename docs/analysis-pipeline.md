@@ -134,20 +134,6 @@ separate timeline-analysis job: local and remote audio-feature executors return
 both projections from one analysis result. The DJ interface remains read-only
 and never starts analysis.
 
-The worker decodes each source once at 44.1 kHz, reuses that PCM for rhythm,
-dynamics and the timeline, and derives the 16 kHz key/loudness input with
-Essentia's in-memory resampler. Per-task worker logs include stage timings
-(`decode_seconds`, `rhythm_seconds`, `timeline_seconds`, and the other stages)
-so throughput tuning can be based on the actual bottleneck.
-
-The five-container Compose defaults deliberately separate buffering from CPU
-parallelism: four tasks may be in flight, while only two CPU analyses run per
-container. Results are submitted four at a time and downloads remain serial.
-This keeps the previous two-analysis CPU ceiling per container but prevents
-download and result-submit gaps from starving it. Increase
-`DISCOCS_WORKER_CPU_WORKERS` only after the stage timings and host CPU metrics
-show that additional analysis concurrency is safe.
-
 `audio_features_v1` rows are legacy scalar-only results. They do not satisfy
 v2 readiness and are removed per track only after a complete v2 result has
 been accepted. Consequently the first v2 deployment intentionally queues all

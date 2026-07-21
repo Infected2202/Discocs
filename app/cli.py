@@ -1650,15 +1650,7 @@ class WorkerRuntime:
                 }
             )
             self.completed_task_ids.add(task_id)
-            timing_values = analysis.timings or {}
-            timing_text = " ".join(
-                f"{name}_seconds={seconds:.3f}"
-                for name, seconds in timing_values.items()
-            )
-            typer.echo(
-                f"ok task_id={task_id} track_id={task['track_id']} model={model_name}"
-                f"{(' ' + timing_text) if timing_text else ''}"
-            )
+            typer.echo(f"ok task_id={task_id} track_id={task['track_id']} model={model_name}")
         except Exception as exc:
             if close_task_on_conflict(exc, task_id, model_name, audio_path, self.close_inactive_task):
                 return

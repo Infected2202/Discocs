@@ -13,19 +13,15 @@ def test_audio_feature_analyzer_uses_feature_extractors(monkeypatch, tmp_path):
 
     def fake_load_audio(path, sample_rate=16000):
         calls.append(sample_rate)
-        return audio_44k
+        if sample_rate == audio_features.ESSENTIA_RHYTHM_SAMPLE_RATE:
+            return audio_44k
+        return audio_16k
 
     monkeypatch.setattr(
         audio_features,
         "load_audio_with_ffmpeg",
         fake_load_audio,
     )
-    monkeypatch.setattr(
-        audio_features,
-        "resample_audio",
-        lambda audio, **_kwargs: audio_16k if audio is audio_44k else None,
-    )
-
     def fake_analyze_rhythm(audio):
         assert audio is audio_44k
         return RhythmAnalysis(
@@ -73,21 +69,13 @@ def test_audio_feature_analyzer_uses_feature_extractors(monkeypatch, tmp_path):
     )
     features = analysis.features
 
-    assert calls == [audio_features.ESSENTIA_RHYTHM_SAMPLE_RATE]
+    assert calls == [
+        audio_features.EMBEDDING_SAMPLE_RATE,
+        audio_features.ESSENTIA_RHYTHM_SAMPLE_RATE,
+    ]
     assert [feature.name for feature in features] == ["bpm", "key"]
     assert features[0].value == 128.0
     assert features[1].text_value == "F#"
-    assert set(analysis.timings or {}) == {
-        "decode",
-        "resample",
-        "rhythm",
-        "key",
-        "loudness",
-        "dynamic",
-        "timeline",
-        "total",
-    }
-    assert all(seconds >= 0 for seconds in (analysis.timings or {}).values())
 
 
 def test_audio_feature_bundle_reuses_rhythm_decode_for_features_and_timeline(monkeypatch, tmp_path):
@@ -105,9 +93,8 @@ def test_audio_feature_bundle_reuses_rhythm_decode_for_features_and_timeline(mon
     monkeypatch.setattr(
         audio_features,
         "load_audio_with_ffmpeg",
-        lambda _path, sample_rate: audio_44k,
+        lambda _path, sample_rate: audio_44k if sample_rate == 44_100 else audio_16k,
     )
-    monkeypatch.setattr(audio_features, "resample_audio", lambda _audio, **_kwargs: audio_16k)
     monkeypatch.setattr(audio_features, "analyze_rhythm", lambda audio: rhythm_calls.append(audio) or rhythm)
     monkeypatch.setattr(audio_features, "extract_key_features", lambda _audio: [])
     monkeypatch.setattr(audio_features, "extract_loudness_features", lambda _audio: [])
@@ -130,39 +117,6 @@ def test_audio_feature_bundle_reuses_rhythm_decode_for_features_and_timeline(mon
     assert timeline_calls[0][1] is rhythm
     assert analysis.features[0].name == "bpm"
     assert analysis.timeline_payload == b"payload"
-
-
-def test_resample_audio_uses_essentia_for_shared_decode(monkeypatch):
-    calls = []
-
-    class FakeResample:
-        def __init__(self, **kwargs):
-            calls.append(kwargs)
-
-        def __call__(self, audio):
-            calls.append(audio)
-            return np.array([0.25, -0.25], dtype=np.float32)
-
-    essentia_module = types.ModuleType("essentia")
-    standard_module = types.ModuleType("essentia.standard")
-    standard_module.Resample = FakeResample
-    monkeypatch.setitem(sys.modules, "essentia", essentia_module)
-    monkeypatch.setitem(sys.modules, "essentia.standard", standard_module)
-    source = np.ones(44_100, dtype=np.float32)
-
-    result = audio_features.resample_audio(
-        source,
-        input_sample_rate=44_100,
-        output_sample_rate=16_000,
-    )
-
-    assert calls[0] == {
-        "inputSampleRate": 44_100,
-        "outputSampleRate": 16_000,
-        "quality": 1,
-    }
-    assert calls[1] is source
-    np.testing.assert_allclose(result, [0.25, -0.25])
 
 
 def test_loudness_extractor_converts_mono_audio_to_stereo(monkeypatch):
