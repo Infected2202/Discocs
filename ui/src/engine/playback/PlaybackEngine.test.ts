@@ -491,6 +491,23 @@ describe("PlaybackEngine Phase 1 routing", () => {
       })
       engine.routeProgramElement(document.createElement("audio"), 1, "q1")
       engine.routeIncomingElement(document.createElement("audio"), 2, "q2")
+      // FakeAudioContext.decodeAudioData defaults to a 2s buffer, but this
+      // suite advances the context clock well past that (context.advance(5)
+      // below, plus another 3s mid-test) to reach steady linear follower
+      // motion. Left at the default, StretchDeckSource's own end-of-track
+      // detection (handleClockUpdate: inputTime >= duration - 0.05) would
+      // fire on the very first manual tick(), stopping deck B and making it
+      // report "ended" -- which makes dispatchPhaseOffsetObserved's own
+      // (correct) not-playing guard bail out before ever computing a phase
+      // offset. Match the fake decode's duration to the beat timeline's own
+      // duration so the deck genuinely stays "playing" for the clock
+      // advances this suite performs.
+      vi.mocked(FakeAudioContext.instances[0]!.decodeAudioData).mockResolvedValue({
+        duration: beatTimeline().durationSeconds,
+        length: 4,
+        numberOfChannels: 2,
+        getChannelData: (channel: number) => new Float32Array(channel === 0 ? [1, 2, 3, 4] : [5, 6, 7, 8]),
+      } as unknown as AudioBuffer)
       await engine.setClockTempo(120)
       // Pin the master clock (auto: false) before B ever plays -- otherwise
       // AUTO would promote B itself to master the instant it starts, which
@@ -661,13 +678,18 @@ describe("PlaybackEngine Phase 1 routing", () => {
       await engine.upgradeDeckSource("B", { url: "blob:b", trackId: 2, blob: new Blob(["b"]) })
       await engine.playDeck("A")
 
-      // Deck B has no engaged SYNC of any kind yet.
+      // Deck B has no engaged SYNC of any kind yet. Baseline (not a raw
+      // "never called" check): upgradeDeckSource's own load() already issued
+      // one schedule() call to apply the initial tempoRatio, before beginTempoNudge
+      // ever runs -- the no-op must add no *further* calls, not leave the
+      // node untouched from the very start.
+      const callsBeforeUnengagedNudge = vi.mocked(nodeB.schedule).mock.calls.length
       engine.beginTempoNudge("B", "up")
       expect(errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("beginTempoNudge"),
         expect.any(Error),
       )
-      expect(vi.mocked(nodeB.schedule)).not.toHaveBeenCalled()
+      expect(vi.mocked(nodeB.schedule).mock.calls.length).toBe(callsBeforeUnengagedNudge)
 
       // Deck A is the tempo master itself -- never a nudge target either.
       engine.beginTempoNudge("A", "up")
