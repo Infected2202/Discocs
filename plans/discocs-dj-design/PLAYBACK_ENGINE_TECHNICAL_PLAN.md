@@ -225,6 +225,20 @@ Exact coefficients and ramp durations are pure configuration covered by curve/gr
 
 - At most the program/outgoing and prepared/incoming complete compressed payloads are retained normally.
 - The current payload becomes eligible for release only after successful handover and outgoing completion/cancellation policy.
+- **DJ deck isolation (shipped in R5 of `SYNC_REWRITE_PLAN.md`):** `PlayerPlaybackFacade`
+  splits this into two structurally separate resources instead of one shared
+  "prepared" slot. `prefetch()` is fully graph-unaware — it only ever
+  populates the ordinary background next-track Blob cache (`prefetched`),
+  regardless of DJ-mode state, and never touches a DJ deck. The DJ deck lives
+  in its own private field (`djDeck`), populated only by `prepareDjDeck()`
+  (own fetch, own `<audio>` element, own `AbortController`) and torn down
+  only by `clearDjDeck()`. The only allowed interaction between the two: at
+  DJ-mode activation, `ensurePreparedDeckFromCache()` performs one explicit,
+  one-time hand-off — if the ordinary player already has something
+  prefetched, it is copied into a fresh `djDeck` with no new network fetch.
+  From that instant on, `djDeck` and `prefetched` never alias again; ordinary
+  background prefetch that happens later while DJ mode is open no longer
+  silently re-populates or tears down the DJ deck.
 - Phase 1-5 do not eagerly decode whole-track PCM. Phase 6 intentionally holds
   one complete decoded Signalsmith buffer per loaded physical deck, bounded by
   the two-deck model.

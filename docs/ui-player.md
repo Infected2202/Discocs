@@ -205,39 +205,39 @@ The browser retains at most the forced complete active Blob and one upcoming Blo
 Object URLs are revoked after use, on profile/source changes, and on logout.
 This is intentionally an in-memory transition buffer, not offline storage.
 
-Opening the DJ workspace upgrades eligible physical decks from their native
-media-element source to Signalsmith Stretch. The existing complete Blob is
-decoded in the browser and transferred to the deck worklet in full; there is
-no PCM stream and the backend is not part of playback after preparation. The
-MASTER deck's pitch fader controls pitch-preserving tempo over the agreed ±8%
-range; pitch stays locked on every non-master deck. Missing
-timeline data, unsupported AudioWorklet/WASM, or source initialization failure
-keeps that deck on native media playback and exposes the degraded mode in the
-deck status. Retiring a deck releases its compressed Blob, decoded/worklet
-buffer, object URL, and source references.
+Opening the DJ workspace upgrades each physical deck from its plain routed
+`<audio>` element to Signalsmith Stretch, as soon as that deck's track
+qualifies (persisted track id plus a valid beat timeline) and the browser
+supports AudioWorklet/WASM. The existing complete Blob is decoded in the
+browser and transferred to the deck worklet in full; there is no PCM stream
+and the backend is not part of playback after preparation. The MASTER deck's
+pitch fader controls pitch-preserving tempo over the agreed ±8% range; pitch
+stays locked on every non-master deck. A deck that never becomes
+Signalsmith-eligible — no persisted track, unsupported AudioWorklet/WASM,
+missing beat timeline, or worklet initialization failure — stays on its plain
+routed `<audio>` element inside the graph: still playable and mixable, but
+`canEngageBeatSync`/`canEngageTempoSync` (see below) report `false` for it and
+the deck header shows the degraded reason. There is no dedicated
+native-fallback sync path anymore: `HtmlMediaDeckSource`, the `DeckSource`
+implementation that used to drive follower alignment off raw
+`HTMLAudioElement.playbackRate`, was deleted (R1 of
+`plans/discocs-dj-design/SYNC_REWRITE_PLAN.md`) — Signalsmith is now a hard
+requirement for both BeatSync and TempoSync. A browser that lacks
+AudioWorklet/WASM entirely simply never gets a sync-capable deck; ordinary
+single-track playback outside the DJ workspace is completely unaffected,
+since it never routes through this code path at all (it plays a bare
+`<audio>` element outside any `AudioContext`). Retiring a deck releases its
+compressed Blob, decoded/worklet buffer, object URL, and source references.
+
+### Tempo master (AUTO/MASTER clock)
 
 The DJ header contains Traktor-style `AUTO` and `MASTER` clock controls. With
 AUTO active, the first deck that starts becomes tempo master; if that deck
-stops, ownership moves to the other playing deck or back to the
-editable master clock. Each loaded deck has a clickable `SYNC` button,
-including the current MASTER deck and paused decks. SYNC arms immediately and
-remains armed while full-track Signalsmith preparation is pending or retried;
-it is not cleared by a temporary capability/preparation failure. On a paused
-deck the button shows an armed text state. While that deck is playing it shows
-the active filled state. On MASTER it records the deck's SYNC state; if MASTER
-later moves, an engaged former master immediately becomes a follower.
-BeatSync matches each engaged non-master deck to the master BPM and beat phase
-before/while it plays and leaves the matched tempo in place when SYNC is
-disengaged. Starting a previously armed deck goes through the same tempo/phase
-alignment path. Master tempo changes propagate to engaged followers. Following
-requires Signalsmith plus a valid beat timeline and respects the agreed ±8%
-deck range. Each deck header displays its resulting BPM and pitch percentage;
-the disabled follower pitch fader still moves to the applied ratio.
-Production CSP permits only the narrow `wasm-unsafe-eval` script capability
-required to compile the packaged Signalsmith WebAssembly module; general
-JavaScript `unsafe-eval` remains forbidden.
-Seek, loop and handover/retirement paths re-evaluate phase and ownership; Group
-3 will add measured continuous drift correction and browser quality gates.
+stops, ownership moves to the other playing deck or back to the editable
+master clock. `canBecomeMaster`/`canBecomeClockMaster` gate the per-deck
+MASTER button and the header's clock MASTER button respectively: a deck can
+become master only while playing and not already master; the clock can
+reclaim MASTER only while both decks are stopped.
 
 AUTO follows the actual transport of both a routed media element and an
 upgraded Signalsmith source. With both decks stopped, the standalone clock is
@@ -247,8 +247,76 @@ MASTER can be moved between them. Stopping the current master transfers
 ownership to the other playing deck or returns it to the clock when both have
 stopped. Signalsmith and beat timelines are validation requirements for the
 SYNC operation itself, not UI prerequisites for pressing SYNC or selecting a
-playing deck as MASTER. MASTER/SYNC commands wait for an in-progress full-track
-decode.
+playing deck as MASTER. MASTER/SYNC commands wait for an in-progress
+full-track decode.
+
+### BeatSync vs TempoSync
+
+Each loaded deck exposes **two adjacent sync-mode buttons** — `BEAT` and
+`TEMPO` — not a mode dropdown, consistent with the rest of the dense
+control-surface language:
+
+- **BeatSync** (`BEAT`): permanent tempo *and* phase lock. The follower is
+  matched to the master's BPM and beat phase before/while it plays. A
+  dedicated 0.25s Signalsmith clock tick continuously measures the
+  follower's phase offset from the master and automatically re-aligns it
+  once the drift exceeds a small threshold (0.06 beats,
+  `BEAT_SYNC_DRIFT_THRESHOLD_BEATS`), no more often than once every 2 seconds
+  (`BEAT_SYNC_REALIGN_COOLDOWN_SECONDS`) — bounded auto-correction, not a
+  re-seek on every tick.
+- **TempoSync** (`TEMPO`): tempo lock only. Phase is allowed to drift by
+  design — the reducer never auto-realigns a TempoSync follower. The same
+  0.25s clock tick instead just publishes the measured offset into a small
+  phase-offset readout, shown only while a deck is an engaged TempoSync
+  follower (e.g. `+0.34 beat`). Correction is manual: press-and-hold nudge
+  buttons next to the pitch fader (`beginTempoNudge`/`endTempoNudge`) apply a
+  live ~2% rate offset while held and snap back to the locked ratio on
+  release.
+
+Clicking a mode's button while the deck is already engaged in that mode
+disengages SYNC entirely; clicking the *other* mode's button switches the
+engaged mode in place. Engagement survives a master switch — an engaged
+former master immediately becomes a follower. Starting a previously armed
+(paused) deck runs the same alignment path once it starts playing. Master
+tempo changes propagate to every engaged follower. Following requires
+Signalsmith plus a valid beat timeline and respects the agreed ±8% deck
+range. Each deck header displays its resulting BPM and pitch percentage; the
+disabled follower pitch fader still moves to the applied ratio.
+
+Both buttons' enabled/disabled state comes directly from the `tempoSync`
+reducer's own `canEngageBeatSync`/`canEngageTempoSync` snapshot booleans
+(`ui/src/engine/playback/tempoSync.ts`) — the control surface does not
+re-derive its own gating expressions. SYNC feasibility is checked
+**synchronously at arm-time**: an infeasible request (no track, or a track
+that will never produce a beat timeline) is rejected immediately and the
+button never lights up. A feasible-but-not-yet-ready request (deck
+mid-Signalsmith-upgrade) enters a distinct `"arming"` phase that resolves
+itself, with no user-visible flicker, once the pending capability check
+reports back — arming SYNC before the async upgrade resolves is a normal,
+supported sequence, not a race.
+
+### No toast/banner UI
+
+SYNC/MASTER failures have no dedicated UI surface. Every failure — a
+rejected arm attempt, an alignment error, a nudge attempted on a deck that
+isn't an engaged TempoSync follower — funnels through one
+`reportEngineFailure` helper (`ui/src/engine/playback/reportEngineFailure.ts`)
+into `console.error`; DevTools is the only place to observe it directly. The
+**only** in-app indicator is the existing per-deck inline status text: the
+BEAT/TEMPO button shows its current rejection reason as a `title` tooltip,
+and the deck's metadata line shows `preparation · transport · tempoMode` —
+driven honestly by the reducer's real state rather than a flag that never
+resets.
+
+Production CSP permits only the narrow `wasm-unsafe-eval` script capability
+required to compile the packaged Signalsmith WebAssembly module; general
+JavaScript `unsafe-eval` remains forbidden.
+
+Seek, loop, and handover/retirement paths re-evaluate phase and ownership.
+Bounded BeatSync drift correction (above) already ships; further continuous
+drift measurement/statistics and a supported-browser quality gate remain
+Phase 6 Group 3 (pending separate approval — see `IMPLEMENTATION_PLAN.md`),
+out of scope for this sync rewrite.
 
 The per-user playback settings page can request MP3 transcoding at
 96/128/192/256/320 Kbit/s. The profile key is included in the audio URL and

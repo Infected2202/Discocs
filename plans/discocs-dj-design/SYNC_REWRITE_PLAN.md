@@ -1,6 +1,6 @@
 # DJ tempo-master/sync rewrite
 
-**Status:** R1-R7 delivered (R8 pending). R4 shipped mode-aware `alignFollower` branching (BeatSync auto-realigns past drift threshold+cooldown, TempoSync never auto-realigns), the dedicated Signalsmith clock-tick channel (`DeckSource.setClockTickListener`, decoupled from the general transport `notify`), `beginTempoNudge`/`endTempoNudge`, and the phase-offset readout + nudge buttons in `DjControlSurface.tsx`. Only R8 (final consistency pass + docs) remains.
+**Status:** R1-R8 delivered — the rewrite is complete. R4 shipped mode-aware `alignFollower` branching (BeatSync auto-realigns past drift threshold+cooldown, TempoSync never auto-realigns), the dedicated Signalsmith clock-tick channel (`DeckSource.setClockTickListener`, decoupled from the general transport `notify`), `beginTempoNudge`/`endTempoNudge`, and the phase-offset readout + nudge buttons in `DjControlSurface.tsx`. R8 closed out the plan with a test-inventory sanity check, a rewritten `docs/ui-player.md` Sync/Master section, an updated `PLAYBACK_ENGINE_TECHNICAL_PLAN.md` §9 payload-retention note, and a manual dev-server verification pass.
 **Supersedes:** `PLAYBACK_ENGINE_TECHNICAL_PLAN.md` and `IMPLEMENTATION_PLAN.md` Phase 6 Group 2 ("beat sync") — the product behavior described there is correct in spirit and is kept; the code backing it is replaced by this plan.
 **Applies to:** the tempo-master/SYNC subsystem under `ui/src/engine/playback/`
 
