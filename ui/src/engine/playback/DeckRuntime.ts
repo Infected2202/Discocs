@@ -118,7 +118,9 @@ export class DeckRuntime {
 
   private staleOrTimeoutError(signal: AbortSignal): Error {
     const reason = (signal as { reason?: unknown }).reason
-    if (reason instanceof Error) return reason
+    // jsdom's DOMException does not extend Error, so an explicit instanceof
+    // check against Error alone misses reasons built with `new DOMException(...)`.
+    if (reason instanceof Error || reason instanceof DOMException) return reason as Error
     return new DOMException("Stale deck source generation", "AbortError")
   }
 
