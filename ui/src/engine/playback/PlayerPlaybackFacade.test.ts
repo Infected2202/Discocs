@@ -137,7 +137,7 @@ describe("PlayerPlaybackFacade routing", () => {
     const facade = new PlayerPlaybackFacade(engine)
     facade.load("/audio/1", 1, "raw", false, "queue-1")
     await facade.activateDjMode()
-    await facade.prefetch(2, "/audio/2", "raw", "queue-2")
+    await facade.prepareDjDeck(2, "/audio/2", "raw", "queue-2")
 
     await facade.toggleDeckSync("B")
 
@@ -186,7 +186,7 @@ describe("PlayerPlaybackFacade routing", () => {
     const facade = new PlayerPlaybackFacade(runtime())
     facade.load("/audio/1", 1)
     await facade.activateDjMode()
-    await facade.prefetch(2, "/audio/2", "raw", "queue-2")
+    await facade.prepareDjDeck(2, "/audio/2", "raw", "queue-2")
 
     facade.seekDeckToSeconds("B", 999)
 
@@ -385,6 +385,58 @@ describe("PlayerPlaybackFacade routing", () => {
     expect(facade.consumePrefetched(8, "raw")).toBe("blob:prefetched-8")
   })
 
+  it("never routes an ordinary prefetch into the mixer graph, even while DJ mode is active", async () => {
+    const audio: MockAudio[] = []
+    vi.stubGlobal("Audio", function () {
+      const instance = new MockAudio()
+      audio.push(instance)
+      return instance
+    })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob(["audio"])) }))
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:prefetched-dj-active")
+    const engine = runtime()
+    const facade = new PlayerPlaybackFacade(engine)
+    facade.load("/audio/7", 7)
+    await facade.activateDjMode()
+    vi.mocked(engine.routeIncomingElement).mockClear()
+
+    await facade.prefetch(8, "/audio/8", "raw", "queue-8")
+
+    // prefetch() is fully graph-unaware by design (R5): it never routes an
+    // incoming element into the mixer graph, regardless of DJ-mode state.
+    // Only prepareDjDeck() may do that.
+    expect(engine.routeIncomingElement).not.toHaveBeenCalled()
+    expect(facade.hasPrepared(8, "queue-8")).toBe(false)
+  })
+
+  it("does not tear down a manually-prepared DJ deck when ordinary background prefetch runs afterward", async () => {
+    const audio: MockAudio[] = []
+    vi.stubGlobal("Audio", function () {
+      const instance = new MockAudio()
+      audio.push(instance)
+      return instance
+    })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob(["audio"])) }))
+    vi.spyOn(URL, "createObjectURL")
+      .mockReturnValueOnce("blob:dj-deck-armed")
+      .mockReturnValue("blob:background-prefetch")
+    const engine = runtime()
+    const facade = new PlayerPlaybackFacade(engine)
+    facade.load("/audio/1", 1, "raw", false, "queue-1")
+    await facade.activateDjMode()
+
+    // DJ manually arms deck B with track 2.
+    await facade.prepareDjDeck(2, "/audio/2", "raw", "queue-2")
+    expect(facade.hasPrepared(2, "queue-2")).toBe(true)
+
+    // Routine background caching of the ordinary next-queue track (an
+    // unrelated track, 3) runs afterward — this must never touch the DJ deck.
+    await facade.prefetch(3, "/audio/3", "raw", "queue-3")
+
+    expect(facade.hasPrepared(2, "queue-2")).toBe(true)
+    expect(engine.cancelIncoming).not.toHaveBeenCalled()
+  })
+
   it("does not enter DJ mode when AudioContext resume fails", async () => {
     const media = new MockAudio()
     vi.stubGlobal("Audio", function () { return media })
@@ -480,7 +532,7 @@ describe("PlayerPlaybackFacade routing", () => {
     facade.load("/audio/1", 1)
     await facade.activateDjMode()
 
-    await facade.prefetch(2, "/audio/2", "raw", "queue-2")
+    await facade.prepareDjDeck(2, "/audio/2", "raw", "queue-2")
     expect(facade.hasPrepared(2, "queue-2")).toBe(true)
     const result = await facade.handoverPrepared("h-1")
 

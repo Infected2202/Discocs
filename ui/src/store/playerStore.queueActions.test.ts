@@ -17,6 +17,7 @@ vi.mock("@/engine/playback", () => ({
     prefetch: vi.fn().mockResolvedValue(undefined),
     cancelPrefetch: vi.fn(),
     clearPrefetched: vi.fn(),
+    prepareDjDeck: vi.fn().mockResolvedValue(undefined),
     hasPrepared: vi.fn().mockReturnValue(false),
     handoverPrepared: vi.fn().mockResolvedValue({
       trackId: 20, queueItemId: "next", profileKey: "raw", outgoingDeck: "A", programDeck: "B",
@@ -235,9 +236,11 @@ describe("player queue actions", () => {
       queue_item_id: "dropped",
       position: 1,
     })
-    expect(audioEngine.cancelPrefetch).toHaveBeenCalled()
-    expect(audioEngine.clearPrefetched).toHaveBeenCalled()
-    expect(audioEngine.prefetch).toHaveBeenCalledWith(30, "/audio/30", "raw", "dropped")
+    // The DJ deck is its own isolated resource now (R5) — the ordinary
+    // prefetch cache is never touched by this action.
+    expect(audioEngine.cancelPrefetch).not.toHaveBeenCalled()
+    expect(audioEngine.clearPrefetched).not.toHaveBeenCalled()
+    expect(audioEngine.prepareDjDeck).toHaveBeenCalledWith(30, "/audio/30", "raw", "dropped")
     expect(usePlayerStore.getState().queue?.items.map((item) => item.track_id)).toEqual([10, 30, 20])
   })
 
@@ -249,7 +252,7 @@ describe("player queue actions", () => {
     await usePlayerStore.getState().prepareDjDeck(30, "A")
 
     expect(patchQueue).not.toHaveBeenCalled()
-    expect(audioEngine.prefetch).not.toHaveBeenCalled()
+    expect(audioEngine.prepareDjDeck).not.toHaveBeenCalled()
     expect(usePlayerStore.getState().error).toBe("Deck A is currently on air")
   })
 
