@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import type { TimelineLoadState } from "@/api/timeline"
 import { usePlayerStore } from "@/store/playerStore"
 import { useUIStore } from "@/store/uiStore"
 
@@ -30,7 +31,7 @@ const playback = vi.hoisted(() => ({
   pause: vi.fn(),
   seek: vi.fn(),
 }))
-const useTimeline = vi.hoisted(() => vi.fn(() => ({ status: "missing" as const })))
+const useTimeline = vi.hoisted(() => vi.fn<() => TimelineLoadState>(() => ({ status: "missing" })))
 const renderWaveform = vi.hoisted(() => vi.fn())
 
 vi.mock("@/engine/playback", async (importOriginal) => ({
