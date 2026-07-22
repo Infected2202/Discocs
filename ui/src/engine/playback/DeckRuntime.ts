@@ -13,6 +13,7 @@ import type {
 export interface DeckLoadOptions {
   readonly startAtSeconds?: number
   readonly autoplay?: boolean
+  readonly tempoRatio?: number
 }
 
 export class DeckRuntime {
@@ -67,6 +68,7 @@ export class DeckRuntime {
         throw new DOMException("Stale deck source generation", "AbortError")
       }
       if (options.startAtSeconds !== undefined) await candidate.seek(options.startAtSeconds)
+      if (options.tempoRatio !== undefined) await candidate.setRate(options.tempoRatio)
       if (options.autoplay) await candidate.play()
       const activationDelay = options.autoplay ? candidate.activationDelaySeconds ?? 0 : 0
       if (activationDelay > 0) await this.waitForActivation(activationDelay, controller.signal)

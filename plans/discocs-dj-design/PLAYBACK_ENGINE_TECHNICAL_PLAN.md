@@ -159,8 +159,11 @@ MASTER only while both decks are stopped. Deck MASTER is an explicit override
 between playing decks and has no beat-grid or source-kind prerequisite; only
 the SYNC operation validates beat timelines and Signalsmith. SYNC remains
 clickable on both loaded decks, including MASTER, and engagement survives a
-master switch so the old master can become a follower immediately. A synced
-follower derives its ratio from the master's effective BPM,
+master switch so the old master can become a follower immediately. Engagement
+is stored before asynchronous source preparation: paused decks can be armed,
+failed/pending Signalsmith preparation does not clear the selection, and play
+retries preparation before running tempo/phase alignment. A synced follower
+derives its ratio from the master's effective BPM,
 maps the master's current beat phase onto its nearest beat interval and
 schedules rate/seek/start at one common latency-compensated AudioContext time.
 Only the MASTER pitch control is unlocked; disengagement keeps the reached

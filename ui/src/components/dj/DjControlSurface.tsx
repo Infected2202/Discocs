@@ -139,6 +139,20 @@ function DeckTimeReadout({ deck }: { readonly deck: DeckSnapshot }) {
   )
 }
 
+function DeckTempoReadout({ deck, state }: { readonly deck: DeckSnapshot; readonly state: TimelineLoadState }) {
+  const baseBpm = state.timeline?.bpm
+  const currentBpm = baseBpm && baseBpm > 0 ? baseBpm * deck.tempoRatio : null
+  const pitchPercent = (deck.tempoRatio - 1) * 100
+  return (
+    <div className={styles.deckTempoReadout}>
+      <strong aria-label={`Deck ${deck.id} current tempo`}>
+        {currentBpm === null ? "---.--" : currentBpm.toFixed(2)}
+      </strong>
+      <span>{pitchPercent >= 0 ? "+" : ""}{pitchPercent.toFixed(1)}%</span>
+    </div>
+  )
+}
+
 function EffectRack({ side }: { readonly side: DeckId }) {
   const heading = <div className={styles.sectionEyebrow}><Sparkles size={12} /> FX {side}</div>
   const controls = (
@@ -209,10 +223,13 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
           <div className={styles.deckSyncControls}>
             <button
               type="button"
-              data-active={syncState.enabled || undefined}
+              data-enabled={syncState.enabled || undefined}
+              data-active={(syncState.enabled && isPlaying) || undefined}
               disabled={deck.trackId === null}
               onClick={() => runPlayerCommand(() => playerPlayback.toggleDeckSync(deck.id))}
+              aria-pressed={syncState.enabled}
               aria-label={`Sync Deck ${deck.id} to tempo master`}
+              title={syncState.reason ?? undefined}
             >SYNC</button>
             <button
               type="button"
@@ -224,6 +241,7 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
           </div>
         </div>
         <DeckTimeReadout deck={deck} />
+        <DeckTempoReadout deck={deck} state={timelineState} />
         <div className={styles.deckIdentity}>
           <b>{deck.id}</b>
           <span className={cn(styles.roleBadge, isProgram && styles.roleProgram)}>{roleLabel(deck.role)}</span>

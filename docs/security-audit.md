@@ -20,6 +20,8 @@ Covered checks:
 The regression suite additionally exercises two-user IDOR isolation for
 playlists and playback sessions in `tests/test_multiuser_api_scope.py`, and
 the security boundary regressions in `tests/test_security_hardening.py`.
+The public CSP allows `wasm-unsafe-eval` solely for the packaged Signalsmith
+audio engine while continuing to reject the broader JavaScript `unsafe-eval`.
 
 ## Running
 

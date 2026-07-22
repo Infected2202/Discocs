@@ -165,6 +165,8 @@ def test_public_nginx_overwrites_untrusted_identity_headers():
     assert config.count("proxy_set_header X-Forwarded-For $remote_addr;") == 5
     assert config.count('proxy_set_header X-Discocs-Service-Token "";') == 5
     assert "Content-Security-Policy" in config
+    assert "script-src 'self' 'wasm-unsafe-eval'" in config
+    assert "'unsafe-eval'" not in config
 
 
 def test_prod_backend_declares_trusted_docker_proxy_cidr():

@@ -164,12 +164,16 @@
 .deckMeta strong { font-size: 13px; }
 .deckMeta span { color: var(--muted-foreground); font-size: 10px; }
 .deckSyncControls { display: flex; gap: 3px; margin-top: 3px; }
-.deckSyncControls button { height: 15px; padding: 0 5px; border-radius: 2px; color: color-mix(in srgb, var(--track-accent) 78%, white); background: color-mix(in srgb, var(--track-accent) 22%, transparent); font-size: 6px; font-weight: 750; }
+.deckSyncControls button { height: 15px; padding: 0 5px; border-radius: 2px; color: var(--muted-foreground); background: rgb(255 255 255 / 7%); font-size: 6px; font-weight: 750; }
 .deckSyncControls button:disabled { opacity: .58; }
+.deckSyncControls button[data-enabled] { color: #4da3ff; }
 .deckSyncControls button[data-active] { color: #07111c; background: #4da3ff; box-shadow: 0 0 6px rgb(77 163 255 / 35%); }
 .deckReadout { display: grid; justify-items: end; font-variant-numeric: tabular-nums; }
 .deckReadout strong { font-size: 14px; }
 .deckReadout span { color: var(--muted-foreground); font-size: 9px; }
+.deckTempoReadout { display: grid; min-width: 54px; justify-items: end; font-variant-numeric: tabular-nums; }
+.deckTempoReadout strong { font-size: 13px; }
+.deckTempoReadout span { color: var(--muted-foreground); font-size: 9px; }
 .deckIdentity { display: grid; justify-items: center; gap: 2px; min-width: 57px; }
 .deckIdentity b { color: color-mix(in srgb, var(--track-accent) 78%, white); font-size: 18px; line-height: 1; }
 .deckIdentity small { color: var(--muted-foreground); font-size: 8px; text-transform: uppercase; }
@@ -299,6 +303,7 @@
   .deckArtwork { width: 36px; height: 36px; }
   .deckHeader { padding: 4px 7px; }
   .deckReadout { display: none; }
+  .deckTempoReadout { min-width: 48px; }
   .deckControls { grid-template-rows: 35px 1fr; }
   .transportControls { padding: 3px 6px; }
   .playButton, .secondaryButton, .handoverButton { height: 26px; }

@@ -677,7 +677,11 @@ export class PlayerPlaybackFacade {
 
   async setDeckTempoMaster(deck: DeckId): Promise<void> {
     await this.djActivationPromise
-    await this.upgradePromises[deck]
+    await this.ensureStretchDeck(deck)
+    const snapshot = this.runtime.getSnapshot()
+    await Promise.all((["A", "B"] as const)
+      .filter((candidate) => candidate !== deck && snapshot.beatSync.decks[candidate].enabled)
+      .map((candidate) => this.ensureStretchDeck(candidate)))
     return this.runtime.setTempoMaster(deck)
   }
 
@@ -687,11 +691,26 @@ export class PlayerPlaybackFacade {
 
   async toggleDeckSync(deck: DeckId): Promise<void> {
     await this.djActivationPromise
-    await this.upgradePromises[deck]
-    return this.runtime.toggleSync(deck)
+    await this.runtime.toggleSync(deck)
+    let snapshot = this.runtime.getSnapshot()
+    if (!snapshot.beatSync.decks[deck].enabled) return
+    const alignedOnToggle = snapshot.beatSync.decks[deck].phase === "aligned"
+
+    await this.ensureStretchDeck(deck)
+    snapshot = this.runtime.getSnapshot()
+    const master = snapshot.beatSync.master
+    if (master !== "clock" && master !== deck) await this.ensureStretchDeck(master)
+    if (!alignedOnToggle && master !== deck) await this.runtime.synchronizeDeck(deck)
   }
 
   async toggleDeck(deck: DeckId): Promise<void> {
+    const before = this.runtime.getSnapshot()
+    const starting = before.decks[deck].transport !== "playing"
+    if (starting && before.beatSync.decks[deck].enabled) {
+      await this.ensureStretchDeck(deck)
+      const master = this.runtime.getSnapshot().beatSync.master
+      if (master !== "clock" && master !== deck) await this.ensureStretchDeck(master)
+    }
     if (this.runtime.isStretchDeck(deck)) {
       const transport = this.runtime.getSnapshot().decks[deck].transport
       if (transport === "playing") await this.runtime.pauseDeck(deck)
@@ -749,6 +768,59 @@ export class PlayerPlaybackFacade {
       if (this.upgradePromises[deck] === pending) this.upgradePromises[deck] = null
     })
     return pending
+  }
+
+  private async ensureStretchDeck(deck: DeckId): Promise<DeckSourceUpgradeResult | null> {
+    if (this.runtime.isStretchDeck(deck)) {
+      return { upgraded: true, kind: "signalsmith", reason: null }
+    }
+    const queued = this.upgradePromises[deck]
+    if (queued) {
+      const result = await queued
+      if (result.upgraded || this.runtime.isStretchDeck(deck)) return result
+    }
+
+    const candidate = this.stretchCandidateForDeck(deck)
+    if (!candidate) return null
+    const snapshot = this.runtime.getSnapshot().decks[deck]
+    const startAtSeconds = candidate.element
+      ? candidate.element.currentTime
+      : snapshot.anchor?.mediaSeconds ?? 0
+    const autoplay = snapshot.transport === "playing" || (candidate.element ? !candidate.element.paused : false)
+    const result = await this.queueStretchUpgrade(deck, candidate.source, { startAtSeconds, autoplay })
+    if (result.upgraded) candidate.element?.pause()
+    return result
+  }
+
+  private stretchCandidateForDeck(deck: DeckId): {
+    readonly source: TrackSource
+    readonly element: HTMLAudioElement | null
+  } | null {
+    if (deck === this.runtime.programDeck && this.activeTrackId !== null) {
+      const url = this.activeObjectUrl ?? this.activeNetworkUrl ?? this.el.currentSrc ?? this.el.src
+      if (!url) return null
+      return {
+        source: {
+          url,
+          trackId: this.activeTrackId,
+          queueItemId: this.activeQueueItemId,
+          blob: this.activeBlob ?? undefined,
+        },
+        element: this.el,
+      }
+    }
+    if (this.prepared?.deck === deck) {
+      return {
+        source: {
+          url: this.prepared.objectUrl,
+          trackId: this.prepared.trackId,
+          queueItemId: this.prepared.queueItemId,
+          blob: this.prepared.blob,
+        },
+        element: this.prepared.element,
+      }
+    }
+    return null
   }
 
   private syncRuntimeCallbacks(): void {

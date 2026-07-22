@@ -295,9 +295,10 @@ describe("PlaybackEngine Phase 1 routing", () => {
       stretchEligibility: vi.fn(async (trackId) => ({ ready: true, reason: null, timeline: timelines[trackId] })),
     })
     engine.routeProgramElement(document.createElement("audio"), 1, "q1")
-    engine.routeIncomingElement(document.createElement("audio"), 2, "q2")
+    const incomingMedia = document.createElement("audio")
+    incomingMedia.playbackRate = 1.03
+    engine.routeIncomingElement(incomingMedia, 2, "q2")
     await engine.upgradeDeckSource("A", { url: "blob:a", trackId: 1, blob: new Blob(["a"]) })
-    await engine.upgradeDeckSource("B", { url: "blob:b", trackId: 2, blob: new Blob(["b"]) })
 
     await engine.playDeck("A")
     expect(engine.getSnapshot().beatSync).toMatchObject({ auto: true, master: "A", clockBpm: 126 })
@@ -306,11 +307,25 @@ describe("PlaybackEngine Phase 1 routing", () => {
     expect(engine.getSnapshot().beatSync.decks.A).toMatchObject({ enabled: true, phase: "aligned", reason: null })
 
     await engine.toggleSync("B")
+    expect(engine.getSnapshot().beatSync.decks.B).toMatchObject({
+      enabled: true,
+      phase: "unavailable",
+      reason: "Deck B requires a beat timeline",
+    })
+    await engine.upgradeDeckSource("B", { url: "blob:b", trackId: 2, blob: new Blob(["b"]) })
+    expect(engine.getSnapshot().decks.B.tempoRatio).toBeCloseTo(1.03)
+    expect(vi.mocked(nodeB.schedule)).toHaveBeenCalledWith(expect.objectContaining({ rate: 1.03 }), true)
+    await engine.synchronizeDeck("B")
     expect(engine.getSnapshot()).toMatchObject({
       beatSync: { decks: { B: { enabled: true, phase: "aligned", reason: null } } },
       decks: { B: { tempoRatio: 1.05 } },
     })
     expect(vi.mocked(nodeB.schedule)).toHaveBeenCalledWith(expect.objectContaining({ rate: 1.05 }), true)
+    expect(vi.mocked(nodeB.schedule)).toHaveBeenCalledWith(expect.objectContaining({
+      active: false,
+      input: expect.any(Number),
+      rate: 1.05,
+    }))
 
     await engine.setTempo("A", 1.02)
     expect(engine.getSnapshot().decks.B.tempoRatio).toBeCloseTo(1.071)

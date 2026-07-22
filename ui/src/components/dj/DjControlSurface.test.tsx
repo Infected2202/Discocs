@@ -316,7 +316,7 @@ describe("DjControlSurface", () => {
       ...base,
       decks: {
         A: { ...base.decks.A, transport: "playing" as never },
-        B: { ...base.decks.B, transport: "playing" as never },
+        B: { ...base.decks.B, transport: "playing" as never, tempoRatio: 1.05 },
       },
       beatSync: {
         auto: true,
@@ -328,7 +328,7 @@ describe("DjControlSurface", () => {
         },
       },
     })
-    useTimeline.mockReturnValue({ status: "missing" } as never)
+    useTimeline.mockReturnValue({ status: "ready", timeline: { bpm: 120 } } as never)
     useUIStore.setState({ djSurfaceOpen: true })
     render(<DjControlSurface />)
 
@@ -338,7 +338,10 @@ describe("DjControlSurface", () => {
     expect(screen.getByLabelText("Deck A pitch")).toBeEnabled()
     expect(screen.getByLabelText("Deck B pitch")).toBeDisabled()
     expect(screen.getByLabelText("Sync Deck A to tempo master")).toBeEnabled()
-    expect(screen.getByLabelText("Sync Deck B to tempo master")).toBeEnabled()
+    expect(screen.getByLabelText("Sync Deck B to tempo master")).toHaveAttribute("data-enabled", "true")
+    expect(screen.getByLabelText("Sync Deck B to tempo master")).toHaveAttribute("data-active", "true")
+    expect(screen.getByLabelText("Deck B current tempo")).toHaveTextContent("126.00")
+    expect(screen.getByLabelText("Deck B pitch")).toHaveAttribute("aria-valuenow", "0.625")
     expect(screen.getByLabelText("Set Deck B as tempo master")).toBeEnabled()
 
     fireEvent.click(screen.getByLabelText("Sync Deck A to tempo master"))
@@ -352,6 +355,28 @@ describe("DjControlSurface", () => {
     expect(playback.setDeckTempoMaster).toHaveBeenCalledWith("B")
     expect(playback.setAutoTempoMaster).toHaveBeenCalledOnce()
     expect(playback.setClockTempoMaster).not.toHaveBeenCalled()
+  })
+
+  it("shows an armed paused SYNC as blue text without the playing background", () => {
+    const base = snapshot()
+    playback.getEngineSnapshot.mockReturnValue({
+      ...base,
+      beatSync: {
+        ...base.beatSync,
+        master: "A",
+        decks: {
+          ...base.beatSync.decks,
+          B: { enabled: true, phase: "pending", reason: null },
+        },
+      },
+    })
+    useUIStore.setState({ djSurfaceOpen: true })
+    render(<DjControlSurface />)
+
+    const sync = screen.getByLabelText("Sync Deck B to tempo master")
+    expect(sync).toHaveAttribute("data-enabled", "true")
+    expect(sync).not.toHaveAttribute("data-active")
+    expect(sync).toHaveAttribute("aria-pressed", "true")
   })
 
   it("hides the mixer and shows an activate button while the engine is off", () => {

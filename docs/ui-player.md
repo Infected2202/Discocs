@@ -213,12 +213,22 @@ The DJ header contains Traktor-style `AUTO` and `MASTER` clock controls. With
 AUTO active, the first deck that starts becomes tempo master; if that deck
 stops, ownership moves to the other playing deck or back to the
 editable master clock. Each loaded deck has a clickable `SYNC` button,
-including the current MASTER deck. On MASTER it records the deck's SYNC state;
-if MASTER later moves, an engaged former master immediately becomes a follower.
+including the current MASTER deck and paused decks. SYNC arms immediately and
+remains armed while full-track Signalsmith preparation is pending or retried;
+it is not cleared by a temporary capability/preparation failure. On a paused
+deck the button shows an armed text state. While that deck is playing it shows
+the active filled state. On MASTER it records the deck's SYNC state; if MASTER
+later moves, an engaged former master immediately becomes a follower.
 BeatSync matches each engaged non-master deck to the master BPM and beat phase
-and leaves the matched tempo in place when SYNC is disengaged. Master tempo
-changes propagate to engaged followers. Following requires Signalsmith plus a
-valid beat timeline and respects the agreed ±8% deck range.
+before/while it plays and leaves the matched tempo in place when SYNC is
+disengaged. Starting a previously armed deck goes through the same tempo/phase
+alignment path. Master tempo changes propagate to engaged followers. Following
+requires Signalsmith plus a valid beat timeline and respects the agreed ±8%
+deck range. Each deck header displays its resulting BPM and pitch percentage;
+the disabled follower pitch fader still moves to the applied ratio.
+Production CSP permits only the narrow `wasm-unsafe-eval` script capability
+required to compile the packaged Signalsmith WebAssembly module; general
+JavaScript `unsafe-eval` remains forbidden.
 Seek, loop and handover/retirement paths re-evaluate phase and ownership; Group
 3 will add measured continuous drift correction and browser quality gates.
 
