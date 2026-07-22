@@ -139,7 +139,13 @@ describe("DeckRuntime load timeout", () => {
     return fakeSource((_source, signal) => new Promise((_resolve, reject) => {
       signal.addEventListener("abort", () => {
         const abortReason = (signal as { reason?: unknown }).reason
-        reject(abortReason instanceof Error ? abortReason : new DOMException("Aborted", "AbortError"))
+        // jsdom's DOMException does not extend Error, so an instanceof-Error-only
+        // check would miss a `new DOMException(..., "TimeoutError")` reason.
+        reject(
+          abortReason instanceof Error || abortReason instanceof DOMException
+            ? (abortReason as Error)
+            : new DOMException("Aborted", "AbortError"),
+        )
       }, { once: true })
     }))
   }
