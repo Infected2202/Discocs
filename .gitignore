@@ -42,6 +42,7 @@ eval/results/
 
 # Playwright MCP session artifacts
 .playwright-mcp/
+.codex-remote-attachments/
 
 # Local Codex/test secrets
 .codex/local-secrets.env
