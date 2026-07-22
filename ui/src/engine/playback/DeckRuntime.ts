@@ -35,6 +35,7 @@ export class DeckRuntime {
   private transport: TransportState = "idle"
   private duration: number | null = null
   private readonly notify: () => void
+  private readonly onClockTick: () => void
 
   constructor(
     id: DeckId,
@@ -42,12 +43,14 @@ export class DeckRuntime {
     createSource: DeckSourceFactory,
     notify: () => void = () => undefined,
     loadTimeoutMs: number = DEFAULT_LOAD_TIMEOUT_MS,
+    onClockTick: () => void = () => undefined,
   ) {
     this.id = id
     this.graph = graph
     this.createSource = createSource
     this.notify = notify
     this.loadTimeoutMs = loadTimeoutMs
+    this.onClockTick = onClockTick
   }
 
   async load(source: TrackSource, options: DeckLoadOptions = {}): Promise<SourceMetadata> {
@@ -98,6 +101,7 @@ export class DeckRuntime {
         this.candidate = null
         this.active = candidate
         candidate.setStateListener?.(() => this.notify())
+        candidate.setClockTickListener?.(() => this.onClockTick())
         this.transport = candidate.getTransportState?.() ?? (options.autoplay ? "playing" : "paused")
         this.duration = metadata.duration
         if (this.loadController === controller) this.loadController = null
@@ -203,6 +207,7 @@ export class DeckRuntime {
     this.active = null
     if (!active) return
     active.setStateListener?.(null)
+    active.setClockTickListener?.(null)
     this.graph.detachSource(this.id, active.output)
     await active.release()
   }

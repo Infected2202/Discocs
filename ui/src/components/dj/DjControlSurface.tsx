@@ -201,6 +201,7 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
   const pitchPercent = (deck.tempoRatio - 1) * 100
   const isTempoMaster = tempoSync.master === deck.id
   const syncState = tempoSync.decks[deck.id]
+  const isTempoFollowerEngaged = syncState.enabled && syncState.mode === "tempo" && !isTempoMaster
 
   return (
     <section
@@ -309,6 +310,29 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
           onChange={(value) => runPlayerCommand(() => playerPlayback.setDeckTempo(deck.id, 1 + value * 0.08))}
         />
       </div>
+      {isTempoFollowerEngaged && (
+        <div className={styles.phaseOffsetReadout} aria-label={`Deck ${deck.id} phase offset`}>
+          {syncState.phaseOffsetBeats >= 0 ? "+" : ""}{syncState.phaseOffsetBeats.toFixed(2)} beat
+        </div>
+      )}
+      {isTempoFollowerEngaged && (
+        <div className={styles.tempoNudgeControls}>
+          <button
+            type="button"
+            aria-label={`Nudge Deck ${deck.id} tempo up`}
+            onPointerDown={() => playerPlayback.beginTempoNudge(deck.id, "up")}
+            onPointerUp={() => playerPlayback.endTempoNudge(deck.id)}
+            onPointerLeave={() => playerPlayback.endTempoNudge(deck.id)}
+          >+</button>
+          <button
+            type="button"
+            aria-label={`Nudge Deck ${deck.id} tempo down`}
+            onPointerDown={() => playerPlayback.beginTempoNudge(deck.id, "down")}
+            onPointerUp={() => playerPlayback.endTempoNudge(deck.id)}
+            onPointerLeave={() => playerPlayback.endTempoNudge(deck.id)}
+          >−</button>
+        </div>
+      )}
     </section>
   )
 }

@@ -22,6 +22,8 @@ const playback = vi.hoisted(() => ({
   setDeckTempoMaster: vi.fn().mockResolvedValue(undefined),
   setMasterClockTempo: vi.fn().mockResolvedValue(undefined),
   toggleDeckSync: vi.fn().mockResolvedValue(undefined),
+  beginTempoNudge: vi.fn(),
+  endTempoNudge: vi.fn(),
   setVolume: vi.fn(),
   setMuted: vi.fn(),
   activateDjMode: vi.fn().mockResolvedValue(undefined),
@@ -408,6 +410,105 @@ describe("DjControlSurface", () => {
     expect(playback.setDeckTempoMaster).toHaveBeenCalledWith("B")
     expect(playback.setAutoTempoMaster).toHaveBeenCalledOnce()
     expect(playback.setClockTempoMaster).not.toHaveBeenCalled()
+  })
+
+  it("shows the phase-offset readout and nudge buttons only for an engaged TempoSync follower", () => {
+    const base = snapshot()
+    const tempoDecks = {
+      ...base.tempoSync,
+      master: "A" as const,
+      decks: {
+        A: { ...base.tempoSync.decks.A, canBecomeMaster: false },
+        B: {
+          enabled: true,
+          mode: "tempo" as const,
+          phase: "aligned" as const,
+          reason: null,
+          phaseOffsetBeats: 0.234,
+          canEngageBeatSync: true,
+          canEngageTempoSync: true,
+          canBecomeMaster: true,
+        },
+      },
+    }
+    playback.getEngineSnapshot.mockReturnValue({ ...base, tempoSync: tempoDecks })
+    useUIStore.setState({ djSurfaceOpen: true })
+    render(<DjControlSurface />)
+
+    expect(screen.getByLabelText("Deck B phase offset")).toHaveTextContent("+0.23 beat")
+    expect(screen.getByLabelText("Nudge Deck B tempo up")).toBeInTheDocument()
+    expect(screen.getByLabelText("Nudge Deck B tempo down")).toBeInTheDocument()
+    // Deck A is not an engaged TempoSync follower (no sync enabled at all).
+    expect(screen.queryByLabelText("Deck A phase offset")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Nudge Deck A tempo up")).not.toBeInTheDocument()
+  })
+
+  it("hides the phase-offset readout and nudge buttons for a BeatSync follower and for the tempo master itself", () => {
+    const base = snapshot()
+    playback.getEngineSnapshot.mockReturnValue({
+      ...base,
+      tempoSync: {
+        ...base.tempoSync,
+        master: "A",
+        decks: {
+          ...base.tempoSync.decks,
+          B: {
+            enabled: true,
+            mode: "beat",
+            phase: "aligned",
+            reason: null,
+            phaseOffsetBeats: 0.5,
+            canEngageBeatSync: true,
+            canEngageTempoSync: true,
+            canBecomeMaster: true,
+          },
+        },
+      },
+    })
+    useUIStore.setState({ djSurfaceOpen: true })
+    render(<DjControlSurface />)
+
+    // BeatSync, not TempoSync -- no readout, no nudge controls.
+    expect(screen.queryByLabelText("Deck B phase offset")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Nudge Deck B tempo up")).not.toBeInTheDocument()
+  })
+
+  it("wires the tempo nudge buttons to begin/end press-and-hold on the facade", () => {
+    const base = snapshot()
+    playback.getEngineSnapshot.mockReturnValue({
+      ...base,
+      tempoSync: {
+        ...base.tempoSync,
+        master: "A",
+        decks: {
+          ...base.tempoSync.decks,
+          B: {
+            enabled: true,
+            mode: "tempo",
+            phase: "aligned",
+            reason: null,
+            phaseOffsetBeats: -0.1,
+            canEngageBeatSync: true,
+            canEngageTempoSync: true,
+            canBecomeMaster: true,
+          },
+        },
+      },
+    })
+    useUIStore.setState({ djSurfaceOpen: true })
+    render(<DjControlSurface />)
+
+    const up = screen.getByLabelText("Nudge Deck B tempo up")
+    fireEvent.pointerDown(up, { pointerId: 1 })
+    expect(playback.beginTempoNudge).toHaveBeenCalledWith("B", "up")
+    fireEvent.pointerUp(up, { pointerId: 1 })
+    expect(playback.endTempoNudge).toHaveBeenCalledWith("B")
+
+    const down = screen.getByLabelText("Nudge Deck B tempo down")
+    fireEvent.pointerDown(down, { pointerId: 2 })
+    expect(playback.beginTempoNudge).toHaveBeenCalledWith("B", "down")
+    fireEvent.pointerLeave(down, { pointerId: 2 })
+    expect(playback.endTempoNudge).toHaveBeenCalledTimes(2)
   })
 
   it("shows an armed paused BeatSync as blue text without the playing background", () => {

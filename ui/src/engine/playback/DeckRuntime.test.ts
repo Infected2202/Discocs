@@ -34,6 +34,16 @@ function fakeSource(load: DeckSource["load"]): DeckSource {
   }
 }
 
+// A source that additionally supports the dedicated clock-tick channel
+// (SYNC_REWRITE_PLAN.md §2.1), distinct from setStateListener.
+function fakeClockTickingSource(): DeckSource & { fireClockTick: () => void } {
+  const source = fakeSource(async () => metadata) as DeckSource & { fireClockTick: () => void }
+  let clockListener: (() => void) | null = null
+  source.setClockTickListener = vi.fn((listener) => { clockListener = listener })
+  source.fireClockTick = () => clockListener?.()
+  return source
+}
+
 function fakeGraph(): MixerGraph {
   const attachments = new Map<string, AudioNode>()
   return {
@@ -169,5 +179,44 @@ describe("DeckRuntime load timeout", () => {
 
     await expect(runtime.load(track(1))).rejects.toMatchObject({ name: "TimeoutError" })
     expect(source.release).toHaveBeenCalled()
+  })
+})
+
+// R4 (SYNC_REWRITE_PLAN.md §2.1): the Signalsmith clock tick reaches
+// PlaybackEngine via a channel dedicated to it (onClockTick), separate from
+// the general notify used for transport/seek/rate changes.
+describe("DeckRuntime clock-tick channel", () => {
+  it("wires the source's dedicated clock-tick listener to the onClockTick callback", async () => {
+    const source = fakeClockTickingSource()
+    const onClockTick = vi.fn()
+    const runtime = new DeckRuntime("A", fakeGraph(), () => source, undefined, undefined, onClockTick)
+
+    await runtime.load(track(1))
+    expect(source.setClockTickListener).toHaveBeenCalled()
+
+    source.fireClockTick()
+    expect(onClockTick).toHaveBeenCalledTimes(1)
+
+    source.fireClockTick()
+    expect(onClockTick).toHaveBeenCalledTimes(2)
+  })
+
+  it("clears the clock-tick listener on release, so a stale source can't call back", async () => {
+    const source = fakeClockTickingSource()
+    const onClockTick = vi.fn()
+    const runtime = new DeckRuntime("A", fakeGraph(), () => source, undefined, undefined, onClockTick)
+    await runtime.load(track(1))
+
+    await runtime.release()
+
+    expect(source.setClockTickListener).toHaveBeenLastCalledWith(null)
+  })
+
+  it("never throws for a source that does not implement the clock-tick channel", async () => {
+    const source = fakeSource(async () => metadata)
+    const runtime = new DeckRuntime("A", fakeGraph(), () => source, undefined, undefined, vi.fn())
+
+    await expect(runtime.load(track(1))).resolves.toEqual(metadata)
+    await expect(runtime.release()).resolves.toBeUndefined()
   })
 })

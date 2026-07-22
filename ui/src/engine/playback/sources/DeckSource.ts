@@ -27,6 +27,14 @@ export interface DeckSource {
   getBufferedRanges(): BufferedRange[]
   getTransportState?(): import("../types").TransportState
   setStateListener?(listener: (() => void) | null): void
+  /**
+   * A dedicated channel for the periodic Signalsmith worklet clock tick
+   * (distinct from `setStateListener`, which fires on every transport/seek/
+   * rate change too): SYNC_REWRITE_PLAN.md §2.1 wires this specifically to
+   * the follower phase-offset measurement, which must only ever fire from
+   * the real ~0.25s tick, not from every unrelated notify.
+   */
+  setClockTickListener?(listener: (() => void) | null): void
   release(): Promise<void>
 }
 

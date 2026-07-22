@@ -60,6 +60,7 @@ export interface DeckSnapshot {
 export type TempoMaster = DeckId | "clock"
 export type DeckSyncPhase = "off" | "arming" | "pending" | "aligned" | "unavailable"
 export type SyncMode = "beat" | "tempo"
+export type TempoNudgeDirection = "up" | "down"
 
 export interface DeckTempoSyncSnapshot {
   enabled: boolean

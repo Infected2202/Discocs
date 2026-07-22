@@ -74,6 +74,45 @@ describe("StretchDeckSource full-track lifecycle", () => {
     expect(node.port?.close).toHaveBeenCalledOnce()
   })
 
+  // R4 (SYNC_REWRITE_PLAN.md §2.1): the clock-tick listener is a channel
+  // dedicated to the periodic worklet tick, separate from setStateListener
+  // (which also fires on ordinary transport changes) -- both must fire from
+  // the same tick, but the clock-tick listener must not fire from anything
+  // else.
+  it("fires both the general state listener and the dedicated clock-tick listener from the same worklet tick", async () => {
+    const context = createFakeAudioContext({ currentTime: 10 })
+    vi.mocked(context.createGain).mockReturnValue(new FakeAudioNode())
+    vi.mocked(context.decodeAudioData).mockResolvedValue({
+      duration: 2, length: 2, numberOfChannels: 1,
+      getChannelData: () => new Float32Array([0.25, -0.25]),
+    } as unknown as AudioBuffer)
+    const node = createFakeStretchNode(context)
+    let tick!: (inputTime: number) => void
+    vi.mocked(node.setUpdateInterval).mockImplementation(async (_seconds, callback) => { tick = callback! })
+    const source = new StretchDeckSource(context as unknown as AudioContext, { createNode: vi.fn().mockResolvedValue(node) })
+    await source.load({ url: "blob:deck", trackId: 7, blob: new Blob(["audio"]) }, new AbortController().signal)
+
+    const stateListener = vi.fn()
+    const clockTickListener = vi.fn()
+    source.setStateListener(stateListener)
+    source.setClockTickListener(clockTickListener)
+
+    tick(0.5)
+
+    expect(stateListener).toHaveBeenCalledOnce()
+    expect(clockTickListener).toHaveBeenCalledOnce()
+
+    // Ordinary transport operations fire the state listener but never the
+    // dedicated clock-tick channel.
+    await source.play()
+    expect(stateListener.mock.calls.length).toBeGreaterThan(1)
+    expect(clockTickListener).toHaveBeenCalledOnce()
+
+    source.setClockTickListener(null)
+    tick(0.6)
+    expect(clockTickListener).toHaveBeenCalledOnce()
+  })
+
   it("aborts a stalled worklet RPC sequence via the AbortSignal and disposes the node once it later settles", async () => {
     const context = createFakeAudioContext({ currentTime: 10 })
     vi.mocked(context.createGain).mockReturnValue(new FakeAudioNode())

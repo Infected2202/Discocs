@@ -8,6 +8,7 @@ import type {
   HandoverResult,
   PlaybackEngineSnapshot,
   SyncMode,
+  TempoNudgeDirection,
   TrackSource,
   TransportState,
 } from "./types"
@@ -772,6 +773,14 @@ export class PlayerPlaybackFacade {
     const master = snapshot.tempoSync.master
     if (master !== "clock" && master !== deck) await this.ensureStretchDeck(master)
     await this.runtime.toggleSync(deck, mode)
+  }
+
+  beginTempoNudge(deck: DeckId, direction: TempoNudgeDirection): void {
+    this.runtime.beginTempoNudge(deck, direction)
+  }
+
+  endTempoNudge(deck: DeckId): void {
+    this.runtime.endTempoNudge(deck)
   }
 
   async toggleDeck(deck: DeckId): Promise<void> {
