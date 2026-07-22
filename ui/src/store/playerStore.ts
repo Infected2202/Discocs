@@ -957,9 +957,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
         applyEnvelope(envelope, false, false)
         if (!audioEngine.hasPrepared(trackId, target.id)) {
-          audioEngine.cancelPrefetch()
-          audioEngine.clearPrefetched()
-          await audioEngine.prefetch(
+          await audioEngine.prepareDjDeck(
             trackId,
             trackAudioUrl(trackId, playbackProfile.key),
             playbackProfile.key,

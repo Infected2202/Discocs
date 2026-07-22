@@ -46,7 +46,11 @@ export class PlayerPlaybackFacade {
     objectUrl: string
     blob: Blob
   } | null = null
-  private prepared: {
+  // DJ deck: a fully isolated resource populated only by prepareDjDeck(),
+  // never by ordinary background prefetch. The only allowed handoff is the
+  // one-time seed from `prefetched` at DJ-mode activation (see
+  // ensurePreparedDeckFromCache) — after that instant the two never alias.
+  private djDeck: {
     trackId: number
     queueItemId: string | null
     profileKey: string
@@ -55,6 +59,8 @@ export class PlayerPlaybackFacade {
     element: HTMLAudioElement
     deck: DeckId
   } | null = null
+  private djDeckController: AbortController | null = null
+  private djDeckTarget: { trackId: number; profileKey: string; queueItemId: string | null } | null = null
   private retired: { element: HTMLAudioElement; objectUrl: string | null; blob: Blob | null; deck: DeckId } | null = null
   private prefetchController: AbortController | null = null
   private prefetchTarget: { trackId: number; profileKey: string } | null = null
@@ -157,25 +163,11 @@ export class PlayerPlaybackFacade {
       if (controller.signal.aborted) return
       if (this.prefetchTarget?.trackId !== trackId || this.prefetchTarget.profileKey !== profileKey) return
       const objectUrl = URL.createObjectURL(blob)
+      // Graph-unaware by design: prefetch() only ever populates the ordinary
+      // blob/objectUrl cache, regardless of DJ-mode state. It never routes an
+      // element into the mixer graph — that is prepareDjDeck()'s job alone,
+      // so routine background caching can never delete an armed DJ deck.
       this.prefetched = { trackId, queueItemId, profileKey, objectUrl, blob }
-      // Обычный режим: только держим blob наготове (consumePrefetched подставит
-      // его в чистый <audio>). Деку в графе не создаём — иначе следующий трек
-      // снова оказывается привязан к Web Audio. Активация DJ достроит деку из
-      // этого кеша через ensurePreparedDeckFromCache().
-      if (!this.graphActive) return
-      const element = this.createElement()
-      element.volume = this.el.volume
-      element.muted = this.el.muted
-      element.src = objectUrl
-      element.load()
-      const deck = this.runtime.routeIncomingElement(element, trackId, queueItemId)
-      if (deck) {
-        this.prepared = { trackId, queueItemId, profileKey, objectUrl, blob, element, deck }
-        await this.queueStretchUpgrade(deck, { url: objectUrl, trackId, queueItemId, blob })
-      } else {
-        element.src = ""
-        element.load()
-      }
     } finally {
       if (this.prefetchController === controller) {
         this.prefetchController = null
@@ -189,13 +181,6 @@ export class PlayerPlaybackFacade {
     const objectUrl = this.prefetched.objectUrl
     this.activeBlob = this.prefetched.blob
     this.prefetched = null
-    if (this.prepared?.objectUrl === objectUrl) {
-      this.runtime.cancelIncoming()
-      this.prepared.element.pause()
-      this.prepared.element.src = ""
-      this.prepared.element.load()
-      this.prepared = null
-    }
     if (this.activeObjectUrl && this.activeObjectUrl !== objectUrl) {
       URL.revokeObjectURL(this.activeObjectUrl)
     }
@@ -210,20 +195,81 @@ export class PlayerPlaybackFacade {
   }
 
   clearPrefetched() {
-    if (this.prepared) {
-      this.runtime.cancelIncoming()
-      this.prepared.element.pause()
-      this.prepared.element.src = ""
-      this.prepared.element.load()
-      this.prepared = null
-    }
+    // Only the ordinary blob cache — never touches the DJ deck. Background
+    // prefetch (which calls this via prefetch()/directly) must never tear
+    // down a manually-armed DJ deck as a side effect.
     if (this.prefetched) URL.revokeObjectURL(this.prefetched.objectUrl)
     this.prefetched = null
   }
 
+  /**
+   * Load a track onto the DJ deck (the isolated resource used by the DJ's
+   * manual "load onto second deck" action) — own fetch, own element, own
+   * AbortController. Never touches `prefetched`/`prefetchController`, so
+   * ordinary background prefetch can never observe or disturb it.
+   */
+  async prepareDjDeck(trackId: number, url: string, profileKey: string, queueItemId: string | null = null): Promise<void> {
+    if (
+      this.djDeck?.trackId === trackId
+      && this.djDeck.profileKey === profileKey
+      && this.djDeck.queueItemId === queueItemId
+    ) return
+    this.clearDjDeck()
+    const controller = new AbortController()
+    this.djDeckController = controller
+    this.djDeckTarget = { trackId, profileKey, queueItemId }
+    try {
+      const response = await fetch(url, {
+        credentials: "same-origin",
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error(`DJ deck load failed: HTTP ${response.status}`)
+      const blob = await response.blob()
+      if (controller.signal.aborted) return
+      if (
+        this.djDeckTarget?.trackId !== trackId
+        || this.djDeckTarget.profileKey !== profileKey
+        || this.djDeckTarget.queueItemId !== queueItemId
+      ) return
+      const objectUrl = URL.createObjectURL(blob)
+      const element = this.createElement()
+      element.volume = this.el.volume
+      element.muted = this.el.muted
+      element.src = objectUrl
+      element.load()
+      const deck = this.runtime.routeIncomingElement(element, trackId, queueItemId)
+      if (deck) {
+        this.djDeck = { trackId, queueItemId, profileKey, objectUrl, blob, element, deck }
+        await this.queueStretchUpgrade(deck, { url: objectUrl, trackId, queueItemId, blob })
+      } else {
+        element.src = ""
+        element.load()
+      }
+    } finally {
+      if (this.djDeckController === controller) {
+        this.djDeckController = null
+        this.djDeckTarget = null
+      }
+    }
+  }
+
+  /** Tear down the DJ deck alone — never reaches into `prefetched`. */
+  clearDjDeck(): void {
+    this.djDeckController?.abort()
+    this.djDeckController = null
+    this.djDeckTarget = null
+    if (this.djDeck) {
+      this.runtime.cancelIncoming()
+      this.djDeck.element.pause()
+      this.djDeck.element.src = ""
+      this.djDeck.element.load()
+      this.djDeck = null
+    }
+  }
+
   hasPrepared(trackId: number, queueItemId: string): boolean {
-    return this.prepared?.trackId === trackId
-      && this.prepared.queueItemId === queueItemId
+    return this.djDeck?.trackId === trackId
+      && this.djDeck.queueItemId === queueItemId
   }
 
   async handoverPrepared(clientHandoverId: string): Promise<{
@@ -233,7 +279,7 @@ export class PlayerPlaybackFacade {
     outgoingDeck: DeckId
     programDeck: DeckId
   }> {
-    const incoming = this.prepared
+    const incoming = this.djDeck
     if (!incoming?.queueItemId) throw new Error("Incoming deck is not prepared")
     await this.runtime.ensureReady()
     const previous = this.el
@@ -263,7 +309,7 @@ export class PlayerPlaybackFacade {
     this.activeBlob = incoming.blob
     this.fullyBufferedReported = true
     this.prefetched = null
-    this.prepared = null
+    this.djDeck = null
     this.callbacks?.onBufferUpdate([{ start: 0, end: 1 }])
     this.callbacks?.onPlaybackStateChange("playing")
     return {
@@ -329,7 +375,7 @@ export class PlayerPlaybackFacade {
     // Обычный prefetch кеширует только blob — при активации достраиваем из него
     // incoming-деку в графе.
     this.ensurePreparedDeckFromCache()
-    const incoming = this.prepared
+    const incoming = this.djDeck
     if (incoming) {
       await this.queueStretchUpgrade(incoming.deck, {
         url: incoming.objectUrl,
@@ -341,7 +387,11 @@ export class PlayerPlaybackFacade {
   }
 
   private ensurePreparedDeckFromCache(): void {
-    if (this.prepared || !this.prefetched) return
+    // The one explicitly-allowed handoff (product decision #3): seed the DJ
+    // deck once, at activation, from whatever the ordinary player already
+    // has cached — no new network fetch. After this instant `djDeck` and
+    // `prefetched` never alias again.
+    if (this.djDeck || !this.prefetched) return
     const { trackId, queueItemId, profileKey, objectUrl, blob } = this.prefetched
     const element = this.createElement()
     element.volume = this.el.volume
@@ -350,7 +400,7 @@ export class PlayerPlaybackFacade {
     element.load()
     const deck = this.runtime.routeIncomingElement(element, trackId, queueItemId)
     if (deck) {
-      this.prepared = { trackId, queueItemId, profileKey, objectUrl, blob, element, deck }
+      this.djDeck = { trackId, queueItemId, profileKey, objectUrl, blob, element, deck }
     } else {
       element.src = ""
       element.load()
@@ -415,11 +465,11 @@ export class PlayerPlaybackFacade {
     previous.load()
 
     // Деки графа больше не нужны — обычный prefetch пересоберёт blob-кеш.
-    if (this.prepared) {
-      this.prepared.element.pause()
-      this.prepared.element.src = ""
-      this.prepared.element.load()
-      this.prepared = null
+    if (this.djDeck) {
+      this.djDeck.element.pause()
+      this.djDeck.element.src = ""
+      this.djDeck.element.load()
+      this.djDeck = null
     }
     if (this.retired) {
       this.retired.element.pause()
@@ -475,6 +525,7 @@ export class PlayerPlaybackFacade {
     prev.load()
     this.cancelPrefetch()
     this.clearPrefetched()
+    this.clearDjDeck()
     this.cancelActiveCache()
     if (this.activeObjectUrl) URL.revokeObjectURL(this.activeObjectUrl)
     this.activeObjectUrl = null
@@ -604,13 +655,13 @@ export class PlayerPlaybackFacade {
   setVolume(v: number) {
     const volume = Math.max(0, Math.min(1, v))
     this.el.volume = volume
-    if (this.prepared) this.prepared.element.volume = volume
+    if (this.djDeck) this.djDeck.element.volume = volume
     if (this.graphActive) this.runtime.setMasterGain(this.el.muted ? 0 : volume)
   }
 
   setMuted(muted: boolean) {
     this.el.muted = muted
-    if (this.prepared) this.prepared.element.muted = muted
+    if (this.djDeck) this.djDeck.element.muted = muted
     if (this.graphActive) this.runtime.setMasterGain(muted ? 0 : this.el.volume)
   }
 
@@ -828,15 +879,15 @@ export class PlayerPlaybackFacade {
         element: this.el,
       }
     }
-    if (this.prepared?.deck === deck) {
+    if (this.djDeck?.deck === deck) {
       return {
         source: {
-          url: this.prepared.objectUrl,
-          trackId: this.prepared.trackId,
-          queueItemId: this.prepared.queueItemId,
-          blob: this.prepared.blob,
+          url: this.djDeck.objectUrl,
+          trackId: this.djDeck.trackId,
+          queueItemId: this.djDeck.queueItemId,
+          blob: this.djDeck.blob,
         },
-        element: this.prepared.element,
+        element: this.djDeck.element,
       }
     }
     return null
@@ -971,7 +1022,7 @@ export class PlayerPlaybackFacade {
 
   private elementForDeck(deck: DeckId): HTMLAudioElement | null {
     if (deck === this.runtime.programDeck) return this.el
-    if (this.prepared?.deck === deck) return this.prepared.element
+    if (this.djDeck?.deck === deck) return this.djDeck.element
     if (this.retired?.deck === deck) return this.retired.element
     return null
   }
