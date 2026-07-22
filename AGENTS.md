@@ -2,13 +2,26 @@
 
 ## Работа с проектом
 
-Создавай коммит после каждого изменения.
+Коммить и пушить **один раз, когда задача полностью выполнена** — не после
+каждой отдельной правки. `disableConcurrentBuilds()` в Jenkins не даёт сборкам
+идти параллельно: частые пуши копят очередь из полных прогонов пайплайна
+(`Test → Sonar → Build&Push → Security Scan → Deploy`). Один коммит/пуш на
+логическую задачу сохраняет осмысленную историю и не перегружает CI.
+
+После завершения задачи пушить `main` в оба remote:
+
+```bash
+git push origin main && git push gitea main
+```
+
+Gitea-триггер запускает Jenkins CI.
 
 Используй MCP-инструменты когда они уместны: Playwright для проверки UI в браузере, context7 для актуальной документации библиотек.
 
-При каждом изменении:
-1. Пиши или обновляй тесты — новый код без теста не считается готовым.
-2. Обновляй документацию в `docs/` если меняется поведение, API или пайплайн.
+Каждая значимая задача:
+1. Код + тесты — новый код без теста не считается готовым.
+2. Документация в `docs/`, если меняется поведение, API или пайплайн.
+3. Один коммит + push в `origin/main` и `gitea/main`, когда всё готово.
 
 ## Формат ответа
 
@@ -16,7 +29,12 @@
 
 ## Tests
 
-Тесты — обязательная часть каждого значительного изменения, не запускай тесты после изменения параметров в конфигах.
+Тесты — обязательная часть каждого значительного изменения. **Не запускай
+тесты, сборки, typecheck и линтеры локально для самопроверки** (`pytest`,
+`docker build`, `tsc`, `vitest`, `npm run build` и т.п.). Это выполняется в
+Jenkins (`Test → Sonar → Security Scan`); локальный прогон дублирует CI и может
+расходиться с окружением CI-контейнеров. Пиши код и тесты, затем делай один
+коммит/push и проверяй CI по правилам ниже.
 
 Write tests that would fail if the tested logic were removed or inverted. A failing test means the code is broken, not the test. Fix the code, not the test — unless the requirement genuinely changed, in which case update the test first, then fix the code. `tests/conftest.py` поднимает in-memory SQLite и заглушки модели — реальные файлы и Essentia не нужны для unit-тестов.
 
@@ -30,6 +48,32 @@ Write tests that would fail if the tested logic were removed or inverted. A fail
 - FastAPI: health, search, similar — включая пути ошибок
 
 Интеграционные тесты с реальной моделью или Essentia помечать `@pytest.mark.integration`.
+
+## CI results
+
+Результаты сборки, тестов и сканов проверяй в Jenkins, а не локальными
+прогонами:
+
+- качество кода, coverage и security hotspots — через SonarQube MCP
+  (`mcp__sonarqube__*`), проект `discocs`;
+- сборка, стадии, тесты и Trivy — Jenkins API, job
+  `http://192.168.1.41:8077/job/HS/job/discocs_build`;
+- read-only credentials `JENKINS_USER`/`JENKINS_TOKEN` находятся в
+  `.claude/settings.local.json` и не коммитятся.
+
+Проверяй CI от дешёвого запроса к дорогому:
+
+1. `GET lastBuild/api/json?tree=number,building,result` — дождаться
+   `building:false` для сборки, запущенной текущим push.
+2. При `result == SUCCESS` дальнейшие запросы не нужны.
+3. При ошибке сначала использовать структурированные источники:
+   - тесты: `GET lastBuild/testReport/api/json?tree=failCount,passCount,skipCount`;
+   - детали упавших тестов: `testReport/api/json?tree=suites%5Bcases%5Bname,className,status,errorDetails%5D%5D`;
+   - Trivy HTML: `lastBuild/Trivy_3a_20backend/` и аналогичные страницы
+     `frontend`/`bot`;
+   - статусы прочих стадий: `GET lastBuild/wfapi/describe`.
+4. `lastBuild/consoleText` читать только если структурированные данные не
+   объяснили ошибку.
 
 ## UI Rule
 
