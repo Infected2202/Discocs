@@ -456,4 +456,236 @@ describe("PlaybackEngine Phase 1 routing", () => {
 
     expect(engine.getSnapshot().tempoSync).toMatchObject({ auto: false, master: "clock", clockBpm: 140 })
   })
+
+  // R4 (SYNC_REWRITE_PLAN.md §2.1): the Signalsmith 0.25s clock tick
+  // (StretchDeckSource's setUpdateInterval callback, reached here via
+  // DeckRuntime's dedicated onClockTick channel) must compute the
+  // follower's beat-phase offset from the master and dispatch
+  // phase-offset-observed. Mode determines what happens next: BeatSync
+  // re-aligns once past the drift threshold and honours the cooldown;
+  // TempoSync only ever updates the phaseOffsetBeats readout.
+  //
+  // The master here is the plain clock (not another deck): masterPhaseAt
+  // for "clock" is a pure function of audioTime with no Signalsmith
+  // scheduling-lead of its own, which keeps the expected numbers in this
+  // fake deterministic instead of entangled with a second deck's lead time.
+  describe("mode-aware alignment driven by the Signalsmith clock tick", () => {
+    function beatTimeline(): DecodedTimeline {
+      const beats = Float32Array.from({ length: 32 }, (_, index) => index * 0.5)
+      return {
+        durationSeconds: 16, levels: [], bpm: 120, beatConfidence: 0.9, rhythmCoverageSeconds: 16,
+        beats, localTempo: new Float32Array(32).fill(120),
+      }
+    }
+
+    async function setUpClockFollower(mode: "beat" | "tempo") {
+      vi.stubGlobal("AudioContext", FakeAudioContext)
+      let nodeB!: StretchNode
+      const createNode = vi.fn(async (context: AudioContext) => {
+        nodeB = createFakeStretchNode(context, { inputTime: 0 })
+        return nodeB
+      })
+      const engine = new PlaybackEngine(undefined, {
+        stretch: { createNode },
+        stretchEligibility: vi.fn(async () => ({ ready: true, reason: null, timeline: beatTimeline() })),
+      })
+      engine.routeProgramElement(document.createElement("audio"), 1, "q1")
+      engine.routeIncomingElement(document.createElement("audio"), 2, "q2")
+      await engine.setClockTempo(120)
+      // Pin the master clock (auto: false) before B ever plays -- otherwise
+      // AUTO would promote B itself to master the instant it starts, which
+      // would defeat the whole point of using the clock as a bias-free
+      // master for this test.
+      await engine.setClockMaster()
+      await engine.upgradeDeckSource("B", { url: "blob:b", trackId: 2, blob: new Blob(["b"]) })
+      await engine.toggleSync("B", mode)
+      await engine.playDeck("B")
+      expect(engine.getSnapshot().tempoSync).toMatchObject({ master: "clock" })
+      expect(engine.getSnapshot().tempoSync.decks.B).toMatchObject({ enabled: true, mode, phase: "aligned" })
+
+      const context = FakeAudioContext.instances[0]!
+      // Past the Signalsmith scheduling lead (~0.14s): position tracking has
+      // settled into steady linear motion, matching real-world behaviour
+      // once Web Audio's own small scheduling margin has elapsed. At this
+      // point the follower is genuinely phase-locked (offset 0), which the
+      // sub-threshold test below relies on as its clean baseline.
+      context.advance(5)
+      const tick = vi.mocked(nodeB.setUpdateInterval).mock.calls[0][1]!
+      return { engine, context, nodeB, tick }
+    }
+
+    // Directly perturbs the fake node's tracked position to simulate
+    // real-world clock drift this deterministic fake would never accumulate
+    // on its own (follower rate is exactly locked to the clock, so nothing
+    // in the model naturally drifts) -- 0.1s at 120bpm is 0.2 beats, well
+    // past BEAT_SYNC_DRIFT_THRESHOLD_BEATS (0.06). Absolute (relative to the
+    // clean, unperturbed `audioTime`-equals-position baseline this setup
+    // produces), not relative to whatever the node currently reads, so
+    // repeated calls in a single test represent a fresh drift each time
+    // rather than compounding an ever-growing one.
+    async function perturb(nodeB: StretchNode, context: FakeAudioContext, offsetSeconds: number) {
+      await nodeB.schedule({
+        active: true, input: context.currentTime + offsetSeconds, output: context.currentTime, rate: 1,
+      })
+    }
+
+    it("BeatSync re-aligns once drift passes the threshold, then honours the cooldown, then re-aligns again after it", async () => {
+      const { engine, context, nodeB, tick } = await setUpClockFollower("beat")
+
+      const callsBeforeFirstTick = vi.mocked(nodeB.schedule).mock.calls.length
+      await perturb(nodeB, context, 0.1)
+      tick(nodeB.inputTime)
+
+      // +1 for our manual perturbation call, +2 for the correction's
+      // setRate/seek (each of which issues one node.schedule call).
+      expect(vi.mocked(nodeB.schedule).mock.calls.length).toBe(callsBeforeFirstTick + 3)
+      expect(engine.getSnapshot().tempoSync.decks.B.phase).toBe("aligned")
+
+      // Same instant, still drifted: cooldown suppresses a second correction.
+      await perturb(nodeB, context, 0.1)
+      const callsBeforeCooldownTick = vi.mocked(nodeB.schedule).mock.calls.length
+      tick(nodeB.inputTime)
+      expect(vi.mocked(nodeB.schedule).mock.calls.length).toBe(callsBeforeCooldownTick)
+
+      // Past the cooldown window: the same drift now corrects again.
+      context.advance(3)
+      await perturb(nodeB, context, 0.1)
+      const callsBeforeReleasedTick = vi.mocked(nodeB.schedule).mock.calls.length
+      tick(nodeB.inputTime)
+      expect(vi.mocked(nodeB.schedule).mock.calls.length).toBe(callsBeforeReleasedTick + 2)
+    })
+
+    it("BeatSync does not re-align for sub-threshold drift", async () => {
+      const { engine, context, nodeB, tick } = await setUpClockFollower("beat")
+
+      // 0.02s at 120bpm is 0.04 beats, comfortably under the 0.06 threshold.
+      const callsBeforeTick = vi.mocked(nodeB.schedule).mock.calls.length
+      await perturb(nodeB, context, 0.02)
+      tick(nodeB.inputTime)
+
+      // Only our own manual perturbation call shows up -- no correction.
+      expect(vi.mocked(nodeB.schedule).mock.calls.length).toBe(callsBeforeTick + 1)
+      expect(engine.getSnapshot().tempoSync.decks.B.phaseOffsetBeats).toBeCloseTo(0.04, 2)
+    })
+
+    it("TempoSync never auto-realigns on the clock tick, only updates the phase-offset readout", async () => {
+      const { engine, context, nodeB, tick } = await setUpClockFollower("tempo")
+
+      const callsBeforeTick = vi.mocked(nodeB.schedule).mock.calls.length
+      await perturb(nodeB, context, 0.1)
+      tick(nodeB.inputTime)
+
+      // Only our own manual perturbation call shows up -- the tick produced
+      // no setRate/seek correction at all, unlike BeatSync above.
+      expect(vi.mocked(nodeB.schedule).mock.calls.length).toBe(callsBeforeTick + 1)
+      expect(engine.getSnapshot().tempoSync.decks.B.phaseOffsetBeats).toBeCloseTo(0.2, 2)
+      expect(engine.getSnapshot().tempoSync.decks.B.phase).toBe("aligned")
+
+      // Repeating well past the cooldown window still never re-aligns --
+      // TempoSync has no such thing, phase is allowed to drift by design.
+      context.advance(10)
+      const callsBeforeSecondTick = vi.mocked(nodeB.schedule).mock.calls.length
+      await perturb(nodeB, context, 0.1)
+      tick(nodeB.inputTime)
+      expect(vi.mocked(nodeB.schedule).mock.calls.length).toBe(callsBeforeSecondTick + 1)
+      expect(engine.getSnapshot().tempoSync.decks.B.phaseOffsetBeats).toBeCloseTo(0.2, 2)
+    })
+  })
+
+  // R4: beginTempoNudge/endTempoNudge implement the manual pitch-bend
+  // correction for an engaged TempoSync follower -- a live setRate nudge
+  // while held, snapping back to the locked ratio on release.
+  describe("beginTempoNudge / endTempoNudge", () => {
+    function loopTimeline(bpm: number): DecodedTimeline {
+      return {
+        durationSeconds: 8, levels: [], bpm, beatConfidence: 0.9, rhythmCoverageSeconds: 8,
+        beats: new Float32Array([0, 0.5, 1, 1.5]), localTempo: new Float32Array([bpm, bpm, bpm, bpm]),
+      }
+    }
+
+    it("nudges the rate while held and snaps back to the locked ratio on release", async () => {
+      vi.stubGlobal("AudioContext", FakeAudioContext)
+      let nodeA!: StretchNode
+      let nodeB!: StretchNode
+      const createNode = vi.fn(async (context: AudioContext) => {
+        if (!nodeA) {
+          nodeA = createFakeStretchNode(context, { inputTime: 0 })
+          return nodeA
+        }
+        nodeB = createFakeStretchNode(context, { inputTime: 0 })
+        return nodeB
+      })
+      const engine = new PlaybackEngine(undefined, {
+        stretch: { createNode },
+        stretchEligibility: vi.fn(async () => ({ ready: true, reason: null, timeline: loopTimeline(120) })),
+      })
+      engine.routeProgramElement(document.createElement("audio"), 1, "q1")
+      engine.routeIncomingElement(document.createElement("audio"), 2, "q2")
+      await engine.upgradeDeckSource("A", { url: "blob:a", trackId: 1, blob: new Blob(["a"]) })
+      await engine.upgradeDeckSource("B", { url: "blob:b", trackId: 2, blob: new Blob(["b"]) })
+      await engine.playDeck("A")
+      await engine.toggleSync("B", "tempo")
+      expect(engine.getSnapshot().tempoSync.decks.B).toMatchObject({ enabled: true, mode: "tempo", phase: "aligned" })
+
+      engine.beginTempoNudge("B", "up")
+      await Promise.resolve()
+      const nudgedRate = vi.mocked(nodeB.schedule).mock.calls.at(-1)?.[0].rate
+      expect(nudgedRate).toBeCloseTo(1.02)
+
+      engine.endTempoNudge("B")
+      await Promise.resolve()
+      const releasedRate = vi.mocked(nodeB.schedule).mock.calls.at(-1)?.[0].rate
+      expect(releasedRate).toBeCloseTo(1)
+    })
+
+    it("is a safe no-op reported via reportEngineFailure for a deck that is not an engaged TempoSync follower", async () => {
+      vi.stubGlobal("AudioContext", FakeAudioContext)
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined)
+      let nodeA!: StretchNode
+      let nodeB!: StretchNode
+      const createNode = vi.fn(async (context: AudioContext) => {
+        if (!nodeA) {
+          nodeA = createFakeStretchNode(context, { inputTime: 0 })
+          return nodeA
+        }
+        nodeB = createFakeStretchNode(context, { inputTime: 0 })
+        return nodeB
+      })
+      const engine = new PlaybackEngine(undefined, {
+        stretch: { createNode },
+        stretchEligibility: vi.fn(async () => ({ ready: true, reason: null, timeline: loopTimeline(120) })),
+      })
+      engine.routeProgramElement(document.createElement("audio"), 1, "q1")
+      engine.routeIncomingElement(document.createElement("audio"), 2, "q2")
+      await engine.upgradeDeckSource("A", { url: "blob:a", trackId: 1, blob: new Blob(["a"]) })
+      await engine.upgradeDeckSource("B", { url: "blob:b", trackId: 2, blob: new Blob(["b"]) })
+      await engine.playDeck("A")
+
+      // Deck B has no engaged SYNC of any kind yet.
+      engine.beginTempoNudge("B", "up")
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("beginTempoNudge"),
+        expect.any(Error),
+      )
+      expect(vi.mocked(nodeB.schedule)).not.toHaveBeenCalled()
+
+      // Deck A is the tempo master itself -- never a nudge target either.
+      engine.beginTempoNudge("A", "up")
+      expect(errorSpy).toHaveBeenCalledTimes(2)
+
+      // A BeatSync (not TempoSync) follower is also not a valid nudge target.
+      await engine.toggleSync("B", "beat")
+      expect(engine.getSnapshot().tempoSync.decks.B).toMatchObject({ enabled: true, mode: "beat", phase: "aligned" })
+      const callsBeforeInvalidNudge = vi.mocked(nodeB.schedule).mock.calls.length
+      engine.beginTempoNudge("B", "up")
+      expect(errorSpy).toHaveBeenCalledTimes(3)
+      expect(vi.mocked(nodeB.schedule).mock.calls.length).toBe(callsBeforeInvalidNudge)
+
+      // endTempoNudge on a deck that was never begun is a silent no-op.
+      engine.endTempoNudge("B")
+      expect(errorSpy).toHaveBeenCalledTimes(3)
+
+      errorSpy.mockRestore()
+    })
+  })
 })

@@ -63,6 +63,8 @@ function runtime() {
     toggleSync: vi.fn(async (deck: "A" | "B") => {
       snapshot.tempoSync.decks[deck].enabled = !snapshot.tempoSync.decks[deck].enabled
     }),
+    beginTempoNudge: vi.fn(),
+    endTempoNudge: vi.fn(),
     setMasterGain: vi.fn(),
     upgradeDeckSource: vi.fn().mockResolvedValue({ upgraded: false, kind: "media-element", reason: null }),
     getSnapshot: vi.fn(() => snapshot),
@@ -97,6 +99,17 @@ describe("PlayerPlaybackFacade routing", () => {
     await facade.toggleDeckSync("A", "tempo")
 
     expect(engine.toggleSync).toHaveBeenCalledWith("A", "tempo")
+  })
+
+  it("forwards tempo-nudge press/release straight through to the engine", () => {
+    const engine = runtime()
+    const facade = new PlayerPlaybackFacade(engine)
+
+    facade.beginTempoNudge("B", "up")
+    facade.endTempoNudge("B")
+
+    expect(engine.beginTempoNudge).toHaveBeenCalledWith("B", "up")
+    expect(engine.endTempoNudge).toHaveBeenCalledWith("B")
   })
 
   it("waits for an in-progress full-track deck upgrade before engaging SYNC", async () => {

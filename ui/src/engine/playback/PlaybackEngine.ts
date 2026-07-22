@@ -31,11 +31,18 @@ import type {
   PlaybackEngineSnapshot,
   SourceMetadata,
   TempoMaster,
+  TempoNudgeDirection,
   TempoSyncSnapshot,
   TrackSource,
   TransportState,
   LoopState,
 } from "./types"
+
+// Momentary pitch-bend applied while a TempoSync nudge button is held, as a
+// fraction of the locked ratio (2%). Released back to the exact locked ratio
+// in endTempoNudge -- this never touches `tempoRatios`, which stays the
+// source of truth for the locked rate throughout the nudge.
+const TEMPO_NUDGE_FRACTION = 0.02
 
 const emptyDeck = (id: DeckId) => ({
   id,
@@ -100,6 +107,7 @@ export class PlaybackEngine implements TempoSyncHost {
   // only a coarse feasibility gate for the reducer's own math, not this.
   private clockBpm = 126
   private readonly tempoSync: TempoSyncController = new TempoSyncController(this)
+  private readonly nudging: Record<DeckId, boolean> = { A: false, B: false }
 
   constructor(
     log: MixerGraphLogger = () => undefined,
@@ -565,11 +573,15 @@ export class PlaybackEngine implements TempoSyncHost {
         "A", this.graph,
         () => new StretchDeckSource(this.context!, this.stretchDependencies),
         () => this.handleDeckRuntimeChange("A"),
+        undefined,
+        () => this.dispatchPhaseOffsetObserved("A"),
       ),
       B: new DeckRuntime(
         "B", this.graph,
         () => new StretchDeckSource(this.context!, this.stretchDependencies),
         () => this.handleDeckRuntimeChange("B"),
+        undefined,
+        () => this.dispatchPhaseOffsetObserved("B"),
       ),
     }
   }
@@ -667,7 +679,7 @@ export class PlaybackEngine implements TempoSyncHost {
   async alignFollower(
     deck: DeckId,
     master: TempoMaster,
-    _mode: SyncMode,
+    mode: SyncMode,
     start: boolean,
     positionHint?: number,
   ): Promise<void> {
@@ -680,6 +692,20 @@ export class PlaybackEngine implements TempoSyncHost {
     const ratio = tempoRatioFor(this.masterTempoFor(master), timeline.bpm)
     if (ratio === null) throw new Error("Master tempo is outside the ±8% deck range")
     const scheduled = this.syncScheduleTime(deck, master)
+
+    // TempoSync (SYNC_REWRITE_PLAN.md §2.1): tempo lock only -- phase is
+    // allowed to drift by design, corrected manually via beginTempoNudge/
+    // endTempoNudge instead. The alignment path here never seeks; starting
+    // playback (if requested) begins from wherever the deck already sits
+    // rather than snapping to a beat-aligned position, unlike BeatSync below.
+    if (mode === "tempo") {
+      await runtime.setRate(ratio, scheduled)
+      this.tempoRatios[deck] = ratio
+      if (start) await runtime.play(scheduled)
+      this.changed()
+      return
+    }
+
     const followerAnchor = runtime.anchor
     if (!followerAnchor) throw new Error(`Deck ${deck} has no playback clock`)
     const followerPosition = positionHint ?? projectPlayhead(
@@ -702,6 +728,45 @@ export class PlaybackEngine implements TempoSyncHost {
     this.tempoRatios[deck] = ratio
     if (start) await runtime.play(scheduled, target)
     this.changed()
+  }
+
+  /**
+   * Manual pitch-bend correction for an engaged TempoSync follower
+   * (SYNC_REWRITE_PLAN.md §2.1): a live `setRate` nudge while held, snapping
+   * back to the locked ratio on release. No-op (reported, not thrown -- this
+   * is invoked directly from UI press handlers with no call site expecting
+   * to catch) for any deck that is not currently an engaged TempoSync
+   * follower, matching the reportEngineFailure convention established in
+   * R2/R7 for failures with no other user-facing surface.
+   */
+  beginTempoNudge(deck: DeckId, direction: TempoNudgeDirection): void {
+    const runtime = this.decks?.[deck]
+    if (!this.isEngagedTempoSyncFollower(deck) || !runtime || runtime.sourceKind !== "signalsmith") {
+      reportEngineFailure(
+        `PlaybackEngine.beginTempoNudge(${deck})`,
+        new Error(`Deck ${deck} is not an engaged TempoSync follower`),
+      )
+      return
+    }
+    this.nudging[deck] = true
+    const nudgedRatio = this.tempoRatios[deck] * (1 + (direction === "up" ? 1 : -1) * TEMPO_NUDGE_FRACTION)
+    void runtime.setRate(nudgedRatio).catch((error) => reportEngineFailure(`PlaybackEngine.beginTempoNudge(${deck})`, error))
+    this.changed()
+  }
+
+  endTempoNudge(deck: DeckId): void {
+    if (!this.nudging[deck]) return
+    this.nudging[deck] = false
+    const runtime = this.decks?.[deck]
+    if (runtime) {
+      void runtime.setRate(this.tempoRatios[deck]).catch((error) => reportEngineFailure(`PlaybackEngine.endTempoNudge(${deck})`, error))
+    }
+    this.changed()
+  }
+
+  private isEngagedTempoSyncFollower(deck: DeckId): boolean {
+    const follower = this.tempoSync.getState().followers[deck]
+    return this.tempoSync.isFollower(deck) && follower.mode === "tempo" && follower.enabled
   }
 
   private masterPhaseAt(master: TempoMaster, audioTime: number): number {
@@ -802,6 +867,49 @@ export class PlaybackEngine implements TempoSyncHost {
   private handleDeckRuntimeChange(deck: DeckId): void {
     void this.tempoSync.dispatch({ type: "deck-transport", deck, transport: this.deckTransport(deck) })
     this.changed()
+  }
+
+  /**
+   * SYNC_REWRITE_PLAN.md §2.1: wired as DeckRuntime's dedicated onClockTick
+   * callback (StretchDeckSource's setUpdateInterval -> handleClockUpdate ->
+   * a channel separate from the general notify used for transport/seek/
+   * rate changes), so this only ever runs from the real ~0.25s Signalsmith
+   * clock tick -- never spuriously from an unrelated play/pause/seek/setRate
+   * call, which would risk measuring transient scheduling-lead noise as
+   * "drift" and re-aligning a follower that never actually needed it.
+   */
+  private dispatchPhaseOffsetObserved(deck: DeckId): void {
+    const state = this.tempoSync.getState()
+    const follower = state.followers[deck]
+    if (!follower.enabled || deck === state.master) return
+    // A paused follower isn't drifting from the master in any meaningful
+    // sense -- its own worklet clock tick can still fire while paused (the
+    // Signalsmith node's periodic timer isn't itself gated on transport
+    // state), but measuring "drift" against a frozen, not-currently-playing
+    // position would be nonsensical and could spuriously re-trigger
+    // alignment on a deck the user deliberately paused.
+    if (this.deckTransport(deck) !== "playing") return
+    const offsetBeats = this.computePhaseOffsetBeats(deck, state.master)
+    if (offsetBeats === null) return
+    void this.tempoSync.dispatch({
+      type: "phase-offset-observed", deck, offsetBeats, at: this.context?.currentTime ?? 0,
+    })
+  }
+
+  private computePhaseOffsetBeats(deck: DeckId, master: TempoMaster): number | null {
+    const runtime = this.decks?.[deck]
+    const timeline = this.timelines[deck]
+    const anchor = runtime?.anchor
+    if (!runtime || !timeline || !anchor || timeline.beats.length < 2) return null
+    const audioTime = this.context?.currentTime ?? 0
+    const followerPosition = projectPlayhead(anchor.mediaSeconds, anchor.audioTime, anchor.rate, audioTime)
+    const followerPhase = this.phaseForDeckPosition(deck, followerPosition)
+    const masterPhase = this.masterPhaseAt(master, audioTime)
+    const diff = followerPhase - masterPhase
+    // Wrap to a signed nearest-wraparound offset (roughly -0.5 to +0.5 beats):
+    // the reducer's drift threshold/cooldown expects that, not a raw phase
+    // difference that could jump straight to ~1 at the wrap boundary.
+    return diff - Math.round(diff)
   }
 
   private requireGraph(): MixerGraph {

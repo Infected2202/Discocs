@@ -199,6 +199,10 @@
 .pitchControl > span { color: var(--muted-foreground); font-size: 6px; font-variant-numeric: tabular-nums; }
 .pitchControl .fader { width: 30px; height: 92px; }
 .pitchControl .faderThumb { width: 26px; }
+.phaseOffsetReadout { position: absolute; top: 199px; right: 0; z-index: 2; width: 38px; padding: 3px 0; border-left: 1px solid var(--border); background: rgb(0 0 0 / 16%); color: var(--muted-foreground); font-size: 6px; font-variant-numeric: tabular-nums; text-align: center; }
+.tempoNudgeControls { position: absolute; top: 218px; right: 0; z-index: 2; display: grid; gap: 2px; width: 38px; padding: 0 4px 4px; border-left: 1px solid var(--border); background: rgb(0 0 0 / 16%); }
+.tempoNudgeControls button { height: 16px; border-radius: 2px; color: var(--muted-foreground); background: rgb(255 255 255 / 7%); font-size: 9px; font-weight: 750; }
+.tempoNudgeControls button:active { color: #07111c; background: #4da3ff; box-shadow: 0 0 6px rgb(77 163 255 / 35%); }
 
 .mixerPanel { display: grid; grid-template-rows: minmax(0, 1fr) 44px; min-height: 0; padding: 5px 8px 3px; border-inline: 1px solid var(--border); background: rgb(0 0 0 / 30%); }
 .mixerChannels { display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
@@ -311,6 +315,8 @@
   .beatControls button, .hotcuePads button { height: 18px; }
   .pitchControl { top: 51px; height: 105px; }
   .pitchControl .fader { height: 70px; }
+  .phaseOffsetReadout { top: 156px; }
+  .tempoNudgeControls { top: 173px; }
   .fader { height: 58px; }
   .mixerPanel { grid-template-rows: 1fr 35px; padding-top: 3px; }
   .mixerPanel .knob { width: 22px; height: 22px; }

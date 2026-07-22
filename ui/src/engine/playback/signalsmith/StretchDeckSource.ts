@@ -30,6 +30,7 @@ export class StretchDeckSource implements DeckSource {
   private transport: TransportState = "idle"
   private loop: LoopState = { enabled: false, startSeconds: 0, endSeconds: 0 }
   private stateListener: (() => void) | null = null
+  private clockTickListener: (() => void) | null = null
   private released = false
 
   constructor(context: AudioContext, dependencies: StretchDeckSourceDependencies = {}) {
@@ -173,6 +174,10 @@ export class StretchDeckSource implements DeckSource {
     this.stateListener = listener
   }
 
+  setClockTickListener(listener: (() => void) | null): void {
+    this.clockTickListener = listener
+  }
+
   async release(): Promise<void> {
     if (this.released) return
     this.released = true
@@ -201,6 +206,7 @@ export class StretchDeckSource implements DeckSource {
       void this.adapter?.stop()
     }
     this.notify()
+    this.clockTickListener?.()
   }
 
   private async releaseAdapter(): Promise<void> {
