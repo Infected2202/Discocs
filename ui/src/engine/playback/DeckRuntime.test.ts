@@ -128,3 +128,40 @@ describe("DeckRuntime source generations", () => {
     expect(graph.attachSource).toHaveBeenCalledWith("A", source.output, 8)
   })
 })
+
+describe("DeckRuntime load timeout", () => {
+  // Simulates a DeckSource whose load() is abort-aware (as StretchDeckSource
+  // now is via abortRace): it never settles on its own, only in reaction to
+  // the signal it was given -- and it rethrows the signal's own abort reason,
+  // the same way abortRace does. This is what lets a caller distinguish "the
+  // overall load() timed out" from an ordinary stale-generation abort.
+  function abortAwareSource(): DeckSource {
+    return fakeSource((_source, signal) => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => {
+        const abortReason = (signal as { reason?: unknown }).reason
+        reject(abortReason instanceof Error ? abortReason : new DOMException("Aborted", "AbortError"))
+      }, { once: true })
+    }))
+  }
+
+  it("rejects with a distinguishable TimeoutError once the injected load timeout elapses", async () => {
+    const runtime = new DeckRuntime("A", fakeGraph(), () => abortAwareSource(), undefined, 10)
+
+    await expect(runtime.load(track(1))).rejects.toMatchObject({ name: "TimeoutError" })
+  })
+
+  it("never times out while the candidate settles well within the configured window", async () => {
+    const source = fakeSource(async () => metadata)
+    const runtime = new DeckRuntime("A", fakeGraph(), () => source, undefined, 10_000)
+
+    await expect(runtime.load(track(1))).resolves.toEqual(metadata)
+  })
+
+  it("releases the hung candidate once the timeout fires", async () => {
+    const source = abortAwareSource()
+    const runtime = new DeckRuntime("A", fakeGraph(), () => source, undefined, 10)
+
+    await expect(runtime.load(track(1))).rejects.toMatchObject({ name: "TimeoutError" })
+    expect(source.release).toHaveBeenCalled()
+  })
+})
