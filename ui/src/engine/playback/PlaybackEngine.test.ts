@@ -546,12 +546,28 @@ describe("PlaybackEngine Phase 1 routing", () => {
       })
     }
 
+    // tick() is a plain (non-async) callback, exactly like the real
+    // Signalsmith worklet's periodic timer: PlaybackEngine.dispatchPhaseOffsetObserved
+    // dispatches the resulting phase-offset-observed fact fire-and-forget
+    // (`void this.tempoSync.dispatch(...)`), so calling tick() synchronously
+    // only ever completes the reducer decision + however much of a triggered
+    // correction's setRate -> seek chain happens to resolve before the JS
+    // engine's call stack next empties -- which, immediately after a
+    // synchronous tick() with no intervening await, is none of it. Flushing
+    // a macrotask boundary drains the whole microtask queue no matter how
+    // many hops deep that chain is, so assertions see the settled result
+    // instead of an arbitrary partial slice of it.
+    async function flushTick() {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+
     it("BeatSync re-aligns once drift passes the threshold, then honours the cooldown, then re-aligns again after it", async () => {
       const { engine, context, nodeB, tick } = await setUpClockFollower("beat")
 
       const callsBeforeFirstTick = vi.mocked(nodeB.schedule).mock.calls.length
       await perturb(nodeB, context, 0.1)
       tick(nodeB.inputTime)
+      await flushTick()
 
       // +1 for our manual perturbation call, +2 for the correction's
       // setRate/seek (each of which issues one node.schedule call).
@@ -562,6 +578,7 @@ describe("PlaybackEngine Phase 1 routing", () => {
       await perturb(nodeB, context, 0.1)
       const callsBeforeCooldownTick = vi.mocked(nodeB.schedule).mock.calls.length
       tick(nodeB.inputTime)
+      await flushTick()
       expect(vi.mocked(nodeB.schedule).mock.calls.length).toBe(callsBeforeCooldownTick)
 
       // Past the cooldown window: the same drift now corrects again.
@@ -569,6 +586,7 @@ describe("PlaybackEngine Phase 1 routing", () => {
       await perturb(nodeB, context, 0.1)
       const callsBeforeReleasedTick = vi.mocked(nodeB.schedule).mock.calls.length
       tick(nodeB.inputTime)
+      await flushTick()
       expect(vi.mocked(nodeB.schedule).mock.calls.length).toBe(callsBeforeReleasedTick + 2)
     })
 
@@ -579,6 +597,7 @@ describe("PlaybackEngine Phase 1 routing", () => {
       const callsBeforeTick = vi.mocked(nodeB.schedule).mock.calls.length
       await perturb(nodeB, context, 0.02)
       tick(nodeB.inputTime)
+      await flushTick()
 
       // Only our own manual perturbation call shows up -- no correction.
       expect(vi.mocked(nodeB.schedule).mock.calls.length).toBe(callsBeforeTick + 1)
@@ -591,6 +610,7 @@ describe("PlaybackEngine Phase 1 routing", () => {
       const callsBeforeTick = vi.mocked(nodeB.schedule).mock.calls.length
       await perturb(nodeB, context, 0.1)
       tick(nodeB.inputTime)
+      await flushTick()
 
       // Only our own manual perturbation call shows up -- the tick produced
       // no setRate/seek correction at all, unlike BeatSync above.
@@ -604,6 +624,7 @@ describe("PlaybackEngine Phase 1 routing", () => {
       const callsBeforeSecondTick = vi.mocked(nodeB.schedule).mock.calls.length
       await perturb(nodeB, context, 0.1)
       tick(nodeB.inputTime)
+      await flushTick()
       expect(vi.mocked(nodeB.schedule).mock.calls.length).toBe(callsBeforeSecondTick + 1)
       expect(engine.getSnapshot().tempoSync.decks.B.phaseOffsetBeats).toBeCloseTo(0.2, 2)
     })

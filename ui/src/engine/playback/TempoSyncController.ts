@@ -32,7 +32,7 @@ export interface TempoSyncHost {
 export class TempoSyncController {
   private readonly host: TempoSyncHost
   private state: TempoSyncState = initialTempoSyncState()
-  private readonly pendingTransportDispatches = new Map<string, Promise<TempoSyncTransition>>()
+  private readonly pendingTransportDispatches = new Map<DeckId, Promise<TempoSyncTransition>>()
 
   constructor(host: TempoSyncHost) {
     this.host = host
@@ -41,7 +41,25 @@ export class TempoSyncController {
   dispatch(event: TempoSyncEvent): Promise<TempoSyncTransition> {
     if (event.type !== "deck-transport") return this.dispatchOnce(event)
 
-    const key = `${event.deck}:${event.transport}`
+    // Keyed by deck alone, not deck+transport: a deck mid-alignFollower (e.g.
+    // PlaybackEngine's setRate -> seek -> play sequence for a BeatSync
+    // "start=true" arm) fires its general state listener after *each* step,
+    // and PlaybackEngine.handleDeckRuntimeChange re-derives the fact's
+    // `transport` fresh every time from the DeckSource's own transport field
+    // -- which genuinely still reads "paused" until the trailing `play()`
+    // resolves, even though this exact "deck-transport playing" dispatch
+    // already committed `transports[deck] = true` up front. Keying by
+    // deck+transport treated that transient "paused" reading as a *different*
+    // key, so it raced in fresh (via dispatchOnce below) instead of waiting,
+    // flipping `transports[deck]` back to false for the remainder of the
+    // in-flight arm and leaving it stuck there -- silently corrupting state
+    // that only a later, unrelated "playing" fact (e.g. the next Signalsmith
+    // clock tick's own notify()) would happen to correct, spuriously
+    // re-triggering `armFollower` in the process. Keying by deck alone
+    // serializes *every* transport reading for a deck behind whichever
+    // dispatch for that deck is already in flight, so a stale mid-sequence
+    // reading can never independently apply itself.
+    const key = event.deck
     const pending = this.pendingTransportDispatches.get(key)
     if (pending) {
       return pending.then(() => reduceTempoSync(this.state, event))
