@@ -33,7 +33,7 @@ function runtime() {
       A: { sourceKind: "media-element" as const, transport: "paused" as const, duration: 120, anchor: null },
       B: { sourceKind: "media-element" as const, transport: "paused" as const, duration: 120, anchor: null },
     },
-    tempoSync: {
+    beatSync: {
       auto: true,
       master: "clock" as const,
       clockBpm: 126,
@@ -61,8 +61,9 @@ function runtime() {
     setTempoMaster: vi.fn().mockResolvedValue(undefined),
     setClockTempo: vi.fn().mockResolvedValue(undefined),
     toggleSync: vi.fn(async (deck: "A" | "B") => {
-      snapshot.tempoSync.decks[deck].enabled = !snapshot.tempoSync.decks[deck].enabled
+      snapshot.beatSync.decks[deck].enabled = !snapshot.beatSync.decks[deck].enabled
     }),
+    synchronizeDeck: vi.fn().mockResolvedValue(true),
     setMasterGain: vi.fn(),
     upgradeDeckSource: vi.fn().mockResolvedValue({ upgraded: false, kind: "media-element", reason: null }),
     getSnapshot: vi.fn(() => snapshot),
@@ -87,7 +88,8 @@ describe("PlayerPlaybackFacade routing", () => {
     expect(engine.setClockMaster).toHaveBeenCalledOnce()
     expect(engine.setTempoMaster).toHaveBeenCalledWith("B")
     expect(engine.setClockTempo).toHaveBeenCalledWith(128.5)
-    expect(engine.toggleSync).toHaveBeenCalledWith("B", "beat")
+    expect(engine.toggleSync).toHaveBeenCalledWith("B")
+    expect(engine.synchronizeDeck).toHaveBeenCalledWith("B")
   })
 
   it("waits for an in-progress full-track deck upgrade before engaging SYNC", async () => {
@@ -114,7 +116,7 @@ describe("PlayerPlaybackFacade routing", () => {
     finishUpgrade({ upgraded: true, kind: "signalsmith", reason: null })
     await activation
     await sync
-    expect(engine.toggleSync).toHaveBeenCalledWith("A", "beat")
+    expect(engine.toggleSync).toHaveBeenCalledWith("A")
   })
 
   it("keeps SYNC armed and retries a failed follower upgrade before realigning it", async () => {
@@ -141,12 +143,13 @@ describe("PlayerPlaybackFacade routing", () => {
 
     await facade.toggleDeckSync("B")
 
-    expect(engine.toggleSync).toHaveBeenCalledWith("B", "beat")
+    expect(engine.toggleSync).toHaveBeenCalledWith("B")
     expect(engine.upgradeDeckSource).toHaveBeenLastCalledWith(
       "B",
       expect.objectContaining({ trackId: 2, queueItemId: "queue-2", blob: expect.any(Blob) }),
       { startAtSeconds: 0, autoplay: false },
     )
+    expect(engine.synchronizeDeck).toHaveBeenCalledWith("B")
   })
 
   it("defers a fractional seek until replacement media metadata is ready", () => {

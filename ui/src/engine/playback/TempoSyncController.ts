@@ -32,33 +32,12 @@ export interface TempoSyncHost {
 export class TempoSyncController {
   private readonly host: TempoSyncHost
   private state: TempoSyncState = initialTempoSyncState()
-  private readonly pendingTransportDispatches = new Map<string, Promise<TempoSyncTransition>>()
 
   constructor(host: TempoSyncHost) {
     this.host = host
   }
 
-  dispatch(event: TempoSyncEvent): Promise<TempoSyncTransition> {
-    if (event.type !== "deck-transport") return this.dispatchOnce(event)
-
-    const key = `${event.deck}:${event.transport}`
-    const pending = this.pendingTransportDispatches.get(key)
-    if (pending) {
-      return pending.then(() => reduceTempoSync(this.state, event))
-    }
-
-    const operation = this.dispatchOnce(event)
-    this.pendingTransportDispatches.set(key, operation)
-    const clearPending = () => {
-      if (this.pendingTransportDispatches.get(key) === operation) {
-        this.pendingTransportDispatches.delete(key)
-      }
-    }
-    void operation.then(clearPending, clearPending)
-    return operation
-  }
-
-  private async dispatchOnce(event: TempoSyncEvent): Promise<TempoSyncTransition> {
+  async dispatch(event: TempoSyncEvent): Promise<TempoSyncTransition> {
     const transition = reduceTempoSync(this.state, event)
     this.state = transition.state
     await Promise.all(transition.effects.map((effect) => this.executeEffect(effect, event)))

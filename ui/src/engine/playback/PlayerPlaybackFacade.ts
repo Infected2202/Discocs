@@ -698,7 +698,7 @@ export class PlayerPlaybackFacade {
     await this.ensureStretchDeck(deck)
     const snapshot = this.runtime.getSnapshot()
     await Promise.all((["A", "B"] as const)
-      .filter((candidate) => candidate !== deck && snapshot.tempoSync.decks[candidate].enabled)
+      .filter((candidate) => candidate !== deck && snapshot.beatSync.decks[candidate].enabled)
       .map((candidate) => this.ensureStretchDeck(candidate)))
     return this.runtime.setTempoMaster(deck)
   }
@@ -709,25 +709,24 @@ export class PlayerPlaybackFacade {
 
   async toggleDeckSync(deck: DeckId): Promise<void> {
     await this.djActivationPromise
+    await this.runtime.toggleSync(deck)
     let snapshot = this.runtime.getSnapshot()
-    if (snapshot.tempoSync.decks[deck].enabled) {
-      await this.runtime.toggleSync(deck, "beat")
-      return
-    }
+    if (!snapshot.beatSync.decks[deck].enabled) return
+    const alignedOnToggle = snapshot.beatSync.decks[deck].phase === "aligned"
 
     await this.ensureStretchDeck(deck)
     snapshot = this.runtime.getSnapshot()
-    const master = snapshot.tempoSync.master
+    const master = snapshot.beatSync.master
     if (master !== "clock" && master !== deck) await this.ensureStretchDeck(master)
-    await this.runtime.toggleSync(deck, "beat")
+    if (!alignedOnToggle && master !== deck) await this.runtime.synchronizeDeck(deck)
   }
 
   async toggleDeck(deck: DeckId): Promise<void> {
     const before = this.runtime.getSnapshot()
     const starting = before.decks[deck].transport !== "playing"
-    if (starting && before.tempoSync.decks[deck].enabled) {
+    if (starting && before.beatSync.decks[deck].enabled) {
       await this.ensureStretchDeck(deck)
-      const master = this.runtime.getSnapshot().tempoSync.master
+      const master = this.runtime.getSnapshot().beatSync.master
       if (master !== "clock" && master !== deck) await this.ensureStretchDeck(master)
     }
     if (this.runtime.isStretchDeck(deck)) {

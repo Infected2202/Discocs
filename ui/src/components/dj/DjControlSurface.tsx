@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import {
   playerPlayback,
-  type TempoSyncSnapshot,
+  type BeatSyncSnapshot,
   type DeckId,
   type DeckSnapshot,
   type EqBand,
@@ -184,10 +184,10 @@ interface DeckPanelProps {
   readonly onToggle: () => void
   readonly onHandover: () => void
   readonly timelineState: TimelineLoadState
-  readonly tempoSync: TempoSyncSnapshot
+  readonly beatSync: BeatSyncSnapshot
 }
 
-function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState, tempoSync }: DeckPanelProps) {
+function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState, beatSync }: DeckPanelProps) {
   const isPlaying = deck.transport === "playing"
   const canPlay = deck.trackId !== null && deck.preparation !== "loading" && deck.preparation !== "unavailable"
   const canHandover = !isProgram && deck.preparation === "ready"
@@ -199,8 +199,8 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
   })
   const pitchValue = Math.max(-1, Math.min(1, (deck.tempoRatio - 1) / 0.08))
   const pitchPercent = (deck.tempoRatio - 1) * 100
-  const isTempoMaster = tempoSync.master === deck.id
-  const syncState = tempoSync.decks[deck.id]
+  const isTempoMaster = beatSync.master === deck.id
+  const syncState = beatSync.decks[deck.id]
 
   return (
     <section
@@ -489,23 +489,23 @@ function OpenDjControlSurface() {
                   type="number"
                   min="1"
                   step="0.01"
-                  value={snapshot.tempoSync.clockBpm.toFixed(2)}
-                  disabled={!djEngineActive || snapshot.tempoSync.master !== "clock"}
+                  value={snapshot.beatSync.clockBpm.toFixed(2)}
+                  disabled={!djEngineActive || snapshot.beatSync.master !== "clock"}
                   onChange={(event) => runPlayerCommand(() => playerPlayback.setMasterClockTempo(Number(event.target.value)))}
                   aria-label="Master clock tempo"
                 />
-                <small>{snapshot.tempoSync.master === "clock" ? "CLOCK" : `DECK ${snapshot.tempoSync.master}`}</small>
+                <small>{snapshot.beatSync.master === "clock" ? "CLOCK" : `DECK ${snapshot.beatSync.master}`}</small>
                 <div className={styles.masterClockModes}>
                   <button
                     type="button"
-                    data-active={snapshot.tempoSync.auto || undefined}
+                    data-active={snapshot.beatSync.auto || undefined}
                     disabled={!djEngineActive}
                     onClick={() => runPlayerCommand(() => playerPlayback.setAutoTempoMaster())}
                     aria-label="Use automatic tempo master"
                   >AUTO</button>
                   <button
                     type="button"
-                    data-active={snapshot.tempoSync.master === "clock" || undefined}
+                    data-active={snapshot.beatSync.master === "clock" || undefined}
                     disabled={!djEngineActive || deckIds.some((deck) => snapshot.decks[deck].transport === "playing")}
                     onClick={() => runPlayerCommand(() => playerPlayback.setClockTempoMaster())}
                     aria-label="Use master clock"
@@ -585,7 +585,7 @@ function OpenDjControlSurface() {
             onToggle={() => runPlayerCommand(() => toggleDeck("A"))}
             onHandover={() => runPlayerCommand(skipNext)}
             timelineState={timelines.A}
-            tempoSync={snapshot.tempoSync}
+            beatSync={snapshot.beatSync}
           />
 
           <section className={styles.mixerPanel} aria-label="Mixer">
@@ -612,7 +612,7 @@ function OpenDjControlSurface() {
             onToggle={() => runPlayerCommand(() => toggleDeck("B"))}
             onHandover={() => runPlayerCommand(skipNext)}
             timelineState={timelines.B}
-            tempoSync={snapshot.tempoSync}
+            beatSync={snapshot.beatSync}
           />
         </section>}
 

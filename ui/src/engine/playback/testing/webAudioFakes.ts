@@ -82,12 +82,12 @@ export class FakeAudioContext {
   createBiquadFilter = vi.fn(() => new FakeAudioNode())
   createAnalyser = vi.fn(() => new FakeAudioNode())
 
-  createMediaElementSource(element: HTMLMediaElement): FakeAudioNode {
+  createMediaElementSource = vi.fn((element: HTMLMediaElement): FakeAudioNode => {
     const node = new FakeAudioNode()
     this.mediaNodes.push(node)
     this.mediaElements.push(element)
     return node
-  }
+  })
 
   decodeAudioData = vi.fn(
     async (): Promise<AudioBuffer> =>
@@ -139,6 +139,8 @@ export class FakeStretchNode {
   private scheduledAt: number
   private rate: number
   private active: boolean
+  private loopStart = 0
+  private loopEnd = 0
 
   constructor(clock: FakeStretchClock, init: FakeStretchNodeInit = {}) {
     this.clock = clock
@@ -168,6 +170,8 @@ export class FakeStretchNode {
       this.applyBoundary(when, change.input)
       if (change.active !== undefined) this.active = change.active
       if (change.rate !== undefined) this.rate = change.rate
+      if (change.loopStart !== undefined) this.loopStart = change.loopStart
+      if (change.loopEnd !== undefined) this.loopEnd = change.loopEnd
       return change
     }
   )
