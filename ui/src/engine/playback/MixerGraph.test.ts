@@ -1,65 +1,9 @@
 import { describe, expect, it, vi } from "vitest"
 import { MixerGraph, type MixerGraphEvent } from "./MixerGraph"
-
-class FakeParam {
-  value = 1
-  cancelScheduledValues = vi.fn()
-  setValueAtTime = vi.fn((value: number) => {
-    this.value = value
-  })
-  linearRampToValueAtTime = vi.fn((value: number) => {
-    this.value = value
-  })
-}
-
-class FakeNode {
-  connections: FakeNode[] = []
-  connect = vi.fn((destination: FakeNode) => {
-    this.connections.push(destination)
-    return destination
-  })
-  disconnect = vi.fn((destination?: FakeNode) => {
-    this.connections = destination
-      ? this.connections.filter((candidate) => candidate !== destination)
-      : []
-  })
-}
-
-class FakeBiquad extends FakeNode {
-  type = "peaking"
-  frequency = new FakeParam()
-  gain = new FakeParam()
-  Q = new FakeParam()
-}
-
-class FakeAnalyser extends FakeNode {
-  fftSize = 32
-  getFloatTimeDomainData = vi.fn((samples: Float32Array) => samples.fill(0))
-}
-
-class FakeGain extends FakeNode {
-  gain = new FakeParam()
-}
-
-class FakeCompressor extends FakeNode {
-  threshold = new FakeParam()
-  knee = new FakeParam()
-  ratio = new FakeParam()
-  attack = new FakeParam()
-  release = new FakeParam()
-}
+import { createFakeAudioContext, FakeAudioNode } from "./testing/webAudioFakes"
 
 function makeContext() {
-  const destination = new FakeNode()
-  return {
-    currentTime: 4,
-    state: "running" as AudioContextState,
-    destination,
-    createGain: vi.fn(() => new FakeGain()),
-    createDynamicsCompressor: vi.fn(() => new FakeCompressor()),
-    createBiquadFilter: vi.fn(() => new FakeBiquad()),
-    createAnalyser: vi.fn(() => new FakeAnalyser()),
-  } as unknown as AudioContext
+  return createFakeAudioContext({ currentTime: 4, state: "running" }) as unknown as AudioContext
 }
 
 describe("MixerGraph", () => {
@@ -86,7 +30,7 @@ describe("MixerGraph", () => {
   it("configures explicit peak protection instead of the compressor defaults", () => {
     const context = makeContext()
     new MixerGraph(context)
-    const protection = vi.mocked(context.createDynamicsCompressor).mock.results[0]?.value as FakeCompressor
+    const protection = vi.mocked(context.createDynamicsCompressor).mock.results[0]?.value as FakeAudioNode
 
     expect(protection.threshold.value).toBe(-1)
     expect(protection.knee.value).toBe(0)
@@ -100,7 +44,7 @@ describe("MixerGraph", () => {
     const graph = new MixerGraph(context)
     graph.readMeters()
     graph.readMeters()
-    const analyser = vi.mocked(context.createAnalyser).mock.results[0]?.value as FakeAnalyser
+    const analyser = vi.mocked(context.createAnalyser).mock.results[0]?.value as FakeAudioNode
 
     expect(analyser.getFloatTimeDomainData).toHaveBeenCalledTimes(2)
     expect(analyser.getFloatTimeDomainData.mock.calls[0]?.[0]).toBe(
@@ -110,8 +54,8 @@ describe("MixerGraph", () => {
 
   it("does not disconnect Deck A while Deck B is attached", () => {
     const graph = new MixerGraph(makeContext())
-    const sourceA = new FakeNode()
-    const sourceB = new FakeNode()
+    const sourceA = new FakeAudioNode()
+    const sourceB = new FakeAudioNode()
 
     expect(graph.attachSource("A", sourceA as unknown as AudioNode, 1)).toBe(true)
     expect(graph.attachSource("B", sourceB as unknown as AudioNode, 1)).toBe(true)
@@ -123,8 +67,8 @@ describe("MixerGraph", () => {
 
   it("rejects an older source generation", () => {
     const graph = new MixerGraph(makeContext())
-    const current = new FakeNode()
-    const stale = new FakeNode()
+    const current = new FakeAudioNode()
+    const stale = new FakeAudioNode()
     graph.attachSource("A", current as unknown as AudioNode, 2)
 
     expect(graph.attachSource("A", stale as unknown as AudioNode, 1)).toBe(false)
