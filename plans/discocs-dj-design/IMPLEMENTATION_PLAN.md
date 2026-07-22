@@ -374,7 +374,7 @@ playback.
 
 ### Group 2 — beat sync
 
-**Implementation:** complete. The accepted interaction model follows Traktor:
+**Implementation:** superseded — see SYNC_REWRITE_PLAN.md. The accepted interaction model follows Traktor:
 an editable master clock owns tempo while no deck is master; AUTO promotes the
 first playing deck and transfers ownership when it stops; either deck
 can be selected explicitly with its MASTER button. SYNC is clickable and keeps

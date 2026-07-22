@@ -150,6 +150,8 @@ backend after deck preparation.
 
 The Signalsmith source must implement the same interface and compensate its reported latency when scheduling handover, cue, loop and sync operations.
 
+**Status (Group 2 — beat sync):** superseded — see SYNC_REWRITE_PLAN.md.
+
 Group 2 follows the accepted Traktor ownership model. The engine snapshot owns
 one tempo master (`clock`, Deck A or Deck B), AUTO state and per-deck SYNC phase.
 The first playing deck becomes master in AUTO; stopping/retiring it
