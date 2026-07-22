@@ -58,17 +58,26 @@ export interface DeckSnapshot {
 }
 
 export type TempoMaster = DeckId | "clock"
-export type DeckSyncPhase = "off" | "pending" | "aligned" | "unavailable"
+export type DeckSyncPhase = "off" | "arming" | "pending" | "aligned" | "unavailable"
+export type SyncMode = "beat" | "tempo"
 
-export interface BeatSyncSnapshot {
+export interface DeckTempoSyncSnapshot {
+  enabled: boolean
+  mode: SyncMode
+  phase: DeckSyncPhase
+  reason: string | null
+  phaseOffsetBeats: number
+  canEngageBeatSync: boolean
+  canEngageTempoSync: boolean
+  canBecomeMaster: boolean
+}
+
+export interface TempoSyncSnapshot {
   auto: boolean
   master: TempoMaster
   clockBpm: number
-  decks: Record<DeckId, {
-    enabled: boolean
-    phase: DeckSyncPhase
-    reason: string | null
-  }>
+  canBecomeClockMaster: boolean
+  decks: Record<DeckId, DeckTempoSyncSnapshot>
 }
 
 export interface DeckSourceUpgradeResult {
@@ -122,7 +131,7 @@ export interface PlaybackEngineSnapshot {
   programDeck: DeckId | null
   decks: Record<DeckId, DeckSnapshot>
   mixer: MixerSnapshot
-  beatSync: BeatSyncSnapshot
+  tempoSync: TempoSyncSnapshot
   automation: AutomationSnapshot
   capabilities: PlaybackCapabilities
   error: EngineError | null

@@ -9,12 +9,21 @@ import {
 } from "./signalsmith/selection"
 import { clampBipolar, clampNormalized } from "./curves"
 import { alignFollowerPosition, projectPlayhead, tempoRatioFor } from "./beatSync"
+import {
+  canBecomeClockMaster,
+  canBecomeMaster,
+  canEngageBeatSync,
+  canEngageTempoSync,
+} from "./tempoSync"
+import type { SyncMode, TempoSyncState } from "./tempoSync"
+import { TempoSyncController, type TempoSyncHost } from "./TempoSyncController"
+import { reportEngineFailure } from "./reportEngineFailure"
 import type { DecodedTimeline } from "@/engine/timeline/types"
 import type {
   DeckId,
-  BeatSyncSnapshot,
   DeckSnapshot,
   DeckSourceUpgradeResult,
+  DeckTempoSyncSnapshot,
   EqBand,
   HandoverRequest,
   HandoverResult,
@@ -22,6 +31,7 @@ import type {
   PlaybackEngineSnapshot,
   SourceMetadata,
   TempoMaster,
+  TempoSyncSnapshot,
   TrackSource,
   TransportState,
   LoopState,
@@ -61,7 +71,7 @@ function externalTransport(element: HTMLMediaElement): TransportState {
   return element.paused ? "paused" : "playing"
 }
 
-export class PlaybackEngine {
+export class PlaybackEngine implements TempoSyncHost {
   private readonly log: MixerGraphLogger
   private context: AudioContext | null = null
   private graph: MixerGraph | null = null
@@ -78,22 +88,18 @@ export class PlaybackEngine {
   private roles: DeckRoleState = initialDeckRoleState()
   private revision = 0
   private readonly listeners = new Set<() => void>()
-  private readonly explicitTransportCommands = new Set<DeckId>()
   private mixer = defaultMixerState()
   private readonly stretchDependencies: StretchDeckSourceDependencies
   private readonly stretchEligibility: StretchEligibilityResolver
   private readonly degradedReasons: Record<DeckId, string | null> = { A: null, B: null }
   private readonly tempoRatios: Record<DeckId, number> = { A: 1, B: 1 }
   private readonly timelines: Record<DeckId, DecodedTimeline | null> = { A: null, B: null }
-  private beatSync: BeatSyncSnapshot = {
-    auto: true,
-    master: "clock" as TempoMaster,
-    clockBpm: 126,
-    decks: {
-      A: { enabled: false, phase: "off" as const, reason: null as string | null },
-      B: { enabled: false, phase: "off" as const, reason: null as string | null },
-    },
-  }
+  // Real, engine-owned clock tempo used for actual Web Audio scheduling when
+  // master === "clock". Distinct from tempoSync's own `clockBpm`, which R1
+  // deliberately leaves static (126) with no mutating command — that field is
+  // only a coarse feasibility gate for the reducer's own math, not this.
+  private clockBpm = 126
+  private readonly tempoSync: TempoSyncController = new TempoSyncController(this)
 
   constructor(
     log: MixerGraphLogger = () => undefined,
@@ -144,7 +150,7 @@ export class PlaybackEngine {
   ): boolean {
     if (this.externalElements[deck] === element) {
       this.identities[deck] = { trackId, queueItemId }
-      this.reconcileAutoMaster(deck)
+      void this.tempoSync.dispatch({ type: "deck-transport", deck, transport: externalTransport(element) })
       this.changed()
       return true
     }
@@ -173,7 +179,10 @@ export class PlaybackEngine {
     this.identities[deck] = { trackId, queueItemId }
     this.degradedReasons[deck] = null
     this.tempoRatios[deck] = element.playbackRate
-    this.reconcileAutoMaster(deck)
+    void this.tempoSync.dispatch({
+      type: "deck-capability", deck, hasTrack: trackId !== null, feasible: false, ready: false, bpm: null,
+    })
+    void this.tempoSync.dispatch({ type: "deck-transport", deck, transport: externalTransport(element) })
     if (role === "prepared") {
       this.roles = reduceDeckRoles(this.roles, { type: "preparing", deck })
       this.roles = reduceDeckRoles(this.roles, { type: "prepared", deck })
@@ -205,20 +214,31 @@ export class PlaybackEngine {
     if (!capabilities.manualMix || !this.decks || source.trackId === null) {
       const reason = capabilities.reasons.join("; ") || "Signalsmith requires a persisted track"
       this.degradedReasons[deck] = reason
+      void this.tempoSync.dispatch({
+        type: "deck-capability", deck, hasTrack: source.trackId !== null, feasible: false, ready: false, bpm: null,
+      })
       this.changed()
       return { upgraded: false, kind: "media-element", reason }
     }
+    // Mark feasible optimistically as soon as an upgrade attempt is in
+    // flight: a SYNC toggle that lands while this await is pending should see
+    // "known-feasible, not yet ready" (arming), not "infeasible" (rejected).
+    void this.tempoSync.dispatch({
+      type: "deck-capability", deck, hasTrack: true, feasible: true, ready: false, bpm: null,
+    })
     const eligibility = await this.stretchEligibility(source.trackId)
     if (upgradeGeneration !== this.upgradeGenerations[deck]) {
       return { upgraded: false, kind: "media-element", reason: "Deck source changed" }
     }
     if (!eligibility.ready) {
       this.degradedReasons[deck] = eligibility.reason
+      void this.tempoSync.dispatch({
+        type: "deck-capability", deck, hasTrack: true, feasible: false, ready: false, bpm: null,
+      })
       this.changed()
       return { upgraded: false, kind: "media-element", reason: eligibility.reason }
     }
     this.timelines[deck] = eligibility.timeline ?? null
-    this.reconcileAutoMaster(deck)
     try {
       this.decks[deck].advanceGenerationFloor(this.generations[deck])
       await this.decks[deck].load(source, { ...options, tempoRatio: currentTempoRatio })
@@ -231,15 +251,24 @@ export class PlaybackEngine {
       this.degradedReasons[deck] = null
       this.tempoRatios[deck] = currentTempoRatio
       this.roles = reduceDeckRoles(this.roles, { type: "prepared", deck })
-      if (options.autoplay && this.beatSync.master === "clock") {
-        this.beatSync.auto = true
-        this.assignTempoMaster(deck)
-      }
+      // No explicit master-promotion call here (unlike the old inline
+      // `if (options.autoplay && ...)` block this replaces): DeckRuntime.load
+      // itself calls its notify callback once activation completes, which
+      // flows through handleDeckRuntimeChange -> a deck-transport{playing}
+      // dispatch -> the reducer's own auto-promotion. Same mechanism as any
+      // other transport change, nothing bespoke needed here.
+      void this.tempoSync.dispatch({
+        type: "deck-capability", deck, hasTrack: true, feasible: true, ready: true,
+        bpm: this.deckEffectiveBpm(deck),
+      })
       this.changed()
       return { upgraded: true, kind: "signalsmith", reason: null }
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Signalsmith initialization failed"
       this.degradedReasons[deck] = reason
+      void this.tempoSync.dispatch({
+        type: "deck-capability", deck, hasTrack: true, feasible: false, ready: false, bpm: null,
+      })
       this.changed()
       return { upgraded: false, kind: "media-element", reason }
     }
@@ -248,56 +277,47 @@ export class PlaybackEngine {
   async playDeck(deck: DeckId, when?: number): Promise<void> {
     const runtime = this.decks?.[deck]
     if (!runtime) throw new Error("Playback engine is not initialized")
-    if (this.beatSync.master === "clock") {
-      this.beatSync.auto = true
-      this.assignTempoMaster(deck)
+    const { effects } = await this.tempoSync.dispatch({ type: "deck-transport", deck, transport: "playing" })
+    if (!effects.some((effect) => effect.deck === deck)) {
+      await runtime.play(when)
     }
-    if (this.isSyncedFollower(deck)) {
-      if (await this.synchronizeDeck(deck, true, when)) return
-    }
-    await runtime.play(when)
     this.changed()
   }
 
   async pauseDeck(deck: DeckId, when?: number): Promise<void> {
     const runtime = this.decks?.[deck]
     if (!runtime) throw new Error("Playback engine is not initialized")
-    const wasMaster = this.beatSync.master === deck
-    this.explicitTransportCommands.add(deck)
-    try {
-      await runtime.pause(when)
-    } finally {
-      this.explicitTransportCommands.delete(deck)
-    }
-    if (wasMaster) {
-      this.assignTempoMaster(this.findPlayingDeck(deck) ?? "clock")
-      await this.synchronizeFollowers()
-    }
+    await runtime.pause(when)
+    await this.tempoSync.dispatch({ type: "deck-transport", deck, transport: "paused" })
+    this.changed()
   }
 
   async seekDeck(deck: DeckId, seconds: number, when?: number): Promise<void> {
     const runtime = this.decks?.[deck]
     if (!runtime) throw new Error("Playback engine is not initialized")
-    const scheduled = (this.isSyncedFollower(deck) || (this.beatSync.master === deck && this.hasSyncedFollowers()))
-      ? when ?? this.syncScheduleTime(deck)
+    const state = this.tempoSync.getState()
+    const master = state.master
+    const isFollower = this.tempoSync.isFollower(deck)
+    const isMaster = this.tempoSync.isMaster(deck)
+    const scheduled = (isFollower || (isMaster && this.tempoSync.hasEngagedFollowers()))
+      ? when ?? this.syncScheduleTime(deck, master)
       : when
-    if (this.isSyncedFollower(deck)) {
-      await this.synchronizeFollower(deck, false, scheduled, seconds)
+
+    if (isFollower) {
+      await this.alignFollower(deck, master, state.followers[deck].mode, false, seconds)
+      this.changed()
       return
     }
     await runtime.seek(seconds, scheduled)
-    if (this.beatSync.master === deck) {
-      await this.synchronizeFollowers(scheduled, this.phaseForDeckPosition(deck, seconds))
-    }
+    if (isMaster) await this.cascadeAlignment()
+    this.changed()
   }
 
   async setTempo(deck: DeckId, ratio: number, when?: number): Promise<void> {
-    if (this.beatSync.master !== deck) throw new Error(`Deck ${deck} tempo is controlled by the tempo master`)
+    if (!this.tempoSync.isMaster(deck)) throw new Error(`Deck ${deck} tempo is controlled by the tempo master`)
     const clamped = Math.max(0.5, Math.min(2, ratio))
     const runtime = this.decks?.[deck]
-    const scheduled = this.beatSync.master === deck && this.hasSyncedFollowers()
-      ? when ?? this.syncScheduleTime(deck)
-      : when
+    const scheduled = this.tempoSync.hasEngagedFollowers() ? when ?? this.syncScheduleTime(deck, deck) : when
     if (runtime?.sourceKind === "signalsmith") {
       await runtime.setRate(clamped, scheduled)
     } else {
@@ -307,10 +327,15 @@ export class PlaybackEngine {
       element.preservesPitch = true
     }
     this.tempoRatios[deck] = clamped
-    if (this.beatSync.master === deck) {
-      this.beatSync.clockBpm = this.deckEffectiveBpm(deck) ?? this.beatSync.clockBpm
-      await this.synchronizeFollowers(scheduled)
-    }
+    this.clockBpm = this.deckEffectiveBpm(deck) ?? this.clockBpm
+    // Keep the reducer's feasibility gate fresh: its own tempo-range check
+    // reads capabilities[master].bpm, which would otherwise go stale the
+    // moment the master's rate changes.
+    await this.tempoSync.dispatch({
+      type: "deck-capability", deck, hasTrack: true, feasible: true, ready: true,
+      bpm: this.deckEffectiveBpm(deck),
+    })
+    await this.cascadeAlignment()
     this.changed()
   }
 
@@ -319,84 +344,46 @@ export class PlaybackEngine {
     if (!runtime || runtime.sourceKind !== "signalsmith") {
       throw new Error(`Deck ${deck} requires Signalsmith for beat-synced loops`)
     }
-    const scheduled = (this.isSyncedFollower(deck) || (this.beatSync.master === deck && this.hasSyncedFollowers()))
-      ? when ?? this.syncScheduleTime(deck)
+    const state = this.tempoSync.getState()
+    const master = state.master
+    const isFollower = this.tempoSync.isFollower(deck)
+    const isMaster = this.tempoSync.isMaster(deck)
+    const scheduled = (isFollower || (isMaster && this.tempoSync.hasEngagedFollowers()))
+      ? when ?? this.syncScheduleTime(deck, master)
       : when
     await runtime.setLoop(loop, scheduled)
-    if (this.isSyncedFollower(deck)) await this.synchronizeFollower(deck, false, scheduled)
-    else if (this.beatSync.master === deck) await this.synchronizeFollowers(scheduled)
+    if (isFollower) await this.alignFollower(deck, master, state.followers[deck].mode, false)
+    else if (isMaster) await this.cascadeAlignment()
+    this.changed()
   }
 
   async setAutoMaster(): Promise<void> {
-    this.beatSync.auto = true
-    this.assignTempoMaster(this.findPlayingDeck() ?? "clock")
-    await this.synchronizeFollowers()
+    await this.tempoSync.dispatch({ type: "set-auto-master" })
     this.changed()
   }
 
   async setClockMaster(): Promise<void> {
     if (this.findPlayingDeck()) throw new Error("The master clock is unavailable while a deck is playing")
-    this.beatSync.auto = false
-    this.assignTempoMaster("clock")
-    await this.synchronizeFollowers()
+    await this.tempoSync.dispatch({ type: "set-clock-master" })
     this.changed()
   }
 
   async setTempoMaster(deck: DeckId): Promise<void> {
     if (this.deckTransport(deck) !== "playing") throw new Error(`Deck ${deck} must be playing to become tempo master`)
-    this.beatSync.auto = true
-    this.assignTempoMaster(deck)
-    await this.synchronizeFollowers()
+    await this.tempoSync.dispatch({ type: "set-deck-master", deck })
     this.changed()
   }
 
   async setClockTempo(bpm: number): Promise<void> {
     if (!Number.isFinite(bpm) || bpm <= 0) throw new RangeError("Master clock tempo must be positive")
-    this.beatSync.clockBpm = bpm
-    if (this.beatSync.master === "clock") await this.synchronizeFollowers()
+    this.clockBpm = bpm
+    if (this.tempoSync.isMaster("clock")) await this.cascadeAlignment()
     this.changed()
   }
 
-  async toggleSync(deck: DeckId): Promise<void> {
-    const state = this.beatSync.decks[deck]
-    if (state.enabled) {
-      state.enabled = false
-      state.phase = "off"
-      state.reason = null
-      this.changed()
-      return
-    }
-    state.enabled = true
-    state.phase = "pending"
-    state.reason = null
+  async toggleSync(deck: DeckId, mode: SyncMode): Promise<void> {
+    await this.tempoSync.dispatch({ type: "toggle-sync", deck, mode })
     this.changed()
-    if (this.beatSync.master === deck) {
-      state.phase = this.deckTransport(deck) === "playing" ? "aligned" : "pending"
-      this.changed()
-      return
-    }
-    await this.synchronizeDeck(deck)
-  }
-
-  async synchronizeDeck(deck: DeckId, start = false, when?: number): Promise<boolean> {
-    const state = this.beatSync.decks[deck]
-    if (!state.enabled) return false
-    if (this.beatSync.master === deck) {
-      state.phase = this.deckTransport(deck) === "playing" ? "aligned" : "pending"
-      state.reason = null
-      this.changed()
-      return true
-    }
-    try {
-      await this.synchronizeFollower(deck, start, when)
-      this.changed()
-      return true
-    } catch (error) {
-      state.phase = "unavailable"
-      state.reason = error instanceof Error ? error.message : "Beat sync failed"
-      this.changed()
-      return false
-    }
   }
 
   isStretchDeck(deck: DeckId): boolean {
@@ -404,20 +391,11 @@ export class PlaybackEngine {
   }
 
   async unload(deck: DeckId): Promise<void> {
-    const wasMaster = this.beatSync.master === deck
-    this.explicitTransportCommands.add(deck)
-    try {
-      await this.decks?.[deck].release()
-    } finally {
-      this.explicitTransportCommands.delete(deck)
-    }
+    await this.decks?.[deck].release()
     this.detachExternal(deck)
     this.roles = reduceDeckRoles(this.roles, { type: "retire", deck })
     this.clearDeckSync(deck)
-    if (wasMaster) {
-      this.assignTempoMaster(this.findPlayingDeck(deck) ?? "clock")
-      await this.synchronizeFollowers()
-    }
+    await this.tempoSync.dispatch({ type: "deck-transport", deck, transport: "idle" })
     this.changed()
   }
 
@@ -503,18 +481,38 @@ export class PlaybackEngine {
       programDeck: this.roles.program,
       decks,
       mixer: { ...this.mixer, meters: this.getMeterLevels() },
-      beatSync: {
-        auto: this.beatSync.auto,
-        master: this.beatSync.master,
-        clockBpm: this.currentMasterBpm(),
-        decks: {
-          A: { ...this.beatSync.decks.A },
-          B: { ...this.beatSync.decks.B },
-        },
-      },
+      tempoSync: this.buildTempoSyncSnapshot(),
       automation: { owner: "none" },
       capabilities,
       error: null,
+    }
+  }
+
+  private buildTempoSyncSnapshot(): TempoSyncSnapshot {
+    const state = this.tempoSync.getState()
+    return {
+      auto: state.auto,
+      master: state.master,
+      clockBpm: this.currentMasterBpm(),
+      canBecomeClockMaster: canBecomeClockMaster(state),
+      decks: {
+        A: this.deckTempoSyncSnapshot(state, "A"),
+        B: this.deckTempoSyncSnapshot(state, "B"),
+      },
+    }
+  }
+
+  private deckTempoSyncSnapshot(state: TempoSyncState, deck: DeckId): DeckTempoSyncSnapshot {
+    const follower = state.followers[deck]
+    return {
+      enabled: follower.enabled,
+      mode: follower.mode,
+      phase: follower.phase,
+      reason: follower.reason,
+      phaseOffsetBeats: follower.phaseOffsetBeats,
+      canEngageBeatSync: canEngageBeatSync(state, deck),
+      canEngageTempoSync: canEngageTempoSync(state, deck),
+      canBecomeMaster: canBecomeMaster(state, deck),
     }
   }
 
@@ -546,15 +544,8 @@ export class PlaybackEngine {
     this.tempoRatios.B = 1
     this.timelines.A = null
     this.timelines.B = null
-    this.beatSync = {
-      auto: true,
-      master: "clock",
-      clockBpm: 126,
-      decks: {
-        A: { enabled: false, phase: "off", reason: null },
-        B: { enabled: false, phase: "off", reason: null },
-      },
-    }
+    this.clockBpm = 126
+    this.tempoSync.reset()
     this.changed()
   }
 
@@ -584,19 +575,17 @@ export class PlaybackEngine {
 
   private clearDeckSync(deck: DeckId): void {
     this.timelines[deck] = null
-    this.beatSync.decks[deck] = { enabled: false, phase: "off", reason: null }
+    const follower = this.tempoSync.getState().followers[deck]
+    if (follower.enabled) {
+      void this.tempoSync.dispatch({ type: "toggle-sync", deck, mode: follower.mode })
+    }
+    void this.tempoSync.dispatch({
+      type: "deck-capability", deck, hasTrack: false, feasible: false, ready: false, bpm: null,
+    })
   }
 
   private hasBeatTimeline(deck: DeckId): boolean {
     return (this.timelines[deck]?.beats.length ?? 0) >= 2
-  }
-
-  private isSyncedFollower(deck: DeckId): boolean {
-    return this.beatSync.master !== deck && this.beatSync.decks[deck].enabled
-  }
-
-  private hasSyncedFollowers(): boolean {
-    return (["A", "B"] as const).some((deck) => this.isSyncedFollower(deck))
   }
 
   private findPlayingDeck(exclude?: DeckId): DeckId | null {
@@ -613,23 +602,12 @@ export class PlaybackEngine {
     return element ? externalTransport(element) : "idle"
   }
 
-  private assignTempoMaster(master: TempoMaster): void {
-    this.beatSync.master = master
-    if (master !== "clock") {
-      const state = this.beatSync.decks[master]
-      if (state.enabled) {
-        state.phase = this.deckTransport(master) === "playing" ? "aligned" : "pending"
-        state.reason = null
-      }
-      const bpm = this.deckEffectiveBpm(master)
-      if (bpm !== null) this.beatSync.clockBpm = bpm
-    }
+  private currentMasterBpm(): number {
+    return this.masterTempoFor(this.tempoSync.getState().master)
   }
 
-  private currentMasterBpm(): number {
-    return this.beatSync.master === "clock"
-      ? this.beatSync.clockBpm
-      : this.deckEffectiveBpm(this.beatSync.master) ?? this.beatSync.clockBpm
+  private masterTempoFor(master: TempoMaster): number {
+    return master === "clock" ? this.clockBpm : this.deckEffectiveBpm(master) ?? this.clockBpm
   }
 
   private deckEffectiveBpm(deck: DeckId): number | null {
@@ -637,56 +615,65 @@ export class PlaybackEngine {
     return bpm && bpm > 0 ? bpm * this.tempoRatios[deck] : null
   }
 
-  private syncUnavailableReason(deck: DeckId): string | null {
+  private syncUnavailableReason(deck: DeckId, master: TempoMaster): string | null {
     if (!this.hasBeatTimeline(deck)) return `Deck ${deck} requires a beat timeline`
     if (this.decks?.[deck].sourceKind !== "signalsmith") return `Deck ${deck} requires Signalsmith for tempo sync`
-    if (this.beatSync.master !== "clock" && !this.hasBeatTimeline(this.beatSync.master)) {
-      return `Tempo master Deck ${this.beatSync.master} requires a beat timeline`
+    if (master !== "clock" && !this.hasBeatTimeline(master)) {
+      return `Tempo master Deck ${master} requires a beat timeline`
     }
-    const target = tempoRatioFor(this.currentMasterBpm(), this.timelines[deck]!.bpm)
+    const target = tempoRatioFor(this.masterTempoFor(master), this.timelines[deck]!.bpm)
     return target === null ? "Master tempo is outside the ±8% deck range" : null
   }
 
-  private async synchronizeFollowers(when?: number, masterPhase?: number): Promise<void> {
+  /**
+   * Re-aligns every deck currently engaged as a follower of the live master,
+   * for master-side mutations (tempo/seek/loop) that R1's reducer has no
+   * fact/command for — these are host-level Web Audio orchestration, not
+   * reducer decisions, so they bypass tempoSync.dispatch entirely. Failures
+   * are reported per-deck and do not abort the others, matching the old
+   * Promise.all + per-deck catch behavior; unlike a dispatch-driven effect,
+   * a failure here is not fed back as an align-result fact, so a follower's
+   * snapshot phase can go stale (still "aligned") if this silently fails.
+   */
+  private async cascadeAlignment(): Promise<void> {
+    const state = this.tempoSync.getState()
+    const master = state.master
     await Promise.all((["A", "B"] as const)
-      .filter((deck) => this.isSyncedFollower(deck))
-      .map((deck) => this.synchronizeDeckFromMaster(deck, when, masterPhase)))
+      .filter((deck) => this.tempoSync.isFollower(deck))
+      .map(async (deck) => {
+        try {
+          await this.alignFollower(deck, master, state.followers[deck].mode, false)
+        } catch (error) {
+          reportEngineFailure(`PlaybackEngine.cascadeAlignment(${deck})`, error)
+        }
+      }))
   }
 
-  private async synchronizeDeckFromMaster(
+  /**
+   * The TempoSyncHost seam: the only place that turns a tempoSync decision
+   * into a real Web Audio operation. Called either by TempoSyncController in
+   * response to an align-follower effect, or directly by PlaybackEngine for
+   * master-side mutations (see cascadeAlignment) that have no reducer
+   * representation. Throws on failure instead of touching sync state itself
+   * -- the controller is the only thing that translates a throw into an
+   * align-result fact.
+   */
+  async alignFollower(
     deck: DeckId,
-    when?: number,
-    masterPhase?: number,
-  ): Promise<boolean> {
-    const state = this.beatSync.decks[deck]
-    try {
-      await this.synchronizeFollower(deck, false, when, undefined, masterPhase)
-      return true
-    } catch (error) {
-      state.phase = "unavailable"
-      state.reason = error instanceof Error ? error.message : "Beat sync failed"
-      this.changed()
-      return false
-    }
-  }
-
-  private async synchronizeFollower(
-    deck: DeckId,
+    master: TempoMaster,
+    _mode: SyncMode,
     start: boolean,
-    when?: number,
     positionHint?: number,
-    masterPhaseHint?: number,
   ): Promise<void> {
     const runtime = this.decks?.[deck]
     const timeline = this.timelines[deck]
-    const state = this.beatSync.decks[deck]
-    const reason = this.syncUnavailableReason(deck)
+    const reason = this.syncUnavailableReason(deck, master)
     if (!runtime || !timeline || reason) {
-      const unavailable = reason ?? "Beat sync is unavailable"
-      throw new Error(unavailable)
+      throw new Error(reason ?? "Beat sync is unavailable")
     }
-    const ratio = tempoRatioFor(this.currentMasterBpm(), timeline.bpm)!
-    const scheduled = when ?? this.syncScheduleTime(deck)
+    const ratio = tempoRatioFor(this.masterTempoFor(master), timeline.bpm)
+    if (ratio === null) throw new Error("Master tempo is outside the ±8% deck range")
+    const scheduled = this.syncScheduleTime(deck, master)
     const followerAnchor = runtime.anchor
     if (!followerAnchor) throw new Error(`Deck ${deck} has no playback clock`)
     const followerPosition = positionHint ?? projectPlayhead(
@@ -695,7 +682,7 @@ export class PlaybackEngine {
       followerAnchor.rate,
       scheduled,
     )
-    const masterPhase = masterPhaseHint ?? this.masterPhaseAt(scheduled)
+    const masterPhase = this.masterPhaseAt(master, scheduled)
     const target = alignFollowerPosition(
       new Float32Array([0, 1]),
       masterPhase,
@@ -704,25 +691,21 @@ export class PlaybackEngine {
     )
     if (target === null) throw new Error("Beat phase cannot be mapped")
 
-    state.phase = "pending"
-    state.reason = null
     await runtime.setRate(ratio, scheduled)
     await runtime.seek(target, scheduled)
     this.tempoRatios[deck] = ratio
     if (start) await runtime.play(scheduled, target)
-    state.phase = "aligned"
     this.changed()
   }
 
-  private masterPhaseAt(audioTime: number): number {
-    if (this.beatSync.master === "clock") {
-      return ((audioTime * this.beatSync.clockBpm / 60) % 1 + 1) % 1
+  private masterPhaseAt(master: TempoMaster, audioTime: number): number {
+    if (master === "clock") {
+      return ((audioTime * this.clockBpm / 60) % 1 + 1) % 1
     }
-    const deck = this.beatSync.master
-    const anchor = this.deckSnapshot(deck).anchor
+    const anchor = this.deckSnapshot(master).anchor
     if (!anchor) return 0
     const position = projectPlayhead(anchor.mediaSeconds, anchor.audioTime, anchor.rate, audioTime)
-    return this.phaseForDeckPosition(deck, position)
+    return this.phaseForDeckPosition(master, position)
   }
 
   private phaseForDeckPosition(deck: DeckId, position: number): number {
@@ -737,12 +720,10 @@ export class PlaybackEngine {
     return width > 0 ? Math.min(1, Math.max(0, (position - beats[index]) / width)) : 0
   }
 
-  private syncScheduleTime(deck: DeckId): number {
+  private syncScheduleTime(deck: DeckId, master: TempoMaster): number {
     const contextTime = this.context?.currentTime ?? 0
     const followerLead = this.decks?.[deck].schedulingLeadSeconds ?? 0
-    const masterLead = this.beatSync.master === "clock"
-      ? 0
-      : this.decks?.[this.beatSync.master].schedulingLeadSeconds ?? 0
+    const masterLead = master === "clock" ? 0 : this.decks?.[master].schedulingLeadSeconds ?? 0
     return contextTime + Math.max(followerLead, masterLead) + 0.02
   }
 
@@ -799,7 +780,7 @@ export class PlaybackEngine {
   private watchExternalElement(deck: DeckId, element: HTMLMediaElement): void {
     this.externalListenerCleanup[deck]?.()
     const notify = () => {
-      this.reconcileAutoMaster(deck)
+      void this.tempoSync.dispatch({ type: "deck-transport", deck, transport: externalTransport(element) })
       this.changed()
     }
     const events = [
@@ -812,25 +793,8 @@ export class PlaybackEngine {
     }
   }
 
-  private reconcileAutoMaster(changedDeck: DeckId): void {
-    if (this.beatSync.master === "clock") {
-      if (
-        this.deckTransport(changedDeck) === "playing"
-      ) {
-        this.beatSync.auto = true
-        this.assignTempoMaster(changedDeck)
-        void this.synchronizeFollowers().catch(() => undefined)
-      }
-      return
-    }
-    if (this.beatSync.master === changedDeck && this.deckTransport(changedDeck) !== "playing") {
-      this.assignTempoMaster(this.findPlayingDeck(changedDeck) ?? "clock")
-      void this.synchronizeFollowers().catch(() => undefined)
-    }
-  }
-
   private handleDeckRuntimeChange(deck: DeckId): void {
-    if (!this.explicitTransportCommands.has(deck)) this.reconcileAutoMaster(deck)
+    void this.tempoSync.dispatch({ type: "deck-transport", deck, transport: this.deckTransport(deck) })
     this.changed()
   }
 

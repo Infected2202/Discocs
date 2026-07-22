@@ -127,22 +127,33 @@ describe("PlaybackEngine Phase 1 routing", () => {
 
     // DJ activation routes an already-playing ordinary <audio>, so no new
     // `play` event will arrive after the engine attaches its listeners.
-    expect(engine.getSnapshot().beatSync).toMatchObject({ auto: true, master: "A" })
+    expect(engine.getSnapshot().tempoSync).toMatchObject({ auto: true, master: "A" })
     await expect(engine.setClockMaster()).rejects.toThrow("unavailable while a deck is playing")
 
     Object.defineProperty(mediaB, "paused", { configurable: true, value: false })
     mediaB.dispatchEvent(new Event("play"))
-    expect(engine.getSnapshot().beatSync.master).toBe("A")
+    expect(engine.getSnapshot().tempoSync.master).toBe("A")
+
+    // setTempoMaster now dispatches R1's set-deck-master command, which is a
+    // genuine manual pin (auto: false) -- unlike the pre-rewrite engine,
+    // which always left `auto: true` even for an explicit master pin,
+    // blurring "auto-promoted" and "manually forced" into the same flag.
+    // That blur is exactly the kind of scattered-mutation inconsistency this
+    // rewrite exists to remove, so pausing the pinned master must NOT
+    // auto-fall-back until AUTO is explicitly re-enabled.
     await engine.setTempoMaster("B")
-    expect(engine.getSnapshot().beatSync.master).toBe("B")
+    expect(engine.getSnapshot().tempoSync).toMatchObject({ master: "B", auto: false })
 
     Object.defineProperty(mediaB, "paused", { configurable: true, value: true })
     mediaB.dispatchEvent(new Event("pause"))
-    expect(engine.getSnapshot().beatSync.master).toBe("A")
+    expect(engine.getSnapshot().tempoSync.master).toBe("B")
+
+    await engine.setAutoMaster()
+    expect(engine.getSnapshot().tempoSync).toMatchObject({ auto: true, master: "A" })
 
     Object.defineProperty(mediaA, "paused", { configurable: true, value: true })
     mediaA.dispatchEvent(new Event("pause"))
-    expect(engine.getSnapshot().beatSync.master).toBe("clock")
+    expect(engine.getSnapshot().tempoSync.master).toBe("clock")
   })
 
   it("projects ended and failed external media states", () => {
@@ -230,23 +241,36 @@ describe("PlaybackEngine Phase 1 routing", () => {
     await engine.upgradeDeckSource("A", { url: "blob:a", trackId: 1, blob: new Blob(["a"]) })
 
     await engine.playDeck("A")
-    expect(engine.getSnapshot().beatSync).toMatchObject({ auto: true, master: "A", clockBpm: 126 })
+    expect(engine.getSnapshot().tempoSync).toMatchObject({ auto: true, master: "A", clockBpm: 126 })
 
-    await engine.toggleSync("A")
-    expect(engine.getSnapshot().beatSync.decks.A).toMatchObject({ enabled: true, phase: "aligned", reason: null })
+    await engine.toggleSync("A", "beat")
+    expect(engine.getSnapshot().tempoSync.decks.A).toMatchObject({ enabled: true, phase: "aligned", reason: null })
 
-    await engine.toggleSync("B")
-    expect(engine.getSnapshot().beatSync.decks.B).toMatchObject({
-      enabled: true,
+    // Deck B has never had upgradeDeckSource called on it yet, so it is not
+    // merely "not ready" (which would arm) -- SYNC feasibility is checked
+    // synchronously at arm-time per SYNC_REWRITE_PLAN.md §2, and an
+    // unattempted upgrade is infeasible right now, so the request is
+    // rejected synchronously: enabled stays false. This inverts the
+    // pre-rewrite assertion here, which asserted `enabled: true,
+    // phase: "unavailable"` -- a button that visually "engages" but can
+    // never actually align is exactly the "lights up, does nothing" bug
+    // this rewrite exists to fix.
+    await engine.toggleSync("B", "beat")
+    expect(engine.getSnapshot().tempoSync.decks.B).toMatchObject({
+      enabled: false,
       phase: "unavailable",
-      reason: "Deck B requires a beat timeline",
+      reason: "Deck B will never produce a beat timeline",
     })
     await engine.upgradeDeckSource("B", { url: "blob:b", trackId: 2, blob: new Blob(["b"]) })
     expect(engine.getSnapshot().decks.B.tempoRatio).toBeCloseTo(1.03)
     expect(vi.mocked(nodeB.schedule)).toHaveBeenCalledWith(expect.objectContaining({ rate: 1.03 }), true)
-    await engine.synchronizeDeck("B")
+
+    // Deck B is now feasible and ready; pressing SYNC again (there is no
+    // more standalone `synchronizeDeck` -- toggling is the only entry point
+    // now) succeeds and arms it as a follower of A.
+    await engine.toggleSync("B", "beat")
     expect(engine.getSnapshot()).toMatchObject({
-      beatSync: { decks: { B: { enabled: true, phase: "aligned", reason: null } } },
+      tempoSync: { decks: { B: { enabled: true, phase: "aligned", reason: null } } },
       decks: { B: { tempoRatio: 1.05 } },
     })
     expect(vi.mocked(nodeB.schedule)).toHaveBeenCalledWith(expect.objectContaining({ rate: 1.05 }), true)
@@ -259,10 +283,10 @@ describe("PlaybackEngine Phase 1 routing", () => {
     await engine.setTempo("A", 1.02)
     expect(engine.getSnapshot().decks.B.tempoRatio).toBeCloseTo(1.071)
     await expect(engine.setTempo("B", 1)).rejects.toThrow("controlled by the tempo master")
-    await engine.toggleSync("B")
+    await engine.toggleSync("B", "beat")
     expect(engine.getSnapshot().decks.B.tempoRatio).toBeCloseTo(1.071)
-    expect(engine.getSnapshot().beatSync.decks.B).toMatchObject({ enabled: false, phase: "off" })
-    await engine.toggleSync("B")
+    expect(engine.getSnapshot().tempoSync.decks.B).toMatchObject({ enabled: false, phase: "off" })
+    await engine.toggleSync("B", "beat")
 
     const scheduledBeforeRecovery = vi.mocked(nodeB.schedule).mock.calls.length
     await engine.playDeck("B")
@@ -275,7 +299,7 @@ describe("PlaybackEngine Phase 1 routing", () => {
     }))
 
     await engine.pauseDeck("A")
-    expect(engine.getSnapshot().beatSync).toMatchObject({
+    expect(engine.getSnapshot().tempoSync).toMatchObject({
       auto: true,
       master: "B",
       decks: {
@@ -284,7 +308,56 @@ describe("PlaybackEngine Phase 1 routing", () => {
       },
     })
     await engine.handover({ incomingDeck: "B", clientHandoverId: "sync-handover" })
-    expect(engine.getSnapshot()).toMatchObject({ programDeck: "B", beatSync: { master: "B" } })
+    expect(engine.getSnapshot()).toMatchObject({ programDeck: "B", tempoSync: { master: "B" } })
+  })
+
+  it("collapses a redundant DeckRuntime transport notification into a single alignment", async () => {
+    vi.stubGlobal("AudioContext", FakeAudioContext)
+    let nodeA!: StretchNode
+    let nodeB!: StretchNode
+    const createNode = vi.fn(async (context: AudioContext) => {
+      if (!nodeA) {
+        nodeA = createFakeStretchNode(context, { inputTime: 0 })
+        return nodeA
+      }
+      nodeB = createFakeStretchNode(context, { inputTime: 0 })
+      return nodeB
+    })
+    const timeline: DecodedTimeline = {
+      durationSeconds: 4, levels: [], bpm: 120, beatConfidence: 0.9, rhythmCoverageSeconds: 4,
+      beats: new Float32Array([0, 0.5, 1, 1.5, 2]), localTempo: new Float32Array([120, 120, 120, 120, 120]),
+    }
+    const engine = new PlaybackEngine(undefined, {
+      stretch: { createNode },
+      stretchEligibility: vi.fn(async () => ({ ready: true, reason: null, timeline })),
+    })
+    engine.routeProgramElement(document.createElement("audio"), 1, "q1")
+    engine.routeIncomingElement(document.createElement("audio"), 2, "q2")
+    await engine.upgradeDeckSource("A", { url: "blob:a", trackId: 1, blob: new Blob(["a"]) })
+    await engine.upgradeDeckSource("B", { url: "blob:b", trackId: 2, blob: new Blob(["b"]) })
+
+    await engine.playDeck("A")
+    await engine.toggleSync("B", "beat")
+    expect(engine.getSnapshot().tempoSync.decks.B).toMatchObject({ enabled: true, phase: "aligned" })
+
+    // Starting B goes through two independent trigger paths for the exact
+    // same fact: playDeck's own explicit dispatch, and (because alignFollower
+    // calls runtime.play() as part of that same effect) DeckRuntime's own
+    // notify callback firing again afterward. Pre-rewrite this pairing was
+    // guarded by an `explicitTransportCommands` suppression Set; R1's
+    // reducer makes redundant facts structurally idempotent no-ops instead,
+    // so this must produce exactly one align-triggered "start" (one
+    // schedule call with active: true), not two.
+    const startCallsBefore = vi.mocked(nodeB.schedule).mock.calls
+      .filter(([change]) => change.active === true).length
+
+    await engine.playDeck("B")
+
+    const startCallsAfter = vi.mocked(nodeB.schedule).mock.calls
+      .filter(([change]) => change.active === true).length
+    expect(startCallsAfter - startCallsBefore).toBe(1)
+    expect(engine.getSnapshot().tempoSync.decks.B.phase).toBe("aligned")
+    expect(engine.getSnapshot().tempoSync.master).toBe("A")
   })
 
   it("keeps the editable master clock selected when AUTO is disabled", async () => {
@@ -295,6 +368,6 @@ describe("PlaybackEngine Phase 1 routing", () => {
     await engine.setClockMaster()
     await engine.setClockTempo(140)
 
-    expect(engine.getSnapshot().beatSync).toMatchObject({ auto: false, master: "clock", clockBpm: 140 })
+    expect(engine.getSnapshot().tempoSync).toMatchObject({ auto: false, master: "clock", clockBpm: 140 })
   })
 })
