@@ -131,7 +131,8 @@ describe("DjControlSurface", () => {
     playback.subscribeEngine.mockReturnValue(() => undefined)
     playback.getMixerMeters.mockReturnValue({ A: 0.2, B: 0.1, master: 0.3 })
     playback.getEngineSnapshot.mockReturnValue(snapshot())
-    useTimeline.mockClear()
+    useTimeline.mockReset()
+    useTimeline.mockReturnValue({ status: "missing" })
     renderWaveform.mockClear()
     useUIStore.setState({ djSurfaceOpen: false })
     usePlayerStore.setState({
@@ -328,7 +329,18 @@ describe("DjControlSurface", () => {
         },
       },
     })
-    useTimeline.mockReturnValue({ status: "ready", timeline: { bpm: 120 } } as never)
+    useTimeline.mockReturnValue({
+      status: "ready",
+      timeline: {
+        durationSeconds: 180,
+        levels: [],
+        bpm: 120,
+        beatConfidence: 0.9,
+        rhythmCoverageSeconds: 180,
+        beats: new Float32Array([0, 0.5, 1]),
+        localTempo: new Float32Array([120, 120, 120]),
+      },
+    })
     useUIStore.setState({ djSurfaceOpen: true })
     render(<DjControlSurface />)
 
