@@ -115,9 +115,28 @@ function snapshot(programDeck: "A" | "B" | null = "A") {
       auto: true,
       master: "clock" as const,
       clockBpm: 126,
+      canBecomeClockMaster: true,
       decks: {
-        A: { enabled: false, phase: "off" as const, reason: null },
-        B: { enabled: false, phase: "off" as const, reason: null },
+        A: {
+          enabled: false,
+          mode: "beat" as const,
+          phase: "off" as const,
+          reason: null,
+          phaseOffsetBeats: 0,
+          canEngageBeatSync: true,
+          canEngageTempoSync: true,
+          canBecomeMaster: false,
+        },
+        B: {
+          enabled: false,
+          mode: "beat" as const,
+          phase: "off" as const,
+          reason: null,
+          phaseOffsetBeats: 0,
+          canEngageBeatSync: true,
+          canEngageTempoSync: true,
+          canBecomeMaster: false,
+        },
       },
     },
     automation: { owner: "none" as const },
@@ -312,7 +331,7 @@ describe("DjControlSurface", () => {
     expect(playback.setDeckTempo).not.toHaveBeenCalled()
   })
 
-  it("enables SYNC on every loaded deck and unlocks pitch only on MASTER", () => {
+  it("enables BEAT/TEMPO sync on every loaded deck and unlocks pitch only on MASTER", () => {
     const base = snapshot()
     playback.getEngineSnapshot.mockReturnValue({
       ...base,
@@ -324,9 +343,28 @@ describe("DjControlSurface", () => {
         auto: true,
         master: "A",
         clockBpm: 126,
+        canBecomeClockMaster: false,
         decks: {
-          A: { enabled: false, phase: "off", reason: null },
-          B: { enabled: true, phase: "aligned", reason: null },
+          A: {
+            enabled: false,
+            mode: "beat",
+            phase: "off",
+            reason: null,
+            phaseOffsetBeats: 0,
+            canEngageBeatSync: true,
+            canEngageTempoSync: true,
+            canBecomeMaster: false,
+          },
+          B: {
+            enabled: true,
+            mode: "beat",
+            phase: "aligned",
+            reason: null,
+            phaseOffsetBeats: 0,
+            canEngageBeatSync: true,
+            canEngageTempoSync: true,
+            canBecomeMaster: true,
+          },
         },
       },
     })
@@ -350,27 +388,29 @@ describe("DjControlSurface", () => {
     expect(screen.getByLabelText("Set Deck A as tempo master")).toHaveAttribute("data-active", "true")
     expect(screen.getByLabelText("Deck A pitch")).toBeEnabled()
     expect(screen.getByLabelText("Deck B pitch")).toBeDisabled()
-    expect(screen.getByLabelText("Sync Deck A to tempo master")).toBeEnabled()
-    expect(screen.getByLabelText("Sync Deck B to tempo master")).toHaveAttribute("data-enabled", "true")
-    expect(screen.getByLabelText("Sync Deck B to tempo master")).toHaveAttribute("data-active", "true")
+    expect(screen.getByLabelText("BeatSync Deck A to tempo master")).toBeEnabled()
+    expect(screen.getByLabelText("TempoSync Deck A to tempo master")).toBeEnabled()
+    expect(screen.getByLabelText("BeatSync Deck B to tempo master")).toHaveAttribute("data-enabled", "true")
+    expect(screen.getByLabelText("BeatSync Deck B to tempo master")).toHaveAttribute("data-active", "true")
+    expect(screen.getByLabelText("TempoSync Deck B to tempo master")).not.toHaveAttribute("data-enabled")
     expect(screen.getByLabelText("Deck B current tempo")).toHaveTextContent("126.00")
     expect(screen.getByLabelText("Deck B pitch")).toHaveAttribute("aria-valuenow", "0.625")
     expect(screen.getByLabelText("Set Deck B as tempo master")).toBeEnabled()
 
-    fireEvent.click(screen.getByLabelText("Sync Deck A to tempo master"))
-    fireEvent.click(screen.getByLabelText("Sync Deck B to tempo master"))
+    fireEvent.click(screen.getByLabelText("BeatSync Deck A to tempo master"))
+    fireEvent.click(screen.getByLabelText("TempoSync Deck B to tempo master"))
     fireEvent.keyDown(screen.getByLabelText("Deck A pitch"), { key: "End" })
     fireEvent.click(screen.getByLabelText("Set Deck B as tempo master"))
     fireEvent.click(screen.getByLabelText("Use automatic tempo master"))
-    expect(playback.toggleDeckSync).toHaveBeenCalledWith("A")
-    expect(playback.toggleDeckSync).toHaveBeenCalledWith("B")
+    expect(playback.toggleDeckSync).toHaveBeenCalledWith("A", "beat")
+    expect(playback.toggleDeckSync).toHaveBeenCalledWith("B", "tempo")
     expect(playback.setDeckTempo).toHaveBeenCalledWith("A", 1.08)
     expect(playback.setDeckTempoMaster).toHaveBeenCalledWith("B")
     expect(playback.setAutoTempoMaster).toHaveBeenCalledOnce()
     expect(playback.setClockTempoMaster).not.toHaveBeenCalled()
   })
 
-  it("shows an armed paused SYNC as blue text without the playing background", () => {
+  it("shows an armed paused BeatSync as blue text without the playing background", () => {
     const base = snapshot()
     playback.getEngineSnapshot.mockReturnValue({
       ...base,
@@ -379,17 +419,68 @@ describe("DjControlSurface", () => {
         master: "A",
         decks: {
           ...base.tempoSync.decks,
-          B: { enabled: true, phase: "pending", reason: null },
+          B: {
+            enabled: true,
+            mode: "beat",
+            phase: "pending",
+            reason: null,
+            phaseOffsetBeats: 0,
+            canEngageBeatSync: true,
+            canEngageTempoSync: true,
+            canBecomeMaster: false,
+          },
         },
       },
     })
     useUIStore.setState({ djSurfaceOpen: true })
     render(<DjControlSurface />)
 
-    const sync = screen.getByLabelText("Sync Deck B to tempo master")
+    const sync = screen.getByLabelText("BeatSync Deck B to tempo master")
     expect(sync).toHaveAttribute("data-enabled", "true")
     expect(sync).not.toHaveAttribute("data-active")
     expect(sync).toHaveAttribute("aria-pressed", "true")
+  })
+
+  it("never gives an unavailable-while-playing follower the active glow (regression)", () => {
+    // Root cause: the active-glow used to key off `enabled && isPlaying`, so a
+    // follower whose alignment failed asynchronously (enabled stays true,
+    // phase becomes "unavailable" per tempoSync's handleAlignResult) rendered
+    // identically to a genuinely aligned follower while the deck kept
+    // playing. This must fail against `enabled && isPlaying`-style logic and
+    // pass once the glow is keyed off `phase === "aligned"`.
+    const base = snapshot()
+    playback.getEngineSnapshot.mockReturnValue({
+      ...base,
+      decks: {
+        A: { ...base.decks.A, transport: "playing" as never },
+        B: { ...base.decks.B, transport: "playing" as never },
+      },
+      tempoSync: {
+        ...base.tempoSync,
+        master: "A",
+        decks: {
+          ...base.tempoSync.decks,
+          B: {
+            enabled: true,
+            mode: "beat",
+            phase: "unavailable",
+            reason: "Alignment failed",
+            phaseOffsetBeats: 0,
+            canEngageBeatSync: true,
+            canEngageTempoSync: true,
+            canBecomeMaster: false,
+          },
+        },
+      },
+    })
+    useUIStore.setState({ djSurfaceOpen: true })
+    render(<DjControlSurface />)
+
+    const sync = screen.getByLabelText("BeatSync Deck B to tempo master")
+    // enabled is (dishonestly) still true, and the deck is playing, but the
+    // phase says the follower never actually locked on — no glow.
+    expect(sync).toHaveAttribute("data-enabled", "true")
+    expect(sync).not.toHaveAttribute("data-active")
   })
 
   it("hides the mixer and shows an activate button while the engine is off", () => {
