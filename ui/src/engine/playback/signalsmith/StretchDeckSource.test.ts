@@ -73,4 +73,43 @@ describe("StretchDeckSource full-track lifecycle", () => {
     expect(node.disconnect).toHaveBeenCalledOnce()
     expect(node.port?.close).toHaveBeenCalledOnce()
   })
+
+  it("aborts a stalled worklet RPC sequence via the AbortSignal and disposes the node once it later settles", async () => {
+    const context = createFakeAudioContext({ currentTime: 10 })
+    vi.mocked(context.createGain).mockReturnValue(new FakeAudioNode())
+    vi.mocked(context.decodeAudioData).mockResolvedValue({
+      duration: 2,
+      length: 2,
+      numberOfChannels: 1,
+      getChannelData: () => new Float32Array([0.25, -0.25]),
+    } as unknown as AudioBuffer)
+    const node = createFakeStretchNode(context)
+    // Simulates a worklet that never replies to `configure` -- exactly the
+    // hang root cause E describes, before abortRace existed to unblock it.
+    let releaseConfigure!: () => void
+    vi.mocked(node.configure).mockImplementation(
+      () => new Promise((resolve) => { releaseConfigure = () => resolve(undefined) }),
+    )
+    const source = new StretchDeckSource(context as unknown as AudioContext, {
+      createNode: vi.fn().mockResolvedValue(node),
+    })
+    const controller = new AbortController()
+
+    const loadPromise = source.load({ url: "blob:deck", trackId: 7, blob: new Blob(["audio"]) }, controller.signal)
+    await vi.waitFor(() => expect(node.configure).toHaveBeenCalled())
+
+    controller.abort()
+
+    await expect(loadPromise).rejects.toMatchObject({ name: "AbortError" })
+    // The RPC sequence hasn't actually settled yet (configure is still
+    // stalled) -- disposal must not fire before then.
+    expect(node.disconnect).not.toHaveBeenCalled()
+    expect(node.port?.close).not.toHaveBeenCalled()
+
+    releaseConfigure()
+    await vi.waitFor(() => {
+      expect(node.disconnect).toHaveBeenCalledOnce()
+      expect(node.port?.close).toHaveBeenCalledOnce()
+    })
+  })
 })

@@ -4,6 +4,14 @@ import { createFakeStretchNode, FakeAudioContext } from "./testing/webAudioFakes
 import type { StretchNode } from "./signalsmith/types"
 import type { DecodedTimeline } from "@/engine/timeline/types"
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 describe("PlaybackEngine Phase 1 routing", () => {
   beforeEach(() => {
     FakeAudioContext.instances.length = 0
@@ -358,6 +366,84 @@ describe("PlaybackEngine Phase 1 routing", () => {
     expect(startCallsAfter - startCallsBefore).toBe(1)
     expect(engine.getSnapshot().tempoSync.decks.B.phase).toBe("aligned")
     expect(engine.getSnapshot().tempoSync.master).toBe("A")
+  })
+
+  // Named regression test for SYNC_REWRITE_PLAN.md R7 (§2.4/§3/§5): SYNC is
+  // armed on deck B while deck A plays, Play is pressed on B before its
+  // Signalsmith upgrade resolves (the worklet's createNode is deliberately
+  // left pending here to simulate a slow cold-start), fake/real time is
+  // allowed to advance, and deck B must genuinely start playing and end up
+  // phase-aligned rather than hang. Before R7's DeckRuntime timeout +
+  // StretchDeckSource abortRace existed, a worklet RPC stalling here (as
+  // opposed to merely being slow, like this test's deferred promise) had no
+  // way to ever reject -- DeckRuntime.load() would await it forever and this
+  // exact scenario would never settle.
+  it("starts and phase-aligns deck B once its Signalsmith upgrade resolves, after SYNC was armed mid-upgrade", async () => {
+    vi.stubGlobal("AudioContext", FakeAudioContext)
+    let nodeA!: StretchNode
+    let contextForB: AudioContext | undefined
+    const nodeBReady = deferred<StretchNode>()
+    const createNode = vi.fn(async (context: AudioContext) => {
+      if (!nodeA) {
+        nodeA = createFakeStretchNode(context, { inputTime: 0 })
+        return nodeA
+      }
+      contextForB = context
+      return nodeBReady.promise
+    })
+    const timelines: Record<number, DecodedTimeline> = {
+      1: {
+        durationSeconds: 4, levels: [], bpm: 126, beatConfidence: 0.9, rhythmCoverageSeconds: 4,
+        beats: new Float32Array([0, 0.5, 1, 1.5, 2]), localTempo: new Float32Array([126, 126, 126, 126, 126]),
+      },
+      2: {
+        durationSeconds: 4, levels: [], bpm: 124, beatConfidence: 0.9, rhythmCoverageSeconds: 4,
+        beats: new Float32Array([0.1, 0.6, 1.1, 1.6, 2.1]), localTempo: new Float32Array([124, 124, 124, 124, 124]),
+      },
+    }
+    const engine = new PlaybackEngine(undefined, {
+      stretch: { createNode },
+      stretchEligibility: vi.fn(async (trackId) => ({ ready: true, reason: null, timeline: timelines[trackId] })),
+    })
+
+    engine.routeProgramElement(document.createElement("audio"), 1, "q1")
+    engine.routeIncomingElement(document.createElement("audio"), 2, "q2")
+    await engine.upgradeDeckSource("A", { url: "blob:a", trackId: 1, blob: new Blob(["a"]) })
+    await engine.playDeck("A")
+    expect(engine.getSnapshot().tempoSync.master).toBe("A")
+
+    // The "Play" press on deck B: an autoplay upgrade whose Signalsmith
+    // worklet creation is left pending (nodeBReady is not resolved yet).
+    const upgradeB = engine.upgradeDeckSource(
+      "B",
+      { url: "blob:b", trackId: 2, blob: new Blob(["b"]) },
+      { autoplay: true },
+    )
+
+    // Wait for upgradeDeckSource's own optimistic "known feasible, not yet
+    // ready" capability fact to land before arming SYNC -- otherwise this
+    // toggle races the fact and can see the pre-upgrade "infeasible" state.
+    await vi.waitFor(() => {
+      expect(engine.getSnapshot().tempoSync.decks.B.canEngageBeatSync).toBe(true)
+    })
+
+    // SYNC engages while deck B is still mid-upgrade: known-feasible but not
+    // ready, so it arms rather than rejecting or (pre-rewrite) lying about
+    // being engaged.
+    await engine.toggleSync("B", "beat")
+    expect(engine.getSnapshot().tempoSync.decks.B).toMatchObject({ enabled: true, phase: "arming" })
+
+    // Confirm the worklet creation call for deck B actually happened (and is
+    // the thing left hanging) before releasing it.
+    await vi.waitFor(() => expect(contextForB).toBeDefined())
+    nodeBReady.resolve(createFakeStretchNode(contextForB!, { inputTime: 0 }))
+    await upgradeB
+
+    await vi.waitFor(() => {
+      expect(engine.getSnapshot().tempoSync.decks.B.phase).toBe("aligned")
+    })
+    expect(engine.getSnapshot().decks.B.transport).toBe("playing")
+    expect(engine.getSnapshot().tempoSync.decks.B.reason).toBeNull()
   })
 
   it("keeps the editable master clock selected when AUTO is disabled", async () => {

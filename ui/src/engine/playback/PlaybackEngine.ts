@@ -266,6 +266,12 @@ export class PlaybackEngine implements TempoSyncHost {
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Signalsmith initialization failed"
       this.degradedReasons[deck] = reason
+      // Covers the DeckRuntime.load() timeout and StretchDeckSource's
+      // abort-race rejections (SYNC_REWRITE_PLAN.md §2.3/R7) along with every
+      // other upgrade failure: the DJ panel's degraded-reason text is the
+      // only in-app surface (product decision #4, no toast/banner), so
+      // console is the only place this is otherwise observable.
+      reportEngineFailure(`PlaybackEngine.upgradeDeckSource(${deck})`, error)
       void this.tempoSync.dispatch({
         type: "deck-capability", deck, hasTrack: true, feasible: false, ready: false, bpm: null,
       })

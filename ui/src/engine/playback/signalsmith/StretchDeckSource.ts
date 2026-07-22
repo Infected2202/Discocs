@@ -7,6 +7,7 @@ import type {
   TransportState,
 } from "../types"
 import type { DeckSource } from "../sources/DeckSource"
+import { abortRace } from "../abortRace"
 import { createSignalsmithNode } from "./assets"
 import { detectStretchCapability } from "./capabilities"
 import { StretchAdapter } from "./StretchAdapter"
@@ -68,21 +69,53 @@ export class StretchDeckSource implements DeckSource {
       }
       const adapter = new StretchAdapter(this.context, node)
       this.adapter = adapter
-      await adapter.initialize("default")
-      adapter.output.connect(this.output)
-      const channels = Array.from(
-        { length: decoded.numberOfChannels },
-        (_, channel) => Float32Array.from(decoded.getChannelData(channel)),
+      // None of adapter.initialize/append or node.setUpdateInterval below take
+      // an AbortSignal themselves -- they're worklet RPC round-trips that can
+      // hang indefinitely (the root cause this timeout/abort-race exists to
+      // fix). abortRace is what actually unblocks DeckRuntime.load()'s own
+      // timeout: aborting `signal` rejects this promise immediately instead
+      // of leaving the caller awaiting a worklet reply that may never come.
+      // If the raced-away RPC sequence does eventually settle, the dispose
+      // callback disconnects the node and closes its port so it isn't leaked;
+      // this races with (and is redundant with, but safe alongside) the
+      // ordinary release() path the outer catch below still drives via
+      // releaseAdapter() for every other kind of failure.
+      await abortRace(
+        (async () => {
+          await adapter.initialize("default")
+          adapter.output.connect(this.output)
+          const channels = Array.from(
+            { length: decoded.numberOfChannels },
+            (_, channel) => Float32Array.from(decoded.getChannelData(channel)),
+          )
+          await adapter.append(channels)
+          await node.setUpdateInterval(0.25, (inputTime) => this.handleClockUpdate(inputTime))
+        })(),
+        signal,
+        () => {
+          node.disconnect()
+          node.port?.close()
+        },
       )
-      await adapter.append(channels)
       this.duration = decoded.duration
-      await node.setUpdateInterval(0.25, (inputTime) => this.handleClockUpdate(inputTime))
       this.transport = "paused"
       this.notify()
       return { duration: decoded.duration, objectUrl: false }
     } catch (error) {
       this.transport = "error"
-      await this.releaseAdapter()
+      if (signal.aborted && this.adapter) {
+        // An abort mid-RPC means the worklet may simply be unresponsive --
+        // releaseAdapter()'s own stop()/dropBuffers() are further RPCs to
+        // that same node and could hang exactly like the call we just
+        // raced away from. abortRace's dispose callback already disconnects
+        // the node and closes its port (once, whenever the stalled sequence
+        // actually settles) without depending on the node replying to
+        // anything, so just drop the reference here instead of leaking a
+        // second, potentially-hanging cleanup path.
+        this.adapter = null
+      } else {
+        await this.releaseAdapter()
+      }
       throw error
     }
   }
