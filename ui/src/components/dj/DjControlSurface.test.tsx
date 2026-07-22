@@ -354,26 +354,16 @@ describe("DjControlSurface", () => {
     expect(playback.setClockTempoMaster).not.toHaveBeenCalled()
   })
 
-  it("shows the deck-A mirror with an activate button while the engine is off", () => {
-    usePlayerStore.setState({
-      djEngineActive: false,
-      currentTrack: {
-        id: 1,
-        title: "Mirror Track",
-        artists: [{ id: 7, name: "Mirror Artist" }],
-      } as never,
-      currentTime: 30,
-      duration: 120,
-      playbackState: "playing",
-    })
+  it("hides the mixer and shows an activate button while the engine is off", () => {
+    usePlayerStore.setState({ djEngineActive: false })
     useUIStore.setState({ djSurfaceOpen: true })
     render(<DjControlSurface />)
 
-    // Дека A зеркалит текущий трек; полный микшер не рендерится.
-    expect(screen.getAllByText("Mirror Track")).not.toHaveLength(0)
     expect(screen.queryByRole("region", { name: "Mixer" })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId("activate-dj-engine"))
+    const toggle = screen.getByTestId("toggle-dj-engine")
+    expect(toggle).toHaveAttribute("aria-label", "Activate DJ")
+    fireEvent.click(toggle)
     expect(playback.activateDjMode).toHaveBeenCalledOnce()
   })
 

@@ -397,59 +397,6 @@ function runPlayerCommand(command: () => Promise<void>): void {
   })
 }
 
-interface InactivePreviewProps {
-  readonly track: TrackSummary | null
-  readonly currentTime: number
-  readonly duration: number
-  readonly isPlaying: boolean
-  readonly onActivate: () => void
-}
-
-/**
- * Панель, когда DJ-движок выключен: дека A зеркалит текущий трек и позицию из
- * обычного плеера (без звука через граф) плюс кнопка активации. Микшер и
- * управление графом не рендерим — граф ещё не инициализирован, а их обработчики
- * требуют живой AudioContext.
- */
-function InactivePreview({ track, currentTime, duration, isPlaying, onActivate }: InactivePreviewProps) {
-  const { t } = useTranslation("player")
-  const progress = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0
-  return (
-    <section className={styles.inactivePreview} aria-label={t("djEngineInactiveTitle")}>
-      <div className={styles.inactiveDeck}>
-        <ArtworkImage
-          src={track?.artwork?.url}
-          alt=""
-          size={72}
-          className={styles.deckArtwork}
-          fallbackLetter={track?.title?.[0] ?? "A"}
-        />
-        <div className={styles.inactiveMeta}>
-          <span className={cn(styles.roleBadge, styles.roleProgram)}>A</span>
-          <strong>{track?.title ?? t("nothingPlaying")}</strong>
-          <span>{track?.artists?.map((artist) => artist.name).join(", ") || "—"}</span>
-          <div className={styles.inactiveProgress} aria-hidden="true">
-            <span style={{ width: `${progress * 100}%` }} />
-          </div>
-          <small>{formatTime(currentTime)} / {formatTime(duration)} · {isPlaying ? "play" : "pause"}</small>
-        </div>
-      </div>
-      <div className={styles.inactiveCta}>
-        <strong>{t("djEngineInactiveTitle")}</strong>
-        <p>{t("djEngineInactiveHint")}</p>
-        <button
-          type="button"
-          className={styles.engineActivate}
-          data-testid="activate-dj-engine"
-          onClick={onActivate}
-        >
-          <Power size={16} /> {t("activateDjEngine")}
-        </button>
-      </div>
-    </section>
-  )
-}
-
 function OpenDjControlSurface() {
   const { t } = useTranslation("player")
   const close = useUIStore((state) => state.closeDjSurface)
@@ -462,9 +409,6 @@ function OpenDjControlSurface() {
   const djEngineActive = usePlayerStore((state) => state.djEngineActive)
   const activateDj = usePlayerStore((state) => state.activateDj)
   const deactivateDj = usePlayerStore((state) => state.deactivateDj)
-  const programCurrentTime = usePlayerStore((state) => state.currentTime)
-  const programDuration = usePlayerStore((state) => state.duration)
-  const programPlaybackState = usePlayerStore((state) => state.playbackState)
   const snapshot = usePlaybackEngineSnapshot()
   const timelineA = useTimeline(snapshot.decks.A.trackId)
   const timelineB = useTimeline(snapshot.decks.B.trackId)
@@ -514,9 +458,10 @@ function OpenDjControlSurface() {
                 data-active={djEngineActive || undefined}
                 data-testid="toggle-dj-engine"
                 onClick={() => runPlayerCommand(djEngineActive ? deactivateDj : activateDj)}
+                title={djEngineActive ? t("deactivateDjEngine") : t("activateDjEngine")}
                 aria-label={djEngineActive ? t("deactivateDjEngine") : t("activateDjEngine")}
               >
-                <Power size={13} /> {djEngineActive ? t("deactivateDjEngine") : t("activateDjEngine")}
+                <Power size={14} />
               </button>
             </div>
             <div className={styles.masterControls}>
@@ -573,16 +518,6 @@ function OpenDjControlSurface() {
             <ChevronDown size={19} />
           </button>
         </header>
-
-        {!djEngineActive && (
-          <InactivePreview
-            track={tracks.A ?? currentTrack}
-            currentTime={programCurrentTime}
-            duration={programDuration}
-            isPlaying={programPlaybackState === "playing"}
-            onActivate={() => runPlayerCommand(activateDj)}
-          />
-        )}
 
         {djEngineActive && <section className={styles.waveforms} aria-label="Deck waveforms">
           {deckIds.map((deck) => (

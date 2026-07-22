@@ -18,7 +18,5 @@
   "closeDjSurface": "Close DJ workspace",
   "activeMix": "Two decks are playing",
   "activateDjEngine": "Activate DJ",
-  "deactivateDjEngine": "Deactivate DJ",
-  "djEngineInactiveTitle": "DJ engine is off",
-  "djEngineInactiveHint": "The deck mirrors the current track. Activate DJ to mix — audio then runs through the mixer (mixing is unavailable in the background)."
+  "deactivateDjEngine": "Deactivate DJ"
 }

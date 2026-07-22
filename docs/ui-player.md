@@ -98,11 +98,10 @@ While the DJ engine is active, a deck finishing playback stops at its end
 position and the transport goes to `paused`: there is **no** auto-advance, since
 mixing is manual (`handleTrackEnded` returns early on `djEngineActive`).
 
-The DJ panel shows an activate/deactivate button (`toggle-dj-engine`). While the
-engine is inactive, the panel renders a deck-A mirror of the current track and
-position (visual only, no audio through the graph) plus an activate call to
-action, instead of the full mixer — the mixer controls require a live
-`AudioContext` and are only mounted once the engine is active.
+The DJ panel shows a single icon-only activate/deactivate button
+(`toggle-dj-engine`). While the engine is inactive, the mixer/deck sections are
+not rendered at all — their controls require a live `AudioContext` — until the
+button is pressed.
 
 ## Compact player backdrop
 

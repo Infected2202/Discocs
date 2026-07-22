@@ -18,7 +18,5 @@
   "closeDjSurface": "Закрыть DJ-интерфейс",
   "activeMix": "Играют две деки",
   "activateDjEngine": "Активировать DJ",
-  "deactivateDjEngine": "Выключить DJ",
-  "djEngineInactiveTitle": "DJ-движок выключен",
-  "djEngineInactiveHint": "Дека повторяет текущий трек. Активируйте DJ, чтобы свести — звук пойдёт через микшер (в фоне сведение недоступно)."
+  "deactivateDjEngine": "Выключить DJ"
 }
