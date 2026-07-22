@@ -82,12 +82,15 @@ export class FakeAudioContext {
   createBiquadFilter = vi.fn(() => new FakeAudioNode())
   createAnalyser = vi.fn(() => new FakeAudioNode())
 
-  createMediaElementSource = vi.fn((element: HTMLMediaElement): FakeAudioNode => {
+  // Deliberately a prototype method, not a `= vi.fn(...)` class field: capabilities.ts
+  // feature-detects Web Audio support via `AudioContext.prototype.createMediaElementSource`,
+  // and a class-field arrow function only lives on the instance, not the prototype.
+  createMediaElementSource(element: HTMLMediaElement): FakeAudioNode {
     const node = new FakeAudioNode()
     this.mediaNodes.push(node)
     this.mediaElements.push(element)
     return node
-  })
+  }
 
   decodeAudioData = vi.fn(
     async (): Promise<AudioBuffer> =>
