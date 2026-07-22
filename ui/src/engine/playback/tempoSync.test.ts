@@ -8,11 +8,11 @@ import {
   canEngageTempoSync,
   initialTempoSyncState,
   reduceTempoSync,
-  type DeckId,
   type TempoSyncEffect,
   type TempoSyncEvent,
   type TempoSyncState,
 } from "./tempoSync"
+import type { DeckId } from "./types"
 
 function apply(state: TempoSyncState, events: TempoSyncEvent[]): { state: TempoSyncState; effects: TempoSyncEffect[] } {
   let effects: TempoSyncEffect[] = []

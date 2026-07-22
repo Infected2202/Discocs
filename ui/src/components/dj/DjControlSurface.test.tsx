@@ -111,7 +111,7 @@ function snapshot(programDeck: "A" | "B" | null = "A") {
       filters: { A: 0, B: 0 },
       meters: { A: 0.2, B: 0.1, master: 0.3 },
     },
-    beatSync: {
+    tempoSync: {
       auto: true,
       master: "clock" as const,
       clockBpm: 126,
@@ -320,7 +320,7 @@ describe("DjControlSurface", () => {
         A: { ...base.decks.A, transport: "playing" as never },
         B: { ...base.decks.B, transport: "playing" as never, tempoRatio: 1.05 },
       },
-      beatSync: {
+      tempoSync: {
         auto: true,
         master: "A",
         clockBpm: 126,
@@ -374,11 +374,11 @@ describe("DjControlSurface", () => {
     const base = snapshot()
     playback.getEngineSnapshot.mockReturnValue({
       ...base,
-      beatSync: {
-        ...base.beatSync,
+      tempoSync: {
+        ...base.tempoSync,
         master: "A",
         decks: {
-          ...base.beatSync.decks,
+          ...base.tempoSync.decks,
           B: { enabled: true, phase: "pending", reason: null },
         },
       },
