@@ -1,6 +1,6 @@
 # DJ tempo-master/sync rewrite
 
-**Status:** R1 (pure reducer + confirmed-dead-code deletion) delivered; R2-R8 pending
+**Status:** R1, R2, R5, R6, R7 delivered (R3/R4/R8 pending). R3/R4's naming groundwork (mode string rename, `toggleSync(deck, "beat")` signature) landed early via "Complete tempo sync API migration", but the actual UI split (two adjacent sync controls, phase-offset readout, nudge buttons) and mode-aware `alignFollower` branching described in R3/R4 below are not yet implemented.
 **Supersedes:** `PLAYBACK_ENGINE_TECHNICAL_PLAN.md` and `IMPLEMENTATION_PLAN.md` Phase 6 Group 2 ("beat sync") — the product behavior described there is correct in spirit and is kept; the code backing it is replaced by this plan.
 **Applies to:** the tempo-master/SYNC subsystem under `ui/src/engine/playback/`
 
