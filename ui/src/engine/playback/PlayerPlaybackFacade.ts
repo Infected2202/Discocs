@@ -7,6 +7,7 @@ import type {
   EqBand,
   HandoverResult,
   PlaybackEngineSnapshot,
+  SyncMode,
   TrackSource,
   TransportState,
 } from "./types"
@@ -758,11 +759,11 @@ export class PlayerPlaybackFacade {
     return this.runtime.setClockTempo(bpm)
   }
 
-  async toggleDeckSync(deck: DeckId): Promise<void> {
+  async toggleDeckSync(deck: DeckId, mode: SyncMode = "beat"): Promise<void> {
     await this.djActivationPromise
     let snapshot = this.runtime.getSnapshot()
     if (snapshot.tempoSync.decks[deck].enabled) {
-      await this.runtime.toggleSync(deck, "beat")
+      await this.runtime.toggleSync(deck, mode)
       return
     }
 
@@ -770,7 +771,7 @@ export class PlayerPlaybackFacade {
     snapshot = this.runtime.getSnapshot()
     const master = snapshot.tempoSync.master
     if (master !== "clock" && master !== deck) await this.ensureStretchDeck(master)
-    await this.runtime.toggleSync(deck, "beat")
+    await this.runtime.toggleSync(deck, mode)
   }
 
   async toggleDeck(deck: DeckId): Promise<void> {

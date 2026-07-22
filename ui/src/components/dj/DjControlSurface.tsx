@@ -223,18 +223,28 @@ function DeckPanel({ deck, track, isProgram, onToggle, onHandover, timelineState
           <div className={styles.deckSyncControls}>
             <button
               type="button"
-              data-enabled={syncState.enabled || undefined}
-              data-active={(syncState.enabled && isPlaying) || undefined}
-              disabled={deck.trackId === null}
-              onClick={() => runPlayerCommand(() => playerPlayback.toggleDeckSync(deck.id))}
-              aria-pressed={syncState.enabled}
-              aria-label={`Sync Deck ${deck.id} to tempo master`}
-              title={syncState.reason ?? undefined}
-            >SYNC</button>
+              data-enabled={(syncState.enabled && syncState.mode === "beat") || undefined}
+              data-active={(syncState.enabled && syncState.mode === "beat" && syncState.phase === "aligned") || undefined}
+              disabled={!syncState.canEngageBeatSync}
+              onClick={() => runPlayerCommand(() => playerPlayback.toggleDeckSync(deck.id, "beat"))}
+              aria-pressed={syncState.enabled && syncState.mode === "beat"}
+              aria-label={`BeatSync Deck ${deck.id} to tempo master`}
+              title={syncState.mode === "beat" ? syncState.reason ?? undefined : undefined}
+            >BEAT</button>
+            <button
+              type="button"
+              data-enabled={(syncState.enabled && syncState.mode === "tempo") || undefined}
+              data-active={(syncState.enabled && syncState.mode === "tempo" && syncState.phase === "aligned") || undefined}
+              disabled={!syncState.canEngageTempoSync}
+              onClick={() => runPlayerCommand(() => playerPlayback.toggleDeckSync(deck.id, "tempo"))}
+              aria-pressed={syncState.enabled && syncState.mode === "tempo"}
+              aria-label={`TempoSync Deck ${deck.id} to tempo master`}
+              title={syncState.mode === "tempo" ? syncState.reason ?? undefined : undefined}
+            >TEMPO</button>
             <button
               type="button"
               data-active={isTempoMaster || undefined}
-              disabled={!isPlaying}
+              disabled={!syncState.canBecomeMaster}
               onClick={() => runPlayerCommand(() => playerPlayback.setDeckTempoMaster(deck.id))}
               aria-label={`Set Deck ${deck.id} as tempo master`}
             >MASTER</button>
@@ -506,7 +516,7 @@ function OpenDjControlSurface() {
                   <button
                     type="button"
                     data-active={snapshot.tempoSync.master === "clock" || undefined}
-                    disabled={!djEngineActive || deckIds.some((deck) => snapshot.decks[deck].transport === "playing")}
+                    disabled={!djEngineActive || !snapshot.tempoSync.canBecomeClockMaster}
                     onClick={() => runPlayerCommand(() => playerPlayback.setClockTempoMaster())}
                     aria-label="Use master clock"
                   >MASTER</button>

@@ -90,6 +90,15 @@ describe("PlayerPlaybackFacade routing", () => {
     expect(engine.toggleSync).toHaveBeenCalledWith("B", "beat")
   })
 
+  it("threads an explicit TempoSync mode through to the engine", async () => {
+    const engine = runtime()
+    const facade = new PlayerPlaybackFacade(engine)
+
+    await facade.toggleDeckSync("A", "tempo")
+
+    expect(engine.toggleSync).toHaveBeenCalledWith("A", "tempo")
+  })
+
   it("waits for an in-progress full-track deck upgrade before engaging SYNC", async () => {
     const audio: MockAudio[] = []
     vi.stubGlobal("Audio", function () {
