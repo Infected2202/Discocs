@@ -18,6 +18,12 @@ class MockAudio {
   load = vi.fn()
   pause = vi.fn()
   play = vi.fn().mockResolvedValue(undefined)
+
+  emit(type: string) {
+    for (const [event, listener] of this.addEventListener.mock.calls) {
+      if (event === type) (listener as EventListener)(new Event(type))
+    }
+  }
 }
 
 function runtime() {
@@ -245,6 +251,119 @@ describe("PlayerPlaybackFacade routing", () => {
     expect(engine.ensureReady).toHaveBeenCalled()
     expect(engine.routeProgramElement).toHaveBeenCalledWith(audio[1], 7, null)
     expect(facade.djModeActive).toBe(true)
+  })
+
+  it("keeps the forced active Blob replacement off the graph in ordinary mode", async () => {
+    const audio: MockAudio[] = []
+    vi.stubGlobal("Audio", function () {
+      const instance = new MockAudio()
+      audio.push(instance)
+      return instance
+    })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(new Blob(["complete audio"])),
+    }))
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:active-ordinary")
+    const engine = runtime()
+    const facade = new PlayerPlaybackFacade(engine)
+    facade.load("/audio/7", 7, "raw", false, "queue-7")
+
+    await facade.play()
+    await vi.waitFor(() => expect(audio).toHaveLength(3))
+
+    expect(audio.at(-1)?.src).toBe("blob:active-ordinary")
+    expect(engine.routeProgramElement).not.toHaveBeenCalled()
+  })
+
+  it("routes the forced active Blob replacement when the DJ engine is active", async () => {
+    const audio: MockAudio[] = []
+    vi.stubGlobal("Audio", function () {
+      const instance = new MockAudio()
+      audio.push(instance)
+      return instance
+    })
+    let finishBlob!: (blob: Blob) => void
+    const blob = new Promise<Blob>((resolve) => { finishBlob = resolve })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => blob }))
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:active-dj")
+    const engine = runtime()
+    const facade = new PlayerPlaybackFacade(engine)
+    facade.load("/audio/7", 7, "raw", false, "queue-7")
+    await facade.play()
+    await facade.activateDjMode()
+
+    finishBlob(new Blob(["complete audio"]))
+    await vi.waitFor(() => expect(audio).toHaveLength(3))
+
+    expect(engine.routeProgramElement).toHaveBeenLastCalledWith(
+      audio.at(-1), 7, "queue-7",
+    )
+  })
+
+  it("reapplies the user's seek when a broken network seek resets before the Blob swap", async () => {
+    const audio: MockAudio[] = []
+    vi.stubGlobal("Audio", function () {
+      const instance = new MockAudio()
+      audio.push(instance)
+      return instance
+    })
+    let finishBlob!: (blob: Blob) => void
+    const blob = new Promise<Blob>((resolve) => { finishBlob = resolve })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => blob }))
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:active-seek")
+    const facade = new PlayerPlaybackFacade(runtime())
+    facade.load("/audio/7", 7, "raw", false, "queue-7")
+    const networkElement = audio.at(-1)!
+    networkElement.duration = 200
+    networkElement.paused = false
+    await facade.play()
+
+    facade.seek(0.6)
+    expect(networkElement.currentTime).toBe(120)
+    // A non-seekable upstream stream can acknowledge the assignment and then
+    // restart from zero before the forced full-track Blob is ready.
+    networkElement.currentTime = 0
+
+    finishBlob(new Blob(["complete audio"]))
+    await vi.waitFor(() => expect(audio).toHaveLength(3))
+    const blobElement = audio.at(-1)!
+    blobElement.duration = 200
+    blobElement.emit("loadedmetadata")
+
+    expect(blobElement.currentTime).toBe(120)
+    expect(blobElement.play).toHaveBeenCalledOnce()
+  })
+
+  it("preserves the live network position after a successful seek is confirmed", async () => {
+    const audio: MockAudio[] = []
+    vi.stubGlobal("Audio", function () {
+      const instance = new MockAudio()
+      audio.push(instance)
+      return instance
+    })
+    let finishBlob!: (blob: Blob) => void
+    const blob = new Promise<Blob>((resolve) => { finishBlob = resolve })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => blob }))
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:active-confirmed-seek")
+    const facade = new PlayerPlaybackFacade(runtime())
+    facade.load("/audio/7", 7)
+    const networkElement = audio.at(-1)!
+    networkElement.duration = 200
+    networkElement.paused = false
+    await facade.play()
+
+    facade.seek(0.6)
+    networkElement.emit("seeked")
+    networkElement.currentTime = 127
+
+    finishBlob(new Blob(["complete audio"]))
+    await vi.waitFor(() => expect(audio).toHaveLength(3))
+    const blobElement = audio.at(-1)!
+    blobElement.duration = 200
+    blobElement.emit("loadedmetadata")
+
+    expect(blobElement.currentTime).toBe(127)
   })
 
   it("does not create a graph deck for prefetch while DJ mode is inactive", async () => {

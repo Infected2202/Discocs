@@ -34,6 +34,7 @@ export class PlayerPlaybackFacade {
   private activeQueueItemId: string | null = null
   private activeProfileKey = "raw"
   private activeNetworkUrl: string | null = null
+  private pendingNetworkSeek: { fraction: number } | null = null
   private activeObjectUrl: string | null = null
   private activeCacheController: AbortController | null = null
   private activeCacheTarget: { trackId: number; profileKey: string; url: string } | null = null
@@ -88,6 +89,7 @@ export class PlayerPlaybackFacade {
     queueItemId: string | null = null,
   ) {
     this.cancelActiveCache()
+    this.pendingNetworkSeek = null
     const retainedBlob = fullyAvailable && this.activeObjectUrl === url ? this.activeBlob : null
     // Явно освобождаем буфер старого элемента — src='' надёжнее removeAttribute
     const prev = this.el
@@ -478,6 +480,7 @@ export class PlayerPlaybackFacade {
     this.activeObjectUrl = null
     this.activeBlob = null
     this.activeNetworkUrl = null
+    this.pendingNetworkSeek = null
     this.activeTrackId = null
     this.activeQueueItemId = null
     this.fullyBufferedReported = false
@@ -524,11 +527,26 @@ export class PlayerPlaybackFacade {
     const deck = this.runtime.programDeck
     const snapshot = this.runtime.getSnapshot().decks[deck]
     if (snapshot.sourceKind === "signalsmith" && snapshot.duration) {
+      this.pendingNetworkSeek = null
       void this.runtime.seekDeck(deck, clamped * snapshot.duration)
         .catch((error: Error) => this.callbacks?.onError(error.message))
       return
     }
     const el = this.el
+    if (this.activeNetworkUrl) {
+      const pending = { fraction: clamped }
+      this.pendingNetworkSeek = pending
+      const confirm = () => {
+        el.removeEventListener("seeked", confirm)
+        if (this.pendingNetworkSeek !== pending || el !== this.el) return
+        if (!Number.isFinite(el.duration) || el.duration <= 0) return
+        const target = pending.fraction * el.duration
+        if (Math.abs(el.currentTime - target) <= 0.5) this.pendingNetworkSeek = null
+      }
+      el.addEventListener("seeked", confirm)
+    } else {
+      this.pendingNetworkSeek = null
+    }
     const apply = () => {
       el.removeEventListener("loadedmetadata", apply)
       if (el !== this.el || !Number.isFinite(el.duration) || el.duration <= 0) return
@@ -1038,7 +1056,9 @@ export class PlayerPlaybackFacade {
     // Make stale element events inert before unloading it. The replacement is
     // local, so metadata/seek do not require another network request.
     this.el = next
-    this.runtime.routeProgramElement(next, this.activeTrackId, this.activeQueueItemId)
+    if (this.graphActive) {
+      this.runtime.routeProgramElement(next, this.activeTrackId, this.activeQueueItemId)
+    }
     prev.pause()
     prev.src = ""
     prev.load()
@@ -1046,7 +1066,12 @@ export class PlayerPlaybackFacade {
     const resume = () => {
       next.removeEventListener("loadedmetadata", resume)
       if (next !== this.el) return
-      next.currentTime = Math.min(position, next.duration || position)
+      const pendingSeek = this.pendingNetworkSeek
+      const requestedPosition = pendingSeek === null
+        ? position
+        : pendingSeek.fraction * next.duration
+      this.pendingNetworkSeek = null
+      next.currentTime = Math.min(requestedPosition, next.duration || requestedPosition)
       if (shouldResume) {
         void next.play().catch((error: Error) => {
           this.callbacks?.onPlaybackStateChange("error")

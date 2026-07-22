@@ -189,6 +189,13 @@ last pointerdown/pointermove value rather than `pointerup.clientX`, because
 mobile pointer capture can report a zero release coordinate. If media metadata
 is temporarily unavailable during a source swap, fractional seek is deferred
 until `loadedmetadata` instead of being discarded.
+While the first network-backed track is being promoted to its complete local
+Blob, the facade also retains the latest user-requested seek. If the upstream
+stream restarts at zero instead of confirming the range seek, the requested
+fraction is reapplied to the Blob on `loadedmetadata`; a successfully confirmed
+network seek continues from the live media position. In ordinary mode this Blob
+replacement remains a plain `<audio>` element and is routed into Web Audio only
+when the DJ engine is already active.
 After that signal, `playerStore` fetches the next queue item as a `Blob`.
 A completed Blob is consumed through a local `blob:` URL at transition time;
 an unfinished or stale prefetch is aborted and playback falls back immediately
