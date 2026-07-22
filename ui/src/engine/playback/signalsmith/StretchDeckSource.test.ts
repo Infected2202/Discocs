@@ -1,23 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { StretchDeckSource } from "./StretchDeckSource"
-import type { StretchNode } from "./types"
-
-function fakeNode(): StretchNode {
-  return {
-    inputTime: 0,
-    configure: vi.fn().mockResolvedValue(undefined),
-    latency: vi.fn().mockResolvedValue(0.12),
-    addBuffers: vi.fn().mockResolvedValue(2),
-    dropBuffers: vi.fn().mockResolvedValue({ start: 0, end: 0 }),
-    schedule: vi.fn().mockImplementation(async (change) => change),
-    start: vi.fn().mockResolvedValue({}),
-    stop: vi.fn().mockResolvedValue({}),
-    setUpdateInterval: vi.fn().mockResolvedValue(undefined),
-    connect: vi.fn(),
-    disconnect: vi.fn(),
-    port: { close: vi.fn() },
-  } as unknown as StretchNode
-}
+import { createFakeAudioContext, createFakeStretchNode, FakeAudioNode } from "../testing/webAudioFakes"
 
 describe("StretchDeckSource full-track lifecycle", () => {
   beforeEach(() => {
@@ -29,21 +12,19 @@ describe("StretchDeckSource full-track lifecycle", () => {
   afterEach(() => vi.unstubAllGlobals())
 
   it("decodes one complete buffered Blob and transfers every channel to the worklet", async () => {
-    const node = fakeNode()
-    const output = { disconnect: vi.fn() }
+    const context = createFakeAudioContext({ currentTime: 10 })
+    const output = new FakeAudioNode()
+    vi.mocked(context.createGain).mockReturnValue(output)
     const decoded = {
       duration: 2,
       length: 4,
       numberOfChannels: 2,
       getChannelData: vi.fn((channel: number) => new Float32Array(channel === 0 ? [1, 2, 3, 4] : [5, 6, 7, 8])),
     } as unknown as AudioBuffer
-    const context = {
-      currentTime: 10,
-      createGain: vi.fn(() => output),
-      decodeAudioData: vi.fn().mockResolvedValue(decoded),
-    } as unknown as AudioContext
+    vi.mocked(context.decodeAudioData).mockResolvedValue(decoded)
+    const node = createFakeStretchNode(context)
     const createNode = vi.fn().mockResolvedValue(node)
-    const source = new StretchDeckSource(context, { createNode })
+    const source = new StretchDeckSource(context as unknown as AudioContext, { createNode })
     const blob = new Blob([new Uint8Array([1, 2, 3])])
 
     await expect(source.load(
@@ -63,20 +44,18 @@ describe("StretchDeckSource full-track lifecycle", () => {
   })
 
   it("schedules pitch-preserving transport and releases the complete worklet buffer once", async () => {
-    const node = fakeNode()
+    const context = createFakeAudioContext({ currentTime: 10 })
+    vi.mocked(context.createGain).mockReturnValue(new FakeAudioNode())
+    vi.mocked(context.decodeAudioData).mockResolvedValue({
+      duration: 2,
+      length: 2,
+      numberOfChannels: 1,
+      getChannelData: () => new Float32Array([0.25, -0.25]),
+    } as unknown as AudioBuffer)
+    const node = createFakeStretchNode(context)
     const update = vi.fn()
     vi.mocked(node.setUpdateInterval).mockImplementation(async (_seconds, callback) => { update.mockImplementation(callback!) })
-    const context = {
-      currentTime: 10,
-      createGain: vi.fn(() => ({ disconnect: vi.fn() })),
-      decodeAudioData: vi.fn().mockResolvedValue({
-        duration: 2,
-        length: 2,
-        numberOfChannels: 1,
-        getChannelData: () => new Float32Array([0.25, -0.25]),
-      }),
-    } as unknown as AudioContext
-    const source = new StretchDeckSource(context, { createNode: vi.fn().mockResolvedValue(node) })
+    const source = new StretchDeckSource(context as unknown as AudioContext, { createNode: vi.fn().mockResolvedValue(node) })
     await source.load({ url: "blob:deck", trackId: 7, blob: new Blob(["audio"]) }, new AbortController().signal)
 
     await source.play()
