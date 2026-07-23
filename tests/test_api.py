@@ -2905,6 +2905,83 @@ def test_track_audio_uses_navidrome_mapping_for_local_path(tmp_path: Path, monke
     assert not (tmp_path / "tmp" / "navidrome").exists()
 
 
+def test_track_audio_strips_content_length_for_estimated_transcode(tmp_path: Path, monkeypatch):
+    # Navidrome's Content-Length for an on-the-fly transcode (estimateContentLength=true)
+    # is a bitrate*duration estimate, not the real encoded size. Forwarding it verbatim
+    # makes Starlette abort the response when the real stream falls short of that
+    # declared length ("Response content shorter than Content-Length") — surfacing to
+    # clients as a broken/premature connection close.
+    store = init_api_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")
+    track_id = add_track(store, tmp_path / "missing.flac")
+    store.upsert_external_track("navidrome", "song-1", track_id)
+    store.set_user_settings({"transcoding_enabled": True, "transcoding_bitrate_kbps": 192})
+
+    class FakeStreamResponse:
+        status = 200
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Length": "999999",
+            "Content-Type": "audio/mpeg",
+        }
+
+        def __init__(self):
+            self._chunks = [b"short-audio", b""]
+
+        def read(self, _size):
+            return self._chunks.pop(0)
+
+        def close(self):
+            pass
+
+        def getcode(self):
+            return self.status
+
+    monkeypatch.setattr("app.api.tracks.urlopen", lambda request, timeout: FakeStreamResponse())
+    client = TestClient(app)
+
+    response = client.get(f"/api/v1/tracks/{track_id}/audio")
+
+    assert response.status_code == 200
+    assert response.content == b"short-audio"
+    assert "content-length" not in response.headers
+
+
+def test_track_audio_keeps_content_length_for_raw_profile(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")
+    track_id = add_track(store, tmp_path / "missing.flac")
+    store.upsert_external_track("navidrome", "song-1", track_id)
+
+    class FakeStreamResponse:
+        status = 200
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Length": "11",
+            "Content-Type": "audio/x-flac",
+        }
+
+        def __init__(self):
+            self._chunks = [b"raw-audio-1", b""]
+
+        def read(self, _size):
+            return self._chunks.pop(0)
+
+        def close(self):
+            pass
+
+        def getcode(self):
+            return self.status
+
+    monkeypatch.setattr("app.api.tracks.urlopen", lambda request, timeout: FakeStreamResponse())
+    client = TestClient(app)
+
+    response = client.get(f"/api/v1/tracks/{track_id}/audio")
+
+    assert response.status_code == 200
+    assert response.headers["content-length"] == "11"
+
+
 def test_track_audio_profile_defaults_to_raw(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
 

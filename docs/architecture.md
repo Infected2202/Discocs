@@ -223,6 +223,21 @@ Raw playback sends `format=raw` to Navidrome. Enabled transcoding sends
 the active user's Navidrome credentials. Navidrome must have an applicable MP3
 transcoding profile. The browser keeps no persistent/offline audio cache.
 
+`navidrome_audio_stream_response` (`app/api/tracks.py`) does not forward
+Navidrome's `Content-Length` when the request used `estimateContentLength`:
+that header is a bitrate × duration estimate for an on-the-fly transcode, not
+the real encoded size, and the actual stream can legitimately end up shorter.
+Forwarding it verbatim made Starlette compare bytes actually sent against
+that declared length and abort the response ("Response content shorter than
+Content-Length") whenever the estimate overshot — which propagated through
+both nginx hops as "upstream prematurely closed connection" and reached the
+browser as a failed fetch. That failure specifically broke the transcoded
+profile's `cacheActiveTrack()`/native-buffering fetches, which is what
+`playerStore.seek()`'s network gate waits on — so the transcoding path could
+appear to have the seek bar buffer stall and seeking staying blocked, when
+the actual fault was this backend response getting cut short, not the seek
+UI logic itself.
+
 Implementation files: `ui/src/engine/playback/PlayerPlaybackFacade.ts`,
 `ui/src/engine/playback/PlaybackEngine.ts`,
 `ui/src/store/playerStore.ts`, `ui/src/pages/SettingsPage.tsx`,

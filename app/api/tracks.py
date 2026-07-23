@@ -667,6 +667,16 @@ def navidrome_audio_stream_response(
         raise RuntimeError(f"Navidrome stream unavailable: {exc}") from exc
 
     response_headers = navidrome_stream_headers(upstream.headers)
+    if stream_params and stream_params.get("estimateContentLength"):
+        # Navidrome's Content-Length for an on-the-fly transcode is an
+        # estimate derived from bitrate * duration, not the real encoded
+        # size. Forwarding it verbatim makes Starlette count bytes against a
+        # declared length that the actual stream can fall short of, which it
+        # treats as a broken response ("Response content shorter than
+        # Content-Length") and aborts mid-stream — surfacing to clients as a
+        # premature connection close. Dropping it here makes this a normal
+        # chunked response instead.
+        response_headers.pop("Content-Length", None)
     content_type = normalize_audio_media_type(upstream.headers.get("Content-Type", ""))
     status_code = int(getattr(upstream, "status", None) or upstream.getcode() or 200)
 
