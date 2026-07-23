@@ -229,6 +229,8 @@ export default function ExpandedPlayer() {
                     dragProgress === null && "transition-[width] duration-100",
                   )}
                   thumbClassName="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary opacity-0 group-hover/seek:opacity-100 transition-opacity shadow"
+                  nextBufferDotClassName="absolute top-1/2 -translate-y-1/2 right-0.5 w-1.5 h-1.5 rounded-full bg-primary shadow"
+                  seekBufferDotClassName="absolute top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-primary shadow"
                 />
               </div>
               <div className="flex justify-between text-xs text-muted-foreground tabular-nums">

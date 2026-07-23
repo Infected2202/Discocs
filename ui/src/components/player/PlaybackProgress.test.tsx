@@ -21,6 +21,18 @@ function setBuffered(ranges: Array<{ start: number; end: number }>) {
   })
 }
 
+function setNextTrackBuffer(info: { trackId: number; queueItemId: string | null; ready: boolean } | null) {
+  act(() => {
+    usePlayerStore.getState()._setNextTrackBuffer(info)
+  })
+}
+
+function setSeekBuffering(active: boolean) {
+  act(() => {
+    usePlayerStore.getState()._setSeekBuffering(active)
+  })
+}
+
 describe("formatTime", () => {
   it("форматирует секунды в m:ss", () => {
     expect(formatTime(0)).toBe("0:00")
@@ -107,6 +119,64 @@ describe("SeekIndicators", () => {
     expect(buffered[1].style.left).toBe("70%")
     expect(Number.parseFloat(buffered[1].style.width)).toBeCloseTo(20)
     expect(fill.style.width).toBe("80%")
+  })
+
+  it("без nextBufferDotClassName кружок следующего трека не рендерится, даже если он есть в сторе", () => {
+    setNextTrackBuffer({ trackId: 8, queueItemId: "queue-8", ready: false })
+    const { container } = render(
+      <SeekIndicators fillClassName="fill" thumbClassName="thumb" />
+    )
+    expect(container.querySelector("[data-next-buffer-dot]")).not.toBeInTheDocument()
+  })
+
+  it("nextTrackBuffer === null → кружок следующего трека не рендерится", () => {
+    setNextTrackBuffer(null)
+    const { container } = render(
+      <SeekIndicators fillClassName="fill" thumbClassName="thumb" nextBufferDotClassName="next-dot" />
+    )
+    expect(container.querySelector("[data-next-buffer-dot]")).not.toBeInTheDocument()
+  })
+
+  it("следующий трек ещё грузится → кружок мигает (animate-pulse)", () => {
+    setNextTrackBuffer({ trackId: 8, queueItemId: "queue-8", ready: false })
+    const { container } = render(
+      <SeekIndicators fillClassName="fill" thumbClassName="thumb" nextBufferDotClassName="next-dot" />
+    )
+    const dot = container.querySelector("[data-next-buffer-dot]") as HTMLElement
+    expect(dot).toBeInTheDocument()
+    expect(dot.dataset.ready).toBe("false")
+    expect(dot.className).toContain("animate-pulse")
+  })
+
+  it("следующий трек полностью забуферен → кружок статичный, без мигания", () => {
+    setNextTrackBuffer({ trackId: 8, queueItemId: "queue-8", ready: true })
+    const { container } = render(
+      <SeekIndicators fillClassName="fill" thumbClassName="thumb" nextBufferDotClassName="next-dot" />
+    )
+    const dot = container.querySelector("[data-next-buffer-dot]") as HTMLElement
+    expect(dot).toBeInTheDocument()
+    expect(dot.dataset.ready).toBe("true")
+    expect(dot.className).not.toContain("animate-pulse")
+  })
+
+  it("seekBuffering === false → кружок ожидания seek не рендерится", () => {
+    setSeekBuffering(false)
+    const { container } = render(
+      <SeekIndicators fillClassName="fill" thumbClassName="thumb" seekBufferDotClassName="seek-dot" />
+    )
+    expect(container.querySelector("[data-seek-buffer-dot]")).not.toBeInTheDocument()
+  })
+
+  it("seekBuffering === true → мигающий кружок рендерится в позиции текущего прогресса", () => {
+    setTime(50, 200) // 25%
+    setSeekBuffering(true)
+    const { container } = render(
+      <SeekIndicators fillClassName="fill" thumbClassName="thumb" seekBufferDotClassName="seek-dot" />
+    )
+    const dot = container.querySelector("[data-seek-buffer-dot]") as HTMLElement
+    expect(dot).toBeInTheDocument()
+    expect(dot.className).toContain("animate-pulse")
+    expect(dot.style.left).toBe("calc(25% - 3px)")
   })
 })
 

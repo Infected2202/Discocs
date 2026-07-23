@@ -1,4 +1,5 @@
 import { usePlayerStore } from "@/store/playerStore"
+import { cn } from "@/lib/utils"
 
 // Leaf components isolating the high-frequency `currentTime` subscription.
 //
@@ -22,6 +23,16 @@ interface SeekIndicatorsProps {
   readonly override?: number | null
   /** Renders a lighter fill behind the playback fill showing download progress. */
   readonly bufferedClassName?: string
+  /**
+   * Pulsing dot pinned to the bar's right edge, shown whenever the next queue
+   * track is being prefetched; stops pulsing once it's fully buffered.
+   */
+  readonly nextBufferDotClassName?: string
+  /**
+   * Pulsing dot at the current seek target, shown while a seek on a
+   * not-yet-cached track is paused waiting for the Blob swap to land.
+   */
+  readonly seekBufferDotClassName?: string
 }
 
 /**
@@ -36,10 +47,14 @@ export function SeekIndicators({
   fillStyle,
   override = null,
   bufferedClassName,
+  nextBufferDotClassName,
+  seekBufferDotClassName,
 }: SeekIndicatorsProps) {
   const currentTime = usePlayerStore((s) => s.currentTime)
   const duration = usePlayerStore((s) => s.duration)
   const bufferedRanges = usePlayerStore((s) => s.bufferedRanges)
+  const nextTrackBuffer = usePlayerStore((s) => s.nextTrackBuffer)
+  const seekBuffering = usePlayerStore((s) => s.seekBuffering)
   const progress = override ?? (duration > 0 ? currentTime / duration : 0)
   const pct = progress * 100
 
@@ -58,6 +73,20 @@ export function SeekIndicators({
       ))}
       <div className={fillClassName} style={{ ...fillStyle, width: `${pct}%` }} />
       <div className={thumbClassName} style={{ left: `calc(${pct}% - 6px)` }} />
+      {nextBufferDotClassName && nextTrackBuffer && (
+        <div
+          className={cn(nextBufferDotClassName, !nextTrackBuffer.ready && "animate-pulse")}
+          data-next-buffer-dot
+          data-ready={nextTrackBuffer.ready}
+        />
+      )}
+      {seekBufferDotClassName && seekBuffering && (
+        <div
+          className={cn(seekBufferDotClassName, "animate-pulse")}
+          data-seek-buffer-dot
+          style={{ left: `calc(${pct}% - 3px)` }}
+        />
+      )}
     </>
   )
 }

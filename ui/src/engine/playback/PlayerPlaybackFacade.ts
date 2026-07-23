@@ -19,11 +19,19 @@ export interface BufferedRange {
   end: number
 }
 
+export interface NextTrackBufferInfo {
+  trackId: number
+  queueItemId: string | null
+  ready: boolean
+}
+
 interface AudioEngineCallbacks {
   onTimeUpdate(currentTime: number, duration: number): void
   onPlaybackStateChange(state: PlaybackState): void
   onBufferUpdate(ranges: BufferedRange[]): void
   onFullyBuffered?(trackId: number, profileKey: string): void
+  onSeekBufferingChange?(active: boolean): void
+  onNextTrackBufferingChange?(info: NextTrackBufferInfo | null): void
   onEnded(): void
   onError(message: string): void
 }
@@ -36,10 +44,11 @@ export class PlayerPlaybackFacade {
   private activeQueueItemId: string | null = null
   private activeProfileKey = "raw"
   private activeNetworkUrl: string | null = null
-  private pendingNetworkSeek: { fraction: number } | null = null
+  private pendingNetworkSeek: { fraction: number; wasPlaying: boolean } | null = null
   private activeObjectUrl: string | null = null
   private activeCacheController: AbortController | null = null
   private activeCacheTarget: { trackId: number; profileKey: string; url: string } | null = null
+  private activeCacheRetryCount = 0
   private fullyBufferedReported = false
   private prefetched: {
     trackId: number
@@ -48,6 +57,7 @@ export class PlayerPlaybackFacade {
     objectUrl: string
     blob: Blob
   } | null = null
+  private prefetchRetryCount = 0
   // DJ deck: a fully isolated resource populated only by prepareDjDeck(),
   // never by ordinary background prefetch. The only allowed handoff is the
   // one-time seed from `prefetched` at DJ-mode activation (see
@@ -97,7 +107,9 @@ export class PlayerPlaybackFacade {
     queueItemId: string | null = null,
   ) {
     this.cancelActiveCache()
+    if (this.pendingNetworkSeek) this.callbacks?.onSeekBufferingChange?.(false)
     this.pendingNetworkSeek = null
+    this.activeCacheRetryCount = 0
     const retainedBlob = fullyAvailable && this.activeObjectUrl === url ? this.activeBlob : null
     // Явно освобождаем буфер старого элемента — src='' надёжнее removeAttribute
     const prev = this.el
@@ -152,26 +164,45 @@ export class PlayerPlaybackFacade {
     if (this.prefetchTarget?.trackId === trackId && this.prefetchTarget.profileKey === profileKey) return
     this.cancelPrefetch()
     this.clearPrefetched()
-    const controller = new AbortController()
-    this.prefetchController = controller
     this.prefetchTarget = { trackId, profileKey }
+    this.prefetchRetryCount = 0
+    this.callbacks?.onNextTrackBufferingChange?.({ trackId, queueItemId, ready: false })
+
     try {
-      const response = await fetch(url, {
-        credentials: "same-origin",
-        signal: controller.signal,
-      })
-      if (!response.ok) throw new Error(`Audio prefetch failed: HTTP ${response.status}`)
-      const blob = await response.blob()
-      if (controller.signal.aborted) return
-      if (this.prefetchTarget?.trackId !== trackId || this.prefetchTarget.profileKey !== profileKey) return
-      const objectUrl = URL.createObjectURL(blob)
-      // Graph-unaware by design: prefetch() only ever populates the ordinary
-      // blob/objectUrl cache, regardless of DJ-mode state. It never routes an
-      // element into the mixer graph — that is prepareDjDeck()'s job alone,
-      // so routine background caching can never delete an armed DJ deck.
-      this.prefetched = { trackId, queueItemId, profileKey, objectUrl, blob }
+      for (;;) {
+        const controller = new AbortController()
+        this.prefetchController = controller
+        try {
+          const response = await fetch(url, {
+            credentials: "same-origin",
+            signal: controller.signal,
+          })
+          if (!response.ok) throw new Error(`Audio prefetch failed: HTTP ${response.status}`)
+          const blob = await response.blob()
+          if (controller.signal.aborted) return
+          if (this.prefetchTarget?.trackId !== trackId || this.prefetchTarget.profileKey !== profileKey) return
+          const objectUrl = URL.createObjectURL(blob)
+          // Graph-unaware by design: prefetch() only ever populates the ordinary
+          // blob/objectUrl cache, regardless of DJ-mode state. It never routes an
+          // element into the mixer graph — that is prepareDjDeck()'s job alone,
+          // so routine background caching can never delete an armed DJ deck.
+          this.prefetched = { trackId, queueItemId, profileKey, objectUrl, blob }
+          this.callbacks?.onNextTrackBufferingChange?.({ trackId, queueItemId, ready: true })
+          return
+        } catch (error) {
+          const err = error as Error
+          if (err.name === "AbortError" || controller.signal.aborted) return
+          if (this.prefetchTarget?.trackId !== trackId || this.prefetchTarget.profileKey !== profileKey) return
+          if (this.prefetchRetryCount < 1) {
+            this.prefetchRetryCount += 1
+            playerLog("buffer", "prefetch retry", { trackId, profile: profileKey })
+            continue
+          }
+          throw err
+        }
+      }
     } finally {
-      if (this.prefetchController === controller) {
+      if (this.prefetchTarget?.trackId === trackId && this.prefetchTarget.profileKey === profileKey) {
         this.prefetchController = null
         this.prefetchTarget = null
       }
@@ -183,6 +214,7 @@ export class PlayerPlaybackFacade {
     const objectUrl = this.prefetched.objectUrl
     this.activeBlob = this.prefetched.blob
     this.prefetched = null
+    this.callbacks?.onNextTrackBufferingChange?.(null)
     if (this.activeObjectUrl && this.activeObjectUrl !== objectUrl) {
       URL.revokeObjectURL(this.activeObjectUrl)
     }
@@ -191,17 +223,22 @@ export class PlayerPlaybackFacade {
   }
 
   cancelPrefetch() {
+    const hadTarget = this.prefetchController !== null || this.prefetchTarget !== null
     this.prefetchController?.abort()
     this.prefetchController = null
     this.prefetchTarget = null
+    if (hadTarget) this.callbacks?.onNextTrackBufferingChange?.(null)
   }
 
   clearPrefetched() {
     // Only the ordinary blob cache — never touches the DJ deck. Background
     // prefetch (which calls this via prefetch()/directly) must never tear
     // down a manually-armed DJ deck as a side effect.
-    if (this.prefetched) URL.revokeObjectURL(this.prefetched.objectUrl)
-    this.prefetched = null
+    if (this.prefetched) {
+      URL.revokeObjectURL(this.prefetched.objectUrl)
+      this.prefetched = null
+      this.callbacks?.onNextTrackBufferingChange?.(null)
+    }
   }
 
   /**
@@ -492,6 +529,7 @@ export class PlayerPlaybackFacade {
   }
 
   async play(): Promise<void> {
+    if (this.pendingNetworkSeek) this.pendingNetworkSeek.wasPlaying = true
     // Обычный режим не трогает AudioContext — иначе создание/резюм контекста
     // снова привязывает воспроизведение к суспендируемому в фоне графу.
     if (this.graphActive) await this.runtime.ensureReady()
@@ -511,6 +549,7 @@ export class PlayerPlaybackFacade {
   }
 
   pause() {
+    if (this.pendingNetworkSeek) this.pendingNetworkSeek.wasPlaying = false
     const deck = this.runtime.programDeck
     if (this.runtime.isStretchDeck(deck)) {
       void this.runtime.pauseDeck(deck).catch((error: Error) => this.callbacks?.onError(error.message))
@@ -533,7 +572,9 @@ export class PlayerPlaybackFacade {
     this.activeObjectUrl = null
     this.activeBlob = null
     this.activeNetworkUrl = null
+    if (this.pendingNetworkSeek) this.callbacks?.onSeekBufferingChange?.(false)
     this.pendingNetworkSeek = null
+    this.activeCacheRetryCount = 0
     this.activeTrackId = null
     this.activeQueueItemId = null
     this.fullyBufferedReported = false
@@ -587,19 +628,20 @@ export class PlayerPlaybackFacade {
     }
     const el = this.el
     if (this.activeNetworkUrl) {
-      const pending = { fraction: clamped }
-      this.pendingNetworkSeek = pending
-      const confirm = () => {
-        el.removeEventListener("seeked", confirm)
-        if (this.pendingNetworkSeek !== pending || el !== this.el) return
-        if (!Number.isFinite(el.duration) || el.duration <= 0) return
-        const target = pending.fraction * el.duration
-        if (Math.abs(el.currentTime - target) <= 0.5) this.pendingNetworkSeek = null
-      }
-      el.addEventListener("seeked", confirm)
-    } else {
-      this.pendingNetworkSeek = null
+      // The raw network stream is not reliably seekable while still being
+      // transcoded upstream: writing el.currentTime here can be silently
+      // accepted and then reset to 0, which is audible as the track
+      // restarting. Instead, pause and wait for the full-track Blob swap
+      // (activateCachedSource) to apply the position on a genuinely local,
+      // always-seekable source.
+      const wasPlaying = this.pendingNetworkSeek?.wasPlaying ?? !el.paused
+      this.pendingNetworkSeek = { fraction: clamped, wasPlaying }
+      el.pause()
+      this.callbacks?.onSeekBufferingChange?.(true)
+      this.cacheActiveTrack()
+      return
     }
+    this.pendingNetworkSeek = null
     const apply = () => {
       el.removeEventListener("loadedmetadata", apply)
       if (el !== this.el || !Number.isFinite(el.duration) || el.duration <= 0) return
@@ -1027,6 +1069,23 @@ export class PlayerPlaybackFacade {
     this.fullyBufferedReported = true
     this.cancelActiveCache()
     this.callbacks?.onBufferUpdate([{ start: 0, end: 1 }])
+    // Native buffering can independently reach full coverage (via `progress`/
+    // `canplaythrough`) before the explicit cacheActiveTrack() Blob swap
+    // finishes. If a network seek is still pending in that case, the element
+    // is now confirmed fully local — apply it directly instead of leaving
+    // playback paused with no swap ever coming to resolve it.
+    if (this.pendingNetworkSeek && Number.isFinite(this.el.duration) && this.el.duration > 0) {
+      const pendingSeek = this.pendingNetworkSeek
+      this.pendingNetworkSeek = null
+      this.el.currentTime = pendingSeek.fraction * this.el.duration
+      this.callbacks?.onSeekBufferingChange?.(false)
+      if (pendingSeek.wasPlaying) {
+        void this.el.play().catch((error: Error) => {
+          this.callbacks?.onPlaybackStateChange("error")
+          this.callbacks?.onError(error.message)
+        })
+      }
+    }
     this.callbacks?.onFullyBuffered?.(this.activeTrackId, this.activeProfileKey)
   }
 
@@ -1077,13 +1136,28 @@ export class PlayerPlaybackFacade {
       // Native media playback remains the fallback. A later play attempt may
       // retry the explicit cache without turning the player into error.
       .catch((error: Error) => {
-        if (error.name !== "AbortError") {
-          playerLog("buffer", "force-cache failed", {
-            trackId,
-            profile: profileKey,
-            message: error.message,
-          })
+        if (error.name === "AbortError") return
+        const stillCurrent = this.activeTrackId === trackId
+          && this.activeProfileKey === profileKey
+          && this.activeNetworkUrl === url
+        if (stillCurrent && this.activeCacheRetryCount < 1) {
+          this.activeCacheRetryCount += 1
+          this.activeCacheTarget = null
+          this.activeCacheController = null
+          playerLog("buffer", "force-cache retry", { trackId, profile: profileKey })
+          this.cacheActiveTrack()
+          return
         }
+        playerLog("buffer", "force-cache failed", {
+          trackId,
+          profile: profileKey,
+          message: error.message,
+        })
+        if (this.pendingNetworkSeek) {
+          this.pendingNetworkSeek = null
+          this.callbacks?.onSeekBufferingChange?.(false)
+        }
+        this.callbacks?.onError(error.message)
       })
       .finally(() => {
         if (this.activeCacheController === controller) this.activeCacheController = null
@@ -1109,7 +1183,11 @@ export class PlayerPlaybackFacade {
   private activateCachedSource(objectUrl: string) {
     const prev = this.el
     const position = prev.currentTime
-    const shouldResume = !prev.paused
+    // Our own seek() pauses the raw element while buffering, so `!prev.paused`
+    // would always read false here; the seek's own play/pause intent
+    // (pendingNetworkSeek.wasPlaying) is the source of truth when a seek is
+    // in flight.
+    const shouldResume = this.pendingNetworkSeek ? this.pendingNetworkSeek.wasPlaying : !prev.paused
     const next = this.createElement()
     next.volume = prev.volume
     next.muted = prev.muted
@@ -1133,6 +1211,7 @@ export class PlayerPlaybackFacade {
         ? position
         : pendingSeek.fraction * next.duration
       this.pendingNetworkSeek = null
+      if (pendingSeek !== null) this.callbacks?.onSeekBufferingChange?.(false)
       next.currentTime = Math.min(requestedPosition, next.duration || requestedPosition)
       if (shouldResume) {
         void next.play().catch((error: Error) => {

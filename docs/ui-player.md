@@ -189,17 +189,31 @@ last pointerdown/pointermove value rather than `pointerup.clientX`, because
 mobile pointer capture can report a zero release coordinate. If media metadata
 is temporarily unavailable during a source swap, fractional seek is deferred
 until `loadedmetadata` instead of being discarded.
-While the first network-backed track is being promoted to its complete local
-Blob, the facade also retains the latest user-requested seek. If the upstream
-stream restarts at zero instead of confirming the range seek, the requested
-fraction is reapplied to the Blob on `loadedmetadata`; a successfully confirmed
-network seek continues from the live media position. In ordinary mode this Blob
-replacement remains a plain `<audio>` element and is routed into Web Audio only
-when the DJ engine is already active.
-After that signal, `playerStore` fetches the next queue item as a `Blob`.
-A completed Blob is consumed through a local `blob:` URL at transition time;
-an unfinished or stale prefetch is aborted and playback falls back immediately
-to the normal `/api/v1/tracks/{id}/audio` URL.
+The raw upstream stream is not reliably seekable while it is still being
+transcoded — writing `currentTime` directly on it can be silently accepted and
+then reset to zero, audible as the track restarting from the beginning. So
+while the first network-backed track is being promoted to its complete local
+Blob, `seek()` never writes to the network element at all: it pauses playback,
+records the requested fraction (and whether playback should resume) as a
+pending seek, and forces the active-track cache fetch to start immediately if
+it hasn't already. The position is applied — and playback resumed, if it was
+playing — only once the Blob swap's `loadedmetadata` fires on the new, always-
+locally-seekable element. `playerStore.seekBuffering` reflects this pending
+state; the seek bar renders a soft pulsing dot at the seek target while it is
+`true`. A failed active-track cache fetch is retried once before surfacing
+`onError` and clearing the pending seek, so a single flaky request cannot leave
+playback stuck paused indefinitely. In ordinary mode this Blob replacement
+remains a plain `<audio>` element and is routed into Web Audio only when the DJ
+engine is already active.
+After that signal, `playerStore` fetches the next queue item as a `Blob`
+(also retried once on failure). A completed Blob is consumed through a local
+`blob:` URL at transition time; an unfinished or stale prefetch is aborted and
+playback falls back immediately to the normal `/api/v1/tracks/{id}/audio` URL.
+`playerStore.nextTrackBuffer` mirrors this next-track prefetch state
+(`null` when nothing is in flight/ready); the seek bar renders a second dot
+pinned to its right edge — pulsing while the next track is still buffering,
+static once it is fully ready — since the current track's own buffered range
+is always full width by the time next-track prefetch is even allowed to start.
 
 The browser retains at most the forced complete active Blob and one upcoming Blob.
 Object URLs are revoked after use, on profile/source changes, and on logout.

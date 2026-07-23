@@ -2,6 +2,7 @@ import { create } from "zustand"
 import {
   playerPlayback as audioEngine,
   type PlayerBufferedRange as BufferedRange,
+  type NextTrackBufferInfo,
   type PlaybackState,
   type DeckId,
 } from "@/engine/playback"
@@ -87,6 +88,10 @@ interface PlayerState {
   duration: number
   /** Downloaded segments as 0-1 fractions of duration (gaps are preserved). */
   bufferedRanges: BufferedRange[]
+  /** True while a seek waits for the not-yet-cached current track to finish buffering. */
+  seekBuffering: boolean
+  /** Buffering state of the next queue track being prefetched, null if none in flight/ready. */
+  nextTrackBuffer: NextTrackBufferInfo | null
   volume: number
   muted: boolean
   error: string | null
@@ -131,6 +136,8 @@ interface PlayerState {
   // Internal — called by AudioEngine callbacks
   _setTime(currentTime: number, duration: number): void
   _setBuffered(ranges: BufferedRange[]): void
+  _setSeekBuffering(active: boolean): void
+  _setNextTrackBuffer(info: NextTrackBufferInfo | null): void
   _setPlaybackState(state: PlaybackState): void
   _setError(message: string): void
 }
@@ -249,6 +256,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       playerLog("buffer", "current fully buffered", { trackId, profile: profileKey })
       scheduleNextPrefetch()
     },
+    onSeekBufferingChange: (active) => get()._setSeekBuffering(active),
+    onNextTrackBufferingChange: (info) => get()._setNextTrackBuffer(info),
     onPlaybackStateChange: (state) => get()._setPlaybackState(state),
     onEnded: () => get().handleTrackEnded(),
     onError: (message) => get()._setError(message),
@@ -467,6 +476,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     currentTime: 0,
     duration: 0,
     bufferedRanges: [],
+    seekBuffering: false,
+    nextTrackBuffer: null,
     volume: initVolume,
     muted: initMuted,
     error: null,
@@ -688,6 +699,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       try {
         const envelope = await patchSession(session.id, { repeat_mode: newMode })
         applyEnvelope(envelope)
+        // scheduleNextPrefetch() short-circuits while repeat_mode==="one" (it
+        // would just re-buffer the track that's already playing), but any
+        // next-track prefetch already in flight/ready from before the toggle
+        // is not implicitly cancelled by that guard — clear it explicitly so
+        // the buffering dot doesn't linger for a track that will never play.
+        if (newMode === "one") {
+          audioEngine.cancelPrefetch()
+          audioEngine.clearPrefetched()
+        }
       } catch (err) {
         set({ error: (err as Error).message })
       }
@@ -1041,6 +1061,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         currentTime: 0,
         duration: 0,
         bufferedRanges: [],
+        seekBuffering: false,
+        nextTrackBuffer: null,
         error: null,
         expanded: false,
         djEngineActive: false,
@@ -1090,6 +1112,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     },
     _setBuffered(ranges) {
       set({ bufferedRanges: ranges })
+    },
+    _setSeekBuffering(active) {
+      set({ seekBuffering: active })
+    },
+    _setNextTrackBuffer(info) {
+      set({ nextTrackBuffer: info })
     },
     _setPlaybackState(state) {
       set({ playbackState: state })
