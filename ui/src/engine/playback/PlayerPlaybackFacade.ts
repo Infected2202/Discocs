@@ -1074,7 +1074,13 @@ export class PlayerPlaybackFacade {
     // finishes. If a network seek is still pending in that case, the element
     // is now confirmed fully local — apply it directly instead of leaving
     // playback paused with no swap ever coming to resolve it.
-    if (this.pendingNetworkSeek && Number.isFinite(this.el.duration) && this.el.duration > 0) {
+    // Guarded on activeNetworkUrl: cacheActiveTrack()'s own success path
+    // already cleared it and swapped this.el to the new Blob element via
+    // activateCachedSource() *before* calling us — that element's resume()
+    // (on its own loadedmetadata) is the one that must apply pendingNetworkSeek,
+    // not this fallback, or the position gets applied against a duration that
+    // hasn't loaded yet and the swap's own resume() finds nothing left to do.
+    if (this.activeNetworkUrl && this.pendingNetworkSeek && Number.isFinite(this.el.duration) && this.el.duration > 0) {
       const pendingSeek = this.pendingNetworkSeek
       this.pendingNetworkSeek = null
       this.el.currentTime = pendingSeek.fraction * this.el.duration
