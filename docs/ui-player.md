@@ -221,7 +221,13 @@ Before falling back to the slow path below, `seek()` first checks the native
 element's own `buffered` `TimeRanges`: if the target second is already covered
 (within a small tolerance), it writes `currentTime` directly and returns. This
 is just a pointer move over bytes the browser already holds — no new network
-request — so none of the transcoding unreliability applies. This covers the
+request — so none of the transcoding unreliability applies. Computing that
+target second needs a duration, and a chunked transcoded stream (no
+`Content-Length`, see above) can leave `el.duration` unresolved — `NaN` or
+`Infinity` — for the entire download, since the browser has no signal that
+the resource is bounded. `load()` accepts the track's real duration from API
+metadata as a fallback (`activeKnownDuration`) precisely so this fast path
+isn't dead code for exactly the profile that needs it most. This covers the
 common case (scrubbing near the current position, rewinding into already-
 played audio) instantly instead of waiting on the full-file path.
 The raw upstream stream is not reliably seekable while it is still being

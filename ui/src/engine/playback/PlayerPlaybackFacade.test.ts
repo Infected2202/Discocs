@@ -367,6 +367,38 @@ describe("PlayerPlaybackFacade routing", () => {
     expect(callbacks.onSeekBufferingChange).not.toHaveBeenCalled()
   })
 
+  it("falls back to the known track duration for the fast path when el.duration never resolves", () => {
+    // A chunked transcoded stream (no Content-Length) can leave el.duration as
+    // NaN/Infinity for the entire download — the fast path must still work
+    // using the track's real duration from API metadata, passed into load().
+    const audio: MockAudio[] = []
+    vi.stubGlobal("Audio", function () {
+      const instance = new MockAudio()
+      audio.push(instance)
+      return instance
+    })
+    const fetchMock = vi.fn()
+    vi.stubGlobal("fetch", fetchMock)
+    const callbacks = stubCallbacks()
+    const facade = new PlayerPlaybackFacade(runtime())
+    facade.init(callbacks)
+    facade.load("/audio/7", 7, "mp3-320", false, "queue-7", 200)
+    const networkElement = audio.at(-1)!
+    networkElement.duration = Number.POSITIVE_INFINITY
+    networkElement.buffered = {
+      length: 1,
+      start: vi.fn().mockReturnValue(0),
+      end: vi.fn().mockReturnValue(150),
+    }
+
+    facade.seek(0.6)
+
+    expect(networkElement.currentTime).toBe(120)
+    expect(networkElement.pause).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(callbacks.onSeekBufferingChange).not.toHaveBeenCalled()
+  })
+
   it("pauses and waits for the Blob swap instead of writing currentTime on a not-yet-cached network track", async () => {
     const audio: MockAudio[] = []
     vi.stubGlobal("Audio", function () {

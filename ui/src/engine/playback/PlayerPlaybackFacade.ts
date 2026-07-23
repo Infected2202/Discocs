@@ -44,6 +44,12 @@ export class PlayerPlaybackFacade {
   private activeQueueItemId: string | null = null
   private activeProfileKey = "raw"
   private activeNetworkUrl: string | null = null
+  // The track's real duration from API metadata, not the <audio> element's
+  // own `.duration`. A transcoded/chunked network stream (no Content-Length)
+  // can leave el.duration unresolved (NaN/Infinity) for the whole download —
+  // this is the fallback that lets seek()'s buffered-range fast path compute
+  // a target second anyway.
+  private activeKnownDuration: number | null = null
   private pendingNetworkSeek: { fraction: number; wasPlaying: boolean } | null = null
   private activeObjectUrl: string | null = null
   private activeCacheController: AbortController | null = null
@@ -105,6 +111,7 @@ export class PlayerPlaybackFacade {
     profileKey = "raw",
     fullyAvailable = false,
     queueItemId: string | null = null,
+    knownDurationSeconds?: number | null,
   ) {
     this.cancelActiveCache()
     if (this.pendingNetworkSeek) this.callbacks?.onSeekBufferingChange?.(false)
@@ -138,6 +145,9 @@ export class PlayerPlaybackFacade {
     this.activeQueueItemId = queueItemId
     this.activeProfileKey = profileKey
     this.activeNetworkUrl = fullyAvailable || url.startsWith("blob:") ? null : url
+    this.activeKnownDuration = Number.isFinite(knownDurationSeconds) && (knownDurationSeconds as number) > 0
+      ? (knownDurationSeconds as number)
+      : null
     this.fullyBufferedReported = false
     this.lastRuntimeTransport = null
 
@@ -585,6 +595,7 @@ export class PlayerPlaybackFacade {
     if (this.activeObjectUrl) URL.revokeObjectURL(this.activeObjectUrl)
     this.activeObjectUrl = null
     this.activeBlob = null
+    this.activeKnownDuration = null
     this.activeNetworkUrl = null
     if (this.pendingNetworkSeek) this.callbacks?.onSeekBufferingChange?.(false)
     this.pendingNetworkSeek = null
@@ -648,7 +659,14 @@ export class PlayerPlaybackFacade {
       // unreliability below applies. This is the common case (scrubbing near
       // the current position, rewinding into already-played audio) and used
       // to be blocked behind a full-file wait for no reason.
-      const targetSeconds = Number.isFinite(el.duration) && el.duration > 0 ? clamped * el.duration : null
+      // el.duration can stay unresolved (NaN/Infinity) for the whole download
+      // on a chunked transcoded stream with no Content-Length — fall back to
+      // the track's real duration from API metadata so the fast path below
+      // isn't dead code for exactly the profile that needs it most.
+      const durationSeconds = Number.isFinite(el.duration) && el.duration > 0
+        ? el.duration
+        : this.activeKnownDuration
+      const targetSeconds = durationSeconds !== null ? clamped * durationSeconds : null
       if (targetSeconds !== null && this.isBufferedAt(el.buffered, targetSeconds)) {
         this.pendingNetworkSeek = null
         el.currentTime = targetSeconds

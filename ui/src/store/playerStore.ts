@@ -602,7 +602,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         trackId,
         profile: profile.key,
       })
-      audioEngine.load(url, trackId, profile.key, prefetchedUrl !== null, queueItemId ?? null)
+      const knownTrack = get().currentTrack
+      const knownDurationSeconds = knownTrack?.id === trackId ? knownTrack.duration : null
+      audioEngine.load(url, trackId, profile.key, prefetchedUrl !== null, queueItemId ?? null, knownDurationSeconds)
       audioEngine.setVolume(get().volume)
       audioEngine.setMuted(get().muted)
 
@@ -1103,6 +1105,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
             profile.key,
             false,
             restoreQueueItemId,
+            currentTrack?.id === currentTrackId ? currentTrack.duration : null,
           )
           audioEngine.setVolume(get().volume)
           audioEngine.setMuted(get().muted)
