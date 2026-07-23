@@ -724,6 +724,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     },
 
     seek(fraction) {
+      // A trailing throttled timeupdate scheduled just before the seek can
+      // still be holding the stale pre-seek position; letting it fire after
+      // the optimistic write below snaps the bar back visibly.
+      throttledSetTime.cancel()
       audioEngine.seek(fraction)
       // Optimistic update — avoids a visible jump back to the stale currentTime
       // before the next native `timeupdate` tick (~250ms) catches up.

@@ -642,6 +642,22 @@ export class PlayerPlaybackFacade {
     }
     const el = this.el
     if (this.activeNetworkUrl) {
+      // If the target has already arrived via native progressive buffering,
+      // repositioning is just a pointer move over bytes the browser already
+      // holds — no new network request, so none of the "transcoding upstream"
+      // unreliability below applies. This is the common case (scrubbing near
+      // the current position, rewinding into already-played audio) and used
+      // to be blocked behind a full-file wait for no reason.
+      const targetSeconds = Number.isFinite(el.duration) && el.duration > 0 ? clamped * el.duration : null
+      if (targetSeconds !== null && this.isBufferedAt(el.buffered, targetSeconds)) {
+        this.pendingNetworkSeek = null
+        el.currentTime = targetSeconds
+        playerLog("seek", "fast path: target already buffered", {
+          trackId: this.activeTrackId,
+          targetSeconds: Math.round(targetSeconds * 100) / 100,
+        })
+        return
+      }
       // The raw network stream is not reliably seekable while still being
       // transcoded upstream: writing el.currentTime here can be silently
       // accepted and then reset to 0, which is audible as the track
@@ -652,6 +668,10 @@ export class PlayerPlaybackFacade {
       this.pendingNetworkSeek = { fraction: clamped, wasPlaying }
       el.pause()
       this.callbacks?.onSeekBufferingChange?.(true)
+      playerLog("seek", "slow path: waiting for full cache", {
+        trackId: this.activeTrackId,
+        targetSeconds: targetSeconds !== null ? Math.round(targetSeconds * 100) / 100 : null,
+      })
       this.cacheActiveTrack()
       return
     }
@@ -1062,6 +1082,14 @@ export class PlayerPlaybackFacade {
       this.callbacks?.onPlaybackStateChange("error")
       this.callbacks?.onError(msg)
     })
+  }
+
+  private isBufferedAt(buffered: TimeRanges, targetSeconds: number): boolean {
+    const tolerance = 0.25
+    for (let i = 0; i < buffered.length; i++) {
+      if (buffered.start(i) - tolerance <= targetSeconds && buffered.end(i) + tolerance >= targetSeconds) return true
+    }
+    return false
   }
 
   private bufferCoversDuration(buffered: TimeRanges, duration: number): boolean {
