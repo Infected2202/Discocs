@@ -279,7 +279,7 @@ const iconBtn = "p-1.5 rounded transition-colors text-muted-foreground hover:tex
             dragProgress === null && "transition-[width] duration-100",
           )}
           thumbClassName="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary opacity-0 group-hover/seek:opacity-100 transition-opacity"
-          nextBufferDotClassName="absolute top-1/2 -translate-y-1/2 right-0 w-6 h-1 bg-gradient-to-l from-transparent to-primary"
+          nextBufferDotClassName="absolute top-1/2 -translate-y-1/2 right-0 w-6 h-1 bg-gradient-to-r from-transparent to-primary"
           seekBufferDotClassName="absolute top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-primary"
         />
       </div>

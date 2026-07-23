@@ -229,7 +229,7 @@ export default function ExpandedPlayer() {
                     dragProgress === null && "transition-[width] duration-100",
                   )}
                   thumbClassName="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary opacity-0 group-hover/seek:opacity-100 transition-opacity shadow"
-                  nextBufferDotClassName="absolute top-1/2 -translate-y-1/2 right-0 w-6 h-1 rounded-r bg-gradient-to-l from-transparent to-primary shadow"
+                  nextBufferDotClassName="absolute top-1/2 -translate-y-1/2 right-0 w-6 h-1 rounded-r bg-gradient-to-r from-transparent to-primary shadow"
                   seekBufferDotClassName="absolute top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-primary shadow"
                 />
               </div>
