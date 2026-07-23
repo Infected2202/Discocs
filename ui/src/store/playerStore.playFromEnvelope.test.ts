@@ -126,9 +126,10 @@ describe("applyMediaSession — дедуп повторного вызова (A.
     await usePlayerStore.getState().playFromEnvelope(makeEnvelope())
     expect(playerPlayback.setMediaSession).toHaveBeenCalledTimes(1)
 
-    // Имитируем повторный независимый триггер playTrack для того же трека —
-    // например, дублирующийся handleTrackEnded или reconcileOnForeground.
-    await usePlayerStore.getState().playTrack(10, { queueItemId: "a", recordStarted: false })
+    // Повторное применение того же envelope для того же текущего трека —
+    // например, фоновая пересинка очереди — не должно триггерить повторную
+    // подгрузку артворка на медиасессию.
+    await usePlayerStore.getState().playFromEnvelope(makeEnvelope())
 
     expect(playerPlayback.setMediaSession).toHaveBeenCalledTimes(1)
   })
@@ -137,7 +138,7 @@ describe("applyMediaSession — дедуп повторного вызова (A.
     await usePlayerStore.getState().playFromEnvelope(makeEnvelope())
     expect(playerPlayback.setMediaSession).toHaveBeenCalledTimes(1)
 
-    await usePlayerStore.getState().playTrack(20, { queueItemId: "b", recordStarted: false })
+    await usePlayerStore.getState().playFromEnvelope(makeEnvelope(), 20)
 
     expect(playerPlayback.setMediaSession).toHaveBeenCalledTimes(2)
   })
