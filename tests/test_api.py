@@ -2913,6 +2913,9 @@ def test_track_audio_strips_content_length_for_estimated_transcode(tmp_path: Pat
     # clients as a broken/premature connection close.
     store = init_api_store(tmp_path, monkeypatch)
     monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_USER", "tester")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_PASSWORD", "secret")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_AUTH_MODE", "plain")
     track_id = add_track(store, tmp_path / "missing.flac")
     store.upsert_external_track("navidrome", "song-1", track_id)
     store.set_user_settings({"transcoding_enabled": True, "transcoding_bitrate_kbps": 192})
@@ -2950,6 +2953,9 @@ def test_track_audio_strips_content_length_for_estimated_transcode(tmp_path: Pat
 def test_track_audio_keeps_content_length_for_raw_profile(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_USER", "tester")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_PASSWORD", "secret")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_AUTH_MODE", "plain")
     track_id = add_track(store, tmp_path / "missing.flac")
     store.upsert_external_track("navidrome", "song-1", track_id)
 
