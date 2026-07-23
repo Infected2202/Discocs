@@ -209,7 +209,7 @@ describe("player queue actions", () => {
 
     await usePlayerStore.getState().playTrack(20, { queueItemId: "next", recordStarted: false })
 
-    expect(audioEngine.load).toHaveBeenCalledWith("blob:track-20", 20, "mp3-128", true, "next")
+    expect(audioEngine.load).toHaveBeenCalledWith("blob:track-20", 20, "mp3-128", true, "next", 100)
   })
 
   it("moves a dropped playlist track next and prepares the free physical deck", async () => {
