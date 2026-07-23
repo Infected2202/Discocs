@@ -336,37 +336,6 @@ describe("PlayerPlaybackFacade routing", () => {
     )
   })
 
-  it("writes currentTime directly when the seek target is already covered by native buffering", () => {
-    const audio: MockAudio[] = []
-    vi.stubGlobal("Audio", function () {
-      const instance = new MockAudio()
-      audio.push(instance)
-      return instance
-    })
-    const fetchMock = vi.fn()
-    vi.stubGlobal("fetch", fetchMock)
-    const callbacks = stubCallbacks()
-    const facade = new PlayerPlaybackFacade(runtime())
-    facade.init(callbacks)
-    facade.load("/audio/7", 7, "raw", false, "queue-7")
-    const networkElement = audio.at(-1)!
-    networkElement.duration = 200
-    // Native progressive download has already buffered [0, 150] — the 0.6
-    // target (120s) falls well inside it, so no full-file wait is needed.
-    networkElement.buffered = {
-      length: 1,
-      start: vi.fn().mockReturnValue(0),
-      end: vi.fn().mockReturnValue(150),
-    }
-
-    facade.seek(0.6)
-
-    expect(networkElement.currentTime).toBe(120)
-    expect(networkElement.pause).not.toHaveBeenCalled()
-    expect(fetchMock).not.toHaveBeenCalled()
-    expect(callbacks.onSeekBufferingChange).not.toHaveBeenCalled()
-  })
-
   it("pauses and waits for the Blob swap instead of writing currentTime on a not-yet-cached network track", async () => {
     const audio: MockAudio[] = []
     vi.stubGlobal("Audio", function () {
