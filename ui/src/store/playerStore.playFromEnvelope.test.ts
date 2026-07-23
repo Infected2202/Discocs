@@ -22,6 +22,7 @@ vi.mock("@/engine/playback", () => ({
     hasPrepared: vi.fn().mockReturnValue(false),
     handoverPrepared: vi.fn(),
     confirmHandover: vi.fn().mockResolvedValue(undefined),
+    clear: vi.fn(),
   },
 }))
 
@@ -114,6 +115,10 @@ describe("playFromEnvelope — старт с preferredTrackId", () => {
 describe("applyMediaSession — дедуп повторного вызова (A.4)", () => {
   beforeEach(() => {
     localStorage.clear()
+    // The store is a module-level singleton shared across every test in this
+    // file — the dedup key from earlier describe blocks' playFromEnvelope
+    // calls would otherwise leak in and make the first call below a no-op.
+    usePlayerStore.getState().resetForLogout()
     vi.mocked(playerPlayback.setMediaSession).mockClear()
   })
 
