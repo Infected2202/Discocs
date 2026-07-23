@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { playerPlayback as audioEngine } from "@/engine/playback"
-import { patchQueue, postEvent } from "@/api/playback"
+import { fetchQueue, patchQueue, postEvent, refillAutoplay } from "@/api/playback"
 import { usePlayerStore } from "./playerStore"
 import type { PlaybackEnvelope, PlaybackSession, PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
 
@@ -32,6 +32,7 @@ vi.mock("@/api/playback", async (importOriginal) => {
     patchQueue: vi.fn(),
     postEvent: vi.fn().mockResolvedValue({}),
     refillAutoplay: vi.fn().mockResolvedValue({}),
+    fetchQueue: vi.fn(),
     trackAudioUrl: (id: number) => `/audio/${id}`,
   }
 })
@@ -160,5 +161,136 @@ describe("player background / DJ engine behaviour", () => {
     document.dispatchEvent(new Event("visibilitychange"))
 
     expect(audioEngine.play).toHaveBeenCalled()
+  })
+})
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
+
+// A.2: nothing in applyEnvelope's chain ever calls playTrack, so an autoplay
+// refill that fills a previously exhausted queue used to leave playback
+// stuck on "idle" forever. resumeIfIdleAfterRefill() (wired into
+// scheduleAutoplayRefill, driven here via handleTrackEnded's exhausted-queue
+// branch) must resume it — but only while still idle, still the same
+// session, and not mid-DJ-mixing.
+describe("auto-resume after autoplay refill (A.2)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    usePlayerStore.setState({
+      session: null,
+      queue: null,
+      playedHistory: [],
+      currentTrackId: null,
+      currentQueueItemId: null,
+      currentTrack: null,
+      playbackState: "playing",
+      currentTime: 0,
+      duration: 0,
+      error: null,
+      djEngineActive: false,
+      playbackProfile: { transcodingEnabled: false, bitrateKbps: 192, key: "raw" },
+    })
+  })
+
+  function stubAutoplaySession(currentTrackId = 10): PlaybackSession {
+    return {
+      id: "s1", source_type: "track", autoplay_enabled: true, current_track_id: currentTrackId,
+    } as unknown as PlaybackSession
+  }
+
+  it("resumes playback once an autoplay refill fills a previously exhausted queue", async () => {
+    const exhausted = [makeItem("current", 10)]
+    usePlayerStore.setState({
+      session: stubAutoplaySession(),
+      queue: stubQueue(exhausted, "current"),
+      currentTrackId: 10,
+      currentQueueItemId: "current",
+      playbackState: "idle",
+    })
+    const refilled = [makeItem("current", 10), makeItem("gen", 30)]
+    vi.mocked(fetchQueue).mockResolvedValue({
+      session: stubAutoplaySession(),
+      queue: stubQueue(refilled, "current"),
+    })
+    vi.mocked(patchQueue).mockResolvedValue({
+      session: stubAutoplaySession(30),
+      queue: stubQueue(refilled, "gen"),
+    })
+
+    await usePlayerStore.getState().handleTrackEnded()
+
+    await vi.waitFor(() => expect(audioEngine.load).toHaveBeenCalled())
+    expect(refillAutoplay).toHaveBeenCalledTimes(1)
+    expect(usePlayerStore.getState().playbackState).not.toBe("idle")
+    expect(usePlayerStore.getState().currentTrackId).toBe(30)
+  })
+
+  it("does not resume if the user paused before the refill's fetchQueue resolves", async () => {
+    const exhausted = [makeItem("current", 10)]
+    usePlayerStore.setState({
+      session: stubAutoplaySession(),
+      queue: stubQueue(exhausted, "current"),
+      currentTrackId: 10,
+      currentQueueItemId: "current",
+      playbackState: "idle",
+    })
+    const deferredFetch = createDeferred<PlaybackEnvelope>()
+    vi.mocked(fetchQueue).mockReturnValueOnce(deferredFetch.promise)
+
+    await usePlayerStore.getState().handleTrackEnded()
+    await vi.waitFor(() => expect(fetchQueue).toHaveBeenCalled())
+
+    // User pauses while the refill's queue fetch is still in flight.
+    usePlayerStore.setState({ playbackState: "paused" })
+
+    const refilled = [makeItem("current", 10), makeItem("gen", 30)]
+    deferredFetch.resolve({
+      session: stubAutoplaySession(),
+      queue: stubQueue(refilled, "current"),
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(audioEngine.load).not.toHaveBeenCalled()
+    expect(usePlayerStore.getState().playbackState).toBe("paused")
+  })
+
+  it("does not double-resume when two refill triggers fire in quick succession", async () => {
+    const exhausted = [makeItem("current", 10)]
+    usePlayerStore.setState({
+      session: stubAutoplaySession(),
+      queue: stubQueue(exhausted, "current"),
+      currentTrackId: 10,
+      currentQueueItemId: "current",
+      playbackState: "idle",
+    })
+    const refilled = [makeItem("current", 10), makeItem("gen", 30)]
+    vi.mocked(fetchQueue).mockResolvedValue({
+      session: stubAutoplaySession(),
+      queue: stubQueue(refilled, "current"),
+    })
+    vi.mocked(patchQueue).mockResolvedValue({
+      session: stubAutoplaySession(30),
+      queue: stubQueue(refilled, "gen"),
+    })
+
+    // Two overlapping triggers (e.g. a stray second "completed" firing) race
+    // scheduleAutoplayRefill's existing refillInFlight guard.
+    await Promise.all([
+      usePlayerStore.getState().handleTrackEnded(),
+      usePlayerStore.getState().handleTrackEnded(),
+    ])
+    await vi.waitFor(() => expect(audioEngine.load).toHaveBeenCalled())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(refillAutoplay).toHaveBeenCalledTimes(1)
+    expect(audioEngine.load).toHaveBeenCalledTimes(1)
   })
 })

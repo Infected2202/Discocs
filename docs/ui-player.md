@@ -76,11 +76,26 @@ Background reliability is reinforced by:
   auto-advance), and `setPositionState` updated on every `timeupdate`.
 - `handleTrackEnded` fires the `completed` telemetry **fire-and-forget** and
   advances immediately. A backgrounded tab throttles `fetch`; awaiting the POST
-  is what used to block the next track from starting.
+  is what used to block the next track from starting. `skipNext`'s own `skipped`
+  telemetry is fire-and-forget for the same reason.
+- `jumpToQueueItem` (the shared step behind track-ended advance, skip
+  next/previous, and autoplay jump) is **optimistic** when the target queue item
+  is already known locally: it starts playback immediately from local state and
+  syncs the server's queue pointer (`PATCH .../queue` `operation: "jump"`) in the
+  background — retried once, logged (not surfaced as an error) on final failure,
+  and dropped if a newer jump supersedes it before the response arrives. Only a
+  target item not yet known locally falls back to blocking on the PATCH. This
+  is what previously stalled every track transition behind a throttled
+  background request even though the next track's audio was already available.
 - A `visibilitychange` → foreground reconcile: if the store believes playback is
   `playing` but the element is actually paused, it resumes it, or drives
   `handleTrackEnded` when the current track ended in the background without the
   auto-advance having fired.
+- When an autoplay refill fills a queue that had run out (`handleTrackEnded`
+  set `playbackState` to `"idle"` because there was no next item yet),
+  `scheduleAutoplayRefill` resumes playback into the newly generated item once
+  the refill's queue refresh lands — guarded so it only fires if playback is
+  still idle, still the same session, and not mid-DJ-mixing.
 
 ### DJ mode (`graphActive === true`) — activated by explicit gesture
 

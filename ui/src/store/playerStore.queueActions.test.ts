@@ -363,3 +363,164 @@ describe("player queue actions", () => {
     expect(audioEngine.clearPrefetched).not.toHaveBeenCalled()
   })
 })
+
+// A.1/A.3: jumpToQueueItem is optimistic for locally-known queue items (starts
+// playback immediately, syncs the server pointer in the background) and
+// skipNext's own telemetry no longer blocks the transition. Kept as a
+// separate describe block below the pre-existing prepared-deck/DJ coverage
+// above — none of that is touched here.
+describe("jumpToQueueItem optimistic transitions (A.1) / skipNext telemetry (A.3)", () => {
+  function createDeferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((res) => {
+      resolve = res
+    })
+    return { promise, resolve }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(audioEngine.hasPrepared).mockReturnValue(false)
+    localStorage.clear()
+    usePlayerStore.setState({
+      session: null,
+      queue: null,
+      playedHistory: [],
+      currentTrackId: null,
+      currentQueueItemId: null,
+      currentTrack: null,
+      playbackState: "idle",
+      currentTime: 0,
+      duration: 0,
+      error: null,
+      playbackProfile: { transcodingEnabled: false, bitrateKbps: 192, key: "raw" },
+    })
+  })
+
+  it("starts a locally-known track immediately without waiting for patchQueue", async () => {
+    // patchQueue never resolves — if jumpToQueueItem awaited it, this would hang.
+    vi.mocked(patchQueue).mockReturnValue(new Promise(() => undefined) as Promise<PlaybackEnvelope>)
+    const envelope = makeEnvelope("session", [makeItem("current", 10), makeItem("next", 20)], "current")
+    usePlayerStore.setState({
+      session: envelope.session,
+      queue: envelope.queue,
+      currentTrackId: 10,
+      currentQueueItemId: "current",
+    })
+
+    await usePlayerStore.getState().jumpToQueueItem("next")
+
+    expect(audioEngine.load).toHaveBeenCalled()
+    expect(usePlayerStore.getState().currentTrackId).toBe(20)
+    expect(usePlayerStore.getState().currentQueueItemId).toBe("next")
+    expect(patchQueue).toHaveBeenCalledWith("session", { operation: "jump", queue_item_id: "next" })
+  })
+
+  it("does not revert already-correct state once the background jump-sync succeeds", async () => {
+    const envelope = makeEnvelope("session", [makeItem("current", 10), makeItem("next", 20)], "current")
+    usePlayerStore.setState({
+      session: envelope.session,
+      queue: envelope.queue,
+      currentTrackId: 10,
+      currentQueueItemId: "current",
+    })
+    vi.mocked(patchQueue).mockResolvedValue(makeEnvelope("session", envelope.queue.items, "next"))
+
+    await usePlayerStore.getState().jumpToQueueItem("next")
+
+    await vi.waitFor(() => {
+      expect(usePlayerStore.getState().currentQueueItemId).toBe("next")
+      expect(usePlayerStore.getState().currentTrackId).toBe(20)
+    })
+  })
+
+  it("drops a stale jump-sync response superseded by a newer jump", async () => {
+    const items = [makeItem("current", 10), makeItem("next1", 20), makeItem("next2", 30)]
+    const envelope = makeEnvelope("session", items, "current")
+    usePlayerStore.setState({
+      session: envelope.session,
+      queue: envelope.queue,
+      currentTrackId: 10,
+      currentQueueItemId: "current",
+    })
+    const staleResponse = createDeferred<PlaybackEnvelope>()
+    vi.mocked(patchQueue).mockReturnValueOnce(staleResponse.promise)
+
+    // First jump — its background sync (staleResponse) does not resolve yet.
+    await usePlayerStore.getState().jumpToQueueItem("next1")
+
+    // A newer jump supersedes it before the first sync resolves.
+    vi.mocked(patchQueue).mockResolvedValueOnce(makeEnvelope("session", items, "next2"))
+    await usePlayerStore.getState().jumpToQueueItem("next2")
+
+    // The stale first response now arrives — must be dropped, not applied.
+    staleResponse.resolve(makeEnvelope("session", items, "next1"))
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(usePlayerStore.getState().currentQueueItemId).toBe("next2")
+    expect(usePlayerStore.getState().currentTrackId).toBe(30)
+  })
+
+  it("does not set an error when the background jump-sync retry is exhausted", async () => {
+    const envelope = makeEnvelope("session", [makeItem("current", 10), makeItem("next", 20)], "current")
+    usePlayerStore.setState({
+      session: envelope.session,
+      queue: envelope.queue,
+      currentTrackId: 10,
+      currentQueueItemId: "current",
+      error: null,
+    })
+    vi.mocked(patchQueue).mockRejectedValue(new Error("network down"))
+
+    await usePlayerStore.getState().jumpToQueueItem("next")
+
+    await vi.waitFor(() => expect(patchQueue).toHaveBeenCalledTimes(2))
+    await Promise.resolve()
+
+    expect(usePlayerStore.getState().error).toBeNull()
+    // Local optimistic state from the initial jump is not reverted.
+    expect(usePlayerStore.getState().currentQueueItemId).toBe("next")
+    expect(usePlayerStore.getState().currentTrackId).toBe(20)
+  })
+
+  it("falls back to blocking on patchQueue when the target queue item is not locally known", async () => {
+    const envelope = makeEnvelope("session", [makeItem("current", 10)], "current")
+    usePlayerStore.setState({
+      session: envelope.session,
+      queue: envelope.queue,
+      currentTrackId: 10,
+      currentQueueItemId: "current",
+    })
+    const resolvedEnvelope = makeEnvelope(
+      "session", [makeItem("current", 10), makeItem("missing", 99)], "missing",
+    )
+    vi.mocked(patchQueue).mockResolvedValue(resolvedEnvelope)
+
+    await usePlayerStore.getState().jumpToQueueItem("missing")
+
+    expect(patchQueue).toHaveBeenCalledWith("session", { operation: "jump", queue_item_id: "missing" })
+    expect(audioEngine.load).toHaveBeenCalled()
+    expect(usePlayerStore.getState().currentTrackId).toBe(99)
+    expect(usePlayerStore.getState().currentQueueItemId).toBe("missing")
+  })
+
+  it("advances via skipNext even when the skipped telemetry never resolves", async () => {
+    vi.mocked(postEvent).mockReturnValueOnce(new Promise(() => undefined) as Promise<never>)
+    const envelope = makeEnvelope("session", [makeItem("current", 10), makeItem("next", 20)], "current")
+    usePlayerStore.setState({
+      session: envelope.session,
+      queue: envelope.queue,
+      currentTrackId: 10,
+      currentQueueItemId: "current",
+    })
+    vi.mocked(patchQueue).mockResolvedValue(makeEnvelope("session", envelope.queue.items, "next"))
+
+    await usePlayerStore.getState().skipNext()
+
+    expect(audioEngine.load).toHaveBeenCalled()
+    expect(usePlayerStore.getState().currentTrackId).toBe(20)
+    expect(postEvent).toHaveBeenCalledWith(expect.objectContaining({ event_type: "skipped" }))
+  })
+})

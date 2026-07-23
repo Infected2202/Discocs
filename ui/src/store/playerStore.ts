@@ -155,6 +155,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     queueItemId: string
     clientHandoverId: string
   } | null = null
+  let pendingQueueJump: { sessionId: string; queueItemId: string } | null = null
   const incomingStartedQueueItems = new Set<string>()
 
   function scheduleNextPrefetch() {
@@ -344,6 +345,46 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     }
   }
 
+  // Background sync of the server-side queue pointer after an optimistic
+  // jumpToQueueItem() already started local playback. Mirrors the retry-once
+  // shape used by PlayerPlaybackFacade.prefetch()/cacheActiveTrack() — a
+  // backgrounded tab can throttle this fetch heavily, so it must never block
+  // playback, and a late/failed response must never surface an error banner
+  // over otherwise-working playback (it self-heals on the next transition).
+  async function syncQueueJump(sessionId: string, queueItemId: string) {
+    let attempt = 0
+    for (;;) {
+      try {
+        const envelope = await patchQueue(sessionId, {
+          operation: "jump",
+          queue_item_id: queueItemId,
+        })
+        // Only apply if this is still the most recent jump — a newer jump
+        // (e.g. rapid skips) must not be reverted by a stale response.
+        if (pendingQueueJump?.sessionId === sessionId && pendingQueueJump.queueItemId === queueItemId) {
+          applyEnvelope(envelope)
+          pendingQueueJump = null
+        }
+        return
+      } catch (err) {
+        if (attempt < 1) {
+          attempt += 1
+          playerLog("queue", "jump sync retry", { sessionId, queueItemId })
+          continue
+        }
+        playerLog("queue", "jump sync failed — will self-heal on next transition", {
+          sessionId,
+          queueItemId,
+          message: (err as Error).message,
+        })
+        if (pendingQueueJump?.sessionId === sessionId && pendingQueueJump.queueItemId === queueItemId) {
+          pendingQueueJump = null
+        }
+        return
+      }
+    }
+  }
+
   async function handoverToPrepared(next: QueueItem, session: PlaybackSession) {
     const clientHandoverId = createClientHandoverId(session.id, next.id)
     try {
@@ -411,6 +452,20 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     }
   }
 
+  // After an autoplay refill fills a previously exhausted queue, resume
+  // playback if the player is still sitting idle (nothing in applyEnvelope's
+  // chain ever calls playTrack itself). Guards against resuming into DJ mode,
+  // a session/queue that changed underneath the refill, or a user who paused
+  // in the meantime.
+  async function resumeIfIdleAfterRefill(sessionId: string) {
+    const { playbackState, djEngineActive, session: curSession, queue, currentQueueItemId } = get()
+    if (playbackState !== "idle" || djEngineActive) return
+    if (curSession?.id !== sessionId || !queue) return
+    const idx = queue.items.findIndex((item) => item.id === currentQueueItemId)
+    const next = idx >= 0 ? queue.items[idx + 1] : queue.items[0]
+    if (next) await get().jumpToQueueItem(next.id)
+  }
+
   async function scheduleAutoplayRefill(eventType?: string) {
     if (eventType && !REFILL_TRIGGER_EVENTS.has(eventType)) return
     const { session, currentTrackId, currentTrack } = get()
@@ -445,6 +500,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         }
         await flowRefill({ session_id: session.id, visible_buffer: 5 })
         await get().refreshQueue()
+        await resumeIfIdleAfterRefill(session.id)
       } else {
         await refillAutoplay({
           session_id: session.id,
@@ -457,6 +513,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           },
         })
         await get().refreshQueue()
+        await resumeIfIdleAfterRefill(session.id)
       }
     } catch {
       // silently ignore refill errors — not user-facing
@@ -560,8 +617,33 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     },
 
     async jumpToQueueItem(queueItemId) {
-      const { session } = get()
+      const { session, queue } = get()
       if (!session?.id) return
+
+      // Optimistic path: the target item is already known locally (true for
+      // every current caller — track-ended advance, skip next/previous,
+      // autoplay jump). Start playback immediately from local data instead of
+      // waiting on the queue-pointer PATCH, which mobile browsers throttle
+      // heavily when the screen is locked, and sync the server pointer in
+      // the background.
+      const item = queue?.items.find((i) => i.id === queueItemId)
+      if (item) {
+        addCurrentToHistory()
+        pendingQueueJump = { sessionId: session.id, queueItemId: item.id }
+        set({
+          currentTrackId: item.track_id,
+          currentQueueItemId: item.id,
+          currentTrack: item.track ?? null,
+        })
+        await get().playTrack(item.track_id, {
+          queueItemId: item.id,
+          recordStarted: false,
+        })
+        void syncQueueJump(session.id, item.id)
+        return
+      }
+
+      // Fallback for a target not locally known — block on the server as before.
       addCurrentToHistory()
       try {
         const envelope = await patchQueue(session.id, {
@@ -651,7 +733,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         return
       }
 
-      await get().recordEvent("skipped", {
+      // Fire-and-forget, mirroring handleTrackEnded's "completed" event: an
+      // awaited postEvent can hang when a backgrounded tab throttles fetch,
+      // which would block the skip from advancing.
+      void get().recordEvent("skipped", {
         position_seconds: audioEngine.currentTime,
         duration_seconds: audioEngine.duration,
       })
@@ -1048,6 +1133,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       refillInFlight = false
       fullyBufferedSource = null
       pendingHandover = null
+      pendingQueueJump = null
       incomingStartedQueueItems.clear()
       audioEngine.clear()
       set({
