@@ -75,7 +75,7 @@ export class PlayerPlaybackFacade {
   private djDeckTarget: { trackId: number; profileKey: string; queueItemId: string | null } | null = null
   private retired: { element: HTMLAudioElement; objectUrl: string | null; blob: Blob | null; deck: DeckId } | null = null
   private prefetchController: AbortController | null = null
-  private prefetchTarget: { trackId: number; profileKey: string } | null = null
+  private prefetchTarget: { trackId: number; profileKey: string; queueItemId: string | null } | null = null
   // False = ordinary direct-<audio> playback (no AudioContext, reliable mobile
   // background). True = DJ mode: audio routed through the Web Audio mixer graph.
   // The graph is only ever created once DJ mode is activated by a user gesture.
@@ -156,15 +156,26 @@ export class PlayerPlaybackFacade {
   }
 
   async prefetch(trackId: number, url: string, profileKey: string, queueItemId: string | null = null): Promise<void> {
-    if (
-      this.prefetched?.trackId === trackId
-      && this.prefetched.profileKey === profileKey
-      && this.prefetched.queueItemId === queueItemId
-    ) return
-    if (this.prefetchTarget?.trackId === trackId && this.prefetchTarget.profileKey === profileKey) return
+    // Dedup on trackId+profileKey alone — queueItemId is just the queue-row
+    // label the caller currently has in mind. A queue resync (e.g. the
+    // background PATCH sync after an optimistic jump) can hand out a fresh
+    // queue_item_id for the same still-upcoming track; treating that as a
+    // "new" target used to discard an already-downloaded/in-flight Blob and
+    // refetch the identical audio from scratch.
+    if (this.prefetched?.trackId === trackId && this.prefetched.profileKey === profileKey) {
+      if (this.prefetched.queueItemId !== queueItemId) {
+        this.prefetched = { ...this.prefetched, queueItemId }
+        this.callbacks?.onNextTrackBufferingChange?.({ trackId, queueItemId, ready: true })
+      }
+      return
+    }
+    if (this.prefetchTarget?.trackId === trackId && this.prefetchTarget.profileKey === profileKey) {
+      this.prefetchTarget.queueItemId = queueItemId
+      return
+    }
     this.cancelPrefetch()
     this.clearPrefetched()
-    this.prefetchTarget = { trackId, profileKey }
+    this.prefetchTarget = { trackId, profileKey, queueItemId }
     this.prefetchRetryCount = 0
     this.callbacks?.onNextTrackBufferingChange?.({ trackId, queueItemId, ready: false })
 
@@ -186,8 +197,11 @@ export class PlayerPlaybackFacade {
           // blob/objectUrl cache, regardless of DJ-mode state. It never routes an
           // element into the mixer graph — that is prepareDjDeck()'s job alone,
           // so routine background caching can never delete an armed DJ deck.
-          this.prefetched = { trackId, queueItemId, profileKey, objectUrl, blob }
-          this.callbacks?.onNextTrackBufferingChange?.({ trackId, queueItemId, ready: true })
+          // Use the target's current queueItemId, not the closure param — a
+          // superseding call may have relabelled it while this fetch was in flight.
+          const resolvedQueueItemId = this.prefetchTarget.queueItemId
+          this.prefetched = { trackId, queueItemId: resolvedQueueItemId, profileKey, objectUrl, blob }
+          this.callbacks?.onNextTrackBufferingChange?.({ trackId, queueItemId: resolvedQueueItemId, ready: true })
           return
         } catch (error) {
           const err = error as Error

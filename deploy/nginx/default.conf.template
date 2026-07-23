@@ -137,6 +137,11 @@ server {
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Discocs-Service-Token "";
         proxy_read_timeout 300s;
+        # Audio/cover responses can be multi-megabyte; buffering the full
+        # response before forwarding stalls playback and, on a slow/flaky
+        # upstream, can trip a premature close that the client sees as a
+        # broken HTTP/2 stream. Stream bytes through as they arrive instead.
+        proxy_buffering off;
     }
 
     location ~ "^/share/(?<discocs_share_token>[A-Za-z0-9_-]{40,64})/?$" {

@@ -157,6 +157,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
   } | null = null
   let pendingQueueJump: { sessionId: string; queueItemId: string } | null = null
   const incomingStartedQueueItems = new Set<string>()
+  let lastMediaSessionKey: string | null = null
+
+  // Reassigning navigator.mediaSession.metadata re-fetches the artwork image
+  // every time, even for an unchanged URL. Several independent call sites
+  // (DJ handover, ordinary track start, session restore) can end up applying
+  // the same track's metadata back to back — dedupe so that only a genuine
+  // track/artwork change re-fetches the lock-screen cover.
+  function applyMediaSession(track: TrackSummary | null | undefined) {
+    if (!track) return
+    const artwork = hiresArtworkUrl(track.artwork?.url, 512)
+    const key = `${track.id}:${artwork ?? ""}`
+    if (key === lastMediaSessionKey) return
+    lastMediaSessionKey = key
+    audioEngine.setMediaSession(track, artwork)
+  }
 
   function scheduleNextPrefetch() {
     const { queue, currentQueueItemId, currentTrackId, session, playbackProfile } = get()
@@ -411,9 +426,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       })
       pendingHandover = { sessionId: session.id, queueItemId: next.id, clientHandoverId }
       await reconcilePendingHandover()
-      if (next.track) {
-        audioEngine.setMediaSession(next.track, hiresArtworkUrl(next.track.artwork?.url, 512))
-      }
+      applyMediaSession(next.track)
     } catch (err) {
       set({ error: `Handover pending: ${(err as Error).message}` })
     }
@@ -603,11 +616,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       }
 
       // Update Media Session metadata if we have track info
-      const track = get().currentTrack
-      if (track) {
-        const artwork = hiresArtworkUrl(track.artwork?.url, 512)
-        audioEngine.setMediaSession(track, artwork)
-      }
+      applyMediaSession(get().currentTrack)
       audioEngine.registerMediaSessionHandlers({
         play: () => get().togglePlay(),
         pause: () => get().togglePlay(),
@@ -1108,9 +1117,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
             audioEngine.resumeAtSeconds(persisted.seconds)
             set({ currentTime: persisted.seconds })
           }
-          if (currentTrack) {
-            audioEngine.setMediaSession(currentTrack, hiresArtworkUrl(currentTrack.artwork?.url, 512))
-          }
+          applyMediaSession(currentTrack)
           audioEngine.registerMediaSessionHandlers({
             play: () => get().togglePlay(),
             pause: () => get().togglePlay(),
@@ -1134,6 +1141,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       fullyBufferedSource = null
       pendingHandover = null
       pendingQueueJump = null
+      lastMediaSessionKey = null
       incomingStartedQueueItems.clear()
       audioEngine.clear()
       set({

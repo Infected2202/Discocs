@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { usePlayerStore } from "./playerStore"
+import { playerPlayback } from "@/engine/playback"
 import type { PlaybackEnvelope, QueueItem, TrackSummary } from "@/api/types"
 
 // The playback facade is a browser/audio singleton — stub every method the store calls
@@ -107,5 +108,32 @@ describe("playFromEnvelope — старт с preferredTrackId", () => {
     await usePlayerStore.getState().playFromEnvelope(makeEnvelope(), 999)
 
     expect(usePlayerStore.getState().currentTrackId).toBe(10)
+  })
+})
+
+describe("applyMediaSession — дедуп повторного вызова (A.4)", () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.mocked(playerPlayback.setMediaSession).mockClear()
+  })
+
+  it("не переустанавливает MediaSession, если трек и артворк не изменились", async () => {
+    await usePlayerStore.getState().playFromEnvelope(makeEnvelope())
+    expect(playerPlayback.setMediaSession).toHaveBeenCalledTimes(1)
+
+    // Имитируем повторный независимый триггер playTrack для того же трека —
+    // например, дублирующийся handleTrackEnded или reconcileOnForeground.
+    await usePlayerStore.getState().playTrack(10, { queueItemId: "a", recordStarted: false })
+
+    expect(playerPlayback.setMediaSession).toHaveBeenCalledTimes(1)
+  })
+
+  it("переустанавливает MediaSession, когда трек реально сменился", async () => {
+    await usePlayerStore.getState().playFromEnvelope(makeEnvelope())
+    expect(playerPlayback.setMediaSession).toHaveBeenCalledTimes(1)
+
+    await usePlayerStore.getState().playTrack(20, { queueItemId: "b", recordStarted: false })
+
+    expect(playerPlayback.setMediaSession).toHaveBeenCalledTimes(2)
   })
 })

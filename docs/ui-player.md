@@ -96,6 +96,19 @@ Background reliability is reinforced by:
   `scheduleAutoplayRefill` resumes playback into the newly generated item once
   the refill's queue refresh lands — guarded so it only fires if playback is
   still idle, still the same session, and not mid-DJ-mixing.
+- `PlayerPlaybackFacade.prefetch()` dedupes on `trackId + profileKey` alone,
+  not `queueItemId`. A queue resync (e.g. the background PATCH sync after an
+  optimistic `jumpToQueueItem`) can hand the same still-upcoming track a fresh
+  `queue_item_id`; treating that as a new prefetch target used to discard an
+  already-downloaded or in-flight Blob and refetch the identical audio from
+  scratch — doubling network usage and, combined with a flaky proxy hop,
+  doubling the odds of hitting a transfer error on the same track.
+- `setMediaSession` calls are deduped by `applyMediaSession` (keyed on
+  `trackId` + resolved artwork URL). Reassigning
+  `navigator.mediaSession.metadata` re-fetches the lock-screen artwork every
+  time even when the URL is unchanged, and three independent call sites (DJ
+  handover, ordinary track start, session restore) can end up applying the
+  same track's metadata back to back.
 
 ### DJ mode (`graphActive === true`) — activated by explicit gesture
 

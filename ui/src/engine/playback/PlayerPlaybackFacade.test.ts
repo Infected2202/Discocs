@@ -613,6 +613,56 @@ describe("PlayerPlaybackFacade routing", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  it("relabels an already-prefetched track instead of re-fetching when queue_item_id changes", async () => {
+    vi.stubGlobal("Audio", function () { return new MockAudio() })
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob(["audio"])) })
+    vi.stubGlobal("fetch", fetchMock)
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:relabel-8")
+    const callbacks = stubCallbacks()
+    const facade = new PlayerPlaybackFacade(runtime())
+    facade.init(callbacks)
+    facade.load("/audio/7", 7)
+
+    await facade.prefetch(8, "/audio/8", "raw", "queue-8a")
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // A queue resync (e.g. the background PATCH sync after an optimistic
+    // jump) can hand the same still-upcoming track a fresh queue_item_id.
+    // That must not discard the Blob we already have and refetch it.
+    await facade.prefetch(8, "/audio/8", "raw", "queue-8b")
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(callbacks.onNextTrackBufferingChange).toHaveBeenLastCalledWith({
+      trackId: 8, queueItemId: "queue-8b", ready: true,
+    })
+    expect(facade.consumePrefetched(8, "raw")).toBe("blob:relabel-8")
+  })
+
+  it("does not restart an in-flight prefetch when relabelled with a different queue_item_id, and resolves under the latest label", async () => {
+    vi.stubGlobal("Audio", function () { return new MockAudio() })
+    let resolveFetch!: (value: { ok: boolean; blob: () => Promise<Blob> }) => void
+    const fetchMock = vi.fn().mockReturnValue(new Promise((resolve) => { resolveFetch = resolve }))
+    vi.stubGlobal("fetch", fetchMock)
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:relabel-inflight-8")
+    const callbacks = stubCallbacks()
+    const facade = new PlayerPlaybackFacade(runtime())
+    facade.init(callbacks)
+    facade.load("/audio/7", 7)
+
+    const first = facade.prefetch(8, "/audio/8", "raw", "queue-8a")
+    // Relabel while the fetch is still in flight — must not abort/restart it.
+    const second = facade.prefetch(8, "/audio/8", "raw", "queue-8b")
+
+    resolveFetch({ ok: true, blob: () => Promise.resolve(new Blob(["audio"])) })
+    await Promise.all([first, second])
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(callbacks.onNextTrackBufferingChange).toHaveBeenLastCalledWith({
+      trackId: 8, queueItemId: "queue-8b", ready: true,
+    })
+    expect(facade.consumePrefetched(8, "raw")).toBe("blob:relabel-inflight-8")
+  })
+
   it("never routes an ordinary prefetch into the mixer graph, even while DJ mode is active", async () => {
     const audio: MockAudio[] = []
     vi.stubGlobal("Audio", function () {
