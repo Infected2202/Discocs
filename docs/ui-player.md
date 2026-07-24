@@ -110,6 +110,14 @@ Background reliability is reinforced by:
   handover, ordinary track start, session restore) can end up applying the
   same track's metadata back to back.
 
+For the native Android app (Capacitor wrapper, see `docs/android-app.md`),
+background survival beyond what a browser tab allows comes from a shell-level
+Android foreground service started once at app launch
+(`ui/src/lib/nativeInit.ts`). It is not a change to the playback design
+described in this section — the same plain `<audio>` element above is what
+actually keeps playing; the foreground service only prevents the OS from
+killing the app process while backgrounded.
+
 ### DJ mode (`graphActive === true`) — activated by explicit gesture
 
 `playerStore.activateDj()` → `PlayerPlaybackFacade.activateDjMode()`. Activation

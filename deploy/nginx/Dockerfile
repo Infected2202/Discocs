@@ -22,4 +22,10 @@ USER 101
 # Template is processed by nginx entrypoint via envsubst on startup
 COPY deploy/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=ui-builder /build/dist /usr/share/nginx/html
+# APK + OTA web bundle, populated by the separate Jenkinsfile.android job
+# (see docs/android-app.md) into deploy/nginx/downloads/ before this image is
+# built. Empty (just .gitkeep) on the regular per-push pipeline — the SPA
+# fallback in default.conf.template already serves real files under this
+# root before falling through to index.html, so no extra nginx location is needed.
+COPY deploy/nginx/downloads /usr/share/nginx/html/downloads
 EXPOSE 8080

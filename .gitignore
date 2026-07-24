@@ -35,6 +35,12 @@ models/*.json
 models/muq/
 eval/results/
 
+# APK + OTA web bundle staged by Jenkinsfile.android into the frontend image
+# build context (see docs/android-app.md) — never checked in, only .gitkeep
+# keeps the directory present for local dev-compose builds.
+deploy/nginx/downloads/*
+!deploy/nginx/downloads/.gitkeep
+
 # Screenshot artifacts from UI testing sessions
 /mobile-*.png
 /desktop-*.png

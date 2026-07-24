@@ -1,0 +1,73 @@
+# syntax=docker/dockerfile:1
+# Образ для сборки Android APK + web-бандла OTA-обновления в отдельном,
+# ручном пайплайне Jenkinsfile.android (см. docs/cicd.md, docs/android-app.md).
+# Не участвует в основном Jenkinsfile — собирается только по явному запуску.
+
+# --- Стадия 1: сборка web-бандла (dist) и капаситор-синк ---------------------
+FROM node:24-alpine AS ui-build
+WORKDIR /build
+COPY ui/package.json ui/pnpm-lock.yaml ./
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    npm install -g pnpm@11 && pnpm install --frozen-lockfile
+COPY ui/ ./
+ARG DISCOCS_PUBLIC_URL
+RUN pnpm build
+# `cap sync android` копирует dist в android/app/src/main/assets/public и
+# обновляет нативные плагины — без сети (использует уже поставленные пакеты).
+RUN npx cap sync android
+
+# --- Стадия 2: JDK + Android SDK cmdline-tools, сборка debug-APK --------------
+# Ubuntu-based (glibc), не alpine: aapt2 из Android build-tools требует glibc,
+# на musl (alpine) не запускается.
+FROM eclipse-temurin:21-jdk-jammy AS android-build
+
+# Версии SDK закреплены под variables.gradle текущего скаффолда
+# (`ui/android/variables.gradle`: compileSdkVersion=targetSdkVersion=36).
+# cmdline-tools билд 13114758 — актуальный на момент написания
+# (https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip,
+# проверено вручную: 404 на заведомо неверный номер, 200 на этот). Обновлять
+# явным коммитом при апгрейде Capacitor/AGP, вместе с build-tools/platform ниже.
+ARG CMDLINE_TOOLS_VERSION=13114758
+ARG ANDROID_PLATFORM=36
+ARG ANDROID_BUILD_TOOLS=36.0.0
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
+ENV ANDROID_HOME=${ANDROID_SDK_ROOT}
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends unzip curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL -o /tmp/cmdline-tools.zip \
+      "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip" \
+    && unzip -q /tmp/cmdline-tools.zip -d "${ANDROID_SDK_ROOT}/cmdline-tools" \
+    && mv "${ANDROID_SDK_ROOT}/cmdline-tools/cmdline-tools" "${ANDROID_SDK_ROOT}/cmdline-tools/latest" \
+    && rm /tmp/cmdline-tools.zip
+
+ENV PATH="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools:${PATH}"
+
+# Лицензии принимаются неинтерактивно — `yes |` вместо ручного accept, иначе
+# sdkmanager блокируется на первом же интерактивном промпте в CI.
+RUN yes | sdkmanager --licenses >/dev/null \
+    && sdkmanager --install \
+         "platform-tools" \
+         "platforms;android-${ANDROID_PLATFORM}" \
+         "build-tools;${ANDROID_BUILD_TOOLS}"
+
+WORKDIR /build
+COPY --from=ui-build /build /build
+
+# Gradle-кэш переживает инвалидацию слоя с исходниками между билдами.
+RUN --mount=type=cache,target=/root/.gradle/caches \
+    --mount=type=cache,target=/root/.gradle/wrapper \
+    cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+
+# --- Стадия 3: упаковка артефактов для docker cp ------------------------------
+FROM alpine AS package
+ARG GIT_SHA=local
+RUN apk add --no-cache zip
+WORKDIR /build/output
+COPY --from=ui-build /build/dist /build/dist
+COPY --from=android-build /build/android/app/build/outputs/apk/debug/app-debug.apk ./discocs.apk
+RUN cd /build/dist \
+    && zip -qr "/build/output/discocs-web-${GIT_SHA}.zip" . \
+    && printf '{"version":"%s","url":"/downloads/discocs-web-%s.zip"}' "${GIT_SHA}" "${GIT_SHA}" > /build/output/update-manifest.json

@@ -7,6 +7,9 @@ import "./index.css"
 import "./i18n"
 import { router } from "./router"
 import { queryClient } from "./api/queryClient"
+import { initNative } from "./lib/nativeInit"
+
+void initNative()
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
