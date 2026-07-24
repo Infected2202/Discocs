@@ -33,6 +33,27 @@ describe("apiFetch", () => {
     await expect(apiFetch("/api/v1/ping")).resolves.toEqual({ hello: "world" })
   })
 
+  it("throws a diagnostic error (url, status, content-type, body preview) when a 200 body isn't JSON", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: (name: string) => (name === "content-type" ? "text/html" : null) },
+        json: () => Promise.reject(new SyntaxError("Unexpected token '<'")),
+        clone: function (this: unknown) {
+          return this
+        },
+        text: () => Promise.resolve("<!doctype html><html>...</html>"),
+      })
+    )
+    vi.stubGlobal("location", new URL("https://d.plikinson.org/"))
+
+    await expect(apiFetch("/api/v1/auth/session")).rejects.toThrow(
+      'Non-JSON response from https://d.plikinson.org/api/v1/auth/session (status 200, content-type "text/html"): <!doctype html><html>...</html>'
+    )
+  })
+
   it("throws an ApiError with the server's error body on a non-ok response", async () => {
     vi.stubGlobal(
       "fetch",

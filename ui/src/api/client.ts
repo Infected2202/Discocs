@@ -22,7 +22,8 @@ function resolveApiUrl(url: string): string {
 }
 
 export async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(resolveApiUrl(url), {
+  const resolvedUrl = resolveApiUrl(url)
+  const res = await fetch(resolvedUrl, {
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
@@ -41,7 +42,24 @@ export async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
     throw new ApiError(res.status, code, message)
   }
 
-  return res.json() as Promise<T>
+  // A 200 with an unparseable body has repeatedly turned out to be a wrong
+  // network layer answering instead of the API (e.g. a local WebView asset
+  // server returning the app's own index.html for an unmatched path) — bare
+  // "Unexpected token '<'" gives no way to tell which without device logs, so
+  // fold in exactly what would otherwise need adb/logcat to see.
+  try {
+    return (await res.json()) as T
+  } catch (parseError) {
+    const contentType = res.headers?.get?.("content-type") ?? "unknown"
+    const bodyPreview = await res.clone().text().then(
+      (t) => t.slice(0, 200),
+      () => "<unreadable>"
+    )
+    throw new Error(
+      `Non-JSON response from ${resolvedUrl} (status ${res.status}, content-type "${contentType}"): ${bodyPreview}`,
+      { cause: parseError }
+    )
+  }
 }
 
 export function apiUrl(path: string, params?: Record<string, string | number | boolean | undefined>): string {
