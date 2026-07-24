@@ -37,10 +37,10 @@ is in place, and its `192.168.1.146:8711` default bypassed nginx/the
 production domain entirely.
 
 The tradeoff: the production domain is **baked into the APK at build time**
-(`DISCOCS_PUBLIC_URL` is a Jenkins build parameter for `Jenkinsfile.android`,
-not a runtime setting). Changing the domain means rebuilding and
-redistributing the APK. The JS/CSS/HTML bundle itself is not subject to this
-limit — see OTA updates below.
+(`DISCOCS_PUBLIC_URL` is a plain `environment{}` value in the root
+`Jenkinsfile`, not a runtime setting). Changing the domain means rebuilding
+and redistributing the APK. The JS/CSS/HTML bundle itself is not subject to
+this limit — see OTA updates below.
 
 ## Background playback — shell-level only
 
@@ -84,10 +84,11 @@ polling). `nativeInit.ts` does its own minimal check on every launch:
 Everything is wrapped in try/catch: offline, first launch, or a missing
 manifest silently keeps the bundled version, never blocks startup.
 
-The manifest and zip are produced by `Jenkinsfile.android` /
-`deploy/ci/Dockerfile.android` and published as static files under
-`/downloads/` by the frontend nginx image (see `docs/cicd.md`'s "Android
-job" section) — no dedicated update server, no auth gate.
+The manifest and zip are produced by `deploy/ci/Dockerfile.android`, built on
+every push as part of the root `Jenkinsfile`'s `frontend` branch (see
+`docs/cicd.md`'s "Android-приложение" section), and published as static files
+under `/downloads/` by the frontend nginx image — no dedicated update server,
+no auth gate.
 
 ## Manual sideload install
 
@@ -102,7 +103,7 @@ The APK is not distributed through the Play Store — install it directly:
 
 ## Open items
 
-- **No release signing keystore.** `Jenkinsfile.android` builds
+- **No release signing keystore.** `deploy/ci/Dockerfile.android` builds
   `assembleDebug` only — a debug-signed APK, fine for personal sideload but
   not for wider distribution. Add a release keystore as a Jenkins "Secret
   file" credential and switch to `assembleRelease` if that's ever needed.

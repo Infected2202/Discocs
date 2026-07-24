@@ -398,52 +398,55 @@ memory` (см. выше, он обязателен для параллельны
 кэша — и каждый скан стал разбирать образ с нуля: на билде #239 только backend
 стоил 30.6 + 24.0 + 22.7 = 77с из 80с всей стадии. Теперь сканов два.
 
-## Android-приложение (отдельный пайплайн)
+## Android-приложение (часть основного пайплайна)
 
 Capacitor-обёртка веб-UI в APK (см. `docs/android-app.md` — зачем и как) собирается
-**отдельной, вручную запускаемой** Pipeline-джобой, не частью основного
-Gitea-вебхук пайплайна выше: билд APK тяжёлый (Android SDK, Gradle) и нужен
-на порядок реже, чем обычный push.
+**внутри ветки `frontend`** стадии `Images` основного пайплайна выше, на каждый
+пуш — не отдельной джобой. Раньше была отдельная, вручную запускаемая
+`Jenkinsfile.android`; убрана, потому что раздельные джобы, обе собирающие один
+и тот же `frontend`-образ, означали реальный баг: следующий обычный пуш через
+основной пайплайн пересобрал бы `frontend` с пустым `deploy/nginx/downloads/`
+(не в гите) и тихо стёр бы опубликованный APK/OTA с прода до следующего
+ручного запуска Android-джобы.
+
+Сборка APK (JDK 21 + Android SDK, `./gradlew assembleDebug`) идёт
+последовательно перед `docker build` фронта, **внутри** ветки `frontend` —
+`backend`/`bot` её не ждут, остаются полностью параллельны как раньше:
 
 ```
-ручной запуск джобы (parameter: DISCOCS_PUBLIC_URL)
-   └─ Build APK + OTA bundle   deploy/ci/Dockerfile.android:
-   │                             ui-build (pnpm build + `cap sync android`)
-   │                             -> android-build (JDK 21 + Android SDK
-   │                                cmdline-tools, `./gradlew assembleDebug`)
-   │                             -> package (zip dist + update-manifest.json)
-   │                             артефакты — docker cp в deploy/nginx/downloads/
-   └─ Build & push frontend    тот же deploy/nginx/Dockerfile, что в основном
-   │                             пайплайне, теперь COPY'ит непустой
-   │                             deploy/nginx/downloads/ -> Nexus :<git-sha> + :latest
-   └─ Deploy frontend          [post/success] SSH на TARGET_SERVER, точечно:
-                                 docker compose pull frontend && up -d
-                                 --force-recreate --wait frontend
-                                 (backend/bot не трогаются)
+Build & Push -> Images -> ветка "frontend":
+   deploy/ci/Dockerfile.android:
+     ui-build (pnpm build + `cap sync android`)
+     -> android-build (JDK 21 + Android SDK cmdline-tools, `./gradlew assembleDebug`)
+     -> package (zip dist + update-manifest.json)
+   артефакты — docker cp в deploy/nginx/downloads/
+   -> обычная сборка deploy/nginx/Dockerfile (теперь COPY'ит непустой
+      deploy/nginx/downloads/) -> push :<git-sha> (+ :latest на main)
 ```
+
+Итоговая длительность ветки `frontend` = время Android-сборки + время сборки
+самого nginx-образа (было ~20с) — при тёплом Gradle-кэше
+(`--mount=type=cache` для `~/.gradle/caches`) не должна доминировать над
+остальными ветками `Images`, но именно она теперь может стать самой долгой
+веткой стадии, если Android-сборка вдруг замедлится — стоит смотреть при
+разборе времени билда.
 
 Файлы:
 
 | Файл | Роль |
 |---|---|
-| `Jenkinsfile.android` | описание Android-пайплайна (отдельная джоба, Script Path `Jenkinsfile.android`) |
-| `deploy/ci/Dockerfile.android` | сборка APK + OTA web-бандла |
-| `deploy/nginx/downloads/` | staging-каталог для APK/zip/manifest.json — не в гите (см. `.gitignore`), наполняется джобой перед сборкой `frontend` |
+| `deploy/ci/Dockerfile.android` | сборка APK + OTA web-бандла; образ никуда не пушится, только для извлечения трёх файлов через `docker cp` |
+| `deploy/nginx/downloads/` | staging-каталог для APK/zip/manifest.json — не в гите (см. `.gitignore`), наполняется веткой `frontend` перед её же сборкой |
 | `docs/android-app.md` | пользовательская документация: зачем Capacitor, OTA-флоу, sideload |
 
-Джоба принимает параметр `DISCOCS_PUBLIC_URL` (публичный домен, `https://...`) —
-это то же смысловое значение, что `DISCOCS_PUBLIC_URL` в `deploy/prod/.env.example`
+`DISCOCS_PUBLIC_URL` — обычная переменная в `environment{}` основного
+`Jenkinsfile` (не секрет, публичный домен виден в браузере). Это то же
+смысловое значение, что `DISCOCS_PUBLIC_URL` в `deploy/prod/.env.example`
 ("канонический внешний origin"), но здесь это build-time значение: origin
 WebView'а (`server.hostname` в `ui/capacitor.config.ts`) запекается в APK на
 этапе сборки и не может быть переконфигурирован после — в отличие от бэкенда,
-где та же переменная читается в рантайме.
-
-Job создаётся так же, как основной (см. "Job + триггер" выше), но **без**
-Gitea-вебхука — обычная **Pipeline** → *Pipeline script from SCM*, Script Path
-`Jenkinsfile.android`, запуск только вручную (Build with Parameters).
-
-Credentials — те же, что уже есть у основной джобы (`tank_nexus_user_pass`,
-`HS_SSH_KEY`), новых заводить не нужно.
+где та же переменная читается в рантайме. Новых Jenkins-credentials заводить
+не нужно — используются те же, что у остального пайплайна.
 
 **Открытый пункт**: APK подписан debug-ключом (`./gradlew assembleDebug`),
 только для личного sideload'а. Если понадобится более широкое распространение —

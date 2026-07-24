@@ -5,6 +5,15 @@
 //        -> Sonar || Trivy по образам (параллельно)
 //        -> деплой по SSH на целевой хост.
 //
+// Android (Capacitor APK + OTA web-бандл, см. docs/android-app.md) — часть
+// ветки 'frontend' в стадии Images, не отдельная джоба: собирается на каждый
+// пуш вместе с фронтом и запекается в тот же frontend-образ
+// (deploy/nginx/downloads/, см. deploy/nginx/Dockerfile). Раньше был отдельный
+// ручной Jenkinsfile.android — убран: раздельные джобы, обе собирающие один
+// и тот же frontend-образ, означали, что следующий обычный пуш через основной
+// пайплайн пересобрал бы frontend с пустым deploy/nginx/downloads/ (не в
+// гите) и тихо стёр бы опубликованный APK/OTA с прода.
+//
 // Требования к Jenkins-агенту (контейнер):
 //   - смонтирован /var/run/docker.sock (сборка/пуш идут через хостовый демон)
 //   - установлены docker CLI
@@ -36,6 +45,11 @@ pipeline {
     TARGET_DIR    = '/home/infected2202/docker/discocs'
     // Python + TS + Docker analysis can exceed the scanner JRE default heap.
     SONAR_SCANNER_JAVA_OPTS = '-Xmx2g'
+    // Публичный домен приложения — не секрет (виден в браузере), но не
+    // вычисляется автоматически. Запекается в APK на этапе сборки как
+    // WebView-origin (server.hostname в ui/capacitor.config.ts), см.
+    // docs/android-app.md.
+    DISCOCS_PUBLIC_URL = 'https://d.plikinson.org/'
   }
 
   stages {
@@ -173,6 +187,37 @@ pipeline {
               // они видны раздельно, а не одной сплошной стадией.
               parallel(services.collectEntries { svc ->
                 [(svc.name): {
+                  if (svc.name == 'frontend') {
+                    // Android APK + OTA web-бандл должны лежать в
+                    // deploy/nginx/downloads/ ДО сборки frontend-образа — он
+                    // их туда COPY'ит (deploy/nginx/Dockerfile). Поэтому это
+                    // внутри ветки frontend, последовательно перед её же
+                    // docker build, а не отдельная parallel-ветка: backend/bot
+                    // не должны ждать Android, а frontend обязан. Сам
+                    // discocs-android образ никуда не пушится — он существует
+                    // только для извлечения трёх файлов через docker cp
+                    // (тот же паттерн create+cp, что и в Checks — воркспейс
+                    // агента недоступен хостовому демону как bind-mount).
+                    // Single-quoted Groovy strings (как и весь остальной файл) —
+                    // ${VAR}/$VAR ниже раскрывает не Groovy, а сам bash, из
+                    // переменных окружения, которые Jenkins уже экспортировал
+                    // из environment{}/env.GIT_SHA в процесс sh.
+                    sh '''
+                      DOCKER_BUILDKIT=1 docker build \
+                        --build-arg DISCOCS_PUBLIC_URL="$DISCOCS_PUBLIC_URL" \
+                        --build-arg GIT_SHA=${GIT_SHA} \
+                        -f deploy/ci/Dockerfile.android -t discocs-android:${GIT_SHA} .
+                    '''
+                    sh '''
+                      set -e
+                      mkdir -p deploy/nginx/downloads
+                      CID=$(docker create discocs-android:${GIT_SHA})
+                      docker cp "$CID:/build/output/discocs.apk" deploy/nginx/downloads/discocs.apk
+                      docker cp "$CID:/build/output/discocs-web-${GIT_SHA}.zip" "deploy/nginx/downloads/discocs-web-${GIT_SHA}.zip"
+                      docker cp "$CID:/build/output/update-manifest.json" deploy/nginx/downloads/update-manifest.json
+                      docker rm -f "$CID"
+                    '''
+                  }
                   def img = "${REGISTRY}/${IMAGE_NS}/${svc.name}"
                   // BuildKit нужен backend/bot Dockerfile'ам — --mount=type=cache для uv.
                   // --pull обновляет mutable base image. SECURITY_REFRESH сбрасывает
