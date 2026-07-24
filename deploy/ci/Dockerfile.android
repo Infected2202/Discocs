@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
-# Образ для сборки Android APK + web-бандла OTA-обновления в отдельном,
-# ручном пайплайне Jenkinsfile.android (см. docs/cicd.md, docs/android-app.md).
-# Не участвует в основном Jenkinsfile — собирается только по явному запуску.
+# Образ для сборки Android APK + web-бандла OTA-обновления. Собирается веткой
+# 'frontend' стадии Images основного Jenkinsfile на каждый пуш (см.
+# docs/cicd.md, docs/android-app.md) — этот образ никуда не пушится, только
+# для извлечения APK/zip/manifest.json через docker cp.
 
 # --- Стадия 1: сборка web-бандла (dist) и капаситор-синк ---------------------
 FROM node:24-alpine AS ui-build
@@ -37,7 +38,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends unzip curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL -o /tmp/cmdline-tools.zip \
+RUN mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools" \
+    && curl -fsSL -o /tmp/cmdline-tools.zip \
       "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip" \
     && unzip -q /tmp/cmdline-tools.zip -d "${ANDROID_SDK_ROOT}/cmdline-tools" \
     && mv "${ANDROID_SDK_ROOT}/cmdline-tools/cmdline-tools" "${ANDROID_SDK_ROOT}/cmdline-tools/latest" \
