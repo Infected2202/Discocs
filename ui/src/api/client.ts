@@ -47,11 +47,15 @@ export async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
   // server returning the app's own index.html for an unmatched path) — bare
   // "Unexpected token '<'" gives no way to tell which without device logs, so
   // fold in exactly what would otherwise need adb/logcat to see.
+  // The clone MUST happen before res.json() is ever attempted: a Response
+  // body can only be read once, and clone() throws ("body is already used")
+  // once the original has started being consumed — even if that read failed.
+  const diagnosticsCopy = res.clone()
   try {
     return (await res.json()) as T
   } catch (parseError) {
     const contentType = res.headers?.get?.("content-type") ?? "unknown"
-    const bodyPreview = await res.clone().text().then(
+    const bodyPreview = await diagnosticsCopy.text().then(
       (t) => t.slice(0, 200),
       () => "<unreadable>"
     )

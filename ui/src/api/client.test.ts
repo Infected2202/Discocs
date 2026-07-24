@@ -1,13 +1,26 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ApiError, apiFetch, apiUrl } from "./client"
 
+// Real Response objects throughout, not hand-rolled mocks: apiFetch clones
+// the response before reading it (clone() throws "body is already used" once
+// the original has actually started being consumed), and a mock with
+// independent clone()/json()/text() implementations can't reproduce that —
+// it's exactly the class of bug this file exists to catch.
+function jsonResponse(body: unknown, init?: ResponseInit): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+    ...init,
+  })
+}
+
 describe("apiFetch", () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })
 
   it("resolves a root-relative path to an absolute URL before calling fetch", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ ok: true }) })
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }))
     vi.stubGlobal("fetch", fetchMock)
     vi.stubGlobal("location", new URL("https://d.plikinson.org/"))
 
@@ -17,7 +30,7 @@ describe("apiFetch", () => {
   })
 
   it("leaves an already-absolute URL unchanged", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ ok: true }) })
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }))
     vi.stubGlobal("fetch", fetchMock)
     vi.stubGlobal("location", new URL("https://d.plikinson.org/"))
 
@@ -27,26 +40,18 @@ describe("apiFetch", () => {
   })
 
   it("returns the parsed body on success", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ hello: "world" }) }))
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ hello: "world" })))
     vi.stubGlobal("location", new URL("https://d.plikinson.org/"))
 
     await expect(apiFetch("/api/v1/ping")).resolves.toEqual({ hello: "world" })
   })
 
   it("throws a diagnostic error (url, status, content-type, body preview) when a 200 body isn't JSON", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        headers: { get: (name: string) => (name === "content-type" ? "text/html" : null) },
-        json: () => Promise.reject(new SyntaxError("Unexpected token '<'")),
-        clone: function (this: unknown) {
-          return this
-        },
-        text: () => Promise.resolve("<!doctype html><html>...</html>"),
-      })
-    )
+    const htmlResponse = new Response("<!doctype html><html>...</html>", {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(htmlResponse))
     vi.stubGlobal("location", new URL("https://d.plikinson.org/"))
 
     await expect(apiFetch("/api/v1/auth/session")).rejects.toThrow(
@@ -57,11 +62,9 @@ describe("apiFetch", () => {
   it("throws an ApiError with the server's error body on a non-ok response", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 404,
-        json: () => Promise.resolve({ error: { code: "not_found", message: "Track not found" } }),
-      })
+      vi.fn().mockResolvedValue(
+        jsonResponse({ error: { code: "not_found", message: "Track not found" } }, { status: 404 })
+      )
     )
     vi.stubGlobal("location", new URL("https://d.plikinson.org/"))
 
