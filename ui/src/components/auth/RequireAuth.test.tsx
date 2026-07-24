@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter, Routes, Route } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import RequireAuth, { sessionGateState } from "./RequireAuth"
+import RequireAuth, { errorDetail, sessionGateState } from "./RequireAuth"
 import { ApiError } from "@/api/client"
 
 const getSession = vi.fn()
@@ -52,5 +52,16 @@ describe("RequireAuth", () => {
   it("keeps the app state after a failed focus refetch of a known session", () => {
     const session = { authenticated: true, username: "alice", enabled: true }
     expect(sessionGateState(session, new TypeError("Failed to fetch"), true)).toBe("app")
+  })
+
+  it("shows the real error message on the retry screen, not just the generic copy", async () => {
+    getSession.mockRejectedValue(new SyntaxError("Unexpected token '<', \"<!doctype \"... is not valid JSON"))
+    renderGated()
+    expect(await screen.findByText(/Unexpected token/)).toBeInTheDocument()
+  })
+
+  it("extracts a readable message from Error instances and stringifies anything else", () => {
+    expect(errorDetail(new TypeError("Failed to fetch"))).toBe("Failed to fetch")
+    expect(errorDetail("plain string")).toBe("plain string")
   })
 })

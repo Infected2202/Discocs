@@ -206,6 +206,8 @@ pipeline {
                       DOCKER_BUILDKIT=1 docker build \
                         --build-arg DISCOCS_PUBLIC_URL="$DISCOCS_PUBLIC_URL" \
                         --build-arg GIT_SHA=${GIT_SHA} \
+                        --build-arg ANDROID_VERSION_CODE=${BUILD_NUMBER} \
+                        --build-arg ANDROID_VERSION_NAME=${GIT_SHA} \
                         -f deploy/ci/Dockerfile.android -t discocs-android:${GIT_SHA} .
                     '''
                     sh '''

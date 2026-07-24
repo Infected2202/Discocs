@@ -7,8 +7,12 @@ android {
         applicationId "com.discocs.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // CI passes -PdiscocsVersionCode/-PdiscocsVersionName (see
+        // deploy/ci/Dockerfile.android, Jenkinsfile) so every build is
+        // actually distinguishable instead of always shipping as 1/"1.0".
+        // Fallback here is only for a manual/local `./gradlew assembleDebug`.
+        versionCode (project.hasProperty('discocsVersionCode') ? (project.property('discocsVersionCode') as Integer) : 1)
+        versionName (project.hasProperty('discocsVersionName') ? project.property('discocsVersionName') : "0.0-dev")
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

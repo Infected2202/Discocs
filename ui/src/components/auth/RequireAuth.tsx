@@ -1,8 +1,17 @@
+import { useEffect } from "react"
 import { Outlet, Navigate, useLocation } from "react-router"
 import { useQuery } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
 import { getSession, type SessionState } from "@/api/auth"
 import { isUnauthorized } from "@/lib/authRedirect"
+
+// The retry screen's own message is deliberately generic (i18n'd, user-facing).
+// This is the raw cause for DevTools/logcat and, since this app has no other
+// error-reporting surface (no crash analytics), for the retry screen itself —
+// sideloaded builds have no easy remote-debugging story otherwise.
+export function errorDetail(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
 export type SessionGateState = "app" | "login" | "offline"
 
@@ -33,11 +42,16 @@ export default function RequireAuth() {
     staleTime: 60_000,
   })
 
+  const gate = sessionGateState(data, error, isError)
+
+  useEffect(() => {
+    if (gate === "offline") console.error("[auth] session check failed:", error)
+  }, [gate, error])
+
   if (isPending) {
     return <div className="h-svh w-full bg-background" />
   }
 
-  const gate = sessionGateState(data, error, isError)
   if (gate === "login") {
     return <Navigate to="/login" replace state={{ from: location }} />
   }
@@ -46,6 +60,9 @@ export default function RequireAuth() {
     return (
       <div className="flex h-svh w-full flex-col items-center justify-center gap-4 bg-background">
         <p className="text-sm text-muted-foreground">{t("offlineMessage")}</p>
+        <p className="max-w-xs break-words text-center font-mono text-xs text-muted-foreground/70">
+          {errorDetail(error)}
+        </p>
         <button
           type="button"
           onClick={() => void refetch()}
