@@ -10,8 +10,19 @@ export class ApiError extends Error {
   }
 }
 
+// CapacitorHttp (native Android/iOS builds, see ui/capacitor.config.ts) only
+// patches window.fetch/XMLHttpRequest for absolute URLs — a root-relative
+// path like "/api/v1/auth/session" falls straight back through the WebView's
+// own fetch, which the local WebViewAssetLoader intercepts and answers with
+// the bundled index.html (SPA fallback) instead of reaching the real network.
+// Resolving against location.origin here is a no-op on the web (already the
+// same origin) and fixes native without touching every call site.
+function resolveApiUrl(url: string): string {
+  return new URL(url, globalThis.location.origin).toString()
+}
+
 export async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
+  const res = await fetch(resolveApiUrl(url), {
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
