@@ -18,6 +18,21 @@ const config: CapacitorConfig = {
     CapacitorUpdater: {
       autoUpdate: false,
     },
+    // The WebView's own local asset server (which serves the bundled dist/
+    // under the hostname-matched origin, see server.hostname above) owns the
+    // whole path space for that origin and does not fall through to the real
+    // network for unmatched paths like /api/*. Plain fetch()/XMLHttpRequest
+    // therefore never reach the real backend at all. CapacitorHttp/
+    // CapacitorCookies patch window.fetch/XMLHttpRequest/document.cookie to
+    // go through native networking instead, bypassing the local asset loader
+    // entirely — required for apiFetch() (ui/src/api/client.ts) to actually
+    // reach the production API. Bundled with @capacitor/core, no extra deps.
+    CapacitorHttp: {
+      enabled: true,
+    },
+    CapacitorCookies: {
+      enabled: true,
+    },
   },
 }
 

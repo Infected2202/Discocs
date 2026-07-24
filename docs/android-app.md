@@ -42,6 +42,25 @@ The tradeoff: the production domain is **baked into the APK at build time**
 and redistributing the APK. The JS/CSS/HTML bundle itself is not subject to
 this limit — see OTA updates below.
 
+## Hostname-match also requires CapacitorHttp/CapacitorCookies
+
+Matching the WebView's origin to the production domain makes the *page*
+same-origin with the API, but does not by itself make `fetch()`/`XHR` reach
+the real network. On Android, the bundled `dist/` is served by a local
+`WebViewAssetLoader` registered for that same origin, and it owns the whole
+path space under it — a request for a path that isn't a static asset (like
+`/api/v1/auth/session`) is not passed through to the real network, so plain
+`fetch()` never reaches the production backend at all (this surfaced as the
+app showing "нет соединения с сервером" while the same domain loaded fine in
+a regular mobile browser on the same device/network).
+
+`capacitor.config.ts` enables the `CapacitorHttp`/`CapacitorCookies` plugins
+(bundled with `@capacitor/core`, no extra install) to fix this — they patch
+`window.fetch`/`XMLHttpRequest`/`document.cookie` to go through native
+networking instead of the WebView's own resource loader, bypassing the local
+asset loader entirely for actual API calls while still sharing Android's
+`CookieManager`, so the `HttpOnly` session cookie set on login keeps working.
+
 ## Background playback — shell-level only
 
 `ui/src/lib/nativeInit.ts` starts an Android foreground service once at app
