@@ -45,22 +45,20 @@ export async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
   // A 200 with an unparseable body has repeatedly turned out to be a wrong
   // network layer answering instead of the API (e.g. a local WebView asset
   // server returning the app's own index.html for an unmatched path) — bare
-  // "Unexpected token '<'" gives no way to tell which without device logs, so
-  // fold in exactly what would otherwise need adb/logcat to see.
-  // The clone MUST happen before res.json() is ever attempted: a Response
-  // body can only be read once, and clone() throws ("body is already used")
-  // once the original has started being consumed — even if that read failed.
-  const diagnosticsCopy = res.clone()
+  // "Unexpected token '<'" gives no way to tell which without device logs.
+  // Deliberately NOT reading the body a second time (clone()+text()) for a
+  // preview: a Response body can only be read once, clone() must happen
+  // before the first read to have any value, and doing that unconditionally
+  // broke every existing test that mocks fetch with a plain {ok, json}
+  // object (no clone()) — status + content-type alone already answers the
+  // question that mattered here (e.g. content-type "text/html" means
+  // something other than the API answered), without that fragility.
   try {
     return (await res.json()) as T
   } catch (parseError) {
     const contentType = res.headers?.get?.("content-type") ?? "unknown"
-    const bodyPreview = await diagnosticsCopy.text().then(
-      (t) => t.slice(0, 200),
-      () => "<unreadable>"
-    )
     throw new Error(
-      `Non-JSON response from ${resolvedUrl} (status ${res.status}, content-type "${contentType}"): ${bodyPreview}`,
+      `Non-JSON response from ${resolvedUrl} (status ${res.status}, content-type "${contentType}")`,
       { cause: parseError }
     )
   }

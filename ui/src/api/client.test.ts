@@ -1,11 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ApiError, apiFetch, apiUrl } from "./client"
 
-// Real Response objects throughout, not hand-rolled mocks: apiFetch clones
-// the response before reading it (clone() throws "body is already used" once
-// the original has actually started being consumed), and a mock with
-// independent clone()/json()/text() implementations can't reproduce that —
-// it's exactly the class of bug this file exists to catch.
+// Real Response objects rather than hand-rolled mocks, so this stays honest
+// about actual fetch Response semantics (e.g. a body can only be read once).
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -46,7 +43,7 @@ describe("apiFetch", () => {
     await expect(apiFetch("/api/v1/ping")).resolves.toEqual({ hello: "world" })
   })
 
-  it("throws a diagnostic error (url, status, content-type, body preview) when a 200 body isn't JSON", async () => {
+  it("throws a diagnostic error (url, status, content-type) when a 200 body isn't JSON", async () => {
     const htmlResponse = new Response("<!doctype html><html>...</html>", {
       status: 200,
       headers: { "content-type": "text/html" },
@@ -55,7 +52,7 @@ describe("apiFetch", () => {
     vi.stubGlobal("location", new URL("https://d.plikinson.org/"))
 
     await expect(apiFetch("/api/v1/auth/session")).rejects.toThrow(
-      'Non-JSON response from https://d.plikinson.org/api/v1/auth/session (status 200, content-type "text/html"): <!doctype html><html>...</html>'
+      'Non-JSON response from https://d.plikinson.org/api/v1/auth/session (status 200, content-type "text/html")'
     )
   })
 
