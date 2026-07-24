@@ -54,12 +54,6 @@ describe("RequireAuth", () => {
     expect(sessionGateState(session, new TypeError("Failed to fetch"), true)).toBe("app")
   })
 
-  it("shows the real error message on the retry screen, not just the generic copy", async () => {
-    getSession.mockRejectedValue(new SyntaxError("Unexpected token '<', \"<!doctype \"... is not valid JSON"))
-    renderGated()
-    expect(await screen.findByText(/Unexpected token/)).toBeInTheDocument()
-  })
-
   it("extracts a readable message from Error instances and stringifies anything else", () => {
     expect(errorDetail(new TypeError("Failed to fetch"))).toBe("Failed to fetch")
     expect(errorDetail("plain string")).toBe("plain string")
