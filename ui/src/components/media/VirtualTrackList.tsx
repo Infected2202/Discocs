@@ -5,6 +5,7 @@ import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } 
 import { CSS } from "@dnd-kit/utilities"
 import type { PlaylistTrackDragData } from "@/components/dj/DjTrackDragProvider"
 import { useScrollRef } from "@/contexts/ScrollContext"
+import { useUIStore } from "@/store/uiStore"
 import VirtualTrackRow, { type TrackRowTrack } from "./VirtualTrackRow"
 
 const ROW_HEIGHT = 52
@@ -99,12 +100,14 @@ function DraggableTrackRow({
   start,
   scrollMargin,
   dragData,
+  dragEnabled,
   measureElement,
   ...rowProps
-}: PositionedRowProps & { readonly measureElement: (node: Element | null) => void }) {
+}: PositionedRowProps & { readonly dragEnabled: boolean; readonly measureElement: (node: Element | null) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `${dragData.listId}:${rowProps.track.id}`,
     data: dragData,
+    disabled: !dragEnabled,
   })
   return (
     <div
@@ -149,6 +152,10 @@ export default function VirtualTrackList({
   const listRef = useRef<HTMLDivElement>(null)
   const [scrollMargin, setScrollMargin] = useState(0)
   const reorderable = onReorder != null
+  // Строки без реордера перетаскиваемы только ради drop-на-деку — не имеет смысла
+  // вешать touch/pointer-листенеры на каждую строку, пока DJ-панель не открыта
+  // явно кнопкой (иначе задевает обычный скролл на мобильном).
+  const djSurfaceOpen = useUIStore((state) => state.djSurfaceOpen)
   const metricWide = tracks.length > 0 && "play_count" in tracks[0]
   const [order, setOrder] = useState<TrackRowTrack[]>(tracks)
   const orderRef = useRef(order)
@@ -252,6 +259,7 @@ export default function VirtualTrackList({
           scrollMargin={scrollMargin}
           measureElement={rowVirtualizer.measureElement}
           dragData={dragData}
+          dragEnabled={djSurfaceOpen}
           {...props}
         />
       })}

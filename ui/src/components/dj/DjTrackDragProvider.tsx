@@ -82,6 +82,7 @@ function DeckDropDock() {
 
 export default function DjTrackDragProvider({ children }: { readonly children: ReactNode }) {
   const [active, setActive] = useState<PlaylistTrackDragData | null>(null)
+  const djSurfaceOpen = useUIStore((state) => state.djSurfaceOpen)
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 8 } }),
@@ -137,7 +138,7 @@ export default function DjTrackDragProvider({ children }: { readonly children: R
       onDragCancel={handleDragCancel}
     >
       {children}
-      {active && <DeckDropDock />}
+      {active && djSurfaceOpen && <DeckDropDock />}
       <DragOverlay dropAnimation={{ duration: 180, easing: "cubic-bezier(0.2, 0, 0, 1)" }}>
         {active ? (
           <div className="cursor-grabbing">

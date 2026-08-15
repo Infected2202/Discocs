@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react"
+import { act, render } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   openDjSurface: vi.fn(),
   activateDj: vi.fn().mockResolvedValue(undefined),
   prepareDjDeck: vi.fn().mockResolvedValue(undefined),
+  djSurfaceOpen: false,
 }))
 
 vi.mock("@dnd-kit/core", () => ({
@@ -27,7 +28,10 @@ vi.mock("@dnd-kit/core", () => ({
 
 vi.mock("@dnd-kit/sortable", () => ({ sortableKeyboardCoordinates: vi.fn() }))
 vi.mock("@/store/uiStore", () => ({
-  useUIStore: { getState: () => ({ openDjSurface: mocks.openDjSurface }) },
+  useUIStore: Object.assign(
+    (selector: (state: { djSurfaceOpen: boolean }) => unknown) => selector({ djSurfaceOpen: mocks.djSurfaceOpen }),
+    { getState: () => ({ openDjSurface: mocks.openDjSurface }) },
+  ),
 }))
 vi.mock("@/store/playerStore", () => ({
   usePlayerStore: { getState: () => ({ activateDj: mocks.activateDj, prepareDjDeck: mocks.prepareDjDeck }) },
@@ -60,6 +64,7 @@ describe("DjTrackDragProvider", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.dndProps = null
+    mocks.djSurfaceOpen = false
   })
 
   it("opens the DJ surface at drag start and loads a deck on drop", async () => {
@@ -78,5 +83,30 @@ describe("DjTrackDragProvider", () => {
     expect(mocks.activateDj).toHaveBeenCalledOnce()
     await vi.waitFor(() => expect(mocks.prepareDjDeck).toHaveBeenCalledWith(42, "B"))
     expect(data.finish).toHaveBeenCalledOnce()
+  })
+
+  it("не показывает дроп-оверлей деки во время drag, пока DJ-панель не открыта кнопкой", () => {
+    mocks.djSurfaceOpen = false
+    const { container } = render(<DjTrackDragProvider><div>playlist</div></DjTrackDragProvider>)
+    const data = trackData()
+
+    act(() => {
+      mocks.dndProps?.onDragStart({ active: { data: { current: data } } })
+    })
+
+    expect(container.textContent).not.toContain("DECK")
+  })
+
+  it("показывает дроп-оверлей деки во время drag, если DJ-панель уже открыта", () => {
+    mocks.djSurfaceOpen = true
+    const { container } = render(<DjTrackDragProvider><div>playlist</div></DjTrackDragProvider>)
+    const data = trackData()
+
+    act(() => {
+      mocks.dndProps?.onDragStart({ active: { data: { current: data } } })
+    })
+
+    expect(container.textContent).toContain("DECK A")
+    expect(container.textContent).toContain("DECK B")
   })
 })

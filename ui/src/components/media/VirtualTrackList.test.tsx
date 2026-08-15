@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { useRef } from "react"
 import { ScrollContext } from "@/contexts/ScrollContext"
+import { useUIStore } from "@/store/uiStore"
 import VirtualTrackList, {
   getListScrollMargin,
   getVirtualRowOffset,
@@ -158,6 +159,28 @@ describe("VirtualTrackList", () => {
     // dnd-kit useSortable проставляет aria-roledescription="sortable".
     expect((rows[0] as HTMLElement).getAttribute("aria-roledescription")).toBe("sortable")
     expect(screen.getByText("Track 2")).toBeInTheDocument()
+  })
+
+  it("без onReorder и закрытой DJ-панели строки не являются drag-source (изоляция DJ-деки)", () => {
+    useUIStore.setState({ djSurfaceOpen: false })
+    const tracks = [makeTrack(1), makeTrack(2)]
+    render(<Wrapper tracks={tracks} />)
+
+    const row = document.querySelector("[data-index]") as HTMLElement
+    // dnd-kit useDraggable({ disabled }) отражает это в aria-disabled и не вешает
+    // pointer/touch-листенеры — драг на деку недоступен, пока DJ-панель закрыта.
+    expect(row.getAttribute("aria-disabled")).toBe("true")
+  })
+
+  it("без onReorder, но при открытой DJ-панели строки становятся drag-source", () => {
+    useUIStore.setState({ djSurfaceOpen: true })
+    const tracks = [makeTrack(1), makeTrack(2)]
+    render(<Wrapper tracks={tracks} />)
+
+    const row = document.querySelector("[data-index]") as HTMLElement
+    expect(row.getAttribute("aria-disabled")).toBe("false")
+
+    useUIStore.setState({ djSurfaceOpen: false })
   })
 })
 

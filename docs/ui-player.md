@@ -36,11 +36,20 @@ Overview waveforms keep their static geometry and redraw only the playhead when
 time changes.
 
 Virtual playlist rows and the DJ decks share one application-level drag
-context. Starting a playlist drag leaves playlist reordering available and
-reveals a compact A/B deck dock above the player; the on-air deck is locked.
-Dropping on the free deck opens the DJ workspace, moves or adds that track to
-the next canonical queue position and prepares it without starting playback or
-changing the program role. The full deck panels use the same drop payload.
+context (`DjTrackDragProvider`), but the deck dock and each row's DJ drag
+source are gated on `djSurfaceOpen`: rows in non-reorderable lists (liked
+tracks, mix/plain playlist views) get no pointer/touch drag listeners at all
+while the DJ surface is closed, and the A/B deck dock never mounts unless it
+is. This keeps the DJ feature fully isolated until the user opens it via its
+own button — dragging can't reveal deck UI or attach touch listeners that
+would otherwise interfere with ordinary list scrolling on mobile. Reorderable
+lists (playlist edit mode) keep drag listeners for reordering regardless, but
+the deck dock still only reveals once the DJ surface is open. Once open,
+starting a playlist drag reveals the compact A/B deck dock above the player;
+the on-air deck is locked. Dropping on the free deck moves or adds that track
+to the next canonical queue position and prepares it without starting
+playback or changing the program role. The full deck panels use the same drop
+payload.
 
 The primary player UI lives in `ui/src/components/player/`.
 
