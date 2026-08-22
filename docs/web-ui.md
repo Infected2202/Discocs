@@ -112,13 +112,28 @@ entity page.
 ### Search (`/search`, `SearchPage.tsx`)
 
 Reactive search backed by `GET /api/v1/search` via `useSearch`. URL keeps the
-query in `?q=`. A `Tabs` component (All / Artists / Releases / Tracks) filters
-the same result set client-side; tabs are disabled when a group is empty.
-The All tab shows, in order: a "Top result" `MediaCard` (best single match),
-an artists row, a releases row (each capped to 6 cards with a "View all" via
-the tab), and a `TrackTable` (capped to 8 rows). Empty query, loading
-(skeleton), and no-results states are all handled inline; the player is
-unaffected by search navigation since it lives in `AppShell`.
+query in `?q=`. A `Tabs` component (All / Artists / Releases / Tracks) is
+disabled when a group is empty; the trigger label always shows the group's
+true total (from `search_group.total`, not the capped preview length).
+
+The All tab is a small preview fed by a single `type=all` request (12 items
+per group): a "Top result" `MediaCard` (best single match), an artists row
+and a releases row (each capped to 6 cards), and a track list (capped to 8
+rows). Each section header carries a "Show all" button (only rendered when
+the group's total exceeds the preview) that switches to that group's tab.
+
+The Artists / Releases / Tracks tabs are independent — each paginates through
+*all* of its matches via `useInfiniteSearch` (`GET /api/v1/search?type=...`,
+50 per page, driven by the response's `next_offset`), not the capped `all`
+preview. An `IntersectionObserver` sentinel at the bottom of the list
+triggers `fetchNextPage()` as the user scrolls, same pattern as
+`ShelfPage`/`useShelf`. The Tracks tab uses `VirtualTrackList` with
+virtualization enabled (unlike the All-tab preview) since a single query can
+match thousands of tracks.
+
+Empty query, loading (skeleton), and no-results states are all handled
+inline; the player is unaffected by search navigation since it lives in
+`AppShell`.
 
 ### Release page (`/releases/:id`, `ReleasePage.tsx`)
 

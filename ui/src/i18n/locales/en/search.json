@@ -8,5 +8,6 @@
     "tracks": "Tracks"
   },
   "topResult": "Top result",
+  "showAll": "Show all →",
   "sourceLabel": "Search: {{query}}"
 }

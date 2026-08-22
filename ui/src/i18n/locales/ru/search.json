@@ -8,5 +8,6 @@
     "tracks": "Треки"
   },
   "topResult": "Лучший результат",
+  "showAll": "Показать все →",
   "sourceLabel": "Поиск: {{query}}"
 }
