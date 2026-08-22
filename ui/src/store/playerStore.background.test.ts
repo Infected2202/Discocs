@@ -302,7 +302,7 @@ describe("refreshQueue background retry", () => {
     cancelAllBackgroundRetries()
     localStorage.clear()
     usePlayerStore.setState({
-      session: { id: "s1", source_type: "track", autoplay_enabled: false } as unknown as PlaybackSession,
+      session: stubSession(10),
       queue: stubQueue([makeItem("current", 10)], "current"),
       currentTrackId: 10,
       currentQueueItemId: "current",

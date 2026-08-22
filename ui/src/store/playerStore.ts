@@ -180,7 +180,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       !queue || !currentQueueItemId || currentTrackId === null
       || session?.repeat_mode === "one"
       || fullyBufferedSource?.trackId !== currentTrackId
-      || fullyBufferedSource.profileKey !== playbackProfile.key
+      || fullyBufferedSource?.profileKey !== playbackProfile.key
     ) return
     const currentIndex = queue.items.findIndex((item) => item.id === currentQueueItemId)
     const next = currentIndex >= 0 ? queue.items[currentIndex + 1] : undefined
@@ -876,12 +876,25 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       let settleFirstAttempt: (() => void) | undefined
       const firstAttempt = new Promise<void>((resolve) => { settleFirstAttempt = resolve })
       scheduleBackgroundRetry(`player:refresh-queue:${sessionId}`, async () => {
+        let envelope: PlaybackEnvelope
         try {
-          const envelope = await fetchQueue(sessionId)
-          if (get().session?.id === sessionId) applyEnvelope(envelope)
+          envelope = await fetchQueue(sessionId)
         } finally {
           settleFirstAttempt?.()
           settleFirstAttempt = undefined
+        }
+        // Applying a successfully-fetched envelope is not expected to fail —
+        // if it does, that's a bug elsewhere, not a network issue, and
+        // retrying the *same* fetch again would just hit the same bug on
+        // every tick forever. Log and drop instead of feeding it back into
+        // scheduleBackgroundRetry's retry decision.
+        try {
+          if (get().session?.id === sessionId) applyEnvelope(envelope)
+        } catch (err) {
+          playerLog("queue", "refresh: applying the fetched envelope failed", {
+            sessionId,
+            message: (err as Error).message,
+          })
         }
       })
       await firstAttempt

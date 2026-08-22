@@ -1,7 +1,7 @@
 import { create } from "zustand"
 import { apiFetch } from "@/api/client"
 import { queryClient } from "@/api/queryClient"
-import { cancelAllBackgroundRetries, scheduleBackgroundRetry } from "@/lib/backgroundRetry"
+import { DEFAULT_RETRY_INTERVAL_MS, cancelAllBackgroundRetries, scheduleBackgroundRetry } from "@/lib/backgroundRetry"
 import { isNetworkError } from "@/lib/apiErrorKind"
 import { usePlayerStore } from "./playerStore"
 
@@ -85,11 +85,13 @@ export const useNavidromeStore = create<NavidromeStore>((set, get) => ({
       // already reflects the user's intent and is very likely correct, so
       // keep it and quietly retry the write instead of flickering the icon
       // back and forth.
+      // `setStar()` was already attempted (and failed) above — don't fire it
+      // again immediately, just start the interval.
       scheduleBackgroundRetry(`navidrome:toggle-like:${trackId}`, async () => {
         await setStar()
         queryClient.invalidateQueries({ queryKey: ["playlist", "likes"] })
         invalidateLikeDerivedQueries()
-      })
+      }, DEFAULT_RETRY_INTERVAL_MS, true)
     }
   },
 
@@ -119,7 +121,7 @@ export const useNavidromeStore = create<NavidromeStore>((set, get) => ({
       scheduleBackgroundRetry(`navidrome:toggle-album-like:${releaseId}`, async () => {
         await setStar()
         invalidateLikeDerivedQueries()
-      })
+      }, DEFAULT_RETRY_INTERVAL_MS, true)
     }
   },
 
@@ -149,7 +151,7 @@ export const useNavidromeStore = create<NavidromeStore>((set, get) => ({
       scheduleBackgroundRetry(`navidrome:toggle-artist-like:${artistId}`, async () => {
         await setStar()
         invalidateLikeDerivedQueries()
-      })
+      }, DEFAULT_RETRY_INTERVAL_MS, true)
     }
   },
 
@@ -180,8 +182,9 @@ export const useNavidromeStore = create<NavidromeStore>((set, get) => ({
       if (!isNetworkError(err)) return // Navidrome not connected — nothing to retry into.
       // A transient failure (e.g. VPN drop) — "latest fetch wins" is correct
       // whenever it finally lands, so keep quietly retrying instead of
-      // leaving the like mirror stuck stale.
-      scheduleBackgroundRetry("navidrome:fetch-liked-ids", sync)
+      // leaving the like mirror stuck stale. sync() was already attempted
+      // above, so skip the redundant immediate re-attempt.
+      scheduleBackgroundRetry("navidrome:fetch-liked-ids", sync, DEFAULT_RETRY_INTERVAL_MS, true)
     }
   },
 }))
