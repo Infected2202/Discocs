@@ -185,7 +185,38 @@ def test_playlist_cover_endpoint(tmp_path: Path, monkeypatch):
     assert response.content == b"fake-jpeg"
 
     summary = client.get(f"/api/v1/playlists/{playlist_id}").json()
-    assert summary["artwork"]["url"] == f"/api/v1/playlists/{playlist_id}/cover"
+    assert summary["artwork"]["url"].startswith(f"/api/v1/playlists/{playlist_id}/cover?v=")
+
+
+def test_playlist_cover_url_changes_when_playlist_is_modified(tmp_path: Path, monkeypatch):
+    # The collage file is regenerated in place at the same path on every track
+    # mutation — without a cache-busting token in the URL, a browser that
+    # already fetched it once would keep serving the pre-mutation JPEG for the
+    # whole Cache-Control max-age (24h). The token piggybacks on
+    # playlists.updated_at, which every track add/remove/reorder already bumps.
+    store = init_api_store(tmp_path, monkeypatch)
+    tracks = [add_track(store, tmp_path, f"c{i}") for i in range(3)]
+    client = TestClient(app)
+    playlist_id = client.post(
+        "/api/v1/playlists", json={"title": "Cover", "track_ids": tracks[:1]}
+    ).json()["id"]
+
+    cover_file = tmp_path / "playlist_covers" / f"{playlist_id}.jpg"
+    cover_file.parent.mkdir(parents=True, exist_ok=True)
+    cover_file.write_bytes(b"fake-jpeg")
+    store.set_playlist_cover_path(playlist_id, str(cover_file))
+
+    url_before = client.get(f"/api/v1/playlists/{playlist_id}").json()["artwork"]["url"]
+
+    added = client.post(
+        f"/api/v1/playlists/{playlist_id}/tracks",
+        json={"track_ids": [tracks[1]]},
+    )
+    assert added.status_code == 200
+
+    url_after = client.get(f"/api/v1/playlists/{playlist_id}").json()["artwork"]["url"]
+    assert url_after != url_before
+    assert url_after.startswith(f"/api/v1/playlists/{playlist_id}/cover?v=")
 
 
 def test_mix_save_accepts_title_and_description(tmp_path: Path, monkeypatch):

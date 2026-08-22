@@ -122,9 +122,14 @@ export default function MixPage() {
               </Button>
             )}
             {!isSaved && (
-              <Button size="sm" variant="outline" onClick={handleSave} className="gap-2">
+              <Button
+                size="icon-sm"
+                variant="outline"
+                onClick={handleSave}
+                aria-label={t("actions.save", { ns: "common" })}
+                title={t("actions.save", { ns: "common" })}
+              >
                 <Bookmark size={14} />
-                {t("actions.save", { ns: "common" })}
               </Button>
             )}
           </>

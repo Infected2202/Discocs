@@ -1,6 +1,8 @@
 """Serializers for user playlists."""
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from app.models import Playlist
 from app.serializers.entities import _json_object, image_ref, track_summary_dict
 from app.store import Store
@@ -8,7 +10,14 @@ from app.store import Store
 
 def _playlist_artwork(store: Store, playlist: Playlist) -> dict[str, object]:
     if playlist.cover_path:
-        return image_ref(f"/api/v1/playlists/{playlist.id}/cover", "playlist")
+        # The collage is regenerated in place at the same file path on every
+        # track add/remove/reorder (see refresh_playlist_cover), and that same
+        # mutation always bumps playlists.updated_at — so it doubles as a free
+        # cache-busting token. Without it the URL never changes and browsers
+        # keep serving the pre-regeneration JPEG for the whole Cache-Control
+        # max-age (24h), well past the point the mosaic is stale.
+        version = quote(playlist.updated_at, safe="")
+        return image_ref(f"/api/v1/playlists/{playlist.id}/cover?v={version}", "playlist")
     track_ids = store.playlist_track_ids(playlist.id)
     if track_ids:
         return image_ref(f"/api/v1/tracks/{track_ids[0]}/cover?size=512", "track")

@@ -203,19 +203,25 @@ export default function PlaylistPage() {
             )}
             {editable && (
               <>
-                <Button size="sm" variant="outline" onClick={handleEdit} className="gap-2">
+                <Button
+                  size="icon-sm"
+                  variant="outline"
+                  onClick={handleEdit}
+                  aria-label={t("edit")}
+                  title={t("edit")}
+                >
                   <Pencil size={14} />
-                  {t("edit")}
                 </Button>
                 <Button
-                  size="sm"
+                  size="icon-sm"
                   variant="outline"
                   onClick={confirmDelete}
                   disabled={deleting}
-                  className="gap-2 text-destructive hover:text-destructive"
+                  aria-label={t("delete")}
+                  title={t("delete")}
+                  className="text-destructive hover:text-destructive"
                 >
                   <Trash2 size={14} />
-                  {t("delete")}
                 </Button>
               </>
             )}

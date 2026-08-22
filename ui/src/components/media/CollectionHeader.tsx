@@ -53,7 +53,7 @@ export default function CollectionHeader({
             {title}
           </h1>
           {meta && <div className="text-sm text-muted-foreground mt-1">{meta}</div>}
-          {actions && <div className="mt-4 flex gap-2 items-center">{actions}</div>}
+          {actions && <div className="mt-4 flex flex-wrap gap-2 items-center">{actions}</div>}
         </div>
       </div>
     </div>
