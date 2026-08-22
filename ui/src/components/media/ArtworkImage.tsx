@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
@@ -11,13 +11,19 @@ interface ArtworkImageProps {
   readonly fallbackLetter?: string
   /** Clicking the image opens it full-size in a modal. */
   readonly expandable?: boolean
+  /** Skip native lazy-loading for images that are always about to be shown (e.g. the expanded player cover). */
+  readonly eager?: boolean
 }
 
-export default function ArtworkImage({ src, alt, size, className, fallbackLetter, expandable }: ArtworkImageProps) {
+export default function ArtworkImage({ src, alt, size, className, fallbackLetter, expandable, eager }: ArtworkImageProps) {
   const [failed, setFailed] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const { t } = useTranslation("common")
   const letter = fallbackLetter ?? (alt?.[0] ?? "?").toUpperCase()
+
+  useEffect(() => {
+    setFailed(false)
+  }, [src])
 
   if (!src || failed) {
     return (
@@ -41,7 +47,7 @@ export default function ArtworkImage({ src, alt, size, className, fallbackLetter
       className={cn("rounded object-cover shrink-0", className)}
       style={size ? { width: size, height: size } : undefined}
       onError={() => setFailed(true)}
-      loading="lazy"
+      loading={eager ? "eager" : "lazy"}
     />
   )
 

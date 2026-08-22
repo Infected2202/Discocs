@@ -14,6 +14,7 @@
   "status": {
     "loading": "Loading…",
     "error": "Something went wrong",
-    "unknown": "Unknown"
+    "unknown": "Unknown",
+    "reconnecting": "Can't reach the server. Retrying automatically…"
   }
 }

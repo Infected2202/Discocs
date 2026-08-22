@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import PlaylistPage from "./PlaylistPage"
 import { useUIStore } from "@/store/uiStore"
+import { ApiError } from "@/api/client"
 import type { PlaylistDetail, TrackSummary } from "@/api/types"
 
 const fetchPlaylist = vi.fn()
@@ -208,5 +209,24 @@ describe("PlaylistPage — пользовательский плейлист", (
       "href",
       "/api/v1/playlists/likes/download",
     )
+  })
+})
+
+describe("PlaylistPage — состояния ошибки", () => {
+  it("показывает 'not found' для настоящей 404-ошибки", async () => {
+    fetchPlaylist.mockRejectedValue(new ApiError(404, "not_found", "no such playlist"))
+
+    renderPage("/playlists/5")
+
+    expect(await screen.findByText("Playlist not found.")).toBeInTheDocument()
+  })
+
+  it("показывает сообщение о переподключении для сетевой ошибки, а не 'not found'", async () => {
+    fetchPlaylist.mockRejectedValue(new TypeError("Failed to fetch"))
+
+    renderPage("/playlists/5")
+
+    expect(await screen.findByText("Can't reach the server. Retrying automatically…")).toBeInTheDocument()
+    expect(screen.queryByText("Playlist not found.")).toBeNull()
   })
 })

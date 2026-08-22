@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { playerPlayback as audioEngine } from "@/engine/playback"
 import { fetchQueue, patchQueue, postEvent, refillAutoplay } from "@/api/playback"
+import { cancelAllBackgroundRetries } from "@/lib/backgroundRetry"
 import { usePlayerStore } from "./playerStore"
 import type { PlaybackEnvelope, PlaybackSession, PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
 
@@ -292,5 +293,61 @@ describe("auto-resume after autoplay refill (A.2)", () => {
 
     expect(refillAutoplay).toHaveBeenCalledTimes(1)
     expect(audioEngine.load).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("refreshQueue background retry", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    cancelAllBackgroundRetries()
+    localStorage.clear()
+    usePlayerStore.setState({
+      session: { id: "s1", source_type: "track", autoplay_enabled: false } as unknown as PlaybackSession,
+      queue: stubQueue([makeItem("current", 10)], "current"),
+      currentTrackId: 10,
+      currentQueueItemId: "current",
+      error: null,
+    })
+  })
+
+  it("keeps retrying a failed queue refresh on a timer instead of dropping it silently", async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(fetchQueue).mockRejectedValue(new Error("network down"))
+
+      await usePlayerStore.getState().refreshQueue()
+      expect(fetchQueue).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(fetchQueue).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(fetchQueue).toHaveBeenCalledTimes(3)
+
+      expect(usePlayerStore.getState().error).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("applies the queue once the retried refresh eventually succeeds", async () => {
+    vi.useFakeTimers()
+    try {
+      const refreshed = stubQueue([makeItem("current", 10), makeItem("next", 20)], "current")
+      vi.mocked(fetchQueue)
+        .mockRejectedValueOnce(new Error("network down"))
+        .mockResolvedValueOnce({ session: usePlayerStore.getState().session!, queue: refreshed })
+
+      await usePlayerStore.getState().refreshQueue()
+      await vi.advanceTimersByTimeAsync(15_000)
+
+      expect(fetchQueue).toHaveBeenCalledTimes(2)
+      expect(usePlayerStore.getState().queue?.items.map((i) => i.track_id)).toEqual([10, 20])
+
+      // Succeeded — no further retries on later ticks.
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(fetchQueue).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

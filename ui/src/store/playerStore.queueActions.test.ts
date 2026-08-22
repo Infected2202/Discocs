@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { playerPlayback as audioEngine } from "@/engine/playback"
 import { patchQueue, postEvent } from "@/api/playback"
+import { cancelAllBackgroundRetries } from "@/lib/backgroundRetry"
 import { usePlayerStore } from "./playerStore"
 import type { PlaybackEnvelope, QueueItem, TrackSummary } from "@/api/types"
 
@@ -380,6 +381,10 @@ describe("jumpToQueueItem optimistic transitions (A.1) / skipNext telemetry (A.3
 
   beforeEach(() => {
     vi.clearAllMocks()
+    // Several tests below deliberately fail patchQueue to exercise
+    // syncQueueJump's background retry — clear any pending loop a previous
+    // test left registered under the shared "session" id.
+    cancelAllBackgroundRetries()
     vi.mocked(audioEngine.hasPrepared).mockReturnValue(false)
     localStorage.clear()
     usePlayerStore.setState({
@@ -463,26 +468,65 @@ describe("jumpToQueueItem optimistic transitions (A.1) / skipNext telemetry (A.3
     expect(usePlayerStore.getState().currentTrackId).toBe(30)
   })
 
-  it("does not set an error when the background jump-sync retry is exhausted", async () => {
-    const envelope = makeEnvelope("session", [makeItem("current", 10), makeItem("next", 20)], "current")
-    usePlayerStore.setState({
-      session: envelope.session,
-      queue: envelope.queue,
-      currentTrackId: 10,
-      currentQueueItemId: "current",
-      error: null,
-    })
-    vi.mocked(patchQueue).mockRejectedValue(new Error("network down"))
+  it("keeps retrying the background jump-sync on a timer instead of giving up, without surfacing an error", async () => {
+    vi.useFakeTimers()
+    try {
+      const envelope = makeEnvelope("session", [makeItem("current", 10), makeItem("next", 20)], "current")
+      usePlayerStore.setState({
+        session: envelope.session,
+        queue: envelope.queue,
+        currentTrackId: 10,
+        currentQueueItemId: "current",
+        error: null,
+      })
+      vi.mocked(patchQueue).mockRejectedValue(new Error("network down"))
 
-    await usePlayerStore.getState().jumpToQueueItem("next")
+      await usePlayerStore.getState().jumpToQueueItem("next")
+      expect(patchQueue).toHaveBeenCalledTimes(1)
 
-    await vi.waitFor(() => expect(patchQueue).toHaveBeenCalledTimes(2))
-    await Promise.resolve()
+      // A VPN drop can outlast a single retry — this must keep trying
+      // indefinitely on the background-retry interval, not give up after one.
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(patchQueue).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(patchQueue).toHaveBeenCalledTimes(3)
 
-    expect(usePlayerStore.getState().error).toBeNull()
-    // Local optimistic state from the initial jump is not reverted.
-    expect(usePlayerStore.getState().currentQueueItemId).toBe("next")
-    expect(usePlayerStore.getState().currentTrackId).toBe(20)
+      expect(usePlayerStore.getState().error).toBeNull()
+      // Local optimistic state from the initial jump is not reverted.
+      expect(usePlayerStore.getState().currentQueueItemId).toBe("next")
+      expect(usePlayerStore.getState().currentTrackId).toBe(20)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("stops retrying the background jump-sync once it succeeds", async () => {
+    vi.useFakeTimers()
+    try {
+      const envelope = makeEnvelope("session", [makeItem("current", 10), makeItem("next", 20)], "current")
+      usePlayerStore.setState({
+        session: envelope.session,
+        queue: envelope.queue,
+        currentTrackId: 10,
+        currentQueueItemId: "current",
+        error: null,
+      })
+      vi.mocked(patchQueue)
+        .mockRejectedValueOnce(new Error("network down"))
+        .mockResolvedValueOnce(makeEnvelope("session", envelope.queue.items, "next"))
+
+      await usePlayerStore.getState().jumpToQueueItem("next")
+      expect(patchQueue).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(patchQueue).toHaveBeenCalledTimes(2)
+
+      // Succeeded on the retry — no further attempts on later ticks.
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(patchQueue).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("falls back to blocking on patchQueue when the target queue item is not locally known", async () => {

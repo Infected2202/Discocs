@@ -29,6 +29,7 @@ import {
 } from "./sessionPersistence"
 import { ApiError } from "@/api/client"
 import { playerLog } from "@/lib/playerLogger"
+import { cancelAllBackgroundRetries, scheduleBackgroundRetry } from "@/lib/backgroundRetry"
 import { hiresArtworkUrl } from "@/lib/artworkUrl"
 import { throttle } from "@/lib/throttle"
 import type { PlaybackEnvelope, PlaybackSession, PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
@@ -361,43 +362,26 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
   }
 
   // Background sync of the server-side queue pointer after an optimistic
-  // jumpToQueueItem() already started local playback. Mirrors the retry-once
-  // shape used by PlayerPlaybackFacade.prefetch()/cacheActiveTrack() — a
-  // backgrounded tab can throttle this fetch heavily, so it must never block
-  // playback, and a late/failed response must never surface an error banner
-  // over otherwise-working playback (it self-heals on the next transition).
-  async function syncQueueJump(sessionId: string, queueItemId: string) {
-    let attempt = 0
-    for (;;) {
-      try {
-        const envelope = await patchQueue(sessionId, {
-          operation: "jump",
-          queue_item_id: queueItemId,
-        })
-        // Only apply if this is still the most recent jump — a newer jump
-        // (e.g. rapid skips) must not be reverted by a stale response.
-        if (pendingQueueJump?.sessionId === sessionId && pendingQueueJump.queueItemId === queueItemId) {
-          applyEnvelope(envelope)
-          pendingQueueJump = null
-        }
-        return
-      } catch (err) {
-        if (attempt < 1) {
-          attempt += 1
-          playerLog("queue", "jump sync retry", { sessionId, queueItemId })
-          continue
-        }
-        playerLog("queue", "jump sync failed — will self-heal on next transition", {
-          sessionId,
-          queueItemId,
-          message: (err as Error).message,
-        })
-        if (pendingQueueJump?.sessionId === sessionId && pendingQueueJump.queueItemId === queueItemId) {
-          pendingQueueJump = null
-        }
-        return
+  // jumpToQueueItem() already started local playback. A backgrounded tab can
+  // throttle this fetch heavily, or the connection (e.g. a home VPN tunnel)
+  // can drop it outright — it must never block playback, and a late/failed
+  // response must never surface an error banner over otherwise-working
+  // playback. Keyed per session so a newer jump (rapid skips) cancels and
+  // replaces any still-pending retry for a now-stale target — only the
+  // latest queue pointer is worth syncing.
+  function syncQueueJump(sessionId: string, queueItemId: string) {
+    scheduleBackgroundRetry(`player:queue-jump:${sessionId}`, async () => {
+      const envelope = await patchQueue(sessionId, {
+        operation: "jump",
+        queue_item_id: queueItemId,
+      })
+      // Only apply if this is still the most recent jump — a newer jump
+      // (e.g. rapid skips) must not be reverted by a stale response.
+      if (pendingQueueJump?.sessionId === sessionId && pendingQueueJump.queueItemId === queueItemId) {
+        applyEnvelope(envelope)
+        pendingQueueJump = null
       }
-    }
+    })
   }
 
   async function handoverToPrepared(next: QueueItem, session: PlaybackSession) {
@@ -412,6 +396,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       })
     } catch {
       // Semantic telemetry is best-effort; canonical handover is not.
+      // Deliberately not background-retried: it marks a specific transition
+      // as starting *now* — replaying it late after a reconnect could no
+      // longer correspond to what's actually playing.
     }
     addCurrentToHistory()
     try {
@@ -650,7 +637,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
           queueItemId: item.id,
           recordStarted: false,
         })
-        void syncQueueJump(session.id, item.id)
+        syncQueueJump(session.id, item.id)
         return
       }
 
@@ -876,12 +863,28 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       }
       const { session } = get()
       if (!session?.id) return
-      try {
-        const envelope = await fetchQueue(session.id)
-        applyEnvelope(envelope)
-      } catch {
-        // ignore
-      }
+      const sessionId = session.id
+
+      // The queue is "latest state wins" — a late-arriving fetch is still
+      // correct whenever it lands, so a failed attempt keeps retrying in the
+      // background (e.g. on a VPN drop) instead of silently giving up.
+      // Re-keyed per session so a later refreshQueue() call for the same
+      // session coalesces with any still-pending retry. Callers of
+      // refreshQueue() await only the FIRST attempt's outcome (this resolver
+      // fires once, on success or failure) — scheduleBackgroundRetry's own
+      // immediate attempt IS that first attempt, not a duplicate of it.
+      let settleFirstAttempt: (() => void) | undefined
+      const firstAttempt = new Promise<void>((resolve) => { settleFirstAttempt = resolve })
+      scheduleBackgroundRetry(`player:refresh-queue:${sessionId}`, async () => {
+        try {
+          const envelope = await fetchQueue(sessionId)
+          if (get().session?.id === sessionId) applyEnvelope(envelope)
+        } finally {
+          settleFirstAttempt?.()
+          settleFirstAttempt = undefined
+        }
+      })
+      await firstAttempt
     },
 
     async recordEvent(eventType, extra = {}) {
@@ -897,7 +900,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         })
         scheduleAutoplayRefill(eventType)
       } catch {
-        // fire-and-forget — playback events are best-effort
+        // Deliberately not background-retried: this reports what track/position
+        // is playing *right now*. A reconnect minutes later could find a
+        // different track playing (or none), so replaying it late would
+        // misrepresent playback history instead of correcting it — best-effort
+        // and silently dropped is the correct behavior here.
       }
     },
 
@@ -1150,6 +1157,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       pendingQueueJump = null
       lastMediaSessionKey = null
       incomingStartedQueueItems.clear()
+      cancelAllBackgroundRetries()
       audioEngine.clear()
       set({
         session: null,

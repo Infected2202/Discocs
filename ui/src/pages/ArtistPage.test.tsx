@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import ArtistPage from "./ArtistPage"
+import { ApiError } from "@/api/client"
 import type { ArtistResponse, ArtistDiscographyResponse, ArtistSimilarResponse } from "@/api/types"
 
 const useArtist = vi.fn()
@@ -133,5 +134,37 @@ describe("ArtistPage — кнопка Shuffle", () => {
 
     expect(screen.getByTestId("shelf")).toHaveTextContent("Similar artists")
     expect(screen.getByTestId("shelf")).toHaveTextContent("Jon Hopkins")
+  })
+})
+
+describe("ArtistPage — состояния ошибки", () => {
+  beforeEach(() => {
+    useArtistDiscography.mockReturnValue({ data: makeDiscoData(), isLoading: false })
+    useArtistSimilar.mockReturnValue({ data: { artist: { id: 3, name: "Max Cooper" }, items: [], available: true, basis: "artist_similarity" } satisfies ArtistSimilarResponse })
+  })
+
+  it("показывает 'not found' для настоящей 404-ошибки", async () => {
+    useArtist.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new ApiError(404, "not_found", "no such artist"),
+    })
+
+    renderPage()
+
+    expect(await screen.findByText("Artist not found.")).toBeInTheDocument()
+  })
+
+  it("показывает сообщение о переподключении для сетевой ошибки, а не 'not found'", async () => {
+    useArtist.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new TypeError("Failed to fetch"),
+    })
+
+    renderPage()
+
+    expect(await screen.findByText("Can't reach the server. Retrying automatically…")).toBeInTheDocument()
+    expect(screen.queryByText("Artist not found.")).toBeNull()
   })
 })

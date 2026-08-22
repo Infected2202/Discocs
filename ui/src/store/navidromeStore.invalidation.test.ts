@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 /**
  * The favourite shelves are served from the backend's like mirror, which is
@@ -13,12 +13,27 @@ describe("navidromeStore like invalidation", () => {
     vi.restoreAllMocks()
   })
 
+  afterEach(async () => {
+    // A failed toggle schedules a real background retry timer. resetModules()
+    // in the *next* beforeEach hasn't run yet, so a dynamic import here still
+    // resolves to the same backgroundRetry module instance this test's
+    // dynamic import of navidromeStore used — a static top-level import
+    // would instead target the module graph from before the first
+    // resetModules() call and clear nothing.
+    const { cancelAllBackgroundRetries } = await import("@/lib/backgroundRetry")
+    cancelAllBackgroundRetries()
+  })
+
   type InvalidateSpy = { mock: { calls: unknown[][] } }
 
   async function setup(response: unknown) {
-    vi.doMock("@/api/client", () => ({
-      apiFetch: vi.fn().mockResolvedValue(response),
-    }))
+    vi.doMock("@/api/client", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/api/client")>()
+      return {
+        ...actual,
+        apiFetch: vi.fn().mockResolvedValue(response),
+      }
+    })
     const { queryClient } = await import("@/api/queryClient")
     const { useNavidromeStore } = await import("./navidromeStore")
     const invalidate = vi.spyOn(queryClient, "invalidateQueries")
@@ -68,9 +83,13 @@ describe("navidromeStore like invalidation", () => {
   })
 
   it("does not refresh the shelves when the request fails", async () => {
-    vi.doMock("@/api/client", () => ({
-      apiFetch: vi.fn().mockRejectedValue(new Error("navidrome down")),
-    }))
+    vi.doMock("@/api/client", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/api/client")>()
+      return {
+        ...actual,
+        apiFetch: vi.fn().mockRejectedValue(new Error("navidrome down")),
+      }
+    })
     const { queryClient } = await import("@/api/queryClient")
     const { useNavidromeStore } = await import("./navidromeStore")
     const invalidate = vi.spyOn(queryClient, "invalidateQueries")

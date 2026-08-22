@@ -2,6 +2,7 @@ import { useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { Play, Shuffle } from "lucide-react"
 import { useArtist, useArtistDiscography, useArtistSimilar } from "@/api/hooks/useArtist"
+import { isNetworkError } from "@/lib/apiErrorKind"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
@@ -60,6 +61,13 @@ export default function ArtistPage() {
 
   if (isLoading) return <ArtistPageSkeleton />
   if (error || !artistData) {
+    if (error && isNetworkError(error)) {
+      return (
+        <div className="p-8">
+          <p className="text-muted-foreground text-sm">{t("status.reconnecting", { ns: "common" })}</p>
+        </div>
+      )
+    }
     return (
       <div className="p-8">
         <p className="text-destructive text-sm">{t("notFound")}</p>

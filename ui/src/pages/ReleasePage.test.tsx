@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import ReleasePage from "./ReleasePage"
+import { ApiError } from "@/api/client"
 import type {
   ReleaseResponse, ReleaseTracksResponse, RelatedDiscographyResponse, ReleaseAvailabilityStub,
 } from "@/api/types"
@@ -156,5 +157,39 @@ describe("ReleasePage — шелф рекомендаций без битого 
     expect(shuffle).toHaveAttribute("data-size", "icon-sm")
     expect(shuffle).not.toHaveTextContent("Shuffle")
     expect(screen.queryByText("Album")).toBeNull()
+  })
+})
+
+describe("ReleasePage — состояния ошибки", () => {
+  beforeEach(() => {
+    useReleaseTracks.mockReturnValue({ data: makeTracksData(), isLoading: false })
+    useReleaseRelated.mockReturnValue({ data: makeRelatedData() })
+    useReleaseRecommendations.mockReturnValue({ data: makeRecsData() })
+    useShareCapabilities.mockReturnValue({ data: { enabled: true, can_create: true } })
+  })
+
+  it("показывает 'not found' для настоящей 404-ошибки", async () => {
+    useRelease.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new ApiError(404, "not_found", "no such release"),
+    })
+
+    renderPage()
+
+    expect(await screen.findByText("Release not found.")).toBeInTheDocument()
+  })
+
+  it("показывает сообщение о переподключении для сетевой ошибки, а не 'not found'", async () => {
+    useRelease.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new TypeError("Failed to fetch"),
+    })
+
+    renderPage()
+
+    expect(await screen.findByText("Can't reach the server. Retrying automatically…")).toBeInTheDocument()
+    expect(screen.queryByText("Release not found.")).toBeNull()
   })
 })

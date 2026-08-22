@@ -39,4 +39,41 @@ describe("ArtworkImage", () => {
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
   })
+
+  it("falls back after a load error, and recovers once the src changes instead of staying stuck", () => {
+    const { rerender } = render(<ArtworkImage src="/art/1.jpg" alt="Cover" />)
+
+    fireEvent.error(screen.getByRole("img", { name: "Cover" }))
+
+    // No onError-reset watcher on src → without the fix this fallback would never clear.
+    expect(screen.queryByRole("img", { name: "Cover" })).not.toBeInTheDocument()
+    expect(screen.getByText("C")).toBeInTheDocument()
+
+    rerender(<ArtworkImage src="/art/2.jpg" alt="Cover" />)
+
+    const img = screen.getByRole("img", { name: "Cover" })
+    expect(img).toHaveAttribute("src", "/art/2.jpg")
+  })
+
+  it("keeps showing the fallback across re-renders that don't change src", () => {
+    const { rerender } = render(<ArtworkImage src="/art/1.jpg" alt="Cover" />)
+
+    fireEvent.error(screen.getByRole("img", { name: "Cover" }))
+    expect(screen.getByText("C")).toBeInTheDocument()
+
+    rerender(<ArtworkImage src="/art/1.jpg" alt="Cover" className="extra-class" />)
+
+    expect(screen.queryByRole("img", { name: "Cover" })).not.toBeInTheDocument()
+    expect(screen.getByText("C")).toBeInTheDocument()
+  })
+
+  it("defaults to native lazy loading", () => {
+    render(<ArtworkImage src="/art/1.jpg" alt="Cover" />)
+    expect(screen.getByRole("img", { name: "Cover" })).toHaveAttribute("loading", "lazy")
+  })
+
+  it("loads eagerly when eager is set, for images that are always about to be shown", () => {
+    render(<ArtworkImage src="/art/1.jpg" alt="Cover" eager />)
+    expect(screen.getByRole("img", { name: "Cover" })).toHaveAttribute("loading", "eager")
+  })
 })

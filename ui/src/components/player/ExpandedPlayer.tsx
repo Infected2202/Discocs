@@ -87,10 +87,12 @@ export default function ExpandedPlayer() {
       {currentTrack?.artwork?.url && (
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           <img
+            key={currentTrack.artwork.url ?? currentTrackId ?? "empty"}
             src={hiresUrl(currentTrack.artwork.url)}
             aria-hidden
             className="w-full h-full object-cover object-center"
             style={{ filter: "blur(15px) brightness(0.3) saturate(1.4)", transform: "scale(1.05)", opacity: 0.65 }}
+            onError={(e) => { e.currentTarget.style.opacity = "0" }}
           />
           <div className="absolute inset-0" style={{ background: "linear-gradient(in oklab to bottom, rgb(11 13 15 / 0.3) 0%, rgb(11 13 15 / 0.7) 50%, rgb(11 13 15 / 0.95) 100%)" }} />
         </div>
@@ -141,10 +143,12 @@ export default function ExpandedPlayer() {
               }}
             >
               <ArtworkImage
+                key={currentTrack?.artwork?.url ?? currentTrackId ?? "empty"}
                 src={hiresUrl(currentTrack?.artwork?.url)}
                 alt={currentTrack?.title ?? ""}
                 className="w-full h-full object-cover"
                 fallbackLetter={currentTrack?.title?.[0]}
+                eager
               />
               {/* Play/pause flash */}
               <div className={cn(

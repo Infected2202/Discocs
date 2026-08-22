@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import type { TFunction } from "i18next"
 import { Download, Play, Share2, Shuffle } from "lucide-react"
 import { useRelease, useReleaseTracks, useReleaseRelated, useReleaseRecommendations } from "@/api/hooks/useRelease"
+import { isNetworkError } from "@/lib/apiErrorKind"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
@@ -64,6 +65,13 @@ export default function ReleasePage() {
 
   if (isLoading) return <ReleasePageSkeleton />
   if (error || !releaseData) {
+    if (error && isNetworkError(error)) {
+      return (
+        <div className="p-8">
+          <p className="text-muted-foreground text-sm">{t("status.reconnecting", { ns: "common" })}</p>
+        </div>
+      )
+    }
     return (
       <div className="p-8">
         <p className="text-destructive text-sm">{t("notFound")}</p>
