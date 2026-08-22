@@ -117,7 +117,9 @@ describe("SearchPage", () => {
     renderPage()
     await screen.findByRole("tab", { name: "Releases (49)" })
 
-    fireEvent.click(screen.getByRole("tab", { name: "Releases (49)" }))
+    // Radix's TabsTrigger activates on mousedown, not click — see
+    // @radix-ui/react-tabs's Trigger implementation.
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Releases (49)" }), { button: 0 })
 
     await waitFor(() => expect(fetchSearch).toHaveBeenCalledWith("fabric", "release", 50, 0))
     // Proves the tab loaded the full paginated result, not the 10-item preview.
