@@ -1,17 +1,12 @@
 import "@testing-library/jest-dom"
-import { configure } from "@testing-library/react"
 import { afterEach } from "vitest"
 import i18n from "./i18n"
 
-// findBy*/waitFor keep their own 1s budget — the testTimeout in vite.config.ts
-// does not cover it. Under the full parallel run the contention documented
-// there (jsdom is the bottleneck) can push a correct render past that second:
-// build #378 failed LoginPage's redirect assertion that passed in #377 on
-// identical code, first failure of that test ever. This is the same
-// recalibration as testTimeout, and staying well below it keeps a genuinely
-// stuck query reported as a findBy failure with a DOM dump rather than a bare
-// test timeout.
-configure({ asyncUtilTimeout: 5000 })
+// Nothing heavier belongs here: this file is evaluated once per test file (97
+// of them), so an import added for one test is paid by all of them. Pulling
+// @testing-library/react in to raise asyncUtilTimeout globally added ~68s of
+// setup across the suite in build #379 and timed out two unrelated tests.
+// Per-call `{ timeout }` on the few slow assertions instead.
 
 // Tests assert against English copy; force it regardless of the host
 // machine's locale or any language cached from a previous test run.
