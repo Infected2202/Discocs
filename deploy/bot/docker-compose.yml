@@ -13,6 +13,9 @@ services:
       DISCOCS_BASE_URL: ${DISCOCS_BASE_URL:-http://backend:7752}
       SQLITE_PATH: /data/bot.sqlite
       TEMP_DIR: /data/tmp
+      EXTERNAL_CACHE_DIR: ${EXTERNAL_CACHE_DIR:-/data/cache/external}
+      EXTERNAL_CACHE_MAX_GB: ${EXTERNAL_CACHE_MAX_GB:-10}
+      YTDLP_COOKIES_FILE: ${YTDLP_COOKIES_FILE:-}
     volumes:
       - discocs-bot-data:/data
 

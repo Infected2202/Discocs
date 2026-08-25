@@ -8,6 +8,7 @@ from telegram.request import HTTPXRequest
 import bot.utils.logging  # noqa: F401
 from bot.config import get_settings
 from bot.handlers.callbacks import callback_handler
+from bot.handlers.links import link_message_handler
 from bot.handlers.menu import menu_command, menu_message_handler
 from bot.handlers.random import random_command
 from bot.handlers.search import audio_message_handler, search_command
@@ -16,6 +17,9 @@ from bot.handlers.start import help_command, start_command
 from bot.keyboards.menu import BOT_COMMANDS
 from bot.services.delivery import DeliveryService
 from bot.services.discocs import DiscocsClient
+from bot.services.external_audio import LinkAudioService
+from bot.services.external_delivery import ExternalDeliveryService
+from bot.services.media_cache import MediaCache
 from bot.services.navidrome import NavidromeClient
 from bot.services.transcoder import Transcoder
 from bot.storage.db import Database
@@ -32,6 +36,7 @@ async def _post_init(application: Application) -> None:
 
     await db.connect()
     settings.temp_dir.mkdir(parents=True, exist_ok=True)
+    settings.external_cache_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         await navidrome.ping()
@@ -72,6 +77,9 @@ def build_application() -> Application:
     discocs = DiscocsClient(settings, navidrome)
     transcoder = Transcoder(settings)
     delivery = DeliveryService(settings, navidrome, transcoder, db)
+    links = LinkAudioService(settings)
+    media_cache = MediaCache(settings.external_cache_dir, settings.external_cache_max_bytes)
+    external_delivery = ExternalDeliveryService(settings, links, transcoder, media_cache, db)
 
     application = (
         Application.builder()
@@ -89,6 +97,9 @@ def build_application() -> Application:
     application.bot_data["discocs"] = discocs
     application.bot_data["transcoder"] = transcoder
     application.bot_data["delivery"] = delivery
+    application.bot_data["links"] = links
+    application.bot_data["media_cache"] = media_cache
+    application.bot_data["external_delivery"] = external_delivery
 
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("menu", menu_command))
@@ -97,6 +108,12 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("search", search_command))
     application.add_handler(CommandHandler("random", random_command))
     application.add_handler(CallbackQueryHandler(callback_handler))
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND & (filters.Entity("url") | filters.Entity("text_link")),
+            link_message_handler,
+        )
+    )
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_message_handler))
     application.add_handler(MessageHandler(filters.AUDIO, audio_message_handler))
 

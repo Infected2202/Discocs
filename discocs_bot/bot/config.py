@@ -35,6 +35,18 @@ class Settings(BaseSettings):
     sqlite_path: Path = Field(default=Path("data/bot.sqlite"), alias="SQLITE_PATH")
     temp_dir: Path = Field(default=Path("data/tmp"), alias="TEMP_DIR")
 
+    # Скачивание по ссылке (YouTube/SoundCloud/…): кэш файлов, лимиты, куки.
+    external_cache_dir: Path = Field(default=Path("data/cache/external"), alias="EXTERNAL_CACHE_DIR")
+    external_cache_max_gb: float = Field(default=10.0, alias="EXTERNAL_CACHE_MAX_GB")
+    external_max_parts: int = Field(default=4, alias="EXTERNAL_MAX_PARTS")
+    external_max_duration_minutes: int = Field(default=180, alias="EXTERNAL_MAX_DURATION_MINUTES")
+    external_max_download_mb: int = Field(default=500, alias="EXTERNAL_MAX_DOWNLOAD_MB")
+    external_max_bitrate_kbps: int = Field(default=320, alias="EXTERNAL_MAX_BITRATE_KBPS")
+    # Источники отдают 128-160k opus/aac. MP3 на том же битрейте звучит хуже
+    # оригинала, поэтому запас настраивается — но по умолчанию его нет.
+    external_bitrate_headroom: float = Field(default=1.0, alias="EXTERNAL_BITRATE_HEADROOM")
+    ytdlp_cookies_file: str = Field(default="", alias="YTDLP_COOKIES_FILE")
+
     transcode_bitrate: str = Field(default="320k", alias="TRANSCODE_BITRATE")
     transcode_workers: int = Field(default=4, alias="TRANSCODE_WORKERS")
     transcode_fast: bool = Field(default=True, alias="TRANSCODE_FAST")
@@ -45,6 +57,14 @@ class Settings(BaseSettings):
     @property
     def max_telegram_audio_bytes(self) -> int:
         return self.max_telegram_audio_mb * 1024 * 1024
+
+    @property
+    def external_cache_max_bytes(self) -> int:
+        return int(self.external_cache_max_gb * 1024 * 1024 * 1024)
+
+    @property
+    def external_max_download_bytes(self) -> int:
+        return self.external_max_download_mb * 1024 * 1024
 
 
 @lru_cache

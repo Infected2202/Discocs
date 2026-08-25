@@ -63,6 +63,10 @@ run.bat
 
 Под каждым треком: **Отправить** (MP3 в чат, с кэшем `file_id`) и **Радио** (Discocs `/navidrome/similar`).
 
+Ссылка в чате (YouTube, SoundCloud, Bandcamp и другие источники yt-dlp) —
+карточка трека с кнопкой **Скачать MP3**. Подробности и переменные окружения:
+[docs/external-links.md](../docs/external-links.md).
+
 ## Discocs API
 
 Бот использует тот же контракт, что и Navidrome-плагин Discocs:

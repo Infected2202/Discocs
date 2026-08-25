@@ -28,7 +28,8 @@ integration is documented in [docs/navidrome-plugin.md](docs/navidrome-plugin.md
 Original track and streaming collection downloads are documented in
 [docs/music-downloads.md](docs/music-downloads.md). Radio seeded by audio that
 is not in the library is documented in
-[docs/external-audio.md](docs/external-audio.md).
+[docs/external-audio.md](docs/external-audio.md), and the Telegram bot's
+handling of links in [docs/external-links.md](docs/external-links.md).
 
 ## Quick Start
 

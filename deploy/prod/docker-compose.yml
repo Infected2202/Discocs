@@ -116,6 +116,13 @@ services:
       DISCOCS_SERVICE_TOKEN: ${DISCOCS_SERVICE_TOKEN:-}
       SQLITE_PATH: /data/bot.sqlite
       TEMP_DIR: /data/tmp
+      # Кэш скачанного по ссылкам аудио. Лежит на том же host bind-mount, что и
+      # остальное состояние бота; чтобы вынести на другой диск — добавь свой
+      # bind-mount и укажи его путь здесь.
+      EXTERNAL_CACHE_DIR: ${EXTERNAL_CACHE_DIR:-/data/cache/external}
+      EXTERNAL_CACHE_MAX_GB: ${EXTERNAL_CACHE_MAX_GB:-10}
+      # Пусто = без кук. Понадобится, если YouTube начнёт требовать вход.
+      YTDLP_COOKIES_FILE: ${YTDLP_COOKIES_FILE:-}
     volumes:
       - ${DISCOCS_STATE_DIR}/discocs_bot:/data
     depends_on:

@@ -90,6 +90,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if action == "radio":
         context.application.create_task(_handle_radio(update, context, payload))
         return
+    if action == "extget":
+        from bot.handlers.links import external_get_callback
+
+        context.application.create_task(external_get_callback(update, context, payload))
+        return
     if action == "search_page":
         await search_page_callback(update, context, int(payload))
     elif action == "radio_page":

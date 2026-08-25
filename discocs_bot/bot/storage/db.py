@@ -34,6 +34,31 @@ CREATE TABLE IF NOT EXISTS users (
     last_seen_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS external_media (
+    media_key TEXT PRIMARY KEY,
+    url_key TEXT NOT NULL,
+    source TEXT NOT NULL,
+    webpage_url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    artist TEXT,
+    duration INTEGER,
+    thumbnail_url TEXT,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS external_audio_cache (
+    media_key TEXT NOT NULL,
+    profile TEXT NOT NULL,
+    part_index INTEGER NOT NULL,
+    part_count INTEGER NOT NULL,
+    telegram_file_id TEXT NOT NULL,
+    file_size INTEGER,
+    duration INTEGER,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (media_key, part_index)
+);
+
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     telegram_user_id INTEGER,
@@ -201,6 +226,118 @@ class Database:
                 "DELETE FROM telegram_audio_cache WHERE navidrome_song_id = ?",
                 (song_id,),
             )
+        await conn.commit()
+
+    async def save_external_media(
+        self,
+        *,
+        media_key: str,
+        url_key: str,
+        source: str,
+        webpage_url: str,
+        title: str,
+        artist: str | None,
+        duration: int | None,
+        thumbnail_url: str | None,
+        now: str,
+    ) -> None:
+        conn = self._require_conn()
+        await conn.execute(
+            """
+            INSERT INTO external_media (
+                media_key, url_key, source, webpage_url, title, artist,
+                duration, thumbnail_url, created_at, last_used_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(media_key) DO UPDATE SET
+                url_key = excluded.url_key,
+                source = excluded.source,
+                webpage_url = excluded.webpage_url,
+                title = excluded.title,
+                artist = excluded.artist,
+                duration = excluded.duration,
+                thumbnail_url = excluded.thumbnail_url,
+                last_used_at = excluded.last_used_at
+            """,
+            (
+                media_key,
+                url_key,
+                source,
+                webpage_url,
+                title,
+                artist,
+                duration,
+                thumbnail_url,
+                now,
+                now,
+            ),
+        )
+        await conn.commit()
+
+    async def get_external_media(self, media_key: str) -> aiosqlite.Row | None:
+        conn = self._require_conn()
+        async with conn.execute(
+            "SELECT * FROM external_media WHERE media_key = ?",
+            (media_key,),
+        ) as cursor:
+            return await cursor.fetchone()
+
+    async def touch_external_media(self, media_key: str, now: str) -> None:
+        conn = self._require_conn()
+        await conn.execute(
+            "UPDATE external_media SET last_used_at = ? WHERE media_key = ?",
+            (now, media_key),
+        )
+        await conn.commit()
+
+    async def get_external_parts(self, media_key: str) -> list[aiosqlite.Row]:
+        conn = self._require_conn()
+        async with conn.execute(
+            "SELECT * FROM external_audio_cache WHERE media_key = ? ORDER BY part_index",
+            (media_key,),
+        ) as cursor:
+            return list(await cursor.fetchall())
+
+    async def save_external_parts(
+        self,
+        *,
+        media_key: str,
+        profile: str,
+        parts: list[dict],
+        now: str,
+    ) -> None:
+        """Replace the cached parts for a media key.
+
+        Parts of one delivery only make sense together, so a re-delivery in a
+        different profile drops the previous set instead of mixing with it.
+        """
+        conn = self._require_conn()
+        await conn.execute("DELETE FROM external_audio_cache WHERE media_key = ?", (media_key,))
+        await conn.executemany(
+            """
+            INSERT INTO external_audio_cache (
+                media_key, profile, part_index, part_count,
+                telegram_file_id, file_size, duration, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    media_key,
+                    profile,
+                    index,
+                    len(parts),
+                    part["file_id"],
+                    part.get("file_size"),
+                    part.get("duration"),
+                    now,
+                )
+                for index, part in enumerate(parts)
+            ],
+        )
+        await conn.commit()
+
+    async def delete_external_parts(self, media_key: str) -> None:
+        conn = self._require_conn()
+        await conn.execute("DELETE FROM external_audio_cache WHERE media_key = ?", (media_key,))
         await conn.commit()
 
     async def get_user_audio_profile(self, user_id: int) -> str:

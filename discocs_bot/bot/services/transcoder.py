@@ -154,6 +154,54 @@ class Transcoder:
             args.extend(["-c:v", "mjpeg", "-disposition:v", "attached_pic"])
         return args
 
+    @staticmethod
+    def _build_split_command(
+        input_path: Path,
+        output_path: Path,
+        *,
+        start_seconds: float,
+        duration_seconds: float,
+    ) -> list[str]:
+        """Cut a window without re-encoding: mp3 frames copy losslessly."""
+        return [
+            "ffmpeg",
+            "-y",
+            "-ss",
+            f"{start_seconds:.3f}",
+            "-t",
+            f"{duration_seconds:.3f}",
+            "-i",
+            str(input_path),
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "copy",
+            str(output_path),
+        ]
+
+    async def split_audio(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        start_seconds: float,
+        duration_seconds: float,
+    ) -> Path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        cmd = self._build_split_command(
+            input_path,
+            output_path,
+            start_seconds=start_seconds,
+            duration_seconds=duration_seconds,
+        )
+        async with self._semaphore:
+            result = await asyncio.to_thread(_run_subprocess, cmd)
+        if result.returncode != 0 or not output_path.exists():
+            message = (result.stderr or b"").decode(errors="replace") or "ffmpeg failed"
+            logger.error("ffmpeg split failed: %s", message[-500:])
+            raise TranscodeError(message)
+        return output_path
+
     async def make_telegram_thumbnail(self, cover_path: Path, output_path: Path) -> Path | None:
         if not cover_path.exists():
             return None
