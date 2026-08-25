@@ -316,7 +316,20 @@ pipeline {
                   // unfixed через Rego-политику технически можно, но ошибка в ней
                   // даёт молча пропускающий гейт — для проверки безопасности это
                   // худший вид отказа, поэтому здесь родной флаг и лишние ~20с.
-                  sh "docker run --rm ${mounts} aquasec/trivy image --skip-db-update --cache-backend memory --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 ${img}"
+                  //
+                  // .trivyignore.yaml переносим в контейнер через docker cp по той
+                  // же причине, что и отчёты: воркспейс агента недоступен хостовому
+                  // демону как путь. Файл получает только гейт — в HTML-отчёте пусть
+                  // остаются видны все находки, включая заигноренные.
+                  sh """
+                    set -e
+                    CID=\$(docker create ${mounts} aquasec/trivy image --skip-db-update --cache-backend memory --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 --ignorefile /.trivyignore.yaml ${img})
+                    docker cp .trivyignore.yaml "\$CID:/.trivyignore.yaml"
+                    STATUS=0
+                    docker start -a "\$CID" || STATUS=\$?
+                    docker rm -f "\$CID" >/dev/null
+                    exit \$STATUS
+                  """
                 }]
               })
             }

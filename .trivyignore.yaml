@@ -1,0 +1,20 @@
+# Findings the Trivy gate must not block on.
+#
+# Everything here is path-scoped on purpose: a bare rule id would blind the
+# gate to the same finding anywhere in our own code, which is exactly what the
+# gate exists to catch.
+
+secrets:
+  # yt-dlp ships each site's public API credentials inside its extractor
+  # modules — they are constants of the published library, identical in every
+  # install, and there is nothing of ours to leak there. Trivy's secret scanner
+  # cannot tell them from a real key, so build #377 failed on
+  # `yt_dlp/extractor/shahid.py` alone.
+  - id: aws-access-key-id
+    paths:
+      - "**/site-packages/yt_dlp/extractor/**"
+    statement: Vendored public API keys inside the yt-dlp library, not our credentials
+  - id: aws-secret-access-key
+    paths:
+      - "**/site-packages/yt_dlp/extractor/**"
+    statement: Vendored public API keys inside the yt-dlp library, not our credentials

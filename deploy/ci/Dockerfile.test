@@ -36,6 +36,7 @@ COPY deploy/ci/Dockerfile.test ./deploy/ci/Dockerfile.test
 COPY deploy/ci/Dockerfile.bot-test ./deploy/ci/Dockerfile.bot-test
 COPY deploy/prod/docker-compose.yml ./deploy/prod/docker-compose.yml
 COPY Jenkinsfile ./Jenkinsfile
+COPY .trivyignore.yaml ./.trivyignore.yaml
 COPY docker-compose.worker.yml ./docker-compose.worker.yml
 
 ENV PATH="/app/.venv/bin:$PATH"

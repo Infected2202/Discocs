@@ -215,6 +215,35 @@ def test_trivy_blocks_only_fixable_high_or_critical_findings():
     assert pipeline.index('reportName: "Trivy: ${svc}"') < pipeline.index(gate)
 
 
+def test_trivy_gate_receives_the_ignore_file():
+    pipeline = JENKINSFILE.read_text(encoding="utf-8")
+
+    assert "--ignorefile /.trivyignore.yaml" in pipeline
+    # Воркспейс агента не виден хостовому демону как путь, поэтому файл
+    # попадает в контейнер через docker cp, а не через -v.
+    assert 'docker cp .trivyignore.yaml "\\$CID:/.trivyignore.yaml"' in pipeline
+    # Гейт обязан падать вместе с trivy: без проброса кода выхода из
+    # остановленного контейнера он молча пропускал бы HIGH/CRITICAL.
+    assert "exit \\$STATUS" in pipeline
+
+
+def test_every_trivy_ignore_rule_is_scoped_to_a_path():
+    """Голый id заигнорил бы ту же находку и в нашем коде — а гейт ровно за ней.
+
+    Файл нужен из-за yt-dlp: библиотека везёт публичные ключи чужих сервисов
+    внутри своих экстракторов, и секрет-сканер не отличает их от настоящих
+    (билд #377 упал на `yt_dlp/extractor/shahid.py`).
+    """
+    ignore_file = ROOT / ".trivyignore.yaml"
+    content = ignore_file.read_text(encoding="utf-8")
+    entries = content.split("- id:")[1:]
+
+    assert entries, "ignore file must not be empty"
+    for entry in entries:
+        assert "paths:" in entry, entry.strip().splitlines()[0]
+        assert "site-packages/yt_dlp/" in entry, entry.strip().splitlines()[0]
+
+
 def test_reports_reuse_a_single_image_analysis():
     """Таблица и HTML не пересканируют образ, а переформатируют один JSON."""
     code = _pipeline_code()
