@@ -292,17 +292,24 @@ pipeline {
                   // та же причина, что везде в этом файле).
                   sh """
                     set -e
+                    mkdir -p trivy-reports/${svc}
                     CID=\$(docker create ${mounts} --entrypoint sh aquasec/trivy -c '${scan} && ${html} && trivy convert /report.json')
                     docker start -a "\$CID"
                     docker cp "\$CID:/report.json" "trivy-${svc}.json"
-                    docker cp "\$CID:/report.html" "trivy-${svc}.html"
+                    docker cp "\$CID:/report.html" "trivy-reports/${svc}/trivy-${svc}.html"
                     docker rm -f "\$CID"
                   """
+                  // Отчёт лежит в собственном каталоге, а не в корне воркспейса:
+                  // с reportDir '.' HTML Publisher рекурсивно тарит ВЕСЬ воркспейс
+                  // (node_modules, .venv, .scannerwork). На билде #383 это упало
+                  // с FATAL NoSuchFileException — Sonar из соседней ветки удалил
+                  // свой .sonartmp прямо во время обхода, и билд стал FAILURE
+                  // после успеха всех стадий.
                   publishHTML(target: [
                     allowMissing: false,
                     alwaysLinkToLastBuild: true,
                     keepAll: true,
-                    reportDir: '.',
+                    reportDir: "trivy-reports/${svc}",
                     reportFiles: "trivy-${svc}.html",
                     reportName: "Trivy: ${svc}",
                   ])

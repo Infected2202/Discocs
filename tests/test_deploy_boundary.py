@@ -227,6 +227,19 @@ def test_trivy_gate_receives_the_ignore_file():
     assert "exit \\$STATUS" in pipeline
 
 
+def test_trivy_reports_are_published_from_their_own_directory():
+    """reportDir '.' заставляет HTML Publisher тарить весь воркспейс.
+
+    На билде #383 обход упал с FATAL NoSuchFileException: Sonar из соседней
+    параллельной ветки удалил свой .sonartmp прямо во время копирования, и
+    билд стал FAILURE после успеха всех стадий.
+    """
+    pipeline = JENKINSFILE.read_text(encoding="utf-8")
+
+    assert 'reportDir: "trivy-reports/${svc}"' in pipeline
+    assert "reportDir: '.'" not in pipeline
+
+
 def test_every_trivy_ignore_rule_is_scoped_to_a_path():
     """Голый id заигнорил бы ту же находку и в нашем коде — а гейт ровно за ней.
 
