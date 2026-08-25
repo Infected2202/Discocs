@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     # оригинала, поэтому запас настраивается — но по умолчанию его нет.
     external_bitrate_headroom: float = Field(default=1.0, alias="EXTERNAL_BITRATE_HEADROOM")
     ytdlp_cookies_file: str = Field(default="", alias="YTDLP_COOKIES_FILE")
+    temp_max_age_hours: float = Field(default=6.0, alias="TEMP_MAX_AGE_HOURS")
 
     transcode_bitrate: str = Field(default="320k", alias="TRANSCODE_BITRATE")
     transcode_workers: int = Field(default=4, alias="TRANSCODE_WORKERS")

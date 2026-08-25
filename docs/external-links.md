@@ -104,6 +104,12 @@ SHA-1 of `extractor:id`, short enough to live in Telegram's 64-byte
 Link metadata is kept in `external_media`, which is also what makes the button
 survive a bot restart: the card's `callback_data` carries only the key.
 
+Work files (the prepared mp3, its parts, the thumbnail) live in `TEMP_DIR` and
+are deleted by the delivery that made them. A crash in between leaves them
+behind, so startup sweeps anything in that directory older than
+`TEMP_MAX_AGE_HOURS` and trims the download cache to its bound — a restart is
+usually the moment right after such a crash.
+
 ## Safety
 
 The bot fetches whatever URL it is given, so the URL is the attack surface.
@@ -137,6 +143,7 @@ every handler.
 | `EXTERNAL_MAX_BITRATE_KBPS` | `320` | Encoding ceiling |
 | `EXTERNAL_BITRATE_HEADROOM` | `1.0` | Multiplier over the source bitrate |
 | `YTDLP_COOKIES_FILE` | *(empty)* | Cookie jar, if a source starts demanding a login |
+| `TEMP_MAX_AGE_HOURS` | `6` | Age at which leftover work files are swept on startup |
 
 In production the cache sits on the bot's existing host bind mount
 (`${DISCOCS_STATE_DIR}/discocs_bot`). To put it on another disk, add a bind

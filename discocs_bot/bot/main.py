@@ -24,6 +24,7 @@ from bot.services.navidrome import NavidromeClient
 from bot.services.transcoder import Transcoder
 from bot.storage.db import Database
 from bot.utils.single_instance import acquire, release
+from bot.utils.temp_cleanup import sweep_stale_files
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,12 @@ async def _post_init(application: Application) -> None:
     await db.connect()
     settings.temp_dir.mkdir(parents=True, exist_ok=True)
     settings.external_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # A crash mid-delivery leaves work files behind, and with link downloads
+    # those are tens of megabytes. Startup is when that has just happened.
+    sweep_stale_files(settings.temp_dir, max_age_seconds=settings.temp_max_age_hours * 3600)
+    media_cache: MediaCache = application.bot_data["media_cache"]
+    media_cache.trim()
 
     try:
         await navidrome.ping()
