@@ -95,6 +95,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         context.application.create_task(external_get_callback(update, context, payload))
         return
+    if action == "extradio":
+        from bot.handlers.links import external_radio_callback
+
+        context.application.create_task(external_radio_callback(update, context, payload))
+        return
+    if action == "extsearch":
+        from bot.handlers.links import external_search_callback
+
+        context.application.create_task(external_search_callback(update, context, payload))
+        return
     if action == "search_page":
         await search_page_callback(update, context, int(payload))
     elif action == "radio_page":

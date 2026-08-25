@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS external_media (
     url_key TEXT NOT NULL,
     source TEXT NOT NULL,
     webpage_url TEXT NOT NULL,
+    telegram_file_id TEXT,
     title TEXT NOT NULL,
     artist TEXT,
     duration INTEGER,
@@ -97,6 +98,11 @@ class Database:
             await conn.execute(
                 f"ALTER TABLE users ADD COLUMN audio_profile TEXT NOT NULL DEFAULT '{DEFAULT_AUDIO_PROFILE}'"
             )
+
+        async with conn.execute("PRAGMA table_info(external_media)") as cursor:
+            media_cols = {row[1] for row in await cursor.fetchall()}
+        if media_cols and "telegram_file_id" not in media_cols:
+            await conn.execute("ALTER TABLE external_media ADD COLUMN telegram_file_id TEXT")
 
         async with conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'telegram_audio_cache'"
@@ -240,18 +246,20 @@ class Database:
         duration: int | None,
         thumbnail_url: str | None,
         now: str,
+        telegram_file_id: str | None = None,
     ) -> None:
         conn = self._require_conn()
         await conn.execute(
             """
             INSERT INTO external_media (
-                media_key, url_key, source, webpage_url, title, artist,
+                media_key, url_key, source, webpage_url, telegram_file_id, title, artist,
                 duration, thumbnail_url, created_at, last_used_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(media_key) DO UPDATE SET
                 url_key = excluded.url_key,
                 source = excluded.source,
                 webpage_url = excluded.webpage_url,
+                telegram_file_id = excluded.telegram_file_id,
                 title = excluded.title,
                 artist = excluded.artist,
                 duration = excluded.duration,
@@ -263,6 +271,7 @@ class Database:
                 url_key,
                 source,
                 webpage_url,
+                telegram_file_id,
                 title,
                 artist,
                 duration,

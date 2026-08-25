@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from telegram import Bot, InputFile
+from telegram.error import TelegramError
 
 from bot.config import Settings
 from bot.services.external_audio import ExternalAudioError, ExternalTrackInfo, LinkAudioService
@@ -86,6 +87,31 @@ class ExternalDeliveryService:
         path = await self._links.download(url, info, root)
         self._cache.trim()
         return path
+
+    async def telegram_source_file(self, bot: Bot, file_id: str, info: ExternalTrackInfo) -> Path:
+        """The audio someone sent to the chat, downloaded once into the cache.
+
+        Telegram only hands a bot files up to 20 MB, so a longer set has to be
+        refused before we get here.
+        """
+        cached = self._cache.find(info.media_key)
+        if cached is not None:
+            logger.info("Media cache hit media_key=%s path=%s", info.media_key, cached.name)
+            return cached
+        root = self._cache.ensure_root()
+        try:
+            telegram_file = await bot.get_file(file_id)
+            suffix = Path(telegram_file.file_path or "audio.mp3").suffix or ".mp3"
+            destination = root / f"{info.media_key}{suffix}"
+            await telegram_file.download_to_drive(custom_path=destination)
+        except TelegramError as exc:
+            logger.warning("Could not download telegram audio media_key=%s: %s", info.media_key, exc)
+            raise ExternalAudioError(
+                str(exc),
+                user_message="Не удалось забрать файл из Telegram.",
+            ) from exc
+        self._cache.trim()
+        return destination
 
     async def prepare_mp3(
         self,

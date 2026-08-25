@@ -1,8 +1,9 @@
-# Links in the bot
+# External seeds in the bot
 
 Send the bot a link — YouTube, SoundCloud, Bandcamp, or any other source
-yt-dlp supports — and it answers with a card for the track behind it. The audio
-is fetched only when a button is pressed.
+yt-dlp supports — or an audio file, and it answers with a card for the track
+behind it. From there the audio can be delivered as MP3, or used as a radio
+seed against the library. Nothing is fetched until a button is pressed.
 
 ## Flow
 
@@ -10,17 +11,53 @@ is fetched only when a button is pressed.
 link in chat
   -> validate URL (scheme, address, known extractor)
   -> yt-dlp metadata, no download
-  -> card: cover, "Artist — Title", duration, [🎵 Скачать MP3]
-  -> button
-       -> cached file_id?  resend instantly
-       -> cached download? reuse it
-       -> otherwise download, prepare mp3, upload
+  -> already in the library?  -> library card: [📥 Получить] [📻 Радио] [🔗 Всё равно скачать]
+  -> otherwise card: cover, "Artist — Title", duration, [🎵 Скачать MP3] [📻 Радио]
+       -> 🎵  cached file_id? resend instantly; cached download? reuse it;
+              otherwise download, prepare mp3, upload
+       -> 📻  download, POST the bytes to /api/v1/similar/by-audio, show the
+              results as the usual track carousel
+```
+
+```text
+audio file in chat
+  -> card: "Artist — Title", duration, [🔎 Поиск по тегам] [📻 Радио по звуку]
 ```
 
 Metadata costs one cheap request; a download costs traffic and tens of seconds.
 Guessing which of the two someone wanted would be wrong about half the time, so
 the card asks. It also shows what the link actually resolved to before anything
 is spent on it.
+
+## Radio from something outside the library
+
+The button posts the audio to the backend, which embeds it in memory and
+answers with library tracks that sound like it — see
+[external-audio.md](external-audio.md), including the guarantee that this never
+writes to the catalog. Results render as the same carousel as radio from a
+library track, so every card underneath keeps its own **Получить** and
+**Радио**.
+
+There is no next page: the seed lives outside the library, so paging would mean
+uploading and embedding the same audio again for results already asked for. One
+request returns as many tracks as the instant-mix settings allow.
+
+Radio from a file someone sent works the same way, minus the download —
+except that Telegram only hands a bot files up to 20 MB. Above that the card
+offers tag search alone and says why.
+
+## Already in the library
+
+Before offering a download, the bot searches Navidrome for the linked track and
+shows the library card instead when it finds it. Two reasons: nothing has to be
+fetched, and radio then starts from an embedding computed from the original
+file rather than from a re-encoded copy off YouTube.
+
+Matching is strict — normalized titles must agree outright, and artists too
+when the link has one (a title alone has to be at least eight characters, so
+"Intro" never matches). A wrong match would send a different song than the one
+someone pasted, which is worse than one unnecessary download; the library card
+still carries **🔗 Всё равно скачать по ссылке** for when it happens anyway.
 
 ## Quality
 

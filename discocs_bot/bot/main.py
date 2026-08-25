@@ -8,10 +8,10 @@ from telegram.request import HTTPXRequest
 import bot.utils.logging  # noqa: F401
 from bot.config import get_settings
 from bot.handlers.callbacks import callback_handler
-from bot.handlers.links import link_message_handler
+from bot.handlers.links import audio_message_handler, link_message_handler
 from bot.handlers.menu import menu_command, menu_message_handler
 from bot.handlers.random import random_command
-from bot.handlers.search import audio_message_handler, search_command
+from bot.handlers.search import search_command
 from bot.handlers.settings import settings_command
 from bot.handlers.start import help_command, start_command
 from bot.keyboards.menu import BOT_COMMANDS

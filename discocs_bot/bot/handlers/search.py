@@ -1,7 +1,6 @@
 import logging
-from pathlib import Path
 
-from telegram import Message, Update
+from telegram import Update
 from telegram.ext import ContextTypes
 
 from bot.services.navidrome import NavidromeError
@@ -13,42 +12,6 @@ from bot.utils.track_pages import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def audio_search_query(message: Message) -> str | None:
-    audio = message.audio
-    if not audio:
-        return None
-
-    parts: list[str] = []
-    if audio.performer:
-        parts.append(audio.performer.strip())
-    if audio.title:
-        parts.append(audio.title.strip())
-    if parts:
-        return " ".join(parts)
-
-    if audio.file_name:
-        stem = Path(audio.file_name).stem.strip()
-        if stem:
-            return stem
-    return None
-
-
-async def audio_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if await deny_if_not_allowed(update, context):
-        return
-
-    message = update.effective_message
-    if not message:
-        return
-
-    query = audio_search_query(message)
-    if not query:
-        await message.reply_text("Не удалось определить название трека.")
-        return
-
-    await run_search(update, context, query)
 
 
 async def _send_search_page(

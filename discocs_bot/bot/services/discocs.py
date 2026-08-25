@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -8,6 +9,9 @@ from bot.services.navidrome import NavidromeClient
 from bot.storage.models import SimilarTrack, Track
 
 logger = logging.getLogger(__name__)
+
+# Внешний трек считается на бэкенде моделью: декод + EffNet на CPU.
+ANALYSIS_TIMEOUT_SECONDS = 300.0
 
 
 class DiscocsError(Exception):
@@ -88,6 +92,66 @@ class DiscocsClient:
                 if item.track:
                     tracks.append(item.track)
         return tracks, has_next
+
+    async def get_similar_by_audio(
+        self,
+        path: Path,
+        *,
+        limit: int | None = None,
+    ) -> list[Track]:
+        """Similar library tracks for audio that is not in the library.
+
+        The file is posted as a raw body — the backend embeds it in memory and
+        answers in the same item shape as /navidrome/similar, so results are
+        resolved through Navidrome exactly like radio from a library track.
+        """
+        try:
+            with path.open("rb") as handle:
+                response = await self._client.post(
+                    f"{self._base_url}/api/v1/similar/by-audio",
+                    content=handle,
+                    headers={"Content-Type": "application/octet-stream"},
+                    timeout=ANALYSIS_TIMEOUT_SECONDS,
+                )
+        except httpx.HTTPError as exc:
+            raise DiscocsError(str(exc)) from exc
+
+        if response.status_code >= 400:
+            raise self._error_from_audio_response(response)
+
+        payload = response.json()
+        page_limit = limit or self._settings.discocs_count
+        tracks: list[Track] = []
+        for item in payload.get("results", []):
+            parsed = self._parse_item(item)
+            if not parsed:
+                continue
+            try:
+                tracks.append(await self._navidrome.get_song(parsed.song_id))
+            except Exception:
+                logger.warning("Failed to load similar song %s", parsed.song_id)
+                if parsed.track:
+                    tracks.append(parsed.track)
+            if len(tracks) >= page_limit:
+                break
+        return tracks
+
+    def _error_from_audio_response(self, response: httpx.Response) -> DiscocsError:
+        detail = response.text
+        try:
+            detail = str(response.json().get("detail", detail))
+        except Exception:
+            pass
+        logger.error("Discocs by-audio %s: %s", response.status_code, detail)
+        if response.status_code == 400:
+            user_message = "Не удалось разобрать это аудио."
+        elif response.status_code == 413:
+            user_message = "Файл слишком большой для анализа."
+        elif response.status_code == 503:
+            user_message = "Discocs сейчас не может проанализировать аудио."
+        else:
+            user_message = "Discocs сейчас недоступен."
+        return DiscocsError(detail, user_message=user_message)
 
     def _error_from_response(self, response: httpx.Response) -> DiscocsError:
         detail = response.text
