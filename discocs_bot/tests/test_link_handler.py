@@ -125,7 +125,8 @@ def context_for(tmp_path: Path | None = None, **bot_data) -> SimpleNamespace:
         "navidrome": FakeNavidrome(),
     }
     data.update(bot_data)
-    return SimpleNamespace(bot=SimpleNamespace(name="bot"), bot_data=data)
+    # user_data is where PTB keeps the carousel view and the last-track memory.
+    return SimpleNamespace(bot=SimpleNamespace(name="bot"), bot_data=data, user_data={})
 
 
 def allow_everyone(monkeypatch) -> None:
@@ -359,7 +360,9 @@ def test_tag_search_button_searches_the_stored_metadata(monkeypatch):
     async def fake_run_search(update, context, query):
         queries.append(query)
 
-    monkeypatch.setattr("bot.handlers.search.run_search", fake_run_search)
+    from bot.handlers import search as search_module
+
+    monkeypatch.setattr(search_module, "run_search", fake_run_search)
     context = context_for(db=db)
 
     asyncio.run(links_module.external_search_callback(update_for(message), context, "abc123"))
