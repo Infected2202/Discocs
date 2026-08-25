@@ -76,6 +76,7 @@ server {
     location = /api/v1/navidrome/plugin-event { return 404; }
     location = /api/v1/models/download-head-pack { return 404; }
     location = /api/v1/index/rebuild { return 404; }
+    location = /api/v1/similar/by-audio { return 404; }
 
     # These two job families are personal and remain available to a signed-in
     # user. Exact locations take precedence over the general /jobs deny below.

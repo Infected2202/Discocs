@@ -47,6 +47,7 @@ def test_public_nginx_denies_operational_surfaces():
         "= /api/v1/navidrome/plugin-event",
         "= /api/v1/models/download-head-pack",
         "= /api/v1/index/rebuild",
+        "= /api/v1/similar/by-audio",
     )
 
     for selector in denied:

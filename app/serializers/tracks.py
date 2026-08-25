@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR
 from app.models import FeatureTrack, Track, TrackPrediction
+from app.schemas.responses import NavidromeSimilarItem
 from app.store import Store, similar_track_dict, track_dict, track_listing_dict
 
 logger = logging.getLogger(__name__)
@@ -161,3 +163,40 @@ def enriched_similar_track_dict(store: Store, result: object) -> dict[str, objec
     data = similar_track_dict(result)
     data.update(track_card_metadata(store, result.track))  # type: ignore[attr-defined]
     return data
+
+
+def navidrome_similar_items(
+    store: Store,
+    candidates: Iterable[object],
+    *,
+    min_similarity: float | None,
+    limit: int,
+) -> tuple[list[NavidromeSimilarItem], int]:
+    """Map recommender results to Navidrome-addressable items.
+
+    A result without a Navidrome external id cannot be played by the plugin or
+    fetched by the bot, so it is dropped and counted instead of returned.
+    """
+    items: list[NavidromeSimilarItem] = []
+    skipped_without_external_id = 0
+    for candidate in sorted(candidates, key=lambda item: item.similarity, reverse=True):  # type: ignore[attr-defined]
+        if min_similarity is not None and candidate.similarity < float(min_similarity):  # type: ignore[attr-defined]
+            continue
+        external_id = store.external_id_for_track("navidrome", candidate.track.id)  # type: ignore[attr-defined]
+        if external_id is None:
+            skipped_without_external_id += 1
+            continue
+        items.append(
+            NavidromeSimilarItem(
+                item_id=external_id,
+                track_id=candidate.track.id,  # type: ignore[attr-defined]
+                artist=candidate.track.artist,  # type: ignore[attr-defined]
+                title=candidate.track.title,  # type: ignore[attr-defined]
+                album=candidate.track.album,  # type: ignore[attr-defined]
+                distance=candidate.distance,  # type: ignore[attr-defined]
+                similarity=candidate.similarity,  # type: ignore[attr-defined]
+            )
+        )
+        if len(items) >= limit:
+            break
+    return items, skipped_without_external_id

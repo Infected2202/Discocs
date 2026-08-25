@@ -334,6 +334,7 @@ from app.api import (  # noqa: E402
     auth as _api_auth,
     dashboard as _api_dashboard,
     downloads as _api_downloads,
+    external as _api_external,
     metrics as _api_metrics,
     releases as _api_releases,
     search as _api_search,
@@ -362,6 +363,7 @@ app.include_router(_api_metrics.router)
 app.include_router(_api_playback.router)
 app.include_router(_api_mixes.router)
 app.include_router(_api_navidrome.router)
+app.include_router(_api_external.router)
 app.include_router(_api_tracks.router)
 app.include_router(_api_workers.router)
 app.include_router(_api_jobs.router)

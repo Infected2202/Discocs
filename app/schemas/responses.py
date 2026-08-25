@@ -191,6 +191,26 @@ class NavidromeSimilarResponse(BaseModel):
     results: list[NavidromeSimilarItem]
 
 
+class ExternalAudioSimilarResponse(BaseModel):
+    """Similar catalog tracks for a seed that is not in the catalog.
+
+    The seed vector is computed on the fly and never stored, so there is no
+    seed track id to report — only what was analyzed.
+    """
+
+    source: str = "external_audio"
+    request_id: str
+    model: str
+    effective_count: int
+    min_similarity: float | None = None
+    duration_seconds: float | None = None
+    analyzed_seconds: float | None = None
+    analysis_offset_seconds: float = 0.0
+    vector_cached: bool = False
+    skipped_without_external_id: int = 0
+    results: list[NavidromeSimilarItem]
+
+
 # ---------------------------------------------------------------------------
 # Playback
 # ---------------------------------------------------------------------------

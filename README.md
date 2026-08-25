@@ -26,7 +26,9 @@ See [docs/analysis-pipeline.md](docs/analysis-pipeline.md) and
 [docs/operations.md](docs/operations.md) for details. Navidrome Instant Mix
 integration is documented in [docs/navidrome-plugin.md](docs/navidrome-plugin.md).
 Original track and streaming collection downloads are documented in
-[docs/music-downloads.md](docs/music-downloads.md).
+[docs/music-downloads.md](docs/music-downloads.md). Radio seeded by audio that
+is not in the library is documented in
+[docs/external-audio.md](docs/external-audio.md).
 
 ## Quick Start
 

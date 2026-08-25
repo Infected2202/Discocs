@@ -27,8 +27,8 @@ from app.navidrome_starred import (
 )
 from app.recommender import Recommender
 from app.schemas.requests import NavidromeStarRequest
-from app.schemas.responses import NavidromeSimilarItem, NavidromeSimilarResponse
-from app.serializers.tracks import enriched_similar_track_dict
+from app.schemas.responses import NavidromeSimilarResponse
+from app.serializers.tracks import enriched_similar_track_dict, navidrome_similar_items
 
 navidrome_logger = logging.getLogger("discocs.navidrome")
 navidrome_plugin_logger = get_navidrome_plugin_logger()
@@ -429,29 +429,12 @@ def get_navidrome_similar(
         )
         raise HTTPException(status_code=503, detail=f"Navidrome similar failed: {exc}") from exc
 
-    results: list[NavidromeSimilarItem] = []
-    skipped_without_external_id = 0
-    sorted_candidates = sorted(candidates, key=lambda item: item.similarity, reverse=True)
-    for candidate in sorted_candidates:
-        if min_similarity is not None and candidate.similarity < float(min_similarity):
-            continue
-        external_id = store.external_id_for_track("navidrome", candidate.track.id)
-        if external_id is None:
-            skipped_without_external_id += 1
-            continue
-        results.append(
-            NavidromeSimilarItem(
-                item_id=external_id,
-                track_id=candidate.track.id,
-                artist=candidate.track.artist,
-                title=candidate.track.title,
-                album=candidate.track.album,
-                distance=candidate.distance,
-                similarity=candidate.similarity,
-            )
-        )
-        if len(results) >= effective_count:
-            break
+    results, skipped_without_external_id = navidrome_similar_items(
+        store,
+        candidates,
+        min_similarity=None if min_similarity is None else float(min_similarity),
+        limit=effective_count,
+    )
     if skipped_without_external_id:
         navidrome_logger.warning(
             "Navidrome similar skipped results without external ids request_id=%s item_id=%s skipped=%s",
