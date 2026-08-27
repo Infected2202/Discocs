@@ -133,14 +133,6 @@ def api_v1_get_playback_session(session_id: str) -> dict[str, object] | JSONResp
     session = store.get_playback_session(session_id)
     if session is None:
         return api_error(404, "not_found", _PLAYBACK_SESSION_NOT_FOUND)
-    # The flag alone used to be the whole effect, which lit the player's icon
-    # over a queue still in source order. Reorder when it actually changes.
-    if (
-        "shuffle_enabled" in fields
-        and previous is not None
-        and previous.shuffle_enabled != session.shuffle_enabled
-    ):
-        store.set_queue_shuffle(session_id, enabled=session.shuffle_enabled)
     return playback_session_response(store, session)
 
 
@@ -170,6 +162,14 @@ def api_v1_update_playback_session(
         return api_error(400, "invalid_request", str(exc))
     if session is None:
         return api_error(404, "not_found", _PLAYBACK_SESSION_NOT_FOUND)
+    # The flag alone used to be the whole effect, which lit the player's icon
+    # over a queue still in source order. Reorder when it actually changes.
+    if (
+        "shuffle_enabled" in fields
+        and previous is not None
+        and previous.shuffle_enabled != session.shuffle_enabled
+    ):
+        store.set_queue_shuffle(session_id, enabled=session.shuffle_enabled)
     return playback_session_response(store, session)
 
 
