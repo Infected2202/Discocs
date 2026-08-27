@@ -135,6 +135,12 @@ describe("SearchPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /show all/i }))
 
+    // Split the wait the same way the test above does. One click has to
+    // activate the tab, fire a fresh paginated request and render 49 rows;
+    // folding all of that into a single findBy* makes the render share one
+    // budget with the request — and findBy*'s budget is 1s regardless of
+    // testTimeout, which ran out under the full parallel run in build #390.
+    await waitFor(() => expect(fetchSearch).toHaveBeenCalledWith("fabric", "release", 50, 0))
     expect(await screen.findByText("Release 49")).toBeInTheDocument()
   })
 })
