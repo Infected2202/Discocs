@@ -14,6 +14,20 @@ function formatTime(seconds: number): string {
   return `${minutes}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`
 }
 
+/**
+ * The element's own `duration` is unusable while a transcoded stream arrives
+ * without a declared length — the browser reports Infinity for the whole
+ * track. Infinity is truthy, so a plain `reported || fallback` would adopt it
+ * and freeze progress at `t / Infinity === 0` while making every seek target
+ * `fraction * Infinity`. Prefer whatever the element actually resolved, and
+ * fall back to the duration the share API already told us.
+ */
+function resolveDuration(reported: number | undefined, fromApi: number | null | undefined): number {
+  if (reported !== undefined && Number.isFinite(reported) && reported > 0) return reported
+  if (fromApi != null && Number.isFinite(fromApi) && fromApi > 0) return fromApi
+  return 0
+}
+
 export default function SharedPlayerPage() {
   const { t } = useTranslation("share")
   const { token = "" } = useParams<{ token: string }>()
@@ -45,7 +59,7 @@ export default function SharedPlayerPage() {
   const commitSeek = (fraction: number) => {
     const audio = audioRef.current
     const knownDuration = durationRef.current
-    if (audio && knownDuration > 0) {
+    if (audio && Number.isFinite(knownDuration) && knownDuration > 0) {
       const nextTime = fraction * knownDuration
       audio.currentTime = nextTime
       setCurrentTime(nextTime)
@@ -99,7 +113,7 @@ export default function SharedPlayerPage() {
     audio.load()
     setPlaying(false)
     setCurrentTime(0)
-    durationRef.current = item.duration ?? 0
+    durationRef.current = resolveDuration(undefined, item.duration)
     setDuration(durationRef.current)
     setDragProgress(null)
     if ("mediaSession" in navigator) {
@@ -231,7 +245,7 @@ export default function SharedPlayerPage() {
         onPlaying={() => setBuffering(false)}
         onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
         onDurationChange={(event) => {
-          durationRef.current = event.currentTarget.duration || item?.duration || 0
+          durationRef.current = resolveDuration(event.currentTarget.duration, item?.duration)
           setDuration(durationRef.current)
         }}
         onEnded={handleEnded}
@@ -289,7 +303,11 @@ export default function SharedPlayerPage() {
                 >
                   <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded bg-muted" />
                   <div className="absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded bg-primary" style={{ width: `${displayedProgress * 100}%` }} />
-                  <div className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary opacity-0 shadow transition-opacity group-hover/seek:opacity-100 group-focus-visible/seek:opacity-100" style={{ left: `${displayedProgress * 100}%` }} />
+                  <div
+                    className="share-seek-thumb absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary shadow transition-opacity"
+                    data-dragging={dragProgress !== null}
+                    style={{ left: `${displayedProgress * 100}%` }}
+                  />
                 </div>
                 <div className="flex justify-between text-xs tabular-nums text-muted-foreground"><span>{formatTime(displayedTime)}</span><span>{formatTime(duration)}</span></div>
               </div>

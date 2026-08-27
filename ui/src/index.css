@@ -209,6 +209,24 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--track-accent) 32%, transparent);
 }
 
+/* Same reasoning for the public player's seek thumb: a touch-only visitor has
+   no hover, so a hover-gated thumb is simply never drawn and the bar reads as
+   a dead progress line. The native <input type="range"> this replaced always
+   painted its thumb; keep that guarantee. */
+.share-seek-thumb {
+  opacity: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .share-seek-thumb {
+    opacity: 0;
+  }
+  .group\/seek:hover .share-seek-thumb,
+  .group\/seek:focus-visible .share-seek-thumb,
+  .share-seek-thumb[data-dragging="true"] {
+    opacity: 1;
+  }
+}
+
 /* Touchscreens have no persistent hover state, so row actions must remain
    discoverable. Pointer devices can keep the quieter hover-only treatment. */
 .track-menu-trigger {

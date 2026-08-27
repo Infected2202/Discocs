@@ -105,6 +105,82 @@ describe("SharedPlayerPage", () => {
     expect(seek).toHaveAttribute("aria-valuenow", "48")
   })
 
+  it("keeps the API duration when the stream reports an unresolved one", async () => {
+    // A transcoded stream without a declared length leaves the element at
+    // duration Infinity for the whole track. Adopting it froze progress at
+    // `t / Infinity === 0` and made every seek target `fraction * Infinity`,
+    // so the bar rendered as a dead line reading 0:00 / 0:00.
+    const { container } = renderPage()
+    await screen.findByRole("heading", { name: "First" })
+
+    const audio = container.querySelector("audio") as HTMLAudioElement
+    Object.defineProperty(audio, "duration", { value: Number.POSITIVE_INFINITY, configurable: true })
+    fireEvent.durationChange(audio)
+
+    const seek = screen.getByRole("slider", { name: "Playback position" })
+    expect(seek).toHaveAttribute("aria-valuemax", "60")
+    expect(seek).toHaveAttribute("aria-valuetext", "0:00 / 1:00")
+  })
+
+  it("seeks to real seconds when the stream never resolves its duration", async () => {
+    const { container } = renderPage()
+    await screen.findByRole("heading", { name: "First" })
+
+    const audio = container.querySelector("audio") as HTMLAudioElement
+    Object.defineProperty(audio, "duration", { value: Number.POSITIVE_INFINITY, configurable: true })
+    fireEvent.durationChange(audio)
+
+    const seek = screen.getByRole("slider", { name: "Playback position" })
+    vi.spyOn(seek, "getBoundingClientRect").mockReturnValue({
+      left: 100, width: 200, right: 300, top: 0, bottom: 16,
+      height: 16, x: 100, y: 0, toJSON: () => ({}),
+    })
+    seek.setPointerCapture = vi.fn()
+
+    fireEvent.pointerDown(seek, { pointerId: 7, clientX: 200 })
+    fireEvent.pointerUp(window, { pointerId: 7, clientX: 200 })
+
+    expect(audio.currentTime).toBe(30)
+    expect(seek).toHaveAttribute("aria-valuenow", "30")
+  })
+
+  it("prefers the element duration once the stream resolves a real one", async () => {
+    const { container } = renderPage()
+    await screen.findByRole("heading", { name: "First" })
+
+    const audio = container.querySelector("audio") as HTMLAudioElement
+    Object.defineProperty(audio, "duration", { value: 61.5, configurable: true })
+    fireEvent.durationChange(audio)
+
+    expect(screen.getByRole("slider", { name: "Playback position" })).toHaveAttribute("aria-valuemax", "62")
+  })
+
+  it("keeps the seek thumb paintable without hover and marks it while dragging", async () => {
+    // Touch visitors have no hover state, so a hover-gated thumb is never
+    // drawn at all — the bar looks like a static progress line.
+    const { container } = renderPage()
+    await screen.findByRole("heading", { name: "First" })
+
+    const seek = screen.getByRole("slider", { name: "Playback position" })
+    const thumb = container.querySelector(".share-seek-thumb") as HTMLElement
+    expect(thumb).toBeInTheDocument()
+    expect(thumb).not.toHaveClass("opacity-0")
+    expect(thumb).toHaveAttribute("data-dragging", "false")
+
+    vi.spyOn(seek, "getBoundingClientRect").mockReturnValue({
+      left: 100, width: 200, right: 300, top: 0, bottom: 16,
+      height: 16, x: 100, y: 0, toJSON: () => ({}),
+    })
+    seek.setPointerCapture = vi.fn()
+    fireEvent.pointerDown(seek, { pointerId: 9, clientX: 150 })
+
+    expect(container.querySelector(".share-seek-thumb")).toHaveAttribute("data-dragging", "true")
+
+    fireEvent.pointerUp(window, { pointerId: 9, clientX: 150 })
+
+    expect(container.querySelector(".share-seek-thumb")).toHaveAttribute("data-dragging", "false")
+  })
+
   it("shows one generic unavailable state for a rejected token", async () => {
     fetchPublicShare.mockRejectedValueOnce(new Error("404"))
     renderPage()

@@ -2905,12 +2905,7 @@ def test_track_audio_uses_navidrome_mapping_for_local_path(tmp_path: Path, monke
     assert not (tmp_path / "tmp" / "navidrome").exists()
 
 
-def test_track_audio_strips_content_length_for_estimated_transcode(tmp_path: Path, monkeypatch):
-    # Navidrome's Content-Length for an on-the-fly transcode (estimateContentLength=true)
-    # is a bitrate*duration estimate, not the real encoded size. Forwarding it verbatim
-    # makes Starlette abort the response when the real stream falls short of that
-    # declared length ("Response content shorter than Content-Length") — surfacing to
-    # clients as a broken/premature connection close.
+def _transcoding_track(tmp_path: Path, monkeypatch) -> tuple[Store, int]:
     store = init_api_store(tmp_path, monkeypatch)
     monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")
     monkeypatch.setenv("DISCOCS_NAVIDROME_USER", "tester")
@@ -2919,17 +2914,20 @@ def test_track_audio_strips_content_length_for_estimated_transcode(tmp_path: Pat
     track_id = add_track(store, tmp_path / "missing.flac")
     store.upsert_external_track("navidrome", "song-1", track_id)
     store.set_user_settings({"transcoding_enabled": True, "transcoding_bitrate_kbps": 192})
+    return store, track_id
 
+
+def _fake_transcode_stream(declared: str, chunks: list[bytes], status: int = 200):
     class FakeStreamResponse:
-        status = 200
         headers = {
             "Accept-Ranges": "bytes",
-            "Content-Length": "999999",
+            "Content-Length": declared,
             "Content-Type": "audio/mpeg",
         }
 
         def __init__(self):
-            self._chunks = [b"short-audio", b""]
+            self.status = status
+            self._chunks = [*chunks, b""]
 
         def read(self, _size):
             return self._chunks.pop(0)
@@ -2940,14 +2938,65 @@ def test_track_audio_strips_content_length_for_estimated_transcode(tmp_path: Pat
         def getcode(self):
             return self.status
 
-    monkeypatch.setattr("app.api.tracks.urlopen", lambda request, timeout: FakeStreamResponse())
-    client = TestClient(app)
+    return FakeStreamResponse
 
-    response = client.get(f"/api/v1/tracks/{track_id}/audio")
+
+def test_track_audio_pads_estimated_transcode_to_declared_length(tmp_path: Path, monkeypatch):
+    # Navidrome's Content-Length for an on-the-fly transcode
+    # (estimateContentLength=true) is derived from bitrate*duration. It is
+    # normally exact for the CBR profiles we request, but a stream that falls
+    # short of the declared length is a broken response the ASGI server aborts
+    # mid-transfer. Dropping the header avoided that and cost every client its
+    # only source of length: a plain request carries neither Content-Length nor
+    # Content-Range, so the browser reports duration Infinity and cannot seek.
+    # Honour the declared length in the body instead of discarding it.
+    _store, track_id = _transcoding_track(tmp_path, monkeypatch)
+    stream = _fake_transcode_stream("32", [b"short-audio"])
+    monkeypatch.setattr("app.api.tracks.urlopen", lambda request, timeout: stream())
+
+    response = TestClient(app).get(f"/api/v1/tracks/{track_id}/audio")
 
     assert response.status_code == 200
-    assert response.content == b"short-audio"
+    assert response.headers["content-length"] == "32"
+    assert len(response.content) == 32
+    assert response.content == b"short-audio" + bytes(21)
+
+
+def test_track_audio_truncates_transcode_overrunning_declared_length(tmp_path: Path, monkeypatch):
+    _store, track_id = _transcoding_track(tmp_path, monkeypatch)
+    stream = _fake_transcode_stream("5", [b"short", b"-audio"])
+    monkeypatch.setattr("app.api.tracks.urlopen", lambda request, timeout: stream())
+
+    response = TestClient(app).get(f"/api/v1/tracks/{track_id}/audio")
+
+    assert response.status_code == 200
+    assert response.headers["content-length"] == "5"
+    assert response.content == b"short"
+
+
+def test_track_audio_head_reports_the_declared_transcode_length(tmp_path: Path, monkeypatch):
+    # An empty HEAD body used to overwrite the popped header with
+    # "Content-Length: 0", telling a probing client the track had no bytes.
+    _store, track_id = _transcoding_track(tmp_path, monkeypatch)
+    stream = _fake_transcode_stream("8756611", [])
+    monkeypatch.setattr("app.api.tracks.urlopen", lambda request, timeout: stream())
+
+    response = TestClient(app).head(f"/api/v1/tracks/{track_id}/audio")
+
+    assert response.status_code == 200
+    assert response.headers["content-length"] == "8756611"
+
+
+def test_track_audio_streams_unchanged_when_length_is_unparseable(tmp_path: Path, monkeypatch):
+    _store, track_id = _transcoding_track(tmp_path, monkeypatch)
+    stream = _fake_transcode_stream("not-a-number", [b"short-audio"])
+    monkeypatch.setattr("app.api.tracks.urlopen", lambda request, timeout: stream())
+
+    response = TestClient(app).get(f"/api/v1/tracks/{track_id}/audio")
+
+    assert response.status_code == 200
     assert "content-length" not in response.headers
+    assert response.content == b"short-audio"
 
 
 def test_track_audio_keeps_content_length_for_raw_profile(tmp_path: Path, monkeypatch):

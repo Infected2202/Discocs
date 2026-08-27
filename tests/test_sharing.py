@@ -387,6 +387,54 @@ def test_expired_revoked_and_unknown_share_have_same_public_response(tmp_path, m
     assert len({response.text for response in responses}) == 1
 
 
+def test_public_navidrome_audio_declares_its_length_without_a_range_request(tmp_path, monkeypatch):
+    # A share guest whose browser opens the stream without a Range header used
+    # to get neither Content-Length nor Content-Range, so the media element
+    # could not derive the duration or build a byte range: the seek bar showed
+    # 0:00 / 0:00 and refused to move. The public profile always transcodes, so
+    # this was the only path public playback ever took.
+    store = _init_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_USER", "share-service")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_PASSWORD", "service-secret")
+    track_id = _track(store, tmp_path / "mapped.flac", title="Mapped")
+    store.upsert_external_track("navidrome", "song-1", track_id)
+    scoped = _user_store(store)
+    _share, token = scoped.create_share(
+        source_type="track", source_id=track_id, expires_at=_future()
+    )
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        status = 200
+        headers = {"Content-Type": "audio/mpeg", "Content-Length": "24"}
+
+        def getcode(self):
+            return 200
+
+        def read(self, _size=-1):
+            if seen.get("read"):
+                return b""
+            seen["read"] = True
+            return b"audio"
+
+        def close(self):
+            pass
+
+    def fake_urlopen(request, timeout):
+        seen["range"] = request.headers.get("Range")
+        return FakeResponse()
+
+    monkeypatch.setattr("app.api.tracks.urlopen", fake_urlopen)
+
+    response = TestClient(app).get(f"/api/v1/public/shares/{token}/items/0/audio")
+
+    assert response.status_code == 200
+    assert seen["range"] is None
+    assert response.headers["content-length"] == "24"
+    assert len(response.content) == 24
+
+
 def test_public_navidrome_audio_uses_service_account_not_creator_secret(tmp_path, monkeypatch):
     store = _init_store(tmp_path, monkeypatch)
     monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")

@@ -636,6 +636,20 @@ def get_similar_mix_tracks(
 # Audio streaming helpers
 # ---------------------------------------------------------------------------
 
+_STREAM_CHUNK_BYTES = 1024 * 1024
+
+
+def _declared_stream_length(value: str | None) -> int | None:
+    """Content-Length the body generator must reproduce exactly, if usable."""
+    if value is None:
+        return None
+    try:
+        length = int(value)
+    except ValueError:
+        return None
+    return length if length >= 0 else None
+
+
 def navidrome_audio_stream_response(
     settings: object,
     item_id: str,
@@ -667,16 +681,30 @@ def navidrome_audio_stream_response(
         raise RuntimeError(f"Navidrome stream unavailable: {exc}") from exc
 
     response_headers = navidrome_stream_headers(upstream.headers)
+    # Navidrome's Content-Length for an on-the-fly transcode is derived from
+    # bitrate * duration. For the CBR profiles we ask for it matches the real
+    # encoded size, but it is not guaranteed to: a stream that falls short of
+    # the declared length is a broken response the ASGI server aborts
+    # mid-transfer ("Response content shorter than Content-Length"), which
+    # clients see as a premature connection close.
+    #
+    # Dropping the header avoided that, but left a plain (no-Range) request
+    # with no length information at all — no Content-Length and no
+    # Content-Range. A media element then cannot derive the track duration or
+    # form a byte range, so it reports duration Infinity and refuses to seek.
+    # Clients that do send Range were only saved by Content-Range carrying the
+    # total; the rest got an unseekable stream.
+    #
+    # So keep the declared length and make the body honour it instead: the
+    # generator below pads a short upstream with silence and truncates an
+    # overlong one, which keeps the response well-formed for every client.
+    declared_length: int | None = None
     if stream_params and stream_params.get("estimateContentLength"):
-        # Navidrome's Content-Length for an on-the-fly transcode is an
-        # estimate derived from bitrate * duration, not the real encoded
-        # size. Forwarding it verbatim makes Starlette count bytes against a
-        # declared length that the actual stream can fall short of, which it
-        # treats as a broken response ("Response content shorter than
-        # Content-Length") and aborts mid-stream — surfacing to clients as a
-        # premature connection close. Dropping it here makes this a normal
-        # chunked response instead.
-        response_headers.pop("Content-Length", None)
+        declared_length = _declared_stream_length(response_headers.get("Content-Length"))
+        if declared_length is None:
+            # Nothing to honour and nothing worth forwarding: an unparseable
+            # length on the wire is worse than none at all.
+            response_headers.pop("Content-Length", None)
     content_type = normalize_audio_media_type(upstream.headers.get("Content-Type", ""))
     status_code = int(getattr(upstream, "status", None) or upstream.getcode() or 200)
 
@@ -689,12 +717,22 @@ def navidrome_audio_stream_response(
         )
 
     def body():
+        sent = 0
         try:
             while True:
-                chunk = upstream.read(1024 * 1024)
+                chunk = upstream.read(_STREAM_CHUNK_BYTES)
                 if not chunk:
                     break
+                if declared_length is not None:
+                    if sent >= declared_length:
+                        break
+                    chunk = chunk[: declared_length - sent]
+                sent += len(chunk)
                 yield chunk
+            while declared_length is not None and sent < declared_length:
+                padding = min(_STREAM_CHUNK_BYTES, declared_length - sent)
+                sent += padding
+                yield bytes(padding)
         finally:
             upstream.close()
 
