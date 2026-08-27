@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Check, Copy, Loader2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
+import { useVisualViewportFit } from "@/hooks/useVisualViewportFit"
 import {
   Dialog,
   DialogContent,
@@ -37,6 +38,7 @@ export default function CreateShareDialog({
   const [pending, setPending] = useState(false)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const viewportFit = useVisualViewportFit(open)
 
   function reset() {
     setTitle("")
@@ -46,6 +48,21 @@ export default function CreateShareDialog({
     setPending(false)
     setCopied(false)
     setError(null)
+  }
+
+  /**
+   * Clipboard writes reject on their own terms — an insecure origin, a denied
+   * permission, a browser that wants fresher user activation than an awaited
+   * request leaves behind. A failure only means the manual button is still
+   * needed, so it must never surface as a share-creation error.
+   */
+  async function writeToClipboard(value: string): Promise<boolean> {
+    try {
+      await navigator.clipboard.writeText(value)
+      return true
+    } catch {
+      return false
+    }
   }
 
   async function submit() {
@@ -63,6 +80,9 @@ export default function CreateShareDialog({
         expires_at: expiresAt,
       })
       setUrl(result.url)
+      // The link is shown exactly once, so put it somewhere durable before the
+      // user can lose it to a stray tap outside the dialog.
+      setCopied(await writeToClipboard(result.url))
     } catch (err) {
       setError(err instanceof Error ? err.message : t("createError"))
     } finally {
@@ -72,8 +92,7 @@ export default function CreateShareDialog({
 
   async function copy() {
     if (!url) return
-    await navigator.clipboard.writeText(url)
-    setCopied(true)
+    setCopied(await writeToClipboard(url))
   }
 
   return (
@@ -84,7 +103,20 @@ export default function CreateShareDialog({
         if (!next) reset()
       }}
     >
-      <DialogContent>
+      <DialogContent
+        className="overflow-y-auto"
+        style={{ marginTop: viewportFit.offset, maxHeight: viewportFit.maxHeight ?? undefined }}
+        onOpenAutoFocus={(event) => {
+          // Radix focuses the first field on open, which throws up the mobile
+          // keyboard over half the dialog before the user has decided to
+          // rename anything — and the label already defaults to the source
+          // title. Land focus on the dialog itself instead: the focus trap,
+          // Escape and tab order all keep working, without a caret anywhere.
+          event.preventDefault()
+          const content = event.currentTarget as HTMLElement | null
+          content?.focus()
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{t("dialogTitle")}</DialogTitle>
           <DialogDescription>{t("dialogDescription", { title: sourceTitle })}</DialogDescription>
@@ -99,6 +131,7 @@ export default function CreateShareDialog({
                 {copied ? <Check size={16} /> : <Copy size={16} />}
               </Button>
             </div>
+            {copied && <p className="text-xs text-primary">{t("copiedToClipboard")}</p>}
             <p className="text-xs text-muted-foreground">{t("urlShownOnce")}</p>
             <a href="/shared-links" className="inline-block text-xs text-primary hover:underline">{t("manageLinks")}</a>
           </div>

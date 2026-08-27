@@ -17,6 +17,7 @@
   "createError": "Could not create the link.",
   "shareUrl": "Public link",
   "copy": "Copy link",
+  "copiedToClipboard": "Copied to clipboard",
   "urlShownOnce": "The full link is shown only now. If it is lost, create a new one.",
   "manageLinks": "Manage shared links",
   "queue": "Queue",
