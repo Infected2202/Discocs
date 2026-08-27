@@ -57,9 +57,12 @@ PUBLIC_PATHS = frozenset(
 
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
+# Every capability URL a guest may reach without a session. A route missing
+# here is not merely undiscoverable — the middleware answers it with 401, so
+# adding a public share endpoint means adding it to this pattern too.
 _PUBLIC_SHARE_PATH = re.compile(
     r"^/api/v1/public/shares/[A-Za-z0-9_-]{40,64}"
-    r"(?:/cover|/preview|/items/[0-9]+/audio)?$"
+    r"(?:/cover|/preview|/download|/items/[0-9]+/(?:audio|download))?$"
 )
 
 

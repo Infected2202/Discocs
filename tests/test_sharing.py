@@ -40,6 +40,34 @@ def test_sharing_is_enabled_by_default_and_supports_explicit_opt_out(monkeypatch
     assert is_public_share_request(request) is False
 
 
+def test_every_public_share_endpoint_reaches_past_the_auth_middleware():
+    # A guest has no session, so a capability route missing from the whitelist
+    # is answered with 401 rather than merely being undiscoverable. Each path
+    # the share page fetches has to be listed here.
+    token = "A" * 43
+
+    def public(path: str, method: str = "GET") -> bool:
+        request = Request(
+            {"type": "http", "method": method, "path": path, "headers": []}
+        )
+        return is_public_share_request(request)
+
+    base = f"/api/v1/public/shares/{token}"
+    assert public(base) is True
+    assert public(f"{base}/cover") is True
+    assert public(f"{base}/preview") is True
+    assert public(f"{base}/items/0/audio") is True
+    assert public(f"{base}/items/0/audio", "HEAD") is True
+    assert public(f"{base}/items/12/download") is True
+    assert public(f"{base}/download") is True
+
+    # Nothing outside the capability surface rides along.
+    assert public(f"{base}/items/0/download", "DELETE") is False
+    assert public(f"{base}/items/0") is False
+    assert public("/api/v1/tracks/1/download") is False
+    assert public("/api/v1/shares") is False
+
+
 def _init_store(tmp_path: Path, monkeypatch) -> Store:
     db_path = tmp_path / "app.db"
     INITIALIZED_DB_PATHS.discard(db_path.resolve())
@@ -104,6 +132,10 @@ def _user_store(store: Store, username: str = "alice") -> Store:
 
 def _future(days: int = 7) -> str:
     return (datetime.now(UTC) + timedelta(days=days)).isoformat()
+
+
+def _past(hours: int = 1) -> str:
+    return (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
 
 
 def _session_client(store: Store, username: str = "alice") -> TestClient:
@@ -515,7 +547,7 @@ def test_public_share_download_is_refused_for_an_expired_link(tmp_path, monkeypa
     _share, token = scoped.create_share(
         source_type="track",
         source_id=track_id,
-        expires_at=(utc_now() - timedelta(hours=1)).isoformat(),
+        expires_at=_past(),
     )
     client = TestClient(app)
 
