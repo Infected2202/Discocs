@@ -12,6 +12,10 @@ const fetchLikesPlaylist = vi.fn()
 const deletePlaylist = vi.fn()
 const removePlaylistTracks = vi.fn()
 const reorderPlaylistTracks = vi.fn()
+const playPlaylist = vi.fn()
+const playLikes = vi.fn()
+const playFromEnvelope = vi.fn()
+const setShuffle = vi.fn()
 
 vi.mock("@/api/playlists", () => ({
   fetchPlaylist: (...args: unknown[]) => fetchPlaylist(...args),
@@ -19,8 +23,13 @@ vi.mock("@/api/playlists", () => ({
   deletePlaylist: (...args: unknown[]) => deletePlaylist(...args),
   removePlaylistTracks: (...args: unknown[]) => removePlaylistTracks(...args),
   reorderPlaylistTracks: (...args: unknown[]) => reorderPlaylistTracks(...args),
-  playPlaylist: vi.fn(),
-  playLikes: vi.fn(),
+  playPlaylist: (...args: unknown[]) => playPlaylist(...args),
+  playLikes: (...args: unknown[]) => playLikes(...args),
+}))
+
+vi.mock("@/store/playerStore", () => ({
+  usePlayerStore: (selector: (state: Record<string, unknown>) => unknown) =>
+    selector({ playFromEnvelope, setShuffle }),
 }))
 
 // The page is tested through a stub list that surfaces the selection wiring.
@@ -102,6 +111,10 @@ beforeEach(() => {
   deletePlaylist.mockReset()
   removePlaylistTracks.mockReset()
   reorderPlaylistTracks.mockReset()
+  playPlaylist.mockReset().mockResolvedValue({ session: { id: "s1" } })
+  playLikes.mockReset().mockResolvedValue({ session: { id: "s1" } })
+  playFromEnvelope.mockReset().mockResolvedValue(undefined)
+  setShuffle.mockReset().mockResolvedValue(undefined)
   useUIStore.setState({ addToPlaylistTrackIds: null, createPlaylistOptions: null })
 })
 
@@ -209,6 +222,71 @@ describe("PlaylistPage — пользовательский плейлист", (
       "href",
       "/api/v1/playlists/likes/download",
     )
+  })
+})
+
+describe("PlaylistPage — shuffle", () => {
+  it("плейлист: стартует список и включает перемешивание", async () => {
+    fetchPlaylist.mockResolvedValue(makeDetail())
+    renderPage("/playlists/5")
+    await screen.findByText("Road trip")
+
+    fireEvent.click(screen.getByRole("button", { name: "Shuffle" }))
+
+    await waitFor(() => expect(setShuffle).toHaveBeenCalledWith(true))
+    expect(playPlaylist).toHaveBeenCalledWith(5)
+  })
+
+  it("лайки: стартует лайки и включает перемешивание", async () => {
+    fetchLikesPlaylist.mockResolvedValue({
+      id: "likes",
+      title: "Liked Tracks",
+      track_count: 1,
+      tracks: [makeTrack(1)],
+    })
+    renderPage("/playlists/likes")
+    await screen.findByText("Liked Tracks")
+
+    fireEvent.click(screen.getByRole("button", { name: "Shuffle" }))
+
+    await waitFor(() => expect(setShuffle).toHaveBeenCalledWith(true))
+    expect(playLikes).toHaveBeenCalled()
+    expect(playPlaylist).not.toHaveBeenCalled()
+  })
+
+  it("перемешивает новую сессию, а не ту, что играла до нажатия", async () => {
+    // Ordering is the whole point: shuffling before the new queue is applied
+    // would rearrange whatever was playing before and leave this list linear.
+    fetchPlaylist.mockResolvedValue(makeDetail())
+    renderPage("/playlists/5")
+    await screen.findByText("Road trip")
+
+    fireEvent.click(screen.getByRole("button", { name: "Shuffle" }))
+
+    await waitFor(() => expect(setShuffle).toHaveBeenCalled())
+    expect(playFromEnvelope.mock.invocationCallOrder[0])
+      .toBeLessThan(setShuffle.mock.invocationCallOrder[0])
+  })
+
+  it("не включает перемешивание, если старт списка провалился", async () => {
+    fetchPlaylist.mockResolvedValue(makeDetail())
+    playPlaylist.mockRejectedValue(new Error("offline"))
+    renderPage("/playlists/5")
+    await screen.findByText("Road trip")
+
+    fireEvent.click(screen.getByRole("button", { name: "Shuffle" }))
+
+    await waitFor(() => expect(playPlaylist).toHaveBeenCalled())
+    expect(playFromEnvelope).not.toHaveBeenCalled()
+    expect(setShuffle).not.toHaveBeenCalled()
+  })
+
+  it("нечего перемешивать в пустом списке — кнопки нет", async () => {
+    fetchPlaylist.mockResolvedValue({ ...makeDetail(), tracks: [], track_count: 0 })
+    renderPage("/playlists/5")
+    await screen.findByText("Road trip")
+
+    expect(screen.queryByRole("button", { name: "Shuffle" })).toBeNull()
   })
 })
 

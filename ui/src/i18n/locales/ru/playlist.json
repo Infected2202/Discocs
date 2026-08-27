@@ -6,6 +6,7 @@
   "trackCount_many": "{{count}} треков",
   "trackCount_other": "{{count}} трека",
   "play": "Воспроизвести",
+  "shuffle": "Перемешать",
   "edit": "Изменить",
   "delete": "Удалить",
   "deleteConfirm": "Удалить плейлист «{{title}}»?",

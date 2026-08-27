@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useParams, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
-import { Download, Play, ChevronLeft, Pencil, Trash2, X } from "lucide-react"
+import { Download, Play, ChevronLeft, Pencil, Shuffle, Trash2, X } from "lucide-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   fetchLikesPlaylist,
@@ -62,6 +62,7 @@ export default function PlaylistPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
+  const setShuffle = usePlayerStore((s) => s.setShuffle)
   const openCreatePlaylist = useUIStore((s) => s.openCreatePlaylist)
 
   const isLikes = id === "likes"
@@ -132,9 +133,18 @@ export default function PlaylistPage() {
 
   // Starts the whole playlist. With a trackId, playback begins at that track
   // (row click); without one, at the top (the header Play button).
-  function playPlaylistFrom(trackId?: number) {
+  //
+  // Resolves to whether this list actually became the session, which Shuffle
+  // needs on both counts: it must not reorder before the new queue is applied,
+  // and it must not reorder at all if the start failed — the session still
+  // loaded is then whatever was playing before, and shuffling that is not what
+  // the button on this page offers.
+  function playPlaylistFrom(trackId?: number): Promise<boolean> {
     const play = isLikes ? playLikes() : playPlaylist(playlistId!)
-    play.then((envelope) => playFromEnvelope(envelope, trackId)).catch(() => {})
+    return play
+      .then((envelope) => playFromEnvelope(envelope, trackId))
+      .then(() => true)
+      .catch(() => false)
   }
 
   function handleEdit() {
@@ -188,18 +198,31 @@ export default function PlaylistPage() {
               {t("play")}
             </Button>
             {tracks.length > 0 && (
-              <Button size="icon-sm" variant="outline" asChild>
-                <a
-                  href={isLikes
-                    ? "/api/v1/playlists/likes/download"
-                    : `/api/v1/playlists/${playlistId}/download`}
-                  download
-                  aria-label={t("actions.download", { ns: "common" })}
-                  title={t("actions.download", { ns: "common" })}
+              <>
+                <Button
+                  size="icon-sm"
+                  variant="outline"
+                  aria-label={t("shuffle")}
+                  title={t("shuffle")}
+                  onClick={async () => {
+                    if (await playPlaylistFrom()) await setShuffle(true)
+                  }}
                 >
-                  <Download size={14} />
-                </a>
-              </Button>
+                  <Shuffle size={14} />
+                </Button>
+                <Button size="icon-sm" variant="outline" asChild>
+                  <a
+                    href={isLikes
+                      ? "/api/v1/playlists/likes/download"
+                      : `/api/v1/playlists/${playlistId}/download`}
+                    download
+                    aria-label={t("actions.download", { ns: "common" })}
+                    title={t("actions.download", { ns: "common" })}
+                  >
+                    <Download size={14} />
+                  </a>
+                </Button>
+              </>
             )}
             {editable && (
               <>

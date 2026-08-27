@@ -148,6 +148,26 @@ The DJ panel shows a single icon-only activate/deactivate button
 not rendered at all — their controls require a live `AudioContext` — until the
 button is pressed.
 
+## Кнопка Shuffle в заголовке коллекции
+
+Заголовки коллекций (артист, релиз, плейлист, лайки) предлагают Shuffle рядом
+с Play. Ей нужен `setShuffle(true)`, а **не** `toggleShuffle()`.
+
+`playSource` переносит `shuffle_enabled` из предыдущей сессии
+(`playerStore.ts`, создание сессии), поэтому при уже включённом шафле
+последующий toggle выключает его — и кнопка «Перемешать» запускает коллекцию в
+обычном порядке. `setShuffle` приводит состояние к заданному и ничего не делает,
+если оно уже такое. `toggleShuffle` остался для переключателя в самом плеере и
+теперь выражен через `setShuffle`.
+
+Эндпоинты `/playlists/{id}/play` и `/playlists/likes/play` всегда создают
+сессию с `mode="linear"`, в отличие от `playSource`, — но кнопка не должна
+зависеть от этой детали backend'а.
+
+Порядок важен: перемешивать можно только после того, как новая очередь
+применена. И только если старт вообще удался — иначе загруженной остаётся
+предыдущая сессия, и шафл уехал бы на неё.
+
 ## Compact player backdrop
 
 When the current track has artwork, the compact player bar renders a decorative

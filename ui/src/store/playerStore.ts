@@ -115,6 +115,7 @@ interface PlayerState {
   seek(fraction: number): void
   skipNext(): Promise<void>
   skipPrevious(): Promise<void>
+  setShuffle(enabled: boolean): Promise<void>
   toggleShuffle(): Promise<void>
   toggleRepeatOne(): Promise<void>
   toggleAutoplay(): Promise<void>
@@ -767,16 +768,29 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       if (prev) await get().jumpToQueueItem(prev.id)
     },
 
-    async toggleShuffle() {
+    /**
+     * Drives shuffle to a known state.
+     *
+     * A "Shuffle" button on a collection header wants this, not a toggle:
+     * playSource carries shuffle_enabled over from the previous session, so
+     * toggling afterwards flips an already-shuffled queue back to linear and
+     * the button plays the collection in order.
+     */
+    async setShuffle(enabled: boolean) {
       const { session } = get()
-      if (!session?.id) return
-      const newShuffle = !session.shuffle_enabled
+      if (!session?.id || session.shuffle_enabled === enabled) return
       try {
-        const envelope = await patchSession(session.id, { shuffle_enabled: newShuffle })
+        const envelope = await patchSession(session.id, { shuffle_enabled: enabled })
         applyEnvelope(envelope)
       } catch (err) {
         set({ error: (err as Error).message })
       }
+    },
+
+    async toggleShuffle() {
+      const { session } = get()
+      if (!session?.id) return
+      await get().setShuffle(!session.shuffle_enabled)
     },
 
     async toggleRepeatOne() {
