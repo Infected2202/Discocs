@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import json
+import random
 import sqlite3
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -195,18 +196,24 @@ class PlaybackStoreMixin:
                     state_json,
                 ),
             )
-        queue = self.replace_queue_items(
-            session_id,
-            [
-                {
-                    "track_id": track_id,
-                    "origin": "source",
-                    "source_type": source_type,
-                    "source_id": source_id,
-                }
-                for track_id in initial_track_ids
-            ],
-        )
+        # `mode` and `shuffle_enabled` used to be recorded and then ignored, so
+        # a "shuffle" session played its source in order with only the player's
+        # icon lit. The ordering has to happen here, where the queue is built:
+        # source_position keeps the original index so turning shuffle off later
+        # can put the queue back.
+        initial_items = [
+            {
+                "track_id": track_id,
+                "origin": "source",
+                "source_type": source_type,
+                "source_id": source_id,
+                "source_position": index,
+            }
+            for index, track_id in enumerate(initial_track_ids)
+        ]
+        if mode == "shuffle" or shuffle_enabled:
+            random.shuffle(initial_items)
+        queue = self.replace_queue_items(session_id, initial_items)
         session = self.get_playback_session(session_id)
         if session is None:
             raise RuntimeError(f"Playback session not found after create: {session_id}")
@@ -341,20 +348,27 @@ class PlaybackStoreMixin:
                 source_type = item.get("source_type")
                 if source_type is not None:
                     _require_choice(str(source_type), PLAYBACK_SOURCE_TYPES, "source_type")
+                raw_source_position = item.get("source_position")
+                # Callers that build a queue in source order can leave this out;
+                # only a reordered insert has to say where an item came from.
+                source_position = (
+                    int(raw_source_position) if raw_source_position is not None else index
+                )
                 conn.execute(
                     """
                     INSERT INTO queue_items (
-                        id, session_id, track_id, position, origin, source_type,
-                        source_id, status, locked, reason, score, debug_json,
-                        created_at, updated_at
+                        id, session_id, track_id, position, source_position,
+                        origin, source_type, source_id, status, locked, reason,
+                        score, debug_json, created_at, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         queue_id,
                         session_id,
                         int(item["track_id"]),
                         int(item.get("position") or index),
+                        source_position,
                         origin,
                         str(source_type) if source_type is not None else None,
                         _optional_int(item.get("source_id")),
@@ -387,6 +401,68 @@ class PlaybackStoreMixin:
                 (session_id,),
             ).fetchall()
         return [row_to_queue_item(row) for row in rows]
+
+    def set_queue_shuffle(self, session_id: str, *, enabled: bool) -> list[QueueItem]:
+        """Reorder a live queue to match a shuffle flag that just changed.
+
+        Turning shuffle on rearranges only what has not played yet: reshuffling
+        the history would rewrite what the user just heard, and moving the
+        playing item would restart it. Turning it off restores the source order
+        recorded in source_position; items appended later by autoplay have none
+        and stay at the end in their existing order.
+        """
+        session = self.get_playback_session(session_id)
+        if session is None:
+            raise ValueError(f"Playback session not found: {session_id}")
+        now = utc_now()
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, position, source_position FROM queue_items
+                WHERE session_id = ?
+                ORDER BY position, created_at, id
+                """,
+                (session_id,),
+            ).fetchall()
+            if not rows:
+                return []
+            ordered = [dict(row) for row in rows]
+            if enabled:
+                pivot = 0
+                current_id = session.current_queue_item_id
+                if current_id is not None:
+                    for index, row in enumerate(ordered):
+                        if str(row["id"]) == current_id:
+                            pivot = index + 1
+                            break
+                upcoming = ordered[pivot:]
+                random.shuffle(upcoming)
+                ordered = ordered[:pivot] + upcoming
+            else:
+                ordered.sort(
+                    key=lambda row: (
+                        row["source_position"] is None,
+                        row["source_position"] if row["source_position"] is not None else 0,
+                        row["position"],
+                    )
+                )
+            # (session_id, position) is unique, so the final positions cannot be
+            # written straight over the current ones — any swap would collide
+            # mid-update. Park every row in a negative range first.
+            conn.execute(
+                "UPDATE queue_items SET position = -1 - position WHERE session_id = ?",
+                (session_id,),
+            )
+            for index, row in enumerate(ordered):
+                conn.execute(
+                    "UPDATE queue_items SET position = ?, updated_at = ? WHERE id = ?",
+                    (index, now, row["id"]),
+                )
+            conn.execute(
+                "UPDATE playback_sessions SET updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
+        return self.list_queue_items(session_id)
 
     def append_queue_items(
         self,

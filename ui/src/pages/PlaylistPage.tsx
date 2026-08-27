@@ -62,7 +62,6 @@ export default function PlaylistPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
-  const setShuffle = usePlayerStore((s) => s.setShuffle)
   const openCreatePlaylist = useUIStore((s) => s.openCreatePlaylist)
 
   const isLikes = id === "likes"
@@ -134,17 +133,12 @@ export default function PlaylistPage() {
   // Starts the whole playlist. With a trackId, playback begins at that track
   // (row click); without one, at the top (the header Play button).
   //
-  // Resolves to whether this list actually became the session, which Shuffle
-  // needs on both counts: it must not reorder before the new queue is applied,
-  // and it must not reorder at all if the start failed — the session still
-  // loaded is then whatever was playing before, and shuffling that is not what
-  // the button on this page offers.
-  function playPlaylistFrom(trackId?: number): Promise<boolean> {
-    const play = isLikes ? playLikes() : playPlaylist(playlistId!)
-    return play
-      .then((envelope) => playFromEnvelope(envelope, trackId))
-      .then(() => true)
-      .catch(() => false)
+  // Shuffle asks the server for a shuffled session rather than reordering one
+  // afterwards, so the queue arrives already mixed and its first track — the
+  // one that starts playing — is random.
+  function playPlaylistFrom(trackId?: number, options?: { shuffle?: boolean }): Promise<void> {
+    const play = isLikes ? playLikes(options) : playPlaylist(playlistId!, options)
+    return play.then((envelope) => playFromEnvelope(envelope, trackId)).catch(() => {})
   }
 
   function handleEdit() {
@@ -204,9 +198,7 @@ export default function PlaylistPage() {
                   variant="outline"
                   aria-label={t("shuffle")}
                   title={t("shuffle")}
-                  onClick={async () => {
-                    if (await playPlaylistFrom()) await setShuffle(true)
-                  }}
+                  onClick={() => playPlaylistFrom(undefined, { shuffle: true })}
                 >
                   <Shuffle size={14} />
                 </Button>

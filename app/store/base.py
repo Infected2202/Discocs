@@ -420,6 +420,10 @@ class StoreBase:
                     session_id TEXT NOT NULL,
                     track_id INTEGER NOT NULL,
                     position INTEGER NOT NULL,
+                    -- Index of this item in the untouched source order.
+                    -- `position` is the play order and shuffling rewrites it;
+                    -- this is what turning shuffle back off restores.
+                    source_position INTEGER,
                     origin TEXT NOT NULL,
                     source_type TEXT,
                     source_id INTEGER,
@@ -945,6 +949,7 @@ class StoreBase:
             self._ensure_column(conn, "playback_sessions", "current_queue_item_id", "TEXT")
             self._ensure_column(conn, "playback_sessions", "settings_json", "TEXT")
             self._ensure_column(conn, "playback_sessions", "state_json", "TEXT")
+            self._ensure_column(conn, "queue_items", "source_position", "INTEGER")
             self._ensure_column(conn, "queue_items", "locked", _INT_NOT_NULL_DEFAULT_0)
             self._ensure_column(conn, "queue_items", "reason", "TEXT")
             self._ensure_column(conn, "queue_items", "score", "REAL")

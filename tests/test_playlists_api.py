@@ -353,3 +353,70 @@ def test_reorder_playlist_tracks_api(tmp_path: Path, monkeypatch):
         json={"track_ids": [1]},
     )
     assert missing.status_code == 404
+
+
+def test_playlist_play_shuffles_only_when_asked(tmp_path: Path, monkeypatch):
+    # The endpoint used to hardcode mode="linear", so the page could only patch
+    # shuffle_enabled afterwards — which changed a flag and not the order.
+    store = init_api_store(tmp_path, monkeypatch)
+    tracks = [add_track(store, tmp_path, f"s{i}") for i in range(5)]
+    client = TestClient(app)
+    created = client.post("/api/v1/playlists", json={"title": "Set", "track_ids": tracks})
+    playlist_id = created.json()["id"]
+    monkeypatch.setattr("app.store.playback.random.shuffle", lambda items: items.reverse())
+
+    linear = client.post(f"/api/v1/playlists/{playlist_id}/play").json()
+    shuffled = client.post(f"/api/v1/playlists/{playlist_id}/play?shuffle=true").json()
+
+    assert [item["track_id"] for item in linear["queue"]["items"]] == tracks
+    assert linear["session"]["shuffle_enabled"] is False
+
+    assert [item["track_id"] for item in shuffled["queue"]["items"]] == list(reversed(tracks))
+    assert shuffled["session"]["shuffle_enabled"] is True
+    # Whatever lands first is what starts playing, so this is the random opener.
+    assert shuffled["session"]["current_track_id"] == tracks[-1]
+
+
+def test_toggling_shuffle_on_a_live_session_reorders_its_queue(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    tracks = [add_track(store, tmp_path, f"p{i}") for i in range(4)]
+    client = TestClient(app)
+    created = client.post("/api/v1/playlists", json={"title": "Set", "track_ids": tracks})
+    playlist_id = created.json()["id"]
+    session_id = client.post(f"/api/v1/playlists/{playlist_id}/play").json()["session"]["id"]
+    monkeypatch.setattr("app.store.playback.random.shuffle", lambda items: items.reverse())
+
+    on = client.patch(
+        f"/api/v1/playback/sessions/{session_id}", json={"shuffle_enabled": True}
+    ).json()
+    off = client.patch(
+        f"/api/v1/playback/sessions/{session_id}", json={"shuffle_enabled": False}
+    ).json()
+
+    # The opener is already playing, so only what follows it gets rearranged.
+    assert [item["track_id"] for item in on["queue"]["items"]] == [tracks[0], *reversed(tracks[1:])]
+    assert [item["track_id"] for item in off["queue"]["items"]] == tracks
+
+
+def test_patching_an_unchanged_shuffle_flag_leaves_the_queue_where_it_is(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    tracks = [add_track(store, tmp_path, f"q{i}") for i in range(4)]
+    client = TestClient(app)
+    created = client.post("/api/v1/playlists", json={"title": "Set", "track_ids": tracks})
+    playlist_id = created.json()["id"]
+    session_id = client.post(
+        f"/api/v1/playlists/{playlist_id}/play?shuffle=true"
+    ).json()["session"]["id"]
+    before = client.get(f"/api/v1/playback/sessions/{session_id}").json()
+    monkeypatch.setattr("app.store.playback.random.shuffle", lambda items: items.reverse())
+
+    same = client.patch(
+        f"/api/v1/playback/sessions/{session_id}", json={"shuffle_enabled": True}
+    ).json()
+    unrelated = client.patch(
+        f"/api/v1/playback/sessions/{session_id}", json={"repeat_mode": "one"}
+    ).json()
+
+    order = [item["track_id"] for item in before["queue"]["items"]]
+    assert [item["track_id"] for item in same["queue"]["items"]] == order
+    assert [item["track_id"] for item in unrelated["queue"]["items"]] == order

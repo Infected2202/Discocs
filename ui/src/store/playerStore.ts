@@ -104,7 +104,13 @@ interface PlayerState {
   djEngineActive: boolean
 
   // Actions
-  playSource(type: string, id: number, label: string, preferredTrackId?: number): Promise<void>
+  playSource(
+    type: string,
+    id: number,
+    label: string,
+    preferredTrackId?: number,
+    options?: { shuffle?: boolean },
+  ): Promise<void>
   playTrack(trackId: number, opts?: { queueItemId?: string; recordStarted?: boolean }): Promise<void>
   jumpToQueueItem(queueItemId: string): Promise<void>
   jumpToAutoplayItem(poolItemId: string): Promise<void>
@@ -545,11 +551,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
     // --- Playback actions ---
 
-    async playSource(type, id, label, preferredTrackId) {
+    async playSource(type, id, label, preferredTrackId, options) {
       set({ error: null })
       try {
         const { session } = get()
-        const shuffle = session?.shuffle_enabled ?? false
+        // A collection's Shuffle button says so explicitly. Without that the
+        // new session inherits whatever the last one was doing, which is right
+        // for a plain Play but would make Shuffle depend on prior state.
+        const shuffle = options?.shuffle ?? session?.shuffle_enabled ?? false
         const repeatMode = session?.repeat_mode ?? "off"
 
         const envelope = await createSession({
@@ -771,10 +780,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     /**
      * Drives shuffle to a known state.
      *
-     * A "Shuffle" button on a collection header wants this, not a toggle:
-     * playSource carries shuffle_enabled over from the previous session, so
-     * toggling afterwards flips an already-shuffled queue back to linear and
-     * the button plays the collection in order.
+     * Collection headers do not use this — they ask for a shuffled session up
+     * front, so the queue arrives already reordered and its first track is
+     * random. This is for the player's own switch, where the backend reshuffles
+     * what has not played yet and restores source order when switched off.
      */
     async setShuffle(enabled: boolean) {
       const { session } = get()

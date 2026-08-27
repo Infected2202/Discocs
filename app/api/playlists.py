@@ -63,7 +63,7 @@ def api_v1_likes_playlist() -> dict[str, object]:
     response_model=PlaybackSessionEnvelopeResponse,
     responses={502: {"description": "Navidrome starred lookup failed"}},
 )
-def api_v1_play_likes() -> dict[str, object] | JSONResponse:
+def api_v1_play_likes(shuffle: bool = False) -> dict[str, object] | JSONResponse:
     store, settings = context()
     track_ids = _liked_track_ids(store, settings)
     track_ids = [tid for tid in track_ids if (t := store.get_track(tid)) is not None and t.missing_at is None]
@@ -72,7 +72,8 @@ def api_v1_play_likes() -> dict[str, object] | JSONResponse:
     session, _queue = store.create_playback_session(
         source_type="playlist",
         source_label="Liked Tracks",
-        mode="linear",
+        mode="shuffle" if shuffle else "linear",
+        shuffle_enabled=shuffle,
         track_ids=track_ids,
         autoplay_enabled=False,
         settings=playback_session_settings({"source_playlist_id": "likes"}),
@@ -219,7 +220,7 @@ def api_v1_reorder_playlist_tracks(
 
 
 @router.post("/playlists/{playlist_id}/play", response_model=PlaybackSessionEnvelopeResponse)
-def api_v1_play_playlist(playlist_id: int) -> dict[str, object] | JSONResponse:
+def api_v1_play_playlist(playlist_id: int, shuffle: bool = False) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     playlist = store.get_playlist(playlist_id)
     if playlist is None:
@@ -235,7 +236,8 @@ def api_v1_play_playlist(playlist_id: int) -> dict[str, object] | JSONResponse:
         source_type="playlist",
         source_id=playlist.id,
         source_label=playlist.title,
-        mode="linear",
+        mode="shuffle" if shuffle else "linear",
+        shuffle_enabled=shuffle,
         track_ids=track_ids,
         autoplay_enabled=False,
         settings=playback_session_settings({"source_playlist_id": playlist.id}),

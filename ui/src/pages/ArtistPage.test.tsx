@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import ArtistPage from "./ArtistPage"
@@ -87,14 +87,17 @@ describe("ArtistPage — кнопка Shuffle", () => {
     useArtistSimilar.mockReturnValue({ data: { artist: { id: 3, name: "Max Cooper" }, items: [], available: true, basis: "artist_similarity" } satisfies ArtistSimilarResponse })
   })
 
-  it("запускает воспроизведение артиста и включает шафл", async () => {
+  it("просит сразу перемешанную сессию, а не патчит флаг после старта", async () => {
+    // Патч флага задним числом ничего не переупорядочивал: очередь оставалась
+    // в исходном порядке, первым играл первый трек, и менялась только подсветка
+    // иконки в плеере.
     renderPage()
     await screen.findByText("Max Cooper")
 
     fireEvent.click(screen.getByRole("button", { name: /shuffle/i }))
 
-    expect(playSource).toHaveBeenCalledWith("artist", 3, "Max Cooper")
-    await waitFor(() => expect(toggleShuffle).toHaveBeenCalledTimes(1))
+    expect(playSource).toHaveBeenCalledWith("artist", 3, "Max Cooper", undefined, { shuffle: true })
+    expect(toggleShuffle).not.toHaveBeenCalled()
   })
 
   it("Play запускает обычное воспроизведение без шафла", () => {

@@ -58,7 +58,6 @@ export default function ReleasePage() {
   const { data: relatedData } = useReleaseRelated(releaseId)
   const { data: recsData } = useReleaseRecommendations(releaseId)
   const playSource = usePlayerStore((s) => s.playSource)
-  const patchSession = usePlayerStore((s) => s.toggleShuffle)
   const isLoading = relLoading || tracksLoading
   const [shareOpen, setShareOpen] = useState(false)
   const { data: shareCapabilities } = useShareCapabilities()
@@ -129,10 +128,7 @@ export default function ReleasePage() {
               variant="outline"
               aria-label={t("shuffle")}
               title={t("shuffle")}
-              onClick={async () => {
-                await playSource("release", releaseId, release.title)
-                await patchSession()
-              }}
+              onClick={() => playSource("release", releaseId, release.title, undefined, { shuffle: true })}
             >
               <Shuffle size={14} />
             </Button>

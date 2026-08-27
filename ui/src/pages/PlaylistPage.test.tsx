@@ -15,7 +15,6 @@ const reorderPlaylistTracks = vi.fn()
 const playPlaylist = vi.fn()
 const playLikes = vi.fn()
 const playFromEnvelope = vi.fn()
-const setShuffle = vi.fn()
 
 vi.mock("@/api/playlists", () => ({
   fetchPlaylist: (...args: unknown[]) => fetchPlaylist(...args),
@@ -29,27 +28,32 @@ vi.mock("@/api/playlists", () => ({
 
 vi.mock("@/store/playerStore", () => ({
   usePlayerStore: (selector: (state: Record<string, unknown>) => unknown) =>
-    selector({ playFromEnvelope, setShuffle }),
+    selector({ playFromEnvelope }),
 }))
 
 // The page is tested through a stub list that surfaces the selection wiring.
 vi.mock("@/components/media/VirtualTrackList", () => ({
-  default: ({ tracks, selectable, onToggleSelect, onReorder }: {
+  default: ({ tracks, selectable, onToggleSelect, onReorder, onPlayTrack }: {
     tracks: TrackSummary[]
     selectable?: boolean
     onToggleSelect?: (id: number) => void
     onReorder?: (trackIds: number[]) => void
+    onPlayTrack?: (trackId: number) => void
   }) => (
     <div data-testid="track-list">
       {tracks.map((t) => (
-        <button
-          key={t.id}
-          data-testid={`select-${t.id}`}
-          disabled={!selectable}
-          onClick={() => onToggleSelect?.(t.id)}
-        >
-          {t.title}
-        </button>
+        <div key={t.id}>
+          <button
+            data-testid={`select-${t.id}`}
+            disabled={!selectable}
+            onClick={() => onToggleSelect?.(t.id)}
+          >
+            {t.title}
+          </button>
+          <button data-testid={`play-${t.id}`} onClick={() => onPlayTrack?.(t.id)}>
+            play {t.id}
+          </button>
+        </div>
       ))}
       {onReorder && (
         <button
@@ -114,7 +118,6 @@ beforeEach(() => {
   playPlaylist.mockReset().mockResolvedValue({ session: { id: "s1" } })
   playLikes.mockReset().mockResolvedValue({ session: { id: "s1" } })
   playFromEnvelope.mockReset().mockResolvedValue(undefined)
-  setShuffle.mockReset().mockResolvedValue(undefined)
   useUIStore.setState({ addToPlaylistTrackIds: null, createPlaylistOptions: null })
 })
 
@@ -226,18 +229,21 @@ describe("PlaylistPage — пользовательский плейлист", (
 })
 
 describe("PlaylistPage — shuffle", () => {
-  it("плейлист: стартует список и включает перемешивание", async () => {
+  it("плейлист: просит у сервера уже перемешанную сессию", async () => {
+    // Патч shuffle_enabled после старта не трогал порядок очереди: играл первый
+    // трек списка, а перемешанным выглядел только значок в плеере. Сессия должна
+    // создаваться перемешанной, тогда и первый трек случайный.
     fetchPlaylist.mockResolvedValue(makeDetail())
     renderPage("/playlists/5")
     await screen.findByText("Road trip")
 
     fireEvent.click(screen.getByRole("button", { name: "Shuffle" }))
 
-    await waitFor(() => expect(setShuffle).toHaveBeenCalledWith(true))
-    expect(playPlaylist).toHaveBeenCalledWith(5)
+    await waitFor(() => expect(playPlaylist).toHaveBeenCalledWith(5, { shuffle: true }))
+    await waitFor(() => expect(playFromEnvelope).toHaveBeenCalled())
   })
 
-  it("лайки: стартует лайки и включает перемешивание", async () => {
+  it("лайки: просит перемешанную сессию у своего эндпоинта", async () => {
     fetchLikesPlaylist.mockResolvedValue({
       id: "likes",
       title: "Liked Tracks",
@@ -249,36 +255,29 @@ describe("PlaylistPage — shuffle", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Shuffle" }))
 
-    await waitFor(() => expect(setShuffle).toHaveBeenCalledWith(true))
-    expect(playLikes).toHaveBeenCalled()
+    await waitFor(() => expect(playLikes).toHaveBeenCalledWith({ shuffle: true }))
     expect(playPlaylist).not.toHaveBeenCalled()
   })
 
-  it("перемешивает новую сессию, а не ту, что играла до нажатия", async () => {
-    // Ordering is the whole point: shuffling before the new queue is applied
-    // would rearrange whatever was playing before and leave this list linear.
+  it("Play остаётся линейным", async () => {
     fetchPlaylist.mockResolvedValue(makeDetail())
     renderPage("/playlists/5")
     await screen.findByText("Road trip")
 
-    fireEvent.click(screen.getByRole("button", { name: "Shuffle" }))
+    fireEvent.click(screen.getByRole("button", { name: "Play" }))
 
-    await waitFor(() => expect(setShuffle).toHaveBeenCalled())
-    expect(playFromEnvelope.mock.invocationCallOrder[0])
-      .toBeLessThan(setShuffle.mock.invocationCallOrder[0])
+    await waitFor(() => expect(playPlaylist).toHaveBeenCalledWith(5, undefined))
   })
 
-  it("не включает перемешивание, если старт списка провалился", async () => {
+  it("клик по треку играет с него и не перемешивает", async () => {
     fetchPlaylist.mockResolvedValue(makeDetail())
-    playPlaylist.mockRejectedValue(new Error("offline"))
     renderPage("/playlists/5")
     await screen.findByText("Road trip")
 
-    fireEvent.click(screen.getByRole("button", { name: "Shuffle" }))
+    fireEvent.click(screen.getByTestId("play-2"))
 
-    await waitFor(() => expect(playPlaylist).toHaveBeenCalled())
-    expect(playFromEnvelope).not.toHaveBeenCalled()
-    expect(setShuffle).not.toHaveBeenCalled()
+    await waitFor(() => expect(playPlaylist).toHaveBeenCalledWith(5, undefined))
+    await waitFor(() => expect(playFromEnvelope).toHaveBeenCalledWith(expect.anything(), 2))
   })
 
   it("нечего перемешивать в пустом списке — кнопки нет", async () => {

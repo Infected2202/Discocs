@@ -56,7 +56,6 @@ export default function ArtistPage() {
     return hasPlays ? items.filter((t) => t.play_count > 0) : items.slice(0, 5)
   })()
   const playSource = usePlayerStore((s) => s.playSource)
-  const toggleShuffle = usePlayerStore((s) => s.toggleShuffle)
   const isLoading = artistLoading || discoLoading
 
   if (isLoading) return <ArtistPageSkeleton />
@@ -116,10 +115,7 @@ export default function ArtistPage() {
               variant="outline"
               aria-label={t("shuffle")}
               title={t("shuffle")}
-              onClick={async () => {
-                await playSource("artist", artistId, artist.name)
-                await toggleShuffle()
-              }}
+              onClick={() => playSource("artist", artistId, artist.name, undefined, { shuffle: true })}
             >
               <Shuffle size={14} />
             </Button>

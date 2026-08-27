@@ -19,8 +19,9 @@ export function fetchLikesPlaylist(): Promise<LikesPlaylist> {
   return apiFetch("/api/v1/playlists/likes")
 }
 
-export function playLikes(): Promise<PlaybackEnvelope> {
-  return apiFetch("/api/v1/playlists/likes/play", { method: "POST" })
+export function playLikes(options?: { shuffle?: boolean }): Promise<PlaybackEnvelope> {
+  const query = options?.shuffle ? "?shuffle=true" : ""
+  return apiFetch(`/api/v1/playlists/likes/play${query}`, { method: "POST" })
 }
 
 // ----------------------------------------------------------------------------
@@ -106,6 +107,10 @@ export function reorderPlaylistTracks(
   })
 }
 
-export function playPlaylist(playlistId: number): Promise<PlaybackEnvelope> {
-  return apiFetch(`/api/v1/playlists/${playlistId}/play`, { method: "POST" })
+export function playPlaylist(
+  playlistId: number,
+  options?: { shuffle?: boolean },
+): Promise<PlaybackEnvelope> {
+  const query = options?.shuffle ? "?shuffle=true" : ""
+  return apiFetch(`/api/v1/playlists/${playlistId}/play${query}`, { method: "POST" })
 }
