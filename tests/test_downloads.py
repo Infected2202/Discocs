@@ -12,7 +12,8 @@ import app.api.downloads as downloads_api
 from app.config import NavidromeSettings
 from app.main import app
 from app.navidrome import NavidromeClient
-from app.downloads import public_download_error, unique_archive_filename
+from app.downloads import open_navidrome_source, public_download_error, unique_archive_filename
+from app.models import Track
 from app.scanner import ScannedTrack
 from app.store import INITIALIZED_DB_PATHS, Store
 
@@ -177,6 +178,55 @@ def test_navidrome_track_download_uses_original_download_endpoint(tmp_path: Path
     assert response.content == b"remote-bytes"
     assert seen["path"] == "/rest/download.view"
     assert seen["closed"] is True
+
+
+def test_transcoded_source_forces_the_stream_endpoint_and_its_own_extension():
+    # `download` hands back the original file and ignores format parameters, so
+    # a request that must be re-encoded can only go to `stream`. The extension
+    # then has to follow the response rather than the indexed path: a FLAC
+    # re-encoded to MP3 saved as .flac is a file no player will open.
+    seen: dict[str, object] = {}
+
+    class FakeResponse:
+        headers = {"Content-Type": "audio/mpeg"}
+
+        def read(self, _size):
+            return b""
+
+        def close(self):
+            pass
+
+    def opener(request, timeout):
+        seen["url"] = request.full_url
+        return FakeResponse()
+
+    nav = NavidromeClient(
+        NavidromeSettings(
+            url="http://navidrome:4533",
+            user="u",
+            password="p",
+            auth_mode="plain",
+            download_mode="download",
+        ),
+        opener=opener,
+    )
+    track = Track(
+        id=1,
+        path="/music/original.flac",
+        artist="A",
+        title="T",
+        album="Al",
+        duration=1.0,
+        file_size=1,
+        mtime=1,
+    )
+
+    source = open_navidrome_source(
+        nav, "song-1", track, stream_params={"format": "mp3", "maxBitRate": 320}
+    )
+
+    assert urlparse(str(seen["url"])).path == "/rest/stream.view"
+    assert source.suffix == ".mp3"
 
 
 def test_download_error_does_not_expose_navidrome_auth_query():

@@ -5,6 +5,7 @@ import { Link, useParams } from "react-router"
 import { fetchPublicShare, type PublicShare } from "@/api/shares"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import { useDragSlider } from "@/components/player/useDragSlider"
+import ShareDownloadMenu from "@/components/share/ShareDownloadMenu"
 import { useArtworkTheme } from "@/hooks/useArtworkTheme"
 import { cn } from "@/lib/utils"
 
@@ -263,7 +264,16 @@ export default function SharedPlayerPage() {
             >
               discocs
             </Link>
-            {share.items.length > 1 && <button className="rounded-md bg-muted px-3 py-1.5 text-sm md:hidden" onClick={() => setMobileQueue(true)}>{t("queue")}</button>}
+            <div className="flex items-center gap-2">
+              {share.items.length > 1 && <button className="rounded-md bg-muted px-3 py-1.5 text-sm md:hidden" onClick={() => setMobileQueue(true)}>{t("queue")}</button>}
+              {item?.available && (
+                <ShareDownloadMenu
+                  scope="track"
+                  label={item.title}
+                  downloadUrl={item.download_url}
+                />
+              )}
+            </div>
           </header>
 
           <div className="flex flex-1 flex-col items-center justify-center gap-7 px-7 py-5">
@@ -340,25 +350,46 @@ export default function SharedPlayerPage() {
 
         {share.items.length > 1 && (
           <aside className={cn("w-full border-l border-border/60 bg-background/70 backdrop-blur-xl md:flex md:w-[420px] md:flex-col", mobileQueue ? "flex min-h-dvh flex-col" : "hidden")}>
-            <header className="flex items-center justify-between border-b border-border/60 px-5 py-4"><h2 className="font-semibold">{t("queue")}</h2><button className="text-sm text-muted-foreground md:hidden" onClick={() => setMobileQueue(false)}>{t("player")}</button></header>
+            <header className="flex items-center justify-between gap-2 border-b border-border/60 px-5 py-4">
+              <h2 className="font-semibold">{t("queue")}</h2>
+              <div className="flex items-center gap-2">
+                <button className="text-sm text-muted-foreground md:hidden" onClick={() => setMobileQueue(false)}>{t("player")}</button>
+                <ShareDownloadMenu scope="collection" label={share.title} downloadUrl={share.download_url} />
+              </div>
+            </header>
             <div className="flex-1 overflow-y-auto p-2">
               {share.items.map((entry, position) => (
-                <button
+                <div
                   key={entry.position}
-                  disabled={!entry.available}
-                  onClick={() => void playAt(position)}
-                  className={cn("flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-muted disabled:opacity-35", position === index && "bg-muted")}
+                  className={cn("flex w-full items-center rounded-lg pr-2 transition-colors hover:bg-muted", position === index && "bg-muted")}
                 >
-                  <span className="w-6 text-center text-xs tabular-nums text-muted-foreground">{position === index && playing ? "▶" : position + 1}</span>
-                  <ArtworkImage
-                    src={share.artwork_url}
-                    alt={entry.title}
-                    fallbackLetter={entry.title[0]}
-                    className="h-11 w-11 rounded-md"
-                  />
-                  <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{entry.title}</span><span className="block truncate text-xs text-muted-foreground">{entry.artist}</span></span>
-                  <span className="text-xs tabular-nums text-muted-foreground">{formatTime(entry.duration ?? 0)}</span>
-                </button>
+                  {/* The row and its menu are siblings, not nested buttons: a
+                      button inside a button is invalid and browsers resolve
+                      the inner click unpredictably. */}
+                  <button
+                    aria-label={t("playTrack", { name: entry.title })}
+                    disabled={!entry.available}
+                    onClick={() => void playAt(position)}
+                    className="flex min-w-0 flex-1 items-center gap-3 px-3 py-3 text-left disabled:opacity-35"
+                  >
+                    <span className="w-6 text-center text-xs tabular-nums text-muted-foreground">{position === index && playing ? "▶" : position + 1}</span>
+                    <ArtworkImage
+                      src={share.artwork_url}
+                      alt={entry.title}
+                      fallbackLetter={entry.title[0]}
+                      className="h-11 w-11 rounded-md"
+                    />
+                    <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{entry.title}</span><span className="block truncate text-xs text-muted-foreground">{entry.artist}</span></span>
+                    <span className="text-xs tabular-nums text-muted-foreground">{formatTime(entry.duration ?? 0)}</span>
+                  </button>
+                  {entry.available && (
+                    <ShareDownloadMenu
+                      scope="track"
+                      label={entry.title}
+                      downloadUrl={entry.download_url}
+                    />
+                  )}
+                </div>
               ))}
             </div>
           </aside>

@@ -31,6 +31,7 @@ export interface PublicShareItem {
   duration: number | null
   available: boolean
   audio_url: string
+  download_url: string
 }
 
 export interface PublicShare {
@@ -39,6 +40,7 @@ export interface PublicShare {
   subtitle: string | null
   expires_at: string | null
   artwork_url: string
+  download_url: string
   items: PublicShareItem[]
 }
 

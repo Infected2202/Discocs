@@ -21,6 +21,7 @@
   "manageLinks": "Manage shared links",
   "queue": "Queue",
   "player": "Player",
+  "playTrack": "Play {{name}}",
   "play": "Play",
   "pause": "Pause",
   "previous": "Previous track",
@@ -30,6 +31,12 @@
   "volume": "Volume",
   "mute": "Mute",
   "unmute": "Unmute",
+  "menu": {
+    "trackActions": "Actions for {{name}}",
+    "collectionActions": "Actions for {{name}}",
+    "downloadTrack": "Download track",
+    "downloadAll": "Download all"
+  },
   "unavailableTitle": "This link is unavailable",
   "unavailableDescription": "It may have expired, been revoked, or no longer contain playable tracks.",
   "retry": "Try again",

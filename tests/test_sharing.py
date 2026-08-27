@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 from starlette.requests import Request
@@ -12,6 +14,7 @@ from app.api.auth_middleware import is_public_share_request
 from app.config import Settings, SharingSettings
 from app.main import app
 from app.models import utc_now
+from app.navidrome import NavidromeClient
 from app.store import INITIALIZED_DB_PATHS, Store
 from app.store.shares import share_token_hash
 
@@ -385,6 +388,153 @@ def test_expired_revoked_and_unknown_share_have_same_public_response(tmp_path, m
     assert expired.id != revoked.id
     assert [response.status_code for response in responses] == [404, 404, 404]
     assert len({response.text for response in responses}) == 1
+
+
+def _navidrome_share(tmp_path: Path, monkeypatch, *, titles: list[str]) -> str:
+    store = _init_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_USER", "share-service")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_PASSWORD", "service-secret")
+    track_ids = []
+    for index, title in enumerate(titles):
+        track_id = _track(store, tmp_path / f"mapped{index}.flac", title=title)
+        store.upsert_external_track("navidrome", f"song-{index}", track_id)
+        track_ids.append(track_id)
+    scoped = _user_store(store)
+    if len(track_ids) == 1:
+        _share, token = scoped.create_share(
+            source_type="track", source_id=track_ids[0], expires_at=_future()
+        )
+    else:
+        _share, token = scoped.create_share(
+            source_type="release", source_id=_release(store, track_ids), expires_at=_future()
+        )
+    return token
+
+
+def _fake_navidrome_audio(seen: dict):
+    class FakeResponse:
+        status = 200
+        headers = {"Content-Type": "audio/mpeg", "Content-Length": "5"}
+
+        def getcode(self):
+            return 200
+
+        def read(self, _size=-1):
+            key = f"read:{id(self)}"
+            if seen.get(key):
+                return b""
+            seen[key] = True
+            return b"audio"
+
+        def close(self):
+            pass
+
+    def fake_urlopen(request, timeout):
+        seen.setdefault("urls", []).append(request.full_url)
+        return FakeResponse()
+
+    return fake_urlopen
+
+
+def test_public_share_item_download_hands_out_the_transcode_not_the_master(tmp_path, monkeypatch):
+    # The public profile always re-encodes, so a guest receives the same MP3
+    # the page streams. The original master never leaves over a share link,
+    # and the filename must match the transcode rather than the indexed path.
+    token = _navidrome_share(tmp_path, monkeypatch, titles=["Mapped"])
+    seen: dict = {}
+    monkeypatch.setattr("app.api.tracks.urlopen", _fake_navidrome_audio(seen))
+
+    response = TestClient(app).get(f"/api/v1/public/shares/{token}/items/0/download")
+
+    assert response.status_code == 200
+    assert response.content == b"audio"
+    query = parse_qs(urlparse(seen["urls"][0]).query)
+    assert query["format"] == ["mp3"]
+    assert query["maxBitRate"] == ["320"]
+    assert query["u"] == ["share-service"]
+    assert "alice" not in seen["urls"][0]
+    assert ".mp3" in response.headers["content-disposition"]
+    assert ".flac" not in response.headers["content-disposition"]
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_public_share_archive_zips_transcodes_named_by_their_real_format(tmp_path, monkeypatch):
+    # Every member goes out through the stream endpoint so the archive holds
+    # the same MP3 the page plays. The extension has to come from the response
+    # content type: naming a re-encoded member after the indexed .flac path
+    # would produce an archive of files no player can open.
+    token = _navidrome_share(tmp_path, monkeypatch, titles=["First", "Second"])
+    seen: dict = {}
+
+    class FakeResponse:
+        headers = {"Content-Type": "audio/mpeg"}
+
+        def __init__(self):
+            self.chunks = [b"mp3-bytes", b""]
+
+        def read(self, _size):
+            return self.chunks.pop(0)
+
+        def close(self):
+            pass
+
+    def opener(request, timeout):
+        seen.setdefault("urls", []).append(request.full_url)
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "app.api.shares.NavidromeClient",
+        lambda settings: NavidromeClient(settings, opener=opener),
+    )
+
+    response = TestClient(app).get(f"/api/v1/public/shares/{token}/download")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    with ZipFile(BytesIO(response.content)) as archive:
+        names = archive.namelist()
+    assert [Path(name).suffix for name in names] == [".mp3", ".mp3"]
+    assert [Path(name).stem for name in names] == [
+        "001 - Artist - First",
+        "002 - Artist - Second",
+    ]
+    assert len(seen["urls"]) == 2
+    for url in seen["urls"]:
+        assert urlparse(url).path == "/rest/stream.view"
+        query = parse_qs(urlparse(url).query)
+        assert query["format"] == ["mp3"]
+        assert query["maxBitRate"] == ["320"]
+        assert query["u"] == ["share-service"]
+
+
+def test_public_share_download_is_refused_for_an_expired_link(tmp_path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    track_id = _track(store, tmp_path / "mapped.flac", title="Mapped")
+    scoped = _user_store(store)
+    _share, token = scoped.create_share(
+        source_type="track",
+        source_id=track_id,
+        expires_at=(utc_now() - timedelta(hours=1)).isoformat(),
+    )
+    client = TestClient(app)
+
+    item = client.get(f"/api/v1/public/shares/{token}/items/0/download")
+    archive = client.get(f"/api/v1/public/shares/{token}/download")
+
+    assert item.status_code == 404
+    assert archive.status_code == 404
+
+
+def test_public_share_metadata_advertises_download_urls(tmp_path, monkeypatch):
+    token = _navidrome_share(tmp_path, monkeypatch, titles=["Mapped"])
+
+    payload = TestClient(app).get(f"/api/v1/public/shares/{token}").json()
+
+    assert payload["download_url"] == f"/api/v1/public/shares/{token}/download"
+    assert payload["items"][0]["download_url"] == (
+        f"/api/v1/public/shares/{token}/items/0/download"
+    )
 
 
 def test_public_navidrome_audio_declares_its_length_without_a_range_request(tmp_path, monkeypatch):

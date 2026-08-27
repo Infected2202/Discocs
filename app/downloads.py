@@ -162,15 +162,39 @@ def _navidrome_modes(client: NavidromeClient) -> tuple[str, ...]:
     return ("stream",) if client.settings.download_mode.strip().lower() == "stream" else ("download", "stream")
 
 
-def open_navidrome_source(client: NavidromeClient, item_id: str, track: Track) -> AudioSource:
+def transcoded_suffix(track: Track, headers: Mapping[str, str] | object) -> str:
+    """Extension for a re-encoded stream.
+
+    `source_suffix` trusts the indexed path first, which is right for an
+    original-file download and wrong for a transcode: a FLAC re-encoded to MP3
+    would be saved as `.flac` and refuse to open. The response's content type
+    is the only header that describes what the bytes actually are.
+    """
+    content_type = _header(headers, "Content-Type").split(";", 1)[0].strip().lower()
+    return _CONTENT_TYPE_EXTENSIONS.get(content_type) or source_suffix(track, headers)
+
+
+def open_navidrome_source(
+    client: NavidromeClient,
+    item_id: str,
+    track: Track,
+    *,
+    stream_params: Mapping[str, object] | None = None,
+) -> AudioSource:
+    # Only the stream endpoint transcodes; download always hands back the
+    # original file and silently ignores format parameters.
+    modes = ("stream",) if stream_params else _navidrome_modes(client)
     last_error: Exception | None = None
-    for mode in _navidrome_modes(client):
-        request = Request(client.url(mode, {"id": item_id}), headers={"Accept": "*/*"})
+    for mode in modes:
+        request = Request(
+            client.url(mode, {"id": item_id, **(stream_params or {})}),
+            headers={"Accept": "*/*"},
+        )
         try:
             response = client.opener(request, timeout=float(client.settings.timeout_seconds))
         except HTTPError as exc:
             last_error = exc
-            if exc.code not in {403, 404, 405, 501} or mode == _navidrome_modes(client)[-1]:
+            if exc.code not in {403, 404, 405, 501} or mode == modes[-1]:
                 raise
             continue
         content_type = source_content_type(response.headers)
@@ -179,7 +203,11 @@ def open_navidrome_source(client: NavidromeClient, item_id: str, track: Track) -
             raise RuntimeError(f"Navidrome returned non-audio content type: {content_type}")
         return AudioSource(
             stream=response,
-            suffix=source_suffix(track, response.headers),
+            suffix=(
+                transcoded_suffix(track, response.headers)
+                if stream_params
+                else source_suffix(track, response.headers)
+            ),
             content_type=content_type,
         )
     if last_error is not None:
@@ -192,12 +220,14 @@ def open_audio_source(
     store: Store,
     client: NavidromeClient | None,
     track: Track,
+    *,
+    stream_params: Mapping[str, object] | None = None,
 ) -> Iterator[AudioSource]:
     item_id = navidrome_item_id_for_track(store, track)
     if item_id is not None:
         if client is None:
             raise RuntimeError("Navidrome credentials are required for this track")
-        source = open_navidrome_source(client, item_id, track)
+        source = open_navidrome_source(client, item_id, track, stream_params=stream_params)
         store.mark_track_available(track.id)
     else:
         path = Path(track.path)
@@ -251,15 +281,21 @@ def stream_track_archive(
     *,
     root: str,
     chunk_size: int = DOWNLOAD_CHUNK_SIZE,
+    stream_params: Mapping[str, object] | None = None,
 ) -> Iterator[bytes]:
-    """Yield a ZIP archive incrementally without buffering full tracks or the archive."""
+    """Yield a ZIP archive incrementally without buffering full tracks or the archive.
+
+    `stream_params` re-encodes every Navidrome-backed member through the stream
+    endpoint, which is how a public share hands out the same MP3 the page plays
+    instead of the original masters.
+    """
     sink = StreamingZipSink()
     errors: list[str] = []
     used_names: set[str] = set()
     with ZipFile(sink, mode="w", compression=ZIP_STORED, allowZip64=True) as archive:
         for entry in entries:
             try:
-                with open_audio_source(store, client, entry.track) as source:
+                with open_audio_source(store, client, entry.track, stream_params=stream_params) as source:
                     member_name = unique_archive_filename(
                         archive_filename(root, entry.basename, source.suffix),
                         used_names,

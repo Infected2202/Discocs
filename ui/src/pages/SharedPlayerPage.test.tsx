@@ -36,9 +36,10 @@ describe("SharedPlayerPage", () => {
       subtitle: "Artist",
       expires_at: null,
       artwork_url: "/cover",
+      download_url: "/share-download",
       items: [
-        { position: 0, title: "First", artist: "Artist", duration: 60, available: true, audio_url: "/audio/0" },
-        { position: 1, title: "Second", artist: "Artist", duration: 90, available: true, audio_url: "/audio/1" },
+        { position: 0, title: "First", artist: "Artist", duration: 60, available: true, audio_url: "/audio/0", download_url: "/download/0" },
+        { position: 1, title: "Second", artist: "Artist", duration: 90, available: true, audio_url: "/audio/1", download_url: "/download/1" },
       ],
     })
   })
@@ -53,8 +54,8 @@ describe("SharedPlayerPage", () => {
     expect(screen.queryByText("Shared listening")).not.toBeInTheDocument()
     expect(screen.queryByText("Shared album")).not.toBeInTheDocument()
     expect(screen.queryByText("Like")).not.toBeInTheDocument()
-    expect(screen.queryByText("Download")).not.toBeInTheDocument()
     expect(screen.queryByText("Add to playlist")).not.toBeInTheDocument()
+    expect(screen.queryByText("Instant mix")).not.toBeInTheDocument()
   })
 
   it("uses the shared release as an ordered local queue", async () => {
@@ -63,7 +64,7 @@ describe("SharedPlayerPage", () => {
 
     expect(screen.getByRole("img", { name: "Second" })).toHaveAttribute("src", "/cover")
 
-    fireEvent.click(screen.getByRole("button", { name: /Second/ }))
+    fireEvent.click(screen.getByRole("button", { name: "Play Second" }))
 
     await waitFor(() => expect(screen.getByRole("heading", { name: "Second" })).toBeInTheDocument())
   })

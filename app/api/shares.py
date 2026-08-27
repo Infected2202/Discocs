@@ -12,13 +12,21 @@ from html import escape
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import api_error, context
 from app.api.tracks import audio_response_media_type, navidrome_audio_stream_response
 from app.audio_source import navidrome_item_id_for_track
-from app.models import Share, utc_now
+from app.downloads import (
+    DownloadEntry,
+    attachment_filename,
+    content_disposition,
+    safe_filename_component,
+    stream_track_archive,
+    track_download_basename,
+)
+from app.models import Share, Track, utc_now
 from app.navidrome import NavidromeClient
 from app.store.shares import share_token_hash
 
@@ -31,6 +39,7 @@ _METADATA_CACHE_CONTROL = "private, no-cache"
 _MEDIA_CACHE_CONTROL = "private, max-age=3600"
 _PREVIEW_CACHE_CONTROL = "public, max-age=300"
 _PREVIEW_MEDIA_CACHE_CONTROL = "public, max-age=3600"
+_DOWNLOAD_CACHE_CONTROL = "private, no-store"
 _PUBLIC_TRANSCODING_PARAMS = {
     "format": "mp3",
     "maxBitRate": 320,
@@ -399,6 +408,35 @@ def revoke_share(request: Request, share_id: str) -> Response | JSONResponse:
     return Response(status_code=204)
 
 
+def _share_source_title(store, share: Share, valid_tracks: list[Track]) -> str:
+    if share.source_type == "release":
+        release = store.get_release(share.source_id)
+        return release.release.title if release else "Shared release"
+    return valid_tracks[0].title or "Shared track"
+
+
+def _share_track(token: str, position: int) -> tuple[object, object, Track] | None:
+    """Resolve one playable item of a live share, or nothing at all.
+
+    Every rejection reason — malformed token, sharing disabled, expired or
+    revoked link, unknown position, unmounted file — collapses into the same
+    empty result so callers answer with one indistinguishable 404.
+    """
+    if not _TOKEN_PATTERN.fullmatch(token):
+        return None
+    store, settings = context()
+    if not settings.sharing.enabled:
+        return None
+    resolved = store.get_active_share_item(share_token_hash(token), position, now=utc_now())
+    if resolved is None:
+        return None
+    _share, item = resolved
+    track = store.get_track(item.track_id)
+    if track is None or track.missing_at is not None:
+        return None
+    return store, settings, track
+
+
 def _resolved_public_share(token: str) -> tuple[object, object, Share] | None:
     if not _TOKEN_PATTERN.fullmatch(token):
         return None
@@ -425,11 +463,7 @@ def public_share_metadata(token: str, request: Request) -> Response:
     if not valid_tracks:
         return _unavailable()
     artists = ", ".join(dict.fromkeys(track.artist for track in valid_tracks if track.artist))
-    if share.source_type == "release":
-        release = store.get_release(share.source_id)
-        source_title = release.release.title if release else "Shared release"
-    else:
-        source_title = valid_tracks[0].title or "Shared track"
+    source_title = _share_source_title(store, share, valid_tracks)
     public_items = [
         {
             "position": item.position,
@@ -438,6 +472,7 @@ def public_share_metadata(token: str, request: Request) -> Response:
             "duration": track.duration if track else None,
             "available": bool(track is not None and track.missing_at is None),
             "audio_url": f"/api/v1/public/shares/{token}/items/{item.position}/audio",
+            "download_url": f"/api/v1/public/shares/{token}/items/{item.position}/download",
         }
         for item, track in tracks
     ]
@@ -449,6 +484,7 @@ def public_share_metadata(token: str, request: Request) -> Response:
             "subtitle": artists or None,
             "expires_at": share.expires_at,
             "artwork_url": f"/api/v1/public/shares/{token}/cover",
+            "download_url": f"/api/v1/public/shares/{token}/download",
             "items": public_items,
         }
     )
@@ -558,18 +594,10 @@ def public_share_cover(token: str, request: Request) -> Response:
 @router.head("/public/shares/{token}/items/{position}/audio", response_model=None)
 @router.get("/public/shares/{token}/items/{position}/audio", response_model=None)
 def public_share_audio(token: str, position: int, request: Request) -> Response:
-    if not _TOKEN_PATTERN.fullmatch(token):
-        return _unavailable()
-    store, settings = context()
-    if not settings.sharing.enabled:
-        return _unavailable()
-    resolved = store.get_active_share_item(share_token_hash(token), position, now=utc_now())
+    resolved = _share_track(token, position)
     if resolved is None:
         return _unavailable()
-    _share, item = resolved
-    track = store.get_track(item.track_id)
-    if track is None or track.missing_at is not None:
-        return _unavailable()
+    store, settings, track = resolved
     slot_key = f"{_client_key(request)}:{share_token_hash(token)}"
     if not _stream_slots.acquire(slot_key):
         return _rate_limited()
@@ -599,3 +627,91 @@ def public_share_audio(token: str, position: int, request: Request) -> Response:
         _share_headers(response, cache_control=_MEDIA_CACHE_CONTROL),
         slot_key,
     )
+
+
+@router.get("/public/shares/{token}/items/{position}/download", response_model=None)
+def public_share_item_download(token: str, position: int) -> Response:
+    """One track of a share, re-encoded to the MP3 the page already streams.
+
+    A guest never receives the original master: the public profile transcodes
+    on the way out, so the download is the same audio the player produced.
+    """
+    resolved = _share_track(token, position)
+    if resolved is None:
+        return _unavailable()
+    store, settings, track = resolved
+    basename = track_download_basename(track)
+    item_id = navidrome_item_id_for_track(store, track)
+    if item_id is None:
+        # There is no local transcoder, so a fallback file leaves in its own
+        # format — the same asymmetry public streaming already lives with.
+        path = Path(track.path)
+        if not path.exists() or not path.is_file():
+            return _unavailable()
+        return _share_headers(
+            FileResponse(
+                path,
+                media_type=audio_response_media_type(path),
+                headers={
+                    "Content-Disposition": content_disposition(
+                        attachment_filename(basename, path.suffix.lower())
+                    )
+                },
+            ),
+            cache_control=_DOWNLOAD_CACHE_CONTROL,
+        )
+    try:
+        response = navidrome_audio_stream_response(
+            settings,
+            item_id,
+            stream_params=_PUBLIC_TRANSCODING_PARAMS,
+        )
+    except Exception:
+        return _unavailable()
+    response.headers["Content-Disposition"] = content_disposition(
+        attachment_filename(basename, ".mp3")
+    )
+    return _share_headers(response, cache_control=_DOWNLOAD_CACHE_CONTROL)
+
+
+@router.get("/public/shares/{token}/download", response_model=None)
+def public_share_download(token: str) -> Response:
+    """The whole share as a ZIP of the same MP3s the page streams."""
+    resolved = _resolved_public_share(token)
+    if resolved is None:
+        return _unavailable()
+    store, settings, share = resolved
+    entries: list[DownloadEntry] = []
+    for item in store.list_share_items(share.id):
+        track = store.get_track(item.track_id)
+        if track is None or track.missing_at is not None:
+            continue
+        entries.append(
+            DownloadEntry(
+                track=track,
+                basename=f"{item.position + 1:03d} - {track_download_basename(track)}",
+            )
+        )
+    if not entries:
+        return _unavailable()
+    archive_title = safe_filename_component(
+        share.title or _share_source_title(store, share, [entry.track for entry in entries])
+    )
+    # The service account streams every member, exactly as playback does; the
+    # creator's own Navidrome credentials are never involved.
+    needs_navidrome = any(
+        navidrome_item_id_for_track(store, entry.track) is not None for entry in entries
+    )
+    client = NavidromeClient(settings.navidrome) if needs_navidrome else None
+    response = StreamingResponse(
+        stream_track_archive(
+            store,
+            client,
+            entries,
+            root=archive_title,
+            stream_params=_PUBLIC_TRANSCODING_PARAMS,
+        ),
+        media_type="application/zip",
+        headers={"Content-Disposition": content_disposition(f"{archive_title}.zip")},
+    )
+    return _share_headers(response, cache_control=_DOWNLOAD_CACHE_CONTROL)
