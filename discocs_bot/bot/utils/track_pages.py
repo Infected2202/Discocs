@@ -94,6 +94,18 @@ def detach_card_from_view(context, message_id: int) -> None:
         context.user_data.pop(RESULTS_VIEW_KEY, None)
 
 
+def forget_results_view(context) -> None:
+    """Unbind the carousel without deleting its message.
+
+    Results update in place, which reads as an answer only while that message
+    is the last one in the chat. Once the bot has sent something else — a link
+    card, an audio file — updating it silently edits a message that has scrolled
+    away, and the next search looks like no answer at all.
+    """
+    context.user_data.pop(RESULTS_VIEW_KEY, None)
+    context.user_data.pop(RESULTS_HISTORY_KEY, None)
+
+
 async def clear_results_view(bot: Bot, context) -> None:
     view = get_results_view(context)
     if not view:

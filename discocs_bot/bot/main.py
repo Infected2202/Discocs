@@ -62,9 +62,11 @@ async def _post_shutdown(application: Application) -> None:
     db: Database = application.bot_data["db"]
     navidrome: NavidromeClient = application.bot_data["navidrome"]
     discocs: DiscocsClient = application.bot_data["discocs"]
+    links: LinkAudioService = application.bot_data["links"]
     await db.close()
     await navidrome.close()
     await discocs.close()
+    await links.close()
 
 
 def _telegram_request() -> HTTPXRequest:

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,23 @@ logger = logging.getLogger(__name__)
 
 # Внешний трек считается на бэкенде моделью: декод + EffNet на CPU.
 ANALYSIS_TIMEOUT_SECONDS = 300.0
+UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+async def _stream_file(path: Path, chunk_size: int = UPLOAD_CHUNK_BYTES):
+    """Upload body for an AsyncClient.
+
+    Handing httpx a plain file object builds a sync byte stream, and sending
+    that from an AsyncClient raises "Attempted to send an sync request with an
+    AsyncClient instance" before a single byte leaves the process. Reads happen
+    off the event loop so a slow disk cannot stall the bot.
+    """
+    with path.open("rb") as handle:
+        while True:
+            chunk = await asyncio.to_thread(handle.read, chunk_size)
+            if not chunk:
+                break
+            yield chunk
 
 
 class DiscocsError(Exception):
@@ -106,13 +124,12 @@ class DiscocsClient:
         resolved through Navidrome exactly like radio from a library track.
         """
         try:
-            with path.open("rb") as handle:
-                response = await self._client.post(
-                    f"{self._base_url}/api/v1/similar/by-audio",
-                    content=handle,
-                    headers={"Content-Type": "application/octet-stream"},
-                    timeout=ANALYSIS_TIMEOUT_SECONDS,
-                )
+            response = await self._client.post(
+                f"{self._base_url}/api/v1/similar/by-audio",
+                content=_stream_file(path),
+                headers={"Content-Type": "application/octet-stream"},
+                timeout=ANALYSIS_TIMEOUT_SECONDS,
+            )
         except httpx.HTTPError as exc:
             raise DiscocsError(str(exc)) from exc
 

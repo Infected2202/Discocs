@@ -29,6 +29,33 @@ Guessing which of the two someone wanted would be wrong about half the time, so
 the card asks. It also shows what the link actually resolved to before anything
 is spent on it.
 
+Reading a link happens in its own task. PTB processes updates one at a time, so
+holding a request to the source inline would stall every other message in the
+chat until the source answered.
+
+## Share shortlinks
+
+The Share button in the SoundCloud app gives out `on.soundcloud.com/xxxx` — a
+redirect stub no extractor claims (`snd.sc` and `soundcloud.app.goo.gl` are the
+same). YouTube's own share forms (`youtu.be/<id>`, `/shorts/<id>`,
+`music.youtube.com`) are claimed directly and need none of this.
+
+When nothing claims a URL, the bot follows it one hop at a time, up to five, and
+**re-validates every hop** against the rules below before taking it. Letting
+httpx follow redirects internally would let a perfectly public shortener bounce
+the request to an address inside our network, past checks the original URL
+passed. A shortlink that cannot be reached falls back to the original URL, so
+the answer stays "unknown source" rather than a stack trace.
+
+## Results and the carousel
+
+Results render into a single message that updates in place. That reads as an
+answer only while it is the last message in the chat — once the bot has sent a
+link card or an audio file, editing it silently changes a message that scrolled
+away, and the next search looks like no answer at all. So anything the bot sends
+into the chat unbinds the open carousel, and the next results page starts a new
+message.
+
 ## Radio from something outside the library
 
 The button posts the audio to the backend, which embeds it in memory and

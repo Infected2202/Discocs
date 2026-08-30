@@ -35,7 +35,11 @@ from bot.utils.access import deny_if_not_allowed
 from bot.utils.library_match import find_match, search_query
 from bot.utils.links import UnsafeLinkError, find_first_url, validate_public_url
 from bot.utils.track_cards import send_track_card
-from bot.utils.track_pages import remember_last_track, send_track_results_page
+from bot.utils.track_pages import (
+    forget_results_view,
+    remember_last_track,
+    send_track_results_page,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +170,13 @@ async def _library_match(context: ContextTypes.DEFAULT_TYPE, info: ExternalTrack
 # ---------------------------------------------------------------------------
 
 async def link_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Hand the link off to a task and let the update queue move on.
+
+    PTB processes updates one at a time, and reading a link means talking to
+    the source through the tunnel. Held inline, that stalls every other message
+    in the chat — which is why the callback handlers already dispatch their
+    slow work this way.
+    """
     if await deny_if_not_allowed(update, context):
         return
 
@@ -176,6 +187,11 @@ async def link_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if not url:
         return
 
+    context.application.create_task(process_link(update, context, url))
+
+
+async def process_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str) -> None:
+    message = update.effective_message
     links = context.bot_data["links"]
     status = await message.reply_text(LOOKUP_STATUS)
     try:
@@ -206,6 +222,9 @@ async def link_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     match = await _library_match(context, info)
     await _delete_quietly(status)
+    # Anything the bot sends now pushes an open carousel out of view, and an
+    # in-place update of a scrolled-away message reads as no answer at all.
+    forget_results_view(context)
     if match is not None:
         await _send_library_card(context, message, match, info)
         return
@@ -266,6 +285,7 @@ async def audio_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
     can_analyze = not audio.file_size or audio.file_size <= TELEGRAM_DOWNLOAD_LIMIT_BYTES
 
     await _remember(context, info, telegram_file_id=audio.file_id)
+    forget_results_view(context)
     await message.reply_text(
         audio_caption(info, can_analyze=can_analyze),
         reply_markup=external_audio_keyboard(info.media_key, can_analyze=can_analyze),
@@ -331,6 +351,7 @@ async def external_get_callback(
     if cached_parts:
         await _safe_edit(status, UPLOAD_STATUS)
         if await delivery.send_cached(context.bot, chat_id=message.chat_id, parts=cached_parts):
+            forget_results_view(context)
             await db.touch_external_media(media_key, utc_now_iso())
             await _delete_quietly(status)
             return
@@ -346,6 +367,7 @@ async def external_get_callback(
             chat_id=message.chat_id,
             prepared=prepared,
         )
+        forget_results_view(context)
         await delivery.remember_delivery(info, profile=prepared.profile, parts=sent)
         await db.log_event(
             user_id=update.effective_user.id if update.effective_user else None,
@@ -417,6 +439,7 @@ async def external_radio_callback(
     )
     settings.temp_dir.mkdir(parents=True, exist_ok=True)
     await _delete_quietly(status)
+    forget_results_view(context)
     # No paging: the seed lives outside the library, so another page would mean
     # uploading and embedding the audio again for results we already asked for.
     await send_track_results_page(

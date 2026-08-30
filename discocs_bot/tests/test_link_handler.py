@@ -111,6 +111,27 @@ class FakeNavidrome:
         return self.results, False
 
 
+class FakeApplication:
+    def __init__(self) -> None:
+        self.tasks: list = []
+
+    def create_task(self, coro):
+        self.tasks.append(coro)
+        return coro
+
+
+def dispatching_context(**bot_data) -> SimpleNamespace:
+    context = context_for(**bot_data)
+    context.application = FakeApplication()
+    return context
+
+
+def url_of(message: FakeMessage) -> str:
+    from bot.utils.links import find_first_url
+
+    return find_first_url(message.text) or ""
+
+
 def update_for(message: FakeMessage) -> SimpleNamespace:
     return SimpleNamespace(
         effective_message=message,
@@ -172,7 +193,7 @@ def test_link_message_sends_a_card_and_remembers_the_media(monkeypatch):
             return info()
 
     context = context_for(links=FakeLinks(), db=db)
-    asyncio.run(links_module.link_message_handler(update_for(message), context))
+    asyncio.run(links_module.process_link(update_for(message), context, url_of(message)))
 
     assert message.status.deleted is True
     assert len(message.photos) == 1
@@ -205,7 +226,7 @@ def test_track_already_in_the_library_is_offered_instead_of_a_download(monkeypat
         db=FakeDb(),
         navidrome=FakeNavidrome([library_track]),
     )
-    asyncio.run(links_module.link_message_handler(update_for(message), context))
+    asyncio.run(links_module.process_link(update_for(message), context, url_of(message)))
 
     assert message.photos == []
     assert len(sent) == 1
@@ -237,7 +258,7 @@ def test_a_different_song_in_the_library_does_not_hijack_the_link(monkeypatch, t
             return info()
 
     context = context_for(tmp_path, links=FakeLinks(), db=FakeDb(), navidrome=FakeNavidrome([other]))
-    asyncio.run(links_module.link_message_handler(update_for(message), context))
+    asyncio.run(links_module.process_link(update_for(message), context, url_of(message)))
 
     assert len(message.photos) == 1
 
@@ -257,7 +278,7 @@ def test_link_to_an_internal_address_is_reported_and_not_fetched(monkeypatch):
 
     db = FakeDb()
     context = context_for(links=ExplodingLinks(), db=db)
-    asyncio.run(links_module.link_message_handler(update_for(message), context))
+    asyncio.run(links_module.process_link(update_for(message), context, url_of(message)))
 
     assert message.status.texts == ["Эта ссылка ведёт внутрь сети — не открываю."]
     assert db.saved == []
@@ -274,7 +295,7 @@ def test_unsupported_source_is_reported(monkeypatch):
             raise ExternalAudioError("no extractor", user_message="Не знаю такой источник.")
 
     context = context_for(links=FakeLinks(), db=FakeDb())
-    asyncio.run(links_module.link_message_handler(update_for(message), context))
+    asyncio.run(links_module.process_link(update_for(message), context, url_of(message)))
 
     assert message.status.texts == ["Не знаю такой источник."]
 
@@ -282,15 +303,45 @@ def test_unsupported_source_is_reported(monkeypatch):
 def test_message_without_a_url_is_ignored(monkeypatch):
     allow_everyone(monkeypatch)
     message = FakeMessage("просто текст")
+    context = dispatching_context(db=FakeDb())
 
-    class ExplodingLinks:
-        async def fetch_info(self, url: str):
-            raise AssertionError("must not fetch anything")
-
-    context = context_for(links=ExplodingLinks(), db=FakeDb())
     asyncio.run(links_module.link_message_handler(update_for(message), context))
 
+    assert context.application.tasks == []
     assert message.replies == []
+
+
+def test_a_link_is_handled_off_the_update_queue(monkeypatch):
+    """PTB runs updates one at a time; reading a link must not hold the queue."""
+    allow_everyone(monkeypatch)
+    message = FakeMessage("https://youtu.be/abc123")
+    context = dispatching_context(db=FakeDb())
+
+    asyncio.run(links_module.link_message_handler(update_for(message), context))
+
+    assert len(context.application.tasks) == 1
+    context.application.tasks[0].close()
+
+
+def test_link_card_unbinds_the_open_carousel(monkeypatch):
+    """A card pushes the carousel out of view, so the next search needs a new
+    message instead of silently editing one that scrolled away."""
+    allow_everyone(monkeypatch)
+    monkeypatch.setattr(links_module, "validate_public_url", lambda url: url)
+    message = FakeMessage("https://youtu.be/abc123")
+
+    class FakeLinks:
+        async def fetch_info(self, url: str) -> ExternalTrackInfo:
+            return info()
+
+    context = context_for(links=FakeLinks(), db=FakeDb())
+    context.user_data["results_view"] = object()
+    context.user_data["results_history"] = [object()]
+
+    asyncio.run(links_module.process_link(update_for(message), context, url_of(message)))
+
+    assert "results_view" not in context.user_data
+    assert "results_history" not in context.user_data
 
 
 # ---------------------------------------------------------------------------

@@ -14,12 +14,19 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
+
 from bot.config import Settings
 from bot.services.media_cache import AUDIO_EXTENSIONS
+from bot.utils.links import UnsafeLinkError, validate_public_url
 
 logger = logging.getLogger(__name__)
 
 GENERIC_EXTRACTOR_KEYS = {"generic"}
+# Кнопка «Поделиться» у SoundCloud (и не только) даёт короткую ссылку-редирект
+# вроде on.soundcloud.com/xxxx — её не берёт ни один экстрактор.
+MAX_REDIRECT_HOPS = 5
+REDIRECT_TIMEOUT_SECONDS = 15.0
 ARTIST_TITLE_SEPARATORS = (" - ", " — ", " – ", " ~ ", " | ")
 _CHANNEL_SUFFIX = re.compile(r"\s*-\s*topic$", re.IGNORECASE)
 
@@ -133,6 +140,15 @@ class LinkAudioService:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._supported_extractors: list | None = None
+        # follow_redirects=False: каждый хоп проверяется отдельно, иначе редирект
+        # увёл бы запрос внутрь сети в обход проверок из bot/utils/links.py.
+        self._http = httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=REDIRECT_TIMEOUT_SECONDS,
+        )
+
+    async def close(self) -> None:
+        await self._http.aclose()
 
     # -- extractor gate ----------------------------------------------------
 
@@ -180,8 +196,42 @@ class LinkAudioService:
 
     # -- public API --------------------------------------------------------
 
+    async def resolve(self, url: str) -> str:
+        """Follow a share shortlink until a real extractor claims the target.
+
+        Every hop is validated on its own: following redirects inside httpx
+        would let a public shortener bounce the request to an address inside
+        our network, past the checks the URL itself passed.
+        """
+        if await asyncio.to_thread(self.is_supported, url):
+            return url
+        current = url
+        for _hop in range(MAX_REDIRECT_HOPS):
+            try:
+                response = await self._http.head(current)
+            except httpx.HTTPError as exc:
+                logger.warning("Could not resolve shortlink %s: %s", current, exc)
+                return url
+            location = response.headers.get("location")
+            if response.status_code not in range(300, 400) or not location:
+                return current
+            current = str(httpx.URL(current).join(location))
+            try:
+                current = await asyncio.to_thread(validate_public_url, current)
+            except UnsafeLinkError as exc:
+                logger.warning("Shortlink %s redirects somewhere unsafe: %s", url, exc)
+                raise ExternalAudioError(
+                    str(exc),
+                    user_message=exc.user_message,
+                ) from exc
+            if self.is_supported(current):
+                logger.info("Resolved shortlink %s -> %s", url, current)
+                return current
+        return current
+
     async def fetch_info(self, url: str) -> ExternalTrackInfo:
-        if not self.is_supported(url):
+        url = await self.resolve(url)
+        if not await asyncio.to_thread(self.is_supported, url):
             raise ExternalAudioError(
                 f"No extractor for {url}",
                 user_message="Не знаю такой источник. Работают YouTube, SoundCloud, Bandcamp и подобные.",
