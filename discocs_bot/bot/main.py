@@ -1,6 +1,8 @@
 import asyncio
 import contextlib
 import logging
+import os
+import threading
 
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 from telegram.request import HTTPXRequest
@@ -25,6 +27,7 @@ from bot.services.transcoder import Transcoder
 from bot.storage.db import Database
 from bot.utils.single_instance import acquire, release
 from bot.utils.temp_cleanup import sweep_stale_files
+from bot.utils.watchdog import Watchdog
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +144,24 @@ async def _shutdown(application: Application) -> None:
         await application.shutdown()
 
 
-async def _run_bot() -> None:
+SHUTDOWN_GUARD_SECONDS = 30.0
+
+
+def _arm_shutdown_guard(seconds: float = SHUTDOWN_GUARD_SECONDS) -> threading.Timer:
+    """Страховка от зависания в shutdown при мёртвой сети.
+
+    Выходим мы как раз потому, что Telegram недостижим — а закрытие клиентов
+    в этот момент и есть то место, где можно повиснуть. Повисший процесс после
+    решения «перезапуститься» — ровно то состояние, которое сторож и лечит.
+    """
+    timer = threading.Timer(seconds, lambda: os._exit(1))
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+async def _run_bot() -> bool:
+    """Крутит бота. True — выходим ради перезапуска супервизором."""
     settings = get_settings()
     acquire(settings.sqlite_path.parent)
     application = build_application()
@@ -150,11 +170,29 @@ async def _run_bot() -> None:
     await application.start()
     await application.updater.start_polling(drop_pending_updates=True)
     logger.info("Bot is running. Ctrl+C to stop (or stop.bat if it hangs).")
+
+    dead = asyncio.Event()
+    watchdog = Watchdog(
+        application.bot.get_me,
+        settings.heartbeat_path,
+        interval=settings.watchdog_interval_seconds,
+        timeout=settings.watchdog_timeout_seconds,
+        max_failures=settings.watchdog_max_failures,
+    )
+    watchdog_task = asyncio.create_task(watchdog.run(dead))
+    guard: threading.Timer | None = None
     try:
-        await asyncio.Event().wait()
+        await dead.wait()
+        guard = _arm_shutdown_guard()
+        return True
     finally:
+        watchdog_task.cancel()
+        with contextlib.suppress(Exception, asyncio.CancelledError):
+            await watchdog_task
         await _shutdown(application)
         release(settings.sqlite_path.parent)
+        if guard is not None:
+            guard.cancel()
 
 
 def main() -> None:
@@ -165,9 +203,15 @@ def main() -> None:
 
     logger.info("Starting Discocs Bot")
     try:
-        asyncio.run(_run_bot())
+        restart = asyncio.run(_run_bot())
     except KeyboardInterrupt:
         logger.info("Stopped.")
+        return
+
+    if restart:
+        # Ненулевой код — сигнал супервизору (restart: unless-stopped) поднять
+        # бота заново. Чистый выход он бы принял за штатную остановку.
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

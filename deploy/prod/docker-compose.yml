@@ -90,12 +90,18 @@ services:
     dns:
       - 1.1.1.1
       - 8.8.8.8
+    # Проверяем возраст handshake, а не наличие интерфейса: `ip link show awg0`
+    # зелёный и при полностью мёртвом туннеле — 16.09.2026 бот из-за этого
+    # молчал полтора суток в статусе Up (healthy). Живой WG с keepalive=25
+    # обновляет handshake раз в ~2 минуты, так что 300с — двойной запас.
     healthcheck:
-      test: ["CMD", "ip", "link", "show", "awg0"]
-      interval: 10s
+      test:
+        - CMD-SHELL
+        - ts=$$(awg show awg0 latest-handshakes | cut -f2 | sort -n | tail -1); [ -n "$$ts" ] && [ "$$ts" -gt 0 ] && [ $$(( $$(date +%s) - ts )) -lt 300 ]
+      interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 60s
 
   bot:
     image: ${REGISTRY:-192.168.1.41:5000}/${IMAGE_NS:-discocs}/bot:${TAG:-latest}
@@ -116,6 +122,11 @@ services:
       DISCOCS_SERVICE_TOKEN: ${DISCOCS_SERVICE_TOKEN:-}
       SQLITE_PATH: /data/bot.sqlite
       TEMP_DIR: /data/tmp
+      # Сторож доступности Telegram: обновляет heartbeat, а после затяжной
+      # немоты валит процесс, чтобы его поднял restart: unless-stopped.
+      # Единственный способ вернуть бота, если awg-контейнер пересоздавался:
+      # старый сетевой неймспейс остаётся мёртвым навсегда.
+      HEARTBEAT_PATH: /data/heartbeat
       # Кэш скачанного по ссылкам аудио. Лежит на том же host bind-mount, что и
       # остальное состояние бота; чтобы вынести на другой диск — добавь свой
       # bind-mount и укажи его путь здесь.
@@ -125,6 +136,16 @@ services:
       YTDLP_COOKIES_FILE: ${YTDLP_COOKIES_FILE:-}
     volumes:
       - ${DISCOCS_STATE_DIR}/discocs_bot:/data
+    # Порог (240с) ниже, чем у сторожа (5 проб по минуте): сначала контейнер
+    # честно становится unhealthy, и только потом чинит себя перезапуском.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c 'import os,sys,time; p=os.environ.get("HEARTBEAT_PATH","/data/heartbeat"); sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < 240 else 1)'
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     depends_on:
       backend:
         condition: service_healthy

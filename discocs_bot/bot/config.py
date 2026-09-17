@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     sqlite_path: Path = Field(default=Path("data/bot.sqlite"), alias="SQLITE_PATH")
     temp_dir: Path = Field(default=Path("data/tmp"), alias="TEMP_DIR")
 
+    # Сторож сетевой доступности (см. bot/utils/watchdog.py). Бот живёт за
+    # awg-туннелем, и при его падении PTB ретраит get_updates вечно: процесс
+    # жив, контейнер Up, бот молчит. Порог по умолчанию — 5 проб по минуте,
+    # то есть ~5 минут глухой сети до перезапуска процесса.
+    heartbeat_path: Path = Field(default=Path("data/heartbeat"), alias="HEARTBEAT_PATH")
+    watchdog_interval_seconds: float = Field(default=60.0, alias="WATCHDOG_INTERVAL_SECONDS")
+    watchdog_timeout_seconds: float = Field(default=30.0, alias="WATCHDOG_TIMEOUT_SECONDS")
+    watchdog_max_failures: int = Field(default=5, alias="WATCHDOG_MAX_FAILURES")
+
     # Скачивание по ссылке (YouTube/SoundCloud/…): кэш файлов, лимиты, куки.
     external_cache_dir: Path = Field(default=Path("data/cache/external"), alias="EXTERNAL_CACHE_DIR")
     external_cache_max_gb: float = Field(default=10.0, alias="EXTERNAL_CACHE_MAX_GB")

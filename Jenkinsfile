@@ -362,9 +362,20 @@ pipeline {
             sh '''
               set -e
               scp -P "$TARGET_PORT" -o StrictHostKeyChecking=no deploy/prod/docker-compose.yml "$TARGET_USER@$TARGET_SERVER:$TARGET_DIR/docker-compose.yml"
+              scp -P "$TARGET_PORT" -o StrictHostKeyChecking=no deploy/prod/start-awg.sh "$TARGET_USER@$TARGET_SERVER:$TARGET_DIR/start-awg.sh"
               ssh -p "$TARGET_PORT" -o StrictHostKeyChecking=no "$TARGET_USER@$TARGET_SERVER" '
                 set -e
                 cd '"$TARGET_DIR"'
+                # Entrypoint awg-сайдкара монтируется из состояния, а не из образа.
+                # Раскладываем его до up: bind-mount ловит содержимое файла в момент
+                # создания контейнера. Секрет тут только awg0.conf рядом — сам скрипт
+                # держим в git, иначе хостовая копия тихо разъезжается с репозиторием.
+                STATE_DIR=$(sed -n "s/^DISCOCS_STATE_DIR=//p" .env)
+                if [ -d "$STATE_DIR/discocs_awg" ]; then
+                  install -m 0755 start-awg.sh "$STATE_DIR/discocs_awg/start-awg.sh"
+                else
+                  echo "WARN: $STATE_DIR/discocs_awg не найден — start-awg.sh не обновлён"
+                fi
                 TAG=latest docker compose -p discocs --env-file .env pull
                 TAG=latest docker compose -p discocs --env-file .env up -d --force-recreate --remove-orphans --wait --wait-timeout 120
                 docker image prune -f

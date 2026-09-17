@@ -175,3 +175,83 @@ Dashboard -> Check missing files
 
 Missing tracks are not immediately deleted. Review them under `Lost files` and
 remove selected records when you are sure they should leave the catalog.
+
+## Бот: туннель, наблюдаемость, самовосстановление
+
+Бот ходит в Telegram только через awg-туннель: он сидит в сетевом неймспейсе
+сайдкара `awg` (`network_mode: service:awg`, см. `deploy/prod/docker-compose.yml`).
+Всё, что ломается в туннеле, для бота выглядит как «интернета нет».
+
+### Почему это пришлось чинить
+
+16.09.2026 бот молчал полтора суток, показывая `Up` без единой жалобы. Цепочка
+была такая:
+
+1. VPN-сервер перезагрузился, и `awg-quick@awg0` на нём стартовал раньше Docker'а.
+   Его `PostUp` с `iptables -I DOCKER-USER` упал («No chain/target/match by that
+   name» — цепочку создаёт сам Docker), wg-quick откатил конфиг, удалил `awg0`
+   и умер насовсем.
+2. На хосте разом замолчали все туннели, но healthcheck сайдкара проверял
+   `ip link show awg0` — интерфейс существует всегда, даже когда туннель мёртв.
+   Docker считал сайдкар здоровым.
+3. Бот не падал: PTB ретраит `get_updates` вечно, процесс жив, поэтому
+   `restart: unless-stopped` не срабатывал.
+
+Ни один из трёх слоёв не был способен сказать «я сломан». Теперь способен каждый.
+
+### Что проверять при «бот не отвечает»
+
+Порядок от дешёвого к дорогому:
+
+```bash
+docker ps --filter name=discocs --format '{{.Names}}\t{{.Status}}'
+```
+
+`unhealthy` у `awg` — мёртвый туннель, у `bot` — бот не достучался до Telegram.
+Дальше смотреть возраст handshake:
+
+```bash
+docker exec discocs-awg-1 awg show awg0
+```
+
+Если `latest handshake` совпадает с uptime VPN-сервера — упал сервис на той
+стороне, лечится там: `systemctl start awg-quick@awg0`. После подъёма туннеля
+контейнеры, сидящие в неймспейсе awg, нужно перезапустить, если пересоздавался
+сам awg-контейнер: старый неймспейс остаётся мёртвым навсегда.
+
+### Самовосстановление
+
+| Слой | Что проверяет | Что делает |
+|---|---|---|
+| healthcheck `awg` | возраст handshake < 300с | помечает контейнер unhealthy |
+| монитор в `start-awg.sh` | возраст handshake каждые 30с | 2 попытки переприменить конфиг на месте, затем выход с ошибкой → docker пересоздаёт сайдкар |
+| сторож в боте | `get_me()` раз в минуту | пишет heartbeat; после 5 неудач подряд валит процесс → `restart: unless-stopped` |
+| healthcheck `bot` | возраст heartbeat < 240с | помечает контейнер unhealthy |
+
+Пороги подобраны так, чтобы `unhealthy` загорался **раньше**, чем начинается
+самолечение: сначала видно проблему, потом её чинят. Жёсткий перезапуск
+сайдкара идёт с растущей паузой (60с, 120с, … до 10 минут) — когда лежит сам
+VPN-сервер, перезапуски не помогают, и честный `unhealthy` лучше карусели.
+
+Настройки сторожа (env бота): `WATCHDOG_INTERVAL_SECONDS`,
+`WATCHDOG_TIMEOUT_SECONDS`, `WATCHDOG_MAX_FAILURES`, `HEARTBEAT_PATH`.
+Настройки монитора туннеля: `AWG_CHECK_INTERVAL`, `AWG_STALE_AFTER`,
+`AWG_SOFT_ATTEMPTS`.
+
+### Гонка на VPN-сервере
+
+Корень той аварии лечится на самом сервере — drop-in
+`/etc/systemd/system/awg-quick@awg0.service.d/override.conf`:
+
+```ini
+[Unit]
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Restart=on-failure
+RestartSec=10
+```
+
+Плюс `|| true` на правилах `PostUp`/`PostDown`, работающих с цепочкой
+`DOCKER-USER`: потеря одного проброса лучше, чем потеря туннеля целиком.
