@@ -49,12 +49,22 @@ the answer stays "unknown source" rather than a stack trace.
 
 ## Results and the carousel
 
-Results render into a single message that updates in place. That reads as an
-answer only while it is the last message in the chat — once the bot has sent a
-link card or an audio file, editing it silently changes a message that scrolled
-away, and the next search looks like no answer at all. So anything the bot sends
-into the chat unbinds the open carousel, and the next results page starts a new
-message.
+Paging through one result set updates a single message in place, which keeps the
+chat from filling up with near-identical cards. That reads as an answer only
+while the card is the last message in the chat, and it stops being last as soon
+as the bot sends anything else — a link card, an audio file, an album. Editing
+it then silently changes a message that scrolled away, and the search looks like
+it got no answer at all.
+
+Unbinding the carousel from every place that sends something was tried first
+(`forget_results_view` in the link handlers) and missed track delivery, so the
+symptom came back: searches went unanswered for anyone who had pressed
+**Получить** earlier. The rule lives in one place now — in
+`show_or_update_track_results`: a **new** result set (another query, radio from
+another seed) always starts a new message, and only paging within the same set
+edits in place. The previous card is left in the chat rather than deleted; its
+buttons keep working, because callbacks act on the `message_id` they arrived on,
+and the older result set stays in history for **Назад**.
 
 ## Radio from something outside the library
 

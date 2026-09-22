@@ -285,26 +285,18 @@ async def show_or_update_track_results(
     )
 
     if new_session:
+        # Новая выдача — всегда новое сообщение. Обновление карточки на месте
+        # читается как ответ, только пока она последняя в чате: стоит боту
+        # прислать что-то ещё (трек, альбом, радио), и следующий поиск молча
+        # правит уехавшее вверх сообщение — выглядит как «бот не ответил».
+        # Отвязывать карусель в каждом месте, которое что-то отправляет, уже
+        # пробовали (forget_results_view в links.py) — доставку треков тогда
+        # пропустили, и симптом вернулся. Поэтому решаем здесь, в одной точке.
+        # Старую карточку не удаляем: её кнопки продолжают работать по своему
+        # message_id (см. callbacks.py), а история выдач нужна для «Назад».
         if view and view.chat_id == chat_id:
             push_results_history(context, view)
-            view.header = header
-            view.tracks = tracks
-            view.has_next = has_next
-            view.page_size = page_size
-            view.slot = 0
-            view.kind = page_kind
-            view.session_key = session_key
-            set_results_view(context, view)
-            await show_carousel_slot(
-                context,
-                bot,
-                slot=0,
-                navidrome=navidrome,
-                temp_dir=temp_dir,
-            )
-            return
-
-        if view:
+        elif view:
             await clear_results_view(bot, context)
 
         view = ResultsView(
