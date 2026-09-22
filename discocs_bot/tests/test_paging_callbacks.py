@@ -287,3 +287,57 @@ def test_same_session_still_updates_the_card_in_place(monkeypatch, tmp_path: Pat
     view = track_pages_module.get_results_view(context)
     assert view is not None
     assert view.message_id == 111
+
+
+def test_new_radio_session_still_updates_the_card_in_place(monkeypatch, tmp_path: Path) -> None:
+    """Радио открывается кнопкой на самой карточке — она перед глазами.
+
+    Отдельное сообщение тут не нужно: пользователь смотрит на карточку, в
+    которую и приходит новая выдача. Новым сообщением отвечает только поиск,
+    потому что его запрос приходит текстом снизу.
+    """
+    context = SimpleNamespace(user_data={}, bot_data={})
+    track_pages_module.set_results_view(context, _results_view())
+
+    sent: list[int] = []
+    edited: list[int] = []
+
+    async def fake_send_track_card(passed_bot, chat_id: int, passed_track, **kwargs) -> SimpleNamespace:
+        sent.append(chat_id)
+        return SimpleNamespace(message_id=444)
+
+    async def fake_show_carousel_slot(ctx, passed_bot, *, slot: int, navidrome, temp_dir: Path) -> None:
+        edited.append(slot)
+
+    monkeypatch.setattr(track_pages_module, "carousel_keyboard", lambda **kwargs: kwargs)
+    monkeypatch.setattr(track_pages_module, "send_track_card", fake_send_track_card)
+    monkeypatch.setattr(track_pages_module, "show_carousel_slot", fake_show_carousel_slot)
+
+    asyncio.run(
+        track_pages_module.show_or_update_track_results(
+            context,
+            SimpleNamespace(),
+            chat_id=99,
+            anchor=None,
+            tracks=[SimpleNamespace(id="radio-track", album_id="radio-album")],
+            navidrome=SimpleNamespace(),
+            temp_dir=tmp_path / "temp",
+            header="Радио от Sully",
+            page_size=10,
+            page_kind="radio",
+            session_key="seed-song",
+            has_next=False,
+        )
+    )
+
+    assert sent == [], "радио не должно плодить сообщения — оно правит карточку"
+    assert edited == [0]
+
+    view = track_pages_module.get_results_view(context)
+    assert view is not None
+    assert view.message_id == 111
+    assert view.kind == "radio"
+    assert view.session_key == "seed-song"
+    # Прошлая выдача по-прежнему уходит в историю — «Назад» работает.
+    history = track_pages_module.get_results_history(context)
+    assert [item.session_key for item in history] == ["старый запрос"]

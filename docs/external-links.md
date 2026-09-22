@@ -59,12 +59,19 @@ it got no answer at all.
 Unbinding the carousel from every place that sends something was tried first
 (`forget_results_view` in the link handlers) and missed track delivery, so the
 symptom came back: searches went unanswered for anyone who had pressed
-**Получить** earlier. The rule lives in one place now — in
-`show_or_update_track_results`: a **new** result set (another query, radio from
-another seed) always starts a new message, and only paging within the same set
-edits in place. The previous card is left in the chat rather than deleted; its
-buttons keep working, because callbacks act on the `message_id` they arrived on,
-and the older result set stays in history for **Назад**.
+**Получить** earlier. What decides it now is where the request came from, in
+`show_or_update_track_results`:
+
+* **search** answers a line of text typed at the bottom of the chat, so its
+  results always start a new message. The previous card is left alone rather
+  than deleted — its buttons keep working, because callbacks act on the
+  `message_id` they arrived on, and the older set stays in history for
+  **Назад**.
+* **radio and the rest** are opened by a button on the card itself, so that card
+  is on screen by definition and updating it in place is visible immediately.
+  These still reuse the message, and `forget_results_view` still matters for
+  them: once the bot has posted a link card, the carousel is unbound and the
+  next set starts fresh.
 
 ## Radio from something outside the library
 
