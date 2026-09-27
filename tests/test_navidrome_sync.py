@@ -479,3 +479,76 @@ def test_limited_sync_does_not_mark_unseen_tracks_stale(tmp_path):
     assert result.seen_count == 1
     assert result.stale_count == 0
     assert store.get_track_by_external_id(NAVIDROME_PROVIDER, "song-2").missing_at is None
+
+
+def test_sync_navidrome_catalog_relinks_track_when_song_id_rotates(tmp_path):
+    import numpy as np
+
+    store = Store(tmp_path / "app.db")
+    store.init()
+    sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([song_with_path("old-id", "One", "/music/Artist/Album/01 - One.flac")]),  # type: ignore[arg-type]
+    )
+    original = store.get_track_by_external_id(NAVIDROME_PROVIDER, "old-id")
+    assert original is not None
+    store.save_embedding(original.id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+
+    result = sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([song_with_path("new-id", "One", "/music/Artist/Album/01 - One.flac")]),  # type: ignore[arg-type]
+    )
+
+    relinked = store.get_track_by_external_id(NAVIDROME_PROVIDER, "new-id")
+    assert relinked is not None
+    assert relinked.id == original.id
+    assert relinked.path == "navidrome://new-id"
+    assert relinked.missing_at is None
+    assert store.get_track_by_external_id(NAVIDROME_PROVIDER, "old-id") is None
+    assert store.external_id_for_track(NAVIDROME_PROVIDER, original.id) == "new-id"
+    assert store.load_embedding(original.id, "discogs_multi") is not None
+    assert store.count_tracks() == 1
+    assert result.relinked_count == 1
+    assert result.imported_count == 0
+    assert result.stale_count == 0
+
+
+def test_sync_navidrome_catalog_does_not_relink_ambiguous_path(tmp_path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    path = "/music/Artist/Album/01 - One.flac"
+    sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([song_with_path("old-id", "One", path)]),  # type: ignore[arg-type]
+    )
+
+    result = sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([song_with_path("new-a", "One", path), song_with_path("new-b", "One", path)]),  # type: ignore[arg-type]
+    )
+
+    assert result.relinked_count == 0
+    assert result.imported_count == 2
+    assert result.stale_count == 1
+    old = store.get_track_by_external_id(NAVIDROME_PROVIDER, "old-id")
+    assert old is not None
+    assert old.missing_at is not None
+
+
+def test_limited_sync_does_not_relink_rotated_ids(tmp_path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    path = "/music/Artist/Album/01 - One.flac"
+    sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([song_with_path("old-id", "One", path)]),  # type: ignore[arg-type]
+    )
+
+    result = sync_navidrome_catalog(
+        store,
+        FakeNavidromeClient([song_with_path("new-id", "One", path)]),  # type: ignore[arg-type]
+        limit=1,
+    )
+
+    assert result.relinked_count == 0
+    assert store.get_track_by_external_id(NAVIDROME_PROVIDER, "old-id") is not None

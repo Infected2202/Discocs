@@ -86,6 +86,15 @@ uvicorn app.main:app --host 0.0.0.0 --port 8711
 new tracks, and (optionally) marks missing ones stale. It is too heavy to run
 every minute, so it stays manual / occasional.
 
+Tracks are keyed by Navidrome song ID, but Navidrome can re-issue IDs for files
+that did not move (the 0.64 upgrade rescan re-ID'd ~48k songs at once). A full
+sync therefore relinks by file: when a song ID is unknown and its Navidrome
+`path` matches exactly one mapping whose ID vanished from the catalog (and no
+other song claims that path), the original track takes over the new ID — its
+embeddings, likes and history stay put, and it is not marked stale
+(`relinked=` in the sync summary). Ambiguous paths fall back to import + stale.
+Limited syncs (`--limit`) never relink, since they cannot tell which IDs vanished.
+
 For keeping **play history fresh** (the "Recently Played" shelf and Flow's
 recently-played exclusion), the API server runs a lightweight delta refresh
 inside its maintenance loop. It calls `getAlbumList2?type=recent`, expands those

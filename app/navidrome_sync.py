@@ -26,12 +26,13 @@ class NavidromeSyncResult:
     failed_count: int
     external_id_count: int
     tracks_without_external_id: int
+    relinked_count: int = 0
 
     def summary(self) -> str:
         return (
             f"seen={self.seen_count} imported={self.imported_count} "
             f"updated={self.updated_count} preserved_releases={self.preserved_release_count} "
-            f"stale={self.stale_count} "
+            f"relinked={self.relinked_count} stale={self.stale_count} "
             f"failed={self.failed_count} external_ids={self.external_id_count} "
             f"tracks_without_external_id={self.tracks_without_external_id}"
         )
@@ -127,6 +128,11 @@ def sync_navidrome_catalog(
     with store.connect() as conn:
         existing_mappings = _load_existing_navidrome_mappings(conn)
         existing_external_ids = set(existing_mappings)
+        relinked_external_ids = (
+            _relink_rotated_song_ids(conn, songs, existing_mappings)
+            if limit is None
+            else set()
+        )
         preserved_release_count = (
             _preserve_release_continuity(conn, songs, existing_mappings)
             if limit is None
@@ -191,7 +197,7 @@ def sync_navidrome_catalog(
                 logger.exception("Failed to sync Navidrome song item_id=%s", song.id)
 
         if mark_stale and limit is None:
-            stale_external_ids = existing_external_ids - seen_external_ids
+            stale_external_ids = existing_external_ids - seen_external_ids - relinked_external_ids
             for external_id in stale_external_ids:
                 mapping = existing_mappings.get(external_id)
                 if mapping is None:
@@ -210,6 +216,7 @@ def sync_navidrome_catalog(
         failed_count=failed_count,
         external_id_count=external_id_count,
         tracks_without_external_id=tracks_without_external_id,
+        relinked_count=len(relinked_external_ids),
     )
     logger.info("Finished Navidrome sync %s", result.summary())
     return result
@@ -392,6 +399,87 @@ def _preserve_release_continuity(
             album_id,
         )
     return preserved
+
+
+def _relink_rotated_song_ids(
+    conn: sqlite3.Connection,
+    songs: list[NavidromeSong],
+    existing_mappings: dict[str, sqlite3.Row],
+) -> set[str]:
+    """Carry tracks across a Navidrome song ID change for the same file.
+
+    Navidrome can re-issue IDs for files that did not move (0.64 upgrade
+    rescan re-ID'd ~48k songs). Matching only by ID would import every song as
+    a new track and mark the analyzed original missing. When a song ID is
+    unknown, the file's Navidrome path belongs to exactly one mapping whose ID
+    vanished from the catalog, and no other song claims that path, the original
+    track takes over the new ID. Mutates ``existing_mappings`` so the main loop
+    treats the song as an update of that track; returns the retired old IDs.
+    """
+    seen_ids = {song.id for song in songs if song.id}
+    songs_by_path: dict[str, list[NavidromeSong]] = {}
+    for song in songs:
+        path = _song_navidrome_path(song.raw)
+        if path and song.id:
+            songs_by_path.setdefault(path, []).append(song)
+
+    vanished_by_path: dict[str, list[str]] = {}
+    for external_id, mapping in existing_mappings.items():
+        if external_id in seen_ids or mapping["path"] is None:
+            continue
+        path = _song_navidrome_path(_parse_raw_json(mapping["raw_json"]))
+        if path:
+            vanished_by_path.setdefault(path, []).append(external_id)
+
+    now = utc_now()
+    relinked: set[str] = set()
+    for path, old_ids in vanished_by_path.items():
+        candidates = songs_by_path.get(path, [])
+        if len(old_ids) != 1 or len(candidates) != 1:
+            continue
+        new_id = candidates[0].id
+        if new_id in existing_mappings:
+            continue
+        old_id = old_ids[0]
+        mapping = existing_mappings[old_id]
+        track_id = int(mapping["track_id"])
+        if str(mapping["path"]).startswith("navidrome://"):
+            conn.execute(
+                "UPDATE tracks SET path = ?, updated_at = ? WHERE id = ?",
+                (f"navidrome://{new_id}", now, track_id),
+            )
+        conn.execute(
+            """
+            DELETE FROM external_ids
+            WHERE provider = ? AND entity_type = 'track' AND entity_id = ? AND external_id = ?
+            """,
+            (NAVIDROME_PROVIDER, track_id, old_id),
+        )
+        existing_mappings[new_id] = mapping
+        relinked.add(old_id)
+        logger.info(
+            "Relinked track across Navidrome song ID change track_id=%s old_id=%s new_id=%s",
+            track_id,
+            old_id,
+            new_id,
+        )
+    return relinked
+
+
+def _song_navidrome_path(raw: dict | None) -> str | None:
+    value = (raw or {}).get("path")
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def _parse_raw_json(raw_json: str | None) -> dict | None:
+    if not raw_json:
+        return None
+    try:
+        value = json.loads(raw_json)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def _song_album_id(song: NavidromeSong) -> str | None:
