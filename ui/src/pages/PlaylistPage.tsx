@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useParams, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
-import { Download, Play, ChevronLeft, Pencil, Shuffle, Trash2, X } from "lucide-react"
+import { Download, Play, ChevronLeft, ListPlus, Pencil, Shuffle, Trash2, X, FolderInput } from "lucide-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   fetchLikesPlaylist,
@@ -13,12 +13,14 @@ import {
   reorderPlaylistTracks,
   type LikesPlaylist,
 } from "@/api/playlists"
+import { ApiError } from "@/api/client"
 import { isNetworkError } from "@/lib/apiErrorKind"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import CollectionHeader from "@/components/media/CollectionHeader"
 import VirtualTrackList from "@/components/media/VirtualTrackList"
+import ConfirmDialog from "@/components/common/ConfirmDialog"
 import { usePlayerStore } from "@/store/playerStore"
 import { useUIStore } from "@/store/uiStore"
 import type { PlaylistDetail, TrackSummary } from "@/api/types"
@@ -63,10 +65,16 @@ export default function PlaylistPage() {
   const queryClient = useQueryClient()
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
   const openCreatePlaylist = useUIStore((s) => s.openCreatePlaylist)
+  const openAddToPlaylist = useUIStore((s) => s.openAddToPlaylist)
 
   const isLikes = id === "likes"
   const playlistId = isLikes ? null : Number(id)
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<number>>(new Set())
+  // Tracks awaiting "remove from playlist" confirmation. The ids outlive the
+  // open flag so the dialog text doesn't flip to "0 tracks" while it fades out.
+  const [pendingRemoval, setPendingRemoval] = useState<number[]>([])
+  const [confirmingRemoval, setConfirmingRemoval] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const { data, isLoading, error } = useQuery<LikesPlaylist | PlaylistDetail>({
     queryKey: ["playlist", isLikes ? "likes" : playlistId],
@@ -76,10 +84,16 @@ export default function PlaylistPage() {
     staleTime: 30_000,
   })
 
-  const { mutate: removeSelected, isPending: removing } = useMutation({
+  const {
+    mutate: removeTracks,
+    isPending: removing,
+    error: removeError,
+    reset: resetRemove,
+  } = useMutation({
     mutationFn: (trackIds: number[]) => removePlaylistTracks(playlistId!, trackIds),
-    onSuccess: () => {
-      setSelectedIds(new Set())
+    onSuccess: (_result, trackIds) => {
+      setSelectedIds((prev) => new Set([...prev].filter((trackId) => !trackIds.includes(trackId))))
+      setConfirmingRemoval(false)
       queryClient.invalidateQueries({ queryKey: ["playlist", playlistId] })
       queryClient.invalidateQueries({ queryKey: ["playlists"] })
     },
@@ -93,11 +107,26 @@ export default function PlaylistPage() {
     },
   })
 
-  const { mutate: handleDelete, isPending: deleting } = useMutation({
+  function leaveDeletedPlaylist() {
+    // Drop the cached detail: otherwise "Back" lands on a playlist that no
+    // longer exists, rendered from cache, whose buttons all fail with 404.
+    queryClient.removeQueries({ queryKey: ["playlist", playlistId] })
+    queryClient.invalidateQueries({ queryKey: ["playlists"] })
+    navigate("/", { replace: true })
+  }
+
+  const {
+    mutate: handleDelete,
+    isPending: deleting,
+    error: deleteError,
+    reset: resetDelete,
+  } = useMutation({
     mutationFn: () => deletePlaylist(playlistId!),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["playlists"] })
-      navigate("/")
+    onSuccess: leaveDeletedPlaylist,
+    onError: (err) => {
+      // Already gone (deleted in another tab, or a repeated click) — the
+      // user's intent is fulfilled, so leave instead of silently staying.
+      if (err instanceof ApiError && err.status === 404) leaveDeletedPlaylist()
     },
   })
 
@@ -120,6 +149,10 @@ export default function PlaylistPage() {
   const detail = isLikes ? null : (data as PlaylistDetail)
   const editable = !isLikes && detail?.editable !== false
   const tracks = data.tracks as TrackSummary[]
+  // Selection can outlive its tracks (moved/removed elsewhere, refetch) — only
+  // count ids still in the playlist.
+  const trackIdSet = new Set(tracks.map((track) => track.id))
+  const selected = [...selectedIds].filter((trackId) => trackIdSet.has(trackId))
 
   function toggleSelect(trackId: number) {
     setSelectedIds((prev) => {
@@ -145,9 +178,20 @@ export default function PlaylistPage() {
     if (detail) openCreatePlaylist({ playlist: detail })
   }
 
-  function confirmDelete() {
-    if (globalThis.confirm(t("deleteConfirm", { title: data!.title }))) handleDelete()
+  function askRemove(trackIds: number[]) {
+    resetRemove()
+    setPendingRemoval(trackIds)
+    setConfirmingRemoval(true)
   }
+
+  function askDelete() {
+    resetDelete()
+    setConfirmingDelete(true)
+  }
+
+  const pendingTrack = pendingRemoval.length === 1
+    ? tracks.find((track) => track.id === pendingRemoval[0])
+    : undefined
 
   return (
     <div className="space-y-8 pb-8">
@@ -230,7 +274,7 @@ export default function PlaylistPage() {
                 <Button
                   size="icon-sm"
                   variant="outline"
-                  onClick={confirmDelete}
+                  onClick={askDelete}
                   disabled={deleting}
                   aria-label={t("delete")}
                   title={t("delete")}
@@ -245,18 +289,38 @@ export default function PlaylistPage() {
       />
 
       {/* Selection bar */}
-      {editable && selectedIds.size > 0 && (
+      {editable && selected.length > 0 && (
         <div className="px-4 sm:px-6">
-          <div className="flex items-center gap-3 rounded-md bg-muted/60 px-4 py-2 text-sm">
-            <span>{t("selectedCount", { count: selectedIds.size })}</span>
-            <button
-              onClick={() => removeSelected([...selectedIds])}
-              disabled={removing}
-              className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
-              aria-label={t("removeSelectedTracks")}
+          <div className="flex flex-wrap items-center gap-2 rounded-md bg-muted/60 px-4 py-2 text-sm">
+            <span className="mr-1">{t("selectedCount", { count: selected.length })}</span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => openAddToPlaylist(selected, data.title)}
             >
-              <Trash2 size={15} />
-            </button>
+              <ListPlus size={14} />
+              {t("selection.addTo")}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => openAddToPlaylist(selected, data.title, { moveFrom: playlistId! })}
+            >
+              <FolderInput size={14} />
+              {t("selection.moveTo")}
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              className="gap-1.5"
+              onClick={() => askRemove(selected)}
+              disabled={removing}
+            >
+              <Trash2 size={14} />
+              {t("selection.remove")}
+            </Button>
             <button
               onClick={() => setSelectedIds(new Set())}
               className="ml-auto flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
@@ -274,12 +338,39 @@ export default function PlaylistPage() {
           tracks={tracks}
           sourceLabel={data.title}
           selectable={editable}
-          selectedIds={selectedIds}
+          selectedIds={new Set(selected)}
           onToggleSelect={toggleSelect}
           onReorder={editable ? (trackIds) => reorder(trackIds) : undefined}
           onPlayTrack={(trackId) => playPlaylistFrom(trackId)}
+          onRemoveTrack={editable ? (trackId) => askRemove([trackId]) : undefined}
         />
       </div>
+
+      <ConfirmDialog
+        open={confirmingRemoval}
+        title={t("removeDialog.title", { count: pendingRemoval.length })}
+        description={pendingTrack
+          ? t("removeDialog.descriptionOne", { track: pendingTrack.title, playlist: data.title })
+          : t("removeDialog.descriptionMany", { count: pendingRemoval.length, playlist: data.title })}
+        confirmLabel={t("removeDialog.confirm")}
+        pending={removing}
+        error={removeError ? t("actionFailed") : null}
+        onConfirm={() => removeTracks(pendingRemoval)}
+        onCancel={() => setConfirmingRemoval(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmingDelete}
+        title={t("deleteDialog.title")}
+        description={t("deleteDialog.description", { title: data.title, count: tracks.length })}
+        confirmLabel={t("deleteDialog.confirm")}
+        pending={deleting}
+        error={deleteError && !(deleteError instanceof ApiError && deleteError.status === 404)
+          ? t("actionFailed")
+          : null}
+        onConfirm={() => handleDelete()}
+        onCancel={() => setConfirmingDelete(false)}
+      />
     </div>
   )
 }

@@ -187,15 +187,30 @@ Two branches on the same route:
 - numeric ids — user playlists (`fetchPlaylist`): 2x2 collage artwork,
   description, and Play / Edit / Delete actions. Edit reuses
   `CreatePlaylistDialog` in edit mode (title + description via `PATCH`);
-  Delete asks for confirmation, then `DELETE` + navigate to the dashboard.
+  Delete opens a confirmation modal that names the playlist and its track
+  count, then `DELETE` + navigate to the dashboard with `replace`. The cached
+  `["playlist", id]` query is removed first, so "Back" can't render the
+  deleted playlist from cache (where every action would 404). A 404 from
+  `DELETE` itself (already gone) is treated as success and also leaves.
 
-Track removal uses a selection mode: a selection checkbox lives in its own
-column on the **right** of each row (`VirtualTrackRow` `selectable` prop) and
-appears on hover; the play/index button on the left is never replaced.
-Checking the first row keeps checkboxes visible on all rows and shows a
-"N selected · trash · Cancel" bar above the list, where the trash button
-batches `POST /playlists/{id}/tracks/remove`. Only the checkbox itself
-toggles selection — the rest of the row keeps its normal play behaviour.
+Destructive actions on this page go through `components/common/ConfirmDialog`
+(in-app modal, not the browser's `confirm()`; focus starts on Cancel so a
+stray Enter never destroys anything; API errors are shown inside the modal).
+
+Selection mode: a selection checkbox lives in its own column on the **right**
+of each row (`VirtualTrackRow` `selectable` prop) and appears on hover; the
+play/index button on the left is never replaced. Checking the first row keeps
+checkboxes visible on all rows and shows a bar above the list:
+"N selected · Add to playlist · Move to playlist · Remove from playlist ·
+Cancel". Remove asks for confirmation, then batches
+`POST /playlists/{id}/tracks/remove`. Add/Move open `AddToPlaylistDialog`
+(Move in move mode, see below). Only the checkbox itself toggles selection —
+the rest of the row keeps its normal play behaviour. The selection is pruned
+to ids still present in the playlist after each refetch.
+
+A single track can also be removed from the row's `TrackMenu` ("Remove from
+playlist", only on editable playlists, via `VirtualTrackList` `onRemoveTrack`)
+— same confirmation modal.
 
 Rows can be reordered by drag-and-drop, built on **@dnd-kit** (`core` +
 `sortable` + `utilities`) inside `VirtualTrackList`. The picked-up row follows
@@ -222,8 +237,13 @@ non-permutations with 409 `invalid_order`.
 `AddToPlaylistDialog` (Recent 4 by `updated_at` + full list + "New playlist")
 and `CreatePlaylistDialog` (name/description + cosmetic visibility select,
 doubles as the edit dialog) are mounted once in `AppShell` and driven by a
-`uiStore` slice (`openAddToPlaylist(trackIds)` /
-`openCreatePlaylist(options)`). Entry points: the "Add to playlist" item in
+`uiStore` slice (`openAddToPlaylist(trackIds, defaultTitle?, { moveFrom? })` /
+`openCreatePlaylist(options)`). Move mode (`moveFrom` = source playlist id)
+titles the dialog "Move to playlist", hides the source playlist from the list,
+and adds to the target **first**, removing from the source only after the add
+succeeded — a failed add leaves the tracks where they were. "New playlist" in
+move mode forwards `moveFromPlaylistId` to `CreatePlaylistDialog`, which
+removes the tracks from the source after creating the new playlist. Entry points: the "Add to playlist" item in
 `TrackMenu`, the ListPlus button in the ExpandedPlayer queue header (saves
 all `queue.items`, deduped, excluding the autoplay pool), and the MixPage
 Save button (opens the create dialog prefilled with the mix title; submit

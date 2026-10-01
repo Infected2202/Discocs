@@ -13,7 +13,8 @@
     "download": "Скачать",
     "share": "Поделиться",
     "goTo": "Перейти к «{{name}}»",
-    "removeFromQueue": "Убрать из очереди"
+    "removeFromQueue": "Убрать из очереди",
+    "removeFromPlaylist": "Убрать из плейлиста"
   },
   "shelf": {
     "more": "Ещё",

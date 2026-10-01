@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import { useUIStore } from "@/store/uiStore"
-import { addTracksToPlaylist, fetchPlaylists } from "@/api/playlists"
+import { addTracksToPlaylist, fetchPlaylists, removePlaylistTracks } from "@/api/playlists"
 import type { PlaylistSummary } from "@/api/types"
 
 const RECENT_COUNT = 4
@@ -19,6 +19,7 @@ export default function AddToPlaylistDialog() {
   const { t } = useTranslation("playlist")
   const trackIds = useUIStore((s) => s.addToPlaylistTrackIds)
   const defaultTitle = useUIStore((s) => s.addToPlaylistDefaultTitle)
+  const moveFrom = useUIStore((s) => s.addToPlaylistMoveFrom)
   const close = useUIStore((s) => s.closeAddToPlaylist)
   const openCreatePlaylist = useUIStore((s) => s.openCreatePlaylist)
   const queryClient = useQueryClient()
@@ -31,27 +32,40 @@ export default function AddToPlaylistDialog() {
   })
 
   const { mutate: addTo, isPending } = useMutation({
-    mutationFn: (playlistId: number) => addTracksToPlaylist(playlistId, trackIds ?? []),
+    mutationFn: async (playlistId: number) => {
+      await addTracksToPlaylist(playlistId, trackIds ?? [])
+      // Move = add first, then remove from the source: if the add fails the
+      // tracks stay where they were instead of vanishing from both.
+      if (moveFrom !== null) await removePlaylistTracks(moveFrom, trackIds ?? [])
+    },
     onSuccess: (_result, playlistId) => {
       queryClient.invalidateQueries({ queryKey: ["playlists"] })
       queryClient.invalidateQueries({ queryKey: ["playlist", playlistId] })
+      if (moveFrom !== null) queryClient.invalidateQueries({ queryKey: ["playlist", moveFrom] })
       close()
     },
   })
 
-  // list_playlists is already ordered by updated_at DESC
-  const playlists = (data?.items ?? []).filter((playlist) => playlist.editable !== false)
+  // list_playlists is already ordered by updated_at DESC. Moving into the
+  // playlist the tracks already live in would just delete them, so hide it.
+  const playlists = (data?.items ?? []).filter(
+    (playlist) => playlist.editable !== false && playlist.id !== moveFrom,
+  )
   const recent = playlists.slice(0, RECENT_COUNT)
 
   function handleNewPlaylist() {
-    openCreatePlaylist({ trackIds: trackIds ?? [], defaultTitle: defaultTitle ?? undefined })
+    openCreatePlaylist({
+      trackIds: trackIds ?? [],
+      defaultTitle: defaultTitle ?? undefined,
+      moveFromPlaylistId: moveFrom ?? undefined,
+    })
   }
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) close() }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t("addToDialog.title")}</DialogTitle>
+          <DialogTitle>{moveFrom === null ? t("addToDialog.title") : t("addToDialog.moveTitle")}</DialogTitle>
         </DialogHeader>
 
         {isLoading && <p className="text-sm text-muted-foreground">{t("addToDialog.loading")}</p>}

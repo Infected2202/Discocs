@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import PlaylistPage from "./PlaylistPage"
@@ -33,12 +33,13 @@ vi.mock("@/store/playerStore", () => ({
 
 // The page is tested through a stub list that surfaces the selection wiring.
 vi.mock("@/components/media/VirtualTrackList", () => ({
-  default: ({ tracks, selectable, onToggleSelect, onReorder, onPlayTrack }: {
+  default: ({ tracks, selectable, onToggleSelect, onReorder, onPlayTrack, onRemoveTrack }: {
     tracks: TrackSummary[]
     selectable?: boolean
     onToggleSelect?: (id: number) => void
     onReorder?: (trackIds: number[]) => void
     onPlayTrack?: (trackId: number) => void
+    onRemoveTrack?: (trackId: number) => void
   }) => (
     <div data-testid="track-list">
       {tracks.map((t) => (
@@ -53,6 +54,11 @@ vi.mock("@/components/media/VirtualTrackList", () => ({
           <button data-testid={`play-${t.id}`} onClick={() => onPlayTrack?.(t.id)}>
             play {t.id}
           </button>
+          {onRemoveTrack && (
+            <button data-testid={`menu-remove-${t.id}`} onClick={() => onRemoveTrack(t.id)}>
+              menu remove {t.id}
+            </button>
+          )}
         </div>
       ))}
       {onReorder && (
@@ -95,8 +101,10 @@ function makeDetail(): PlaylistDetail {
   }
 }
 
-function renderPage(path: string) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+function renderPage(
+  path: string,
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[path]}>
@@ -118,7 +126,7 @@ beforeEach(() => {
   playPlaylist.mockReset().mockResolvedValue({ session: { id: "s1" } })
   playLikes.mockReset().mockResolvedValue({ session: { id: "s1" } })
   playFromEnvelope.mockReset().mockResolvedValue(undefined)
-  useUIStore.setState({ addToPlaylistTrackIds: null, createPlaylistOptions: null })
+  useUIStore.setState({ addToPlaylistTrackIds: null, addToPlaylistMoveFrom: null, createPlaylistOptions: null })
 })
 
 describe("PlaylistPage — пользовательский плейлист", () => {
@@ -140,7 +148,7 @@ describe("PlaylistPage — пользовательский плейлист", (
     expect(useUIStore.getState().createPlaylistOptions?.playlist?.id).toBe(5)
   })
 
-  it("selection-бар: удаляет выбранные треки батчем и сбрасывает выделение", async () => {
+  it("selection-бар: удаление треков только после подтверждения в модалке", async () => {
     fetchPlaylist.mockResolvedValue(makeDetail())
     removePlaylistTracks.mockResolvedValue({ removed: 2, track_count: 0 })
 
@@ -151,9 +159,81 @@ describe("PlaylistPage — пользовательский плейлист", (
     fireEvent.click(screen.getByTestId("select-2"))
     expect(screen.getByText("2 selected")).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove selected tracks" }))
+    fireEvent.click(screen.getByRole("button", { name: "Remove from playlist" }))
+    const dialog = await screen.findByRole("dialog")
+    expect(dialog).toHaveTextContent("Remove 2 tracks from playlist?")
+    expect(removePlaylistTracks).not.toHaveBeenCalled()
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }))
     await waitFor(() => expect(removePlaylistTracks).toHaveBeenCalledWith(5, [1, 2]))
     await waitFor(() => expect(screen.queryByText("2 selected")).toBeNull())
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+  })
+
+  it("модалка удаления треков: Cancel ничего не удаляет и сохраняет выделение", async () => {
+    fetchPlaylist.mockResolvedValue(makeDetail())
+
+    renderPage("/playlists/5")
+    await screen.findByText("Road trip")
+
+    fireEvent.click(screen.getByTestId("select-1"))
+    fireEvent.click(screen.getByRole("button", { name: "Remove from playlist" }))
+    const dialog = await screen.findByRole("dialog")
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }))
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+    expect(removePlaylistTracks).not.toHaveBeenCalled()
+    expect(screen.getByText("1 selected")).toBeInTheDocument()
+  })
+
+  it("модалка удаления треков: ошибка API видна, модалка не закрывается", async () => {
+    fetchPlaylist.mockResolvedValue(makeDetail())
+    removePlaylistTracks.mockRejectedValue(new ApiError(500, "api_error", "boom"))
+
+    renderPage("/playlists/5")
+    await screen.findByText("Road trip")
+
+    fireEvent.click(screen.getByTestId("select-1"))
+    fireEvent.click(screen.getByRole("button", { name: "Remove from playlist" }))
+    const dialog = await screen.findByRole("dialog")
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }))
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("That didn't work")
+    expect(screen.getByRole("dialog")).toBeInTheDocument()
+  })
+
+  it("пункт меню трека убирает один трек через ту же модалку", async () => {
+    fetchPlaylist.mockResolvedValue(makeDetail())
+    removePlaylistTracks.mockResolvedValue({ removed: 1, track_count: 1 })
+
+    renderPage("/playlists/5")
+    await screen.findByText("Road trip")
+
+    fireEvent.click(screen.getByTestId("menu-remove-2"))
+    const dialog = await screen.findByRole("dialog")
+    expect(dialog).toHaveTextContent("Remove track from playlist?")
+    expect(dialog).toHaveTextContent('"Track 2" will be removed from "Road trip"')
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }))
+    await waitFor(() => expect(removePlaylistTracks).toHaveBeenCalledWith(5, [2]))
+  })
+
+  it("selection-бар: «Добавить» и «Перенести» открывают диалог выбора плейлиста", async () => {
+    fetchPlaylist.mockResolvedValue(makeDetail())
+
+    renderPage("/playlists/5")
+    await screen.findByText("Road trip")
+
+    fireEvent.click(screen.getByTestId("select-2"))
+
+    fireEvent.click(screen.getByRole("button", { name: "Add to playlist" }))
+    expect(useUIStore.getState().addToPlaylistTrackIds).toEqual([2])
+    expect(useUIStore.getState().addToPlaylistMoveFrom).toBeNull()
+
+    fireEvent.click(screen.getByRole("button", { name: "Move to playlist" }))
+    expect(useUIStore.getState().addToPlaylistTrackIds).toEqual([2])
+    expect(useUIStore.getState().addToPlaylistMoveFrom).toBe(5)
+    expect(removePlaylistTracks).not.toHaveBeenCalled()
   })
 
   it("Cancel сбрасывает выделение без удаления", async () => {
@@ -170,16 +250,51 @@ describe("PlaylistPage — пользовательский плейлист", (
     expect(removePlaylistTracks).not.toHaveBeenCalled()
   })
 
-  it("Delete с подтверждением удаляет и уводит на дашборд", async () => {
+  it("Delete плейлиста: без подтверждения в модалке ничего не удаляется", async () => {
     fetchPlaylist.mockResolvedValue(makeDetail())
-    deletePlaylist.mockResolvedValue(undefined)
-    vi.spyOn(globalThis, "confirm").mockReturnValue(true)
 
     renderPage("/playlists/5")
     await screen.findByText("Road trip")
 
-    fireEvent.click(screen.getByRole("button", { name: /delete/i }))
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }))
+    const dialog = await screen.findByRole("dialog")
+    expect(dialog).toHaveTextContent('The whole playlist "Road trip" (2 tracks) will be deleted')
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }))
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+    expect(deletePlaylist).not.toHaveBeenCalled()
+    expect(screen.getByText("Road trip")).toBeInTheDocument()
+  })
+
+  it("Delete с подтверждением удаляет, уводит на дашборд и выкидывает плейлист из кэша", async () => {
+    fetchPlaylist.mockResolvedValue(makeDetail())
+    deletePlaylist.mockResolvedValue(undefined)
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+    renderPage("/playlists/5", queryClient)
+    await screen.findByText("Road trip")
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }))
+    const dialog = await screen.findByRole("dialog")
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete playlist" }))
+
     await waitFor(() => expect(deletePlaylist).toHaveBeenCalledWith(5))
+    await screen.findByTestId("dashboard")
+    // Иначе «Назад» рисует удалённый плейлист из кэша, и все его кнопки молча падают в 404.
+    expect(queryClient.getQueryData(["playlist", 5])).toBeUndefined()
+  })
+
+  it("Delete уже удалённого плейлиста (404) тоже уводит на дашборд, а не молчит", async () => {
+    fetchPlaylist.mockResolvedValue(makeDetail())
+    deletePlaylist.mockRejectedValue(new ApiError(404, "not_found", "Playlist not found"))
+
+    renderPage("/playlists/5")
+    await screen.findByText("Road trip")
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }))
+    const dialog = await screen.findByRole("dialog")
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete playlist" }))
+
     await screen.findByTestId("dashboard")
   })
 
@@ -204,6 +319,7 @@ describe("PlaylistPage — пользовательский плейлист", (
     expect(screen.queryByRole("button", { name: /delete/i })).toBeNull()
     expect(screen.getByTestId("select-1")).toBeDisabled()
     expect(screen.queryByTestId("reorder")).toBeNull()
+    expect(screen.queryByTestId("menu-remove-1")).toBeNull()
   })
 
   it("likes: без Edit/Delete и без selection", async () => {

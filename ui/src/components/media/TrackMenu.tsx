@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
-import { MoreHorizontal, Play, ListEnd, ListPlus, ListX, User, Disc3, Radio, Download, Share2 } from "lucide-react"
+import { MoreHorizontal, Play, ListEnd, ListPlus, ListMinus, ListX, User, Disc3, Radio, Download, Share2 } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,6 +25,8 @@ interface TrackMenuProps {
   readonly onPlayTrack?: (trackId: number) => void
   /** When set, adds a "Remove from queue" item — for rows that live in the current playback queue. */
   readonly onRemoveFromQueue?: () => void
+  /** When set, adds a "Remove from playlist" item — for rows of an editable playlist. */
+  readonly onRemoveFromPlaylist?: () => void
   /** Lets player surfaces keep their own control sizing while sharing the same menu. */
   readonly triggerClassName?: string
   readonly triggerIconSize?: number
@@ -35,6 +37,7 @@ export default function TrackMenu({
   sourceLabel,
   onPlayTrack,
   onRemoveFromQueue,
+  onRemoveFromPlaylist,
   triggerClassName,
   triggerIconSize = 15,
 }: TrackMenuProps) {
@@ -140,6 +143,16 @@ export default function TrackMenu({
             <DropdownMenuItem onClick={() => navigate(`/releases/${release.id}`)}>
               <Disc3 size={14} className="mr-2" />
               {t("trackMenu.goTo", { name: release.title })}
+            </DropdownMenuItem>
+          </>
+        )}
+
+        {onRemoveFromPlaylist && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={onRemoveFromPlaylist}>
+              <ListMinus size={14} className="mr-2" />
+              {t("trackMenu.removeFromPlaylist")}
             </DropdownMenuItem>
           </>
         )}

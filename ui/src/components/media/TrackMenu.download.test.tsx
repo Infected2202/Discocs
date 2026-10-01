@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { describe, expect, it, vi } from "vitest"
 import TrackMenu from "./TrackMenu"
@@ -8,8 +8,8 @@ import type { TrackSummary } from "@/api/types"
 vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DropdownMenuContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  DropdownMenuItem: ({ children, asChild }: { children: ReactNode; asChild?: boolean }) =>
-    asChild ? children : <div>{children}</div>,
+  DropdownMenuItem: ({ children, asChild, onClick }: { children: ReactNode; asChild?: boolean; onClick?: () => void }) =>
+    asChild ? children : <div onClick={onClick}>{children}</div>,
   DropdownMenuSeparator: () => <hr />,
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
@@ -62,5 +62,16 @@ describe("TrackMenu download", () => {
 
     const share = screen.getByText("Share").closest("div")
     expect(share?.querySelector("svg.lucide-share-2")).toBeTruthy()
+  })
+
+  it("shows «Remove from playlist» only when the row belongs to an editable playlist", () => {
+    const onRemove = vi.fn()
+    const { unmount } = render(<MemoryRouter><TrackMenu track={track} /></MemoryRouter>)
+    expect(screen.queryByText("Remove from playlist")).toBeNull()
+    unmount()
+
+    render(<MemoryRouter><TrackMenu track={track} onRemoveFromPlaylist={onRemove} /></MemoryRouter>)
+    fireEvent.click(screen.getByText("Remove from playlist"))
+    expect(onRemove).toHaveBeenCalledTimes(1)
   })
 })

@@ -34,6 +34,8 @@ export interface CreatePlaylistDialogOptions {
   defaultDescription?: string
   /** Tracks to add to the playlist right after creation. */
   trackIds?: number[]
+  /** Move instead of copy: remove trackIds from this playlist once the new one is created. */
+  moveFromPlaylistId?: number
   /** Edit mode: PATCH this playlist instead of creating a new one. */
   playlist?: PlaylistSummary
   /** Replaces the default create call entirely (e.g. mix save flow). */
@@ -50,7 +52,9 @@ interface UIState {
   addToPlaylistTrackIds: number[] | null
   /** Prefill for the "New playlist" title if the user creates one from here (e.g. current playback source). */
   addToPlaylistDefaultTitle: string | null
-  openAddToPlaylist(trackIds: number[], defaultTitle?: string): void
+  /** Move mode: tracks leave this playlist once added to the chosen one; null = plain add. */
+  addToPlaylistMoveFrom: number | null
+  openAddToPlaylist(trackIds: number[], defaultTitle?: string, options?: { moveFrom?: number }): void
   closeAddToPlaylist(): void
   /** Options for the create/edit playlist dialog; null = dialog closed. */
   createPlaylistOptions: CreatePlaylistDialogOptions | null
@@ -75,20 +79,27 @@ export const useUIStore = create<UIState>((set, get) => ({
   },
   addToPlaylistTrackIds: null,
   addToPlaylistDefaultTitle: null,
-  openAddToPlaylist(trackIds, defaultTitle) {
-    set({ addToPlaylistTrackIds: trackIds, addToPlaylistDefaultTitle: defaultTitle ?? null, createPlaylistOptions: null })
+  addToPlaylistMoveFrom: null,
+  openAddToPlaylist(trackIds, defaultTitle, options) {
+    set({
+      addToPlaylistTrackIds: trackIds,
+      addToPlaylistDefaultTitle: defaultTitle ?? null,
+      addToPlaylistMoveFrom: options?.moveFrom ?? null,
+      createPlaylistOptions: null,
+    })
   },
   closeAddToPlaylist() {
-    set({ addToPlaylistTrackIds: null, addToPlaylistDefaultTitle: null })
+    set({ addToPlaylistTrackIds: null, addToPlaylistDefaultTitle: null, addToPlaylistMoveFrom: null })
   },
   createPlaylistOptions: null,
   openCreatePlaylist(options) {
-    set({ createPlaylistOptions: options ?? {}, addToPlaylistTrackIds: null })
+    set({ createPlaylistOptions: options ?? {}, addToPlaylistTrackIds: null, addToPlaylistMoveFrom: null })
   },
   resetForLogout() {
     set({
       addToPlaylistTrackIds: null,
       addToPlaylistDefaultTitle: null,
+      addToPlaylistMoveFrom: null,
       createPlaylistOptions: null,
       djSurfaceOpen: false,
     })

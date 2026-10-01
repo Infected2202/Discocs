@@ -9,12 +9,36 @@
   "shuffle": "Перемешать",
   "edit": "Изменить",
   "delete": "Удалить",
-  "deleteConfirm": "Удалить плейлист «{{title}}»?",
   "selectedCount_one": "Выбрано {{count}}",
   "selectedCount_few": "Выбрано {{count}}",
   "selectedCount_many": "Выбрано {{count}}",
   "selectedCount_other": "Выбрано {{count}}",
-  "removeSelectedTracks": "Убрать выбранные треки",
+  "selection": {
+    "addTo": "Добавить в плейлист",
+    "moveTo": "Перенести в плейлист",
+    "remove": "Убрать из плейлиста"
+  },
+  "removeDialog": {
+    "title_one": "Убрать трек из плейлиста?",
+    "title_few": "Убрать {{count}} трека из плейлиста?",
+    "title_many": "Убрать {{count}} треков из плейлиста?",
+    "title_other": "Убрать {{count}} трека из плейлиста?",
+    "descriptionOne": "«{{track}}» пропадёт из плейлиста «{{playlist}}». Сам трек останется в библиотеке.",
+    "descriptionMany_one": "{{count}} трек пропадёт из плейлиста «{{playlist}}». Сами треки останутся в библиотеке.",
+    "descriptionMany_few": "{{count}} трека пропадут из плейлиста «{{playlist}}». Сами треки останутся в библиотеке.",
+    "descriptionMany_many": "{{count}} треков пропадут из плейлиста «{{playlist}}». Сами треки останутся в библиотеке.",
+    "descriptionMany_other": "{{count}} трека пропадут из плейлиста «{{playlist}}». Сами треки останутся в библиотеке.",
+    "confirm": "Убрать"
+  },
+  "deleteDialog": {
+    "title": "Удалить плейлист?",
+    "description_one": "Плейлист «{{title}}» ({{count}} трек) будет удалён целиком. Отменить это нельзя.",
+    "description_few": "Плейлист «{{title}}» ({{count}} трека) будет удалён целиком. Отменить это нельзя.",
+    "description_many": "Плейлист «{{title}}» ({{count}} треков) будет удалён целиком. Отменить это нельзя.",
+    "description_other": "Плейлист «{{title}}» ({{count}} трека) будет удалён целиком. Отменить это нельзя.",
+    "confirm": "Удалить плейлист"
+  },
+  "actionFailed": "Не получилось. Попробуйте ещё раз.",
   "createDialog": {
     "createTitle": "Новый плейлист",
     "editTitle": "Изменить плейлист",
@@ -37,6 +61,7 @@
     "trackCount_few": "{{count}} трека",
     "trackCount_many": "{{count}} треков",
     "trackCount_other": "{{count}} трека",
-    "newPlaylist": "Новый плейлист"
+    "newPlaylist": "Новый плейлист",
+    "moveTitle": "Перенести в плейлист"
   }
 }

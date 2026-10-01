@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { useUIStore, type CreatePlaylistValues } from "@/store/uiStore"
-import { createPlaylist, updatePlaylist } from "@/api/playlists"
+import { createPlaylist, removePlaylistTracks, updatePlaylist } from "@/api/playlists"
 
 const FIELD_CLASS =
   "w-full rounded-md bg-muted px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
@@ -54,9 +54,15 @@ export default function CreatePlaylistDialog() {
         visibility: values.visibility,
         track_ids: options?.trackIds ?? [],
       })
+      if (options?.moveFromPlaylistId !== undefined && options.trackIds?.length) {
+        await removePlaylistTracks(options.moveFromPlaylistId, options.trackIds)
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["playlists"] })
+      if (options?.moveFromPlaylistId !== undefined) {
+        queryClient.invalidateQueries({ queryKey: ["playlist", options.moveFromPlaylistId] })
+      }
       if (editing) {
         queryClient.invalidateQueries({ queryKey: ["playlist", editing.id] })
       }

@@ -7,10 +7,28 @@
   "shuffle": "Shuffle",
   "edit": "Edit",
   "delete": "Delete",
-  "deleteConfirm": "Delete playlist \"{{title}}\"?",
   "selectedCount_one": "{{count}} selected",
   "selectedCount_other": "{{count}} selected",
-  "removeSelectedTracks": "Remove selected tracks",
+  "selection": {
+    "addTo": "Add to playlist",
+    "moveTo": "Move to playlist",
+    "remove": "Remove from playlist"
+  },
+  "removeDialog": {
+    "title_one": "Remove track from playlist?",
+    "title_other": "Remove {{count}} tracks from playlist?",
+    "descriptionOne": "\"{{track}}\" will be removed from \"{{playlist}}\". The track stays in your library.",
+    "descriptionMany_one": "{{count}} track will be removed from \"{{playlist}}\". The tracks stay in your library.",
+    "descriptionMany_other": "{{count}} tracks will be removed from \"{{playlist}}\". The tracks stay in your library.",
+    "confirm": "Remove"
+  },
+  "deleteDialog": {
+    "title": "Delete playlist?",
+    "description_one": "The whole playlist \"{{title}}\" ({{count}} track) will be deleted. This can't be undone.",
+    "description_other": "The whole playlist \"{{title}}\" ({{count}} tracks) will be deleted. This can't be undone.",
+    "confirm": "Delete playlist"
+  },
+  "actionFailed": "That didn't work. Please try again.",
   "createDialog": {
     "createTitle": "New playlist",
     "editTitle": "Edit playlist",
@@ -31,6 +49,7 @@
     "empty": "No playlists yet.",
     "trackCount_one": "{{count}} track",
     "trackCount_other": "{{count}} tracks",
-    "newPlaylist": "New playlist"
+    "newPlaylist": "New playlist",
+    "moveTitle": "Move to playlist"
   }
 }

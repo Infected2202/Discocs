@@ -7,10 +7,12 @@ import type { PlaylistSummary } from "@/api/types"
 
 const createPlaylist = vi.fn()
 const updatePlaylist = vi.fn()
+const removePlaylistTracks = vi.fn()
 
 vi.mock("@/api/playlists", () => ({
   createPlaylist: (...args: unknown[]) => createPlaylist(...args),
   updatePlaylist: (...args: unknown[]) => updatePlaylist(...args),
+  removePlaylistTracks: (...args: unknown[]) => removePlaylistTracks(...args),
 }))
 
 function makePlaylist(id: number): PlaylistSummary {
@@ -41,6 +43,7 @@ function renderDialog() {
 beforeEach(() => {
   createPlaylist.mockReset()
   updatePlaylist.mockReset()
+  removePlaylistTracks.mockReset()
   useUIStore.setState({ addToPlaylistTrackIds: null, createPlaylistOptions: null })
 })
 
@@ -70,6 +73,7 @@ describe("CreatePlaylistDialog", () => {
       })
     )
     await waitFor(() => expect(useUIStore.getState().createPlaylistOptions).toBeNull())
+    expect(removePlaylistTracks).not.toHaveBeenCalled()
   })
 
   it("кнопка Create заблокирована при пустом названии", async () => {
@@ -124,6 +128,22 @@ describe("CreatePlaylistDialog", () => {
       expect(onSubmit).toHaveBeenCalledWith({ title: "Mix", description: "", visibility: "private" })
     )
     expect(createPlaylist).not.toHaveBeenCalled()
+    await waitFor(() => expect(useUIStore.getState().createPlaylistOptions).toBeNull())
+  })
+
+  it("перенос в новый плейлист: после создания убирает треки из исходного", async () => {
+    createPlaylist.mockResolvedValue(makePlaylist(1))
+    removePlaylistTracks.mockResolvedValue({ removed: 2, track_count: 0 })
+
+    renderDialog()
+    useUIStore.getState().openCreatePlaylist({ defaultTitle: "Moved", trackIds: [5, 6], moveFromPlaylistId: 4 })
+
+    await screen.findByPlaceholderText("Playlist name")
+    fireEvent.click(screen.getByRole("button", { name: "Create" }))
+
+    await waitFor(() => expect(removePlaylistTracks).toHaveBeenCalledWith(4, [5, 6]))
+    expect(createPlaylist.mock.invocationCallOrder[0])
+      .toBeLessThan(removePlaylistTracks.mock.invocationCallOrder[0])
     await waitFor(() => expect(useUIStore.getState().createPlaylistOptions).toBeNull())
   })
 })

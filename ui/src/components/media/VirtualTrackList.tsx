@@ -34,6 +34,8 @@ interface VirtualTrackListProps {
   readonly onReorder?: (trackIds: number[]) => void
   /** When set, playing any row plays the whole collection starting at that track. */
   readonly onPlayTrack?: (trackId: number) => void
+  /** When set, each row's menu gets a "Remove from playlist" item. */
+  readonly onRemoveTrack?: (trackId: number) => void
   /** Disable only for short, inline lists which do not use the app scroll container. */
   readonly virtualized?: boolean
 }
@@ -61,6 +63,7 @@ interface RowProps {
   readonly selectionActive: boolean
   readonly onToggleSelect?: (trackId: number) => void
   readonly onPlayTrack?: (trackId: number) => void
+  readonly onRemoveTrack?: (trackId: number) => void
 }
 
 interface PositionedRowProps extends RowProps {
@@ -145,6 +148,7 @@ export default function VirtualTrackList({
   onToggleSelect,
   onReorder,
   onPlayTrack,
+  onRemoveTrack,
   virtualized = true,
 }: VirtualTrackListProps) {
   const listId = useId()
@@ -211,6 +215,7 @@ export default function VirtualTrackList({
       selectionActive,
       onToggleSelect,
       onPlayTrack,
+      onRemoveTrack,
     }
   }
 

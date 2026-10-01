@@ -13,7 +13,8 @@
     "download": "Download",
     "share": "Share",
     "goTo": "Go to {{name}}",
-    "removeFromQueue": "Remove from queue"
+    "removeFromQueue": "Remove from queue",
+    "removeFromPlaylist": "Remove from playlist"
   },
   "shelf": {
     "more": "More",

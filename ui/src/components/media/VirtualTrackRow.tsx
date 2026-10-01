@@ -53,6 +53,8 @@ interface VirtualTrackRowProps {
    * When omitted, the row plays just this track as its own source.
    */
   readonly onPlayTrack?: (trackId: number) => void
+  /** Adds a "Remove from playlist" item to the row menu (editable playlists). */
+  readonly onRemoveTrack?: (trackId: number) => void
 }
 
 export function trackGridTemplates({
@@ -95,6 +97,7 @@ export default function VirtualTrackRow({
   selectionActive = false,
   onToggleSelect,
   onPlayTrack,
+  onRemoveTrack,
 }: VirtualTrackRowProps) {
   const { t, i18n } = useTranslation("media")
   const [hovered, setHovered] = useState(false)
@@ -233,7 +236,12 @@ export default function VirtualTrackRow({
 
       {/* Menu */}
       <div className="py-2 pr-2">
-        <TrackMenu track={track} sourceLabel={sourceLabel} onPlayTrack={onPlayTrack} />
+        <TrackMenu
+          track={track}
+          sourceLabel={sourceLabel}
+          onPlayTrack={onPlayTrack}
+          onRemoveFromPlaylist={onRemoveTrack ? () => onRemoveTrack(track.id) : undefined}
+        />
       </div>
 
       {/* Selection checkbox (right side) */}
