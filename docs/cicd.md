@@ -12,9 +12,10 @@ Nexus, Gitea, целевой хост) — одна машина `.41`.
 ```
 push в Gitea ──webhook──> Jenkins
    └─ Checks        4 ветки parallel, стадия стоит максимум из них, а не сумму:
-   │                 backend  — pytest -n auto (deploy/ci/Dockerfile.test)
+   │                 backend  — pytest -n 4 (deploy/ci/Dockerfile.test)
    │                 бот      — pytest (deploy/ci/Dockerfile.bot-test)
-   │                 фронт    — vitest run --coverage (deploy/ci/Dockerfile.ui-test)
+   │                 фронт    — vitest run --coverage --maxWorkers=4 (deploy/ci/Dockerfile.ui-test)
+   │                 тестовые контейнеры с --memory (TEST_MEM_*), см. «Память агента»
    │                 Deps CVE — trivy fs по uv.lock/pnpm-lock (Dockerfile.trivy-fs)
    │                 каждый тестовый образ — BuildKit + --mount=type=cache;
    │                 coverage- и junit-отчёты достаются docker cp'ом, junit
@@ -266,6 +267,31 @@ production sources исключаются через `sonar.exclusions`.
 `junit` публикуется в `post { always { ... } }` ветки, а не только при успехе.
 По той же причине у параллельных стадий не включён `failFast`: упавший backend
 не должен обрывать бота и фронт на полпути.
+
+### Память агента и параллелизм тестов
+
+`jenkins-agent-01` — LXC-контейнер (Incus) с `limits.memory: 4GB`, внутри него
+свой dockerd. Все тестовые контейнеры, dockerd и Java-агент живут в одной
+cgroup на 4 ГБ, а `nproc` внутри показывает 16 ядер хоста. Раньше
+`pytest -n auto` поднимал 16 воркеров, vitest по умолчанию ~15 jsdom-воркеров,
+и всё это шло параллельно с тестами бота. Пик упирался в 4 ГБ, и OOM-killer
+выбирал жертву во всей cgroup агента: на билде #401 убил `dockerd`
+(`error waiting for container: unexpected EOF`, отчёты не собрались), на #402
+убил Java-агента («jenkins-agent-01 seems to be removed or offline»), после чего
+сборка висела. Тесты, упавшие «по таймауту» без изменений в коде (DjFader на
+#400), — тот же симптом: агент в свопе.
+
+Сейчас:
+
+- backend — `pytest -n 4`, фронт — `vitest --maxWorkers=4`;
+- каждый тестовый контейнер создаётся с потолком RAM из `environment` в
+  `Jenkinsfile` (`TEST_MEM_BACKEND` / `TEST_MEM_UI` по 1200m, `TEST_MEM_BOT`
+  600m, `--memory-swap` вдвое). Сумма 3 ГБ оставляет ~1 ГБ dockerd и агенту; при
+  нехватке OOM срабатывает внутри тестового контейнера, а не убивает агента.
+
+Диагностика, если снова появятся «странные» падения: на хосте
+`journalctl -k | grep -i oom` (ищи `oom_memcg=/lxc.payload.jenkins-agent-01`) и
+`cat /sys/fs/cgroup/lxc.payload.jenkins-agent-01/memory.{peak,events}`.
 
 ## Python-зависимости (uv)
 

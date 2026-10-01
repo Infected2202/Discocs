@@ -10,4 +10,6 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     npm install -g pnpm@11 && pnpm install --frozen-lockfile
 COPY ui/ ./
 
-CMD ["pnpm", "test:coverage"]
+# --maxWorkers=4: по умолчанию vitest берёт ~ядра-1 (15 jsdom-воркеров) — вместе
+# с pytest это не влезало в 4 ГБ LXC-агента (OOM, билды #400–#402).
+CMD ["pnpm", "exec", "vitest", "run", "--coverage", "--maxWorkers=4"]

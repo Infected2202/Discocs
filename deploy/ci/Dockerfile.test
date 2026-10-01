@@ -40,4 +40,7 @@ COPY .trivyignore.yaml ./.trivyignore.yaml
 COPY docker-compose.worker.yml ./docker-compose.worker.yml
 
 ENV PATH="/app/.venv/bin:$PATH"
-CMD ["python", "-m", "pytest", "-q", "-n", "auto", "--cov=app", "--cov-report=xml:/app/coverage.xml", "--junitxml=/app/junit-backend.xml"]
+# -n 4, не auto: агент видит 16 ядер, а `auto` поднимал 16 воркеров (каждый со
+# своей копией app + coverage) в общих 4 ГБ LXC-агента рядом с vitest и ботом —
+# OOM-killer убивал dockerd/агент (билды #400–#402). См. docs/cicd.md.
+CMD ["python", "-m", "pytest", "-q", "-n", "4", "--cov=app", "--cov-report=xml:/app/coverage.xml", "--junitxml=/app/junit-backend.xml"]

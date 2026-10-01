@@ -43,6 +43,14 @@ pipeline {
     TARGET_USER   = 'infected2202'
     TARGET_PORT   = '2252'
     TARGET_DIR    = '/home/infected2202/docker/discocs'
+    // Потолок RAM для трёх параллельных тестовых контейнеров. Все они живут в
+    // cgroup LXC-агента (limits.memory 4GB) вместе с dockerd и самим агентом:
+    // без потолков пик тестов упирался в 4 ГБ, и OOM-killer убивал dockerd/java
+    // агента, а не тесты (билды #400–#402). Сумма 3 ГБ оставляет ~1 ГБ агенту;
+    // --memory-swap вдвое — под пик тест уходит в своп, а не в OOM.
+    TEST_MEM_BACKEND = '--memory=1200m --memory-swap=2400m'
+    TEST_MEM_UI      = '--memory=1200m --memory-swap=2400m'
+    TEST_MEM_BOT     = '--memory=600m --memory-swap=1200m'
     // Python + TS + Docker analysis can exceed the scanner JRE default heap.
     SONAR_SCANNER_JAVA_OPTS = '-Xmx2g'
     // Публичный домен приложения — не секрет (виден в браузере), но не
@@ -96,7 +104,7 @@ pipeline {
             // и мы потеряли бы coverage/junit именно тогда, когда они нужнее всего.
             sh '''
               set +e
-              CID=$(docker create discocs-test:${GIT_SHA})
+              CID=$(docker create $TEST_MEM_BACKEND discocs-test:${GIT_SHA})
               docker start -a "$CID"
               RC=$?
               docker cp "$CID:/app/coverage.xml" coverage.xml
@@ -116,7 +124,7 @@ pipeline {
             sh 'DOCKER_BUILDKIT=1 docker build -f deploy/ci/Dockerfile.bot-test -t discocs-bot-test:${GIT_SHA} .'
             sh '''
               set +e
-              CID=$(docker create discocs-bot-test:${GIT_SHA})
+              CID=$(docker create $TEST_MEM_BOT discocs-bot-test:${GIT_SHA})
               docker start -a "$CID"
               RC=$?
               docker cp "$CID:/app/bot-coverage.xml" bot-coverage.xml
@@ -135,7 +143,7 @@ pipeline {
             sh 'DOCKER_BUILDKIT=1 docker build -f deploy/ci/Dockerfile.ui-test -t discocs-ui-test:${GIT_SHA} .'
             sh '''
               set +e
-              CID=$(docker create discocs-ui-test:${GIT_SHA})
+              CID=$(docker create $TEST_MEM_UI discocs-ui-test:${GIT_SHA})
               docker start -a "$CID"
               RC=$?
               mkdir -p ui/coverage
