@@ -20,3 +20,6 @@ probe*.log
 ui/node_modules
 ui/dist
 ui/.vite
+
+# Локальные инструменты (tools/README.md): в образы не входят, а данные music-fill — сотни МБ
+tools

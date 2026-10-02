@@ -1,0 +1,948 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Разбор библиотеки</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root {
+  --bg: #f6f6f4; --panel: #fff; --line: #e3e3de; --text: #1d1d1b; --muted: #74746e;
+  --accent: #2f6fdf; --sel: #e8effc;
+  --d-disco: #1f8a4c; --d-album: #2f6fdf; --d-later: #9a7b12; --d-junk: #a33a3a;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #151514; --panel: #1e1e1c; --line: #33332f; --text: #e9e9e4; --muted: #94948c;
+          --accent: #6d9cf2; --sel: #243049; --d-disco: #4cc27f; --d-album: #6d9cf2; --d-later: #d6b24a; --d-junk: #e07070; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, "Segoe UI", sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px;
+         border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+.tabs button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+                     padding: 5px 10px; border-radius: 6px; cursor: pointer; }
+.tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+input, select { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
+                background: var(--panel); color: var(--text); }
+.counts { color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+main { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.1fr); flex: 1; min-height: 0; }
+#list { overflow: auto; border-right: 1px solid var(--line); }
+.row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 7px 16px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.row.cur { background: var(--sel); }
+.row .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .meta { grid-column: 1 / -1; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tag { font-size: 11px; padding: 1px 6px; border-radius: 10px; color: #fff; align-self: center; }
+.t-discography { background: var(--d-disco); } .t-album, .t-download { background: var(--d-album); }
+.t-later { background: var(--d-later); } .t-junk { background: var(--d-junk); } .t-have { background: var(--d-disco); }
+#detail { overflow: auto; padding: 16px 20px; }
+#detail h2 { margin: 0 0 4px; font-size: 20px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; margin: 12px 0; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.stat b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 12px; }
+.links a { color: var(--accent); margin-right: 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.actions .btn kbd { color: var(--muted); font-size: 11px; margin-right: 4px; }
+.actions .btn.on { outline: 2px solid var(--accent); }
+.cands { display: flex; flex-direction: column; gap: 6px; }
+.cand { display: flex; gap: 10px; align-items: center; padding: 6px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; background: var(--panel); }
+.cand.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cand img { width: 48px; height: 48px; border-radius: 4px; object-fit: cover; }
+.cand small { color: var(--muted); display: block; }
+.track { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.track button { width: 30px; }
+.muted { color: var(--muted); }
+h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 18px 0 6px; }
+.help { color: var(--muted); font-size: 12px; margin-top: 24px; }
+ul.ev { margin: 2px 0 8px; padding-left: 18px; }
+ul.ev li { margin: 1px 0; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.warn { color: var(--d-later); font-weight: 600; }
+#ev p { margin: 6px 0 2px; }
+#disco details { margin: 4px 0; }
+#disco summary { cursor: pointer; font-weight: 600; }
+.drel { display: flex; align-items: center; gap: 8px; padding: 2px 0 2px 14px; font-size: 13px; }
+.drel img { width: 32px; height: 32px; border-radius: 3px; object-fit: cover; flex: none; background: var(--line); }
+.drel a { color: var(--accent); text-decoration: none; }
+.drel.have > span { color: var(--muted); }
+.shead { padding: 10px 16px 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border-bottom: 1px solid var(--line); }
+.srow { grid-template-columns: 44px 1fr auto; align-items: center; }
+.srow img { width: 44px; height: 44px; border-radius: 4px; object-fit: cover; background: var(--line); }
+.srow .meta { grid-column: auto; }
+.drel.hl { outline: 2px solid var(--accent); border-radius: 4px; }
+.rel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px; }
+.relart { display: flex; gap: 8px; align-items: center; padding: 6px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; background: var(--panel); }
+.relart:hover { border-color: var(--accent); }
+.relart img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+.relart small { display: block; color: var(--muted); font-size: 12px; }
+.pill-ok { font-size: 11px; padding: 0 6px; border-radius: 10px; border: 1px solid var(--d-disco); color: var(--d-disco); margin-left: 4px; }
+.t-track { background: var(--d-album); }
+#flash { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--panel); color: var(--text); border: 1px solid var(--accent); border-radius: 8px; padding: 8px 14px; box-shadow: 0 4px 16px rgba(0,0,0,.3); opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; }
+#flash.on { opacity: 1; }
+.trow a.src { color: var(--text); text-decoration: none; }
+.trow a.src:hover { text-decoration: underline; }
+.picker { margin-top: 6px; padding: 6px; border: 1px solid var(--accent); border-radius: 6px; background: var(--panel); max-height: 320px; overflow: auto; }
+.picker .pk { padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+.picker .pk:hover { background: var(--sel); }
+.picker .pk-h { font-size: 11px; text-transform: uppercase; color: var(--muted); margin: 6px 0 2px; }
+.picker .pk-filter { width: 100%; margin: 4px 0; }
+header a.nav { color: var(--accent); font-weight: 600; text-decoration: none; }
+.trow { display: grid; grid-template-columns: 64px 1fr auto; gap: 2px 10px; padding: 6px 8px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.trow.cur { background: var(--sel); }
+.trow .t-main { overflow: hidden; }
+.trow .t-main b { font-weight: 600; }
+.trow small { color: var(--muted); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trow .dzl { font-size: 12px; }
+.trow .dzl button { font: inherit; padding: 0 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 4px; cursor: pointer; }
+.st { font-size: 11px; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line); text-align: center; align-self: start; }
+.st-missing { color: var(--d-junk); border-color: var(--d-junk); }
+.st-have_artist { color: var(--d-later); border-color: var(--d-later); }
+.st-have_track, .st-maybe_track { color: var(--d-disco); border-color: var(--d-disco); }
+.st-maybe_track { border-style: dashed; }
+.trow a { color: var(--accent); }
+.trow .t-main small + small { margin-top: 1px; }
+.tacts { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.tacts .btn { padding: 2px 8px; font-size: 12px; }
+.tacts .btn kbd { color: var(--muted); font-size: 10px; margin-right: 3px; }
+@media (max-width: 800px) { main { grid-template-columns: 1fr; height: auto; } #list { max-height: 45vh; } }
+.snap { font-size: 12px; color: var(--muted); }
+.lrel { display: grid; grid-template-columns: 36px 1fr; gap: 2px 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.lrel img, .lrel .nocover { width: 36px; height: 36px; border-radius: 3px; object-fit: cover; background: var(--line); grid-row: span 2; }
+.lrel small { color: var(--muted); }
+.lrel a { color: var(--accent); text-decoration: none; }
+.lrel.miss { opacity: .55; }
+.lsum { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 8px 0; }
+.lfilter { display: flex; gap: 10px; flex-wrap: wrap; font-size: 13px; margin: 6px 0; }
+.snap .btn { padding: 2px 8px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="tabs">
+    <button data-tab="artists">Артисты</button>
+    <button data-tab="albums">Альбомы-дыры</button>
+    <button data-tab="playlists">Плейлисты</button>
+    <button data-tab="ugc">Видео</button>
+    <button data-tab="search">Поиск</button>
+    <button data-tab="labels">Лейблы</button>
+  </div>
+  <a class="nav" href="/decisions">Решения и загрузки →</a>
+  <input id="q" placeholder="поиск" size="16">
+  <select id="period">
+    <option value="">все периоды</option>
+    <option value="old">студенчество (LF 2008–14)</option>
+    <option value="ytm">YouTube (лайки / библиотека)</option>
+    <option value="recent">сейчас (LF 2025+)</option>
+  </select>
+  <label>интерес ≥ <input id="min" type="number" value="10" style="width:64px"></label>
+  <label><input id="hide" type="checkbox" checked> скрыть разобранные</label>
+  <span class="snap" id="matchst"></span> <span class="snap">библиотека: снимок <b id="snapts">…</b> <button class="btn" id="snapbtn" title="заново выгрузить Navidrome и пересобрать сравнение">обновить</button></span>  <span class="counts" id="counts"></span>
+</header>
+<main>
+  <div id="list"></div>
+  <div id="detail"></div>
+</main>
+<audio id="player"></audio>
+<script>
+const ACTIONS = {
+  artists: [["discography", "Дискография"], ["album", "Лучший альбом"], ["later", "Позже"], ["junk", "Мусор / не надо"]],
+  albums: [["download", "Качать альбом"], ["discography", "Дискография"], ["later", "Позже"], ["have", "Уже есть"], ["junk", "Не надо"]],
+  ugc: [["download", "Интересно"], ["later", "Позже"], ["junk", "Не надо"]],
+};
+let data, tab = "artists", view = [], cur = 0, dz = {}, chosen = {};
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const dkey = r => `${tab}:${r.key}`;
+const decision = r => data.decisions[dkey(r)]?.decision;
+
+function score(r) { return tab === "albums" ? r.lf_plays + 15 * r.ytm_likes + 10 * r.ytm_lib : +r.interest || 0; }
+
+// ---------- плейлисты ----------
+const TRACK_ACTIONS = [["track", "Трек"], ["album", "Альбом"], ["discography", "Дискография"], ["have", "Уже есть"], ["junk", "Не надо"], ["later", "Позже"]];
+const ytUrl = t => t.videoId.startsWith("lf:")
+  ? `https://music.youtube.com/search?q=${encodeURIComponent(t.artist + " " + t.title)}`
+  : `https://www.youtube.com/watch?v=${t.videoId}`;
+let pickerFor = null, pickerData = null;  // выбор трека из библиотеки для «уже есть»
+const STATUS = {missing: "артиста нет", have_artist: "трека нет, артист есть", have_track: "трек есть",
+                maybe_track: "похоже, есть", gone: "видео удалено"};
+const discogs = (q, type) => `https://www.discogs.com/search/?q=${encodeURIComponent(q)}&type=${type}`;
+let tcur = 0, dzT = {}, pickT = {}, loadingT = new Set();
+const tkey = t => `tracks:${t.key}`;
+const tdec = t => data.decisions[tkey(t)]?.decision;
+const plStats = pl => {
+  const c = {missing: 0, have_artist: 0, have_track: 0, maybe_track: 0, gone: 0, decided: 0};
+  pl.tracks.forEach(t => { c[t.status]++; if (tdec(t)) c.decided++; });
+  return c;
+};
+const visibleTracks = pl => !pl ? [] : pl.tracks.filter(t => !$("#hide").checked || (!["have_track", "gone"].includes(t.status) && !tdec(t)));
+const dzPick = t => (dzT[t.key]?.candidates || [])[pickT[t.key] || 0];
+
+function renderPlaylist() {
+  const pl = view[cur];
+  if (!pl) { $("#detail").innerHTML = `<p class="muted">Пусто.</p>`; return; }
+  const tracks = visibleTracks(pl), st = plStats(pl);
+  tcur = Math.min(tcur, Math.max(tracks.length - 1, 0));
+  $("#detail").innerHTML = `
+    <h2>${esc(pl.title)}</h2>
+    <p class="muted">${pl.tracks.length} треков · артиста нет: ${st.missing} · трека нет, артист есть: ${st.have_artist}
+      · похоже есть: ${st.maybe_track} · есть: ${st.have_track} · удалено: ${st.gone} · разобрано: ${st.decided}
+      · <a href="https://music.youtube.com/playlist?list=${pl.id}" target="_blank">плейлист на YT</a></p>
+    <details class="help" style="margin:0 0 8px"><summary>как читать</summary>
+      <p><b>Статус</b> — сравнение с Navidrome по артисту и названию: «трек есть» — найден точно; «похоже, есть» — название
+      почти совпадает, под строкой написано, что именно нашлось; «трека нет, артист есть» — у артиста есть другие треки
+      (список альбомов под строкой); «артиста нет» — ничего от артиста. Уже имеющееся и удалённое скрыто галкой «скрыть разобранные».</p>
+      <p><b>Deezer</b> — что будет скачано: найденный на Deezer трек, его альбом и артист. Если нашлось не то — «другое
+      совпадение» (или клавиша c) перебирает варианты поиска. Решение сохраняет выбранный вариант.</p>
+      <p><b>Решения</b>: трек — только этот трек; альбом — альбом, где он вышел на Deezer; дискография — все релизы артиста
+      (что уже есть — пропустится, список виден на странице «Решения»).</p></details>
+    <div id="tracks">${tracks.map((t, i) => trackRow(t, i)).join("") || `<p class="muted">Всё разобрано.</p>`}</div>
+    <p class="help">↑/↓ j/k — трек · PgUp/PgDn или [ ] — плейлист · 1 трек · 2 альбом · 3 дискография · 4 не надо · 5 позже · 0 сброс · c — другое совпадение Deezer</p>`;
+  $("#tracks .cur")?.scrollIntoView({block: "nearest"});
+  tracks.forEach(loadTrack);
+}
+
+function trackRow(t, i) {
+  const d = tdec(t), m = dzPick(t), res = dzT[t.key];
+  const noDz = ["have_track", "gone"].includes(t.status);
+  const dzl = noDz ? "" : !res ? `<span class="muted">Deezer: ещё не сопоставлен (фон дойдёт; решение найдёт сразу)</span>`
+    : !m ? `<span class="muted">Deezer: не найдено</span>`
+    : `Deezer: <a href="${m.link}" target="_blank">${esc(m.artist)} — ${esc(m.title)}</a>
+       · альбом <a href="https://www.deezer.com/album/${m.album_id}" target="_blank">${esc(m.album)}</a>
+       · <a href="https://www.deezer.com/artist/${m.artist_id}" target="_blank">артист</a>
+       ${res.candidates.length > 1 ? ` <button data-cycle="${i}" title="следующий вариант поиска Deezer">другое совпадение ${(pickT[t.key] || 0) + 1}/${res.candidates.length}</button>` : ""}`;
+  const dec = data.decisions[tkey(t)];
+  const libLine = dec?.decision === "have" && dec.lib_label ? `<small>в библиотеке (выбрано): ${esc(dec.lib_label)}</small>`
+    : t.lib ? `<small>в библиотеке: ${esc(t.lib)}</small>` : "";
+  const ytLine = [t.album && `альбом на YT: ${t.album}`, t.channel && t.channel !== t.artist && `канал: ${t.channel}`,
+                  t.unavailable && t.status !== "gone" && "видео недоступно на YT"].filter(Boolean).join(" · ");
+  return `<div class="trow${i === tcur ? " cur" : ""}" data-t="${i}">
+    <span class="st st-${t.status}">${STATUS[t.status]}</span>
+    <div class="t-main"><a class="src" href="${ytUrl(t)}" target="_blank" title="открыть исходник на YouTube"><b>${esc(t.artist)}</b> — ${esc(t.title)} ↗</a>
+      ${ytLine ? `<small>${esc(ytLine)}</small>` : ""}${libLine}
+      <div class="dzl">${dzl}</div>
+      ${pickerFor === t.key ? pickerHtml(t) : ""}</div>
+    ${d ? `<span class="tag t-${d}">${TRACK_ACTIONS.find(a => a[0] === d)?.[1]}</span>` : "<span></span>"}
+    ${i === tcur ? `<div class="tacts">${TRACK_ACTIONS.map(([k, l], j) =>
+        `<button class="btn" data-tact="${k}"><kbd>${j + 1}</kbd>${l}</button>`).join("")}
+        <a class="btn" href="${discogs(t.artist, "artist")}" target="_blank">Discogs: артист</a>
+        <a class="btn" href="${discogs(`${t.artist} ${t.title}`, "release")}" target="_blank">Discogs: релиз</a>
+        <a class="btn" href="${ytUrl(t)}" target="_blank">YouTube</a></div>` : ""}
+  </div>`;
+}
+
+function pickerHtml(t) {
+  if (!pickerData) return `<div class="picker muted">Ищу в библиотеке…</div>`;
+  const row = s => `<div class="pk" data-pick="${esc(s.id)}" data-label="${esc(`${s.artist} — ${s.title} (${s.album})`)}">
+      <b>${esc(s.title)}</b> <span class="muted">— ${esc(s.album)} · ${esc(s.artist)}</span></div>`;
+  const own = pickerData.artist_tracks, other = pickerData.same_title;
+  return `<div class="picker"><div class="muted">Какой это трек в библиотеке? Клик — сохранить «уже есть». Esc — закрыть.</div>
+    <input class="pk-filter" placeholder="фильтр по названию">
+    ${own.length ? `<div class="pk-h">треки артиста (${pickerData.artist_total}), похожие сверху</div>${own.map(row).join("")}` : `<div class="muted">у артиста в библиотеке ничего нет</div>`}
+    ${other.length ? `<div class="pk-h">то же название у других артистов</div>${other.map(row).join("")}` : ""}</div>`;
+}
+
+async function openPicker(t) {
+  pickerFor = t.key; pickerData = null; refreshTrackRowsNow();
+  pickerData = await fetch(`/api/lib/tracks?artist=${encodeURIComponent(t.artist)}&title=${encodeURIComponent(t.title)}`).then(x => x.json());
+  if (pickerFor === t.key) { refreshTrackRowsNow(); $(".pk-filter")?.focus(); }
+}
+
+// Совпадения с Deezer сопоставляет сервер один раз в фоне и хранит (matches.json);
+// страница их только читает. Здесь — лишь трек, до которого фон ещё не дошёл.
+function loadTrack(t) {}
+
+const trackReq = {};
+function fetchTrack(t) {
+  if (!trackReq[t.key]) {
+    trackReq[t.key] = fetch(`/api/match/one?key=${encodeURIComponent(t.key)}`)
+      .then(x => x.json()).catch(() => ({candidates: []}))
+      .then(r => { dzT[t.key] = r; pickT[t.key] = r.pick || 0; return r; });
+  }
+  return trackReq[t.key];
+}
+
+function savePick(t, pick) {  // выбранный вариант запоминается на сервере
+  pickT[t.key] = pick; if (dzT[t.key]) dzT[t.key].pick = pick; refreshTrackRowsNow();
+  fetch("/api/match/pick", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({key: t.key, pick})});
+}
+
+function applyMatches(ms) {
+  for (const [k, m] of Object.entries(ms || {})) { dzT[k] = m; pickT[k] = m.pick || 0; }
+}
+
+async function pollMatching() {
+  const s = await fetch("/api/match/status").then(x => x.json()).catch(() => null);
+  const el = document.getElementById("matchst");
+  if (!s || !el) return;
+  el.textContent = s.running ? `Deezer: сопоставляю ${s.done}/${s.total}…` : `Deezer: сопоставлено ${s.stored}`;
+  if (s.running) setTimeout(pollMatching, 3000);
+  if (s.running || matchWasRunning) {  // подтянуть свежие совпадения
+    const d = await fetch("/api/data").then(x => x.json());
+    applyMatches(d.matches);
+    if (tab === "playlists") refreshTrackRows();
+  }
+  matchWasRunning = s.running;
+}
+let matchWasRunning = false;
+
+function flash(msg) {
+  let el = document.getElementById("flash");
+  if (!el) { el = document.createElement("div"); el.id = "flash"; document.body.appendChild(el); }
+  el.textContent = msg; el.classList.add("on");
+  clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("on"), 5000);
+}
+
+let refreshTimer;
+function refreshTrackRows() {  // пачкой, а не на каждый ответ Deezer
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => {
+    const pl = view[cur], box = $("#tracks");
+    if (!pl || !box) return;
+    const top = $("#detail").scrollTop;
+    box.innerHTML = visibleTracks(pl).map((t, i) => trackRow(t, i)).join("") || `<p class="muted">Всё разобрано.</p>`;
+    $("#detail").scrollTop = top;
+  }, 150);
+}
+
+async function decideTrack(act, lib = null) {
+  const pl = view[cur], t = visibleTracks(pl)[tcur];
+  if (!t) return;
+  if (act === "have" && !lib) {
+    // трек уже сопоставлен автоматически — подтверждаем его; иначе выбрать вручную
+    if (t.lib_id && pickerFor !== t.key) lib = {id: t.lib_id, label: t.lib};
+    else return openPicker(t);
+  }
+  pickerFor = null;
+  // что будет скачано — определяем сейчас, а не в плане: без Deezer-ID решение не сохраняем
+  let m = null, artistId = null;
+  if (["track", "album", "discography"].includes(act)) {
+    if (!dzT[t.key]) { flash("Жду ответа Deezer…"); await fetchTrack(t); }
+    m = dzPick(t);
+    if (act === "discography") {
+      // дискография — по артисту, а не по найденному треку: трек мог не найтись или найтись у другого
+      const r = await fetch(`/api/deezer/find_artist?q=${encodeURIComponent(t.artist)}`).then(x => x.json());
+      artistId = r.artist?.id ?? null;
+      if (!artistId) return flash(`Артист «${t.artist}» на Deezer не найден — дискографию качать не из чего.`);
+      flash(`Дискография: ${r.artist.name} на Deezer (${r.artist.nb_album} релизов)`);
+    } else if (!m) {
+      return flash("На Deezer этот трек не найден — альбом/трек качать не из чего. Можно выбрать «Дискография».");
+    }
+  }
+  const body = {kind: "tracks", key: t.key, decision: act, name: `${t.artist} — ${t.title}`, playlist: pl.title,
+                artist: t.artist, title: t.title,
+                track_id: act === "discography" ? null : m?.id ?? null,
+                album_id: act === "discography" ? null : m?.album_id ?? null,
+                artist_id: artistId ?? m?.artist_id ?? null,
+                album_title: m ? `${m.artist} — ${m.album}` : null, deezer_link: m?.link ?? null,
+                lib_id: lib?.id ?? null, lib_label: lib?.label ?? null, source: ytUrl(t)};
+  await fetch("/api/decision", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  if (act) data.decisions[tkey(t)] = body; else delete data.decisions[tkey(t)];
+  $("#player").pause(); playIdx = -1;
+  if (act && !$("#hide").checked) tcur++;
+  renderList(); renderPlaylist();
+}
+
+function playTrack(i) {
+  const t = visibleTracks(view[cur])[i], m = t && dzPick(t), p = $("#player");
+  if (!m?.preview) return;
+  if (playIdx === i && !p.paused) { p.pause(); return; }
+  playIdx = i; p.src = m.preview; p.play();
+}
+
+// ---------- поиск по Deezer ----------
+const SEARCH_ACTIONS = {
+  artist: [["discography", "Дискография"], ["album", "Лучший альбом"]],
+  album: [["album", "Качать альбом"], ["discography", "Дискография"]],
+  track: [["track", "Трек"], ["album", "Альбом"], ["discography", "Дискография"]],
+};
+let searchView = [], searchQ = "";
+
+async function runSearch(q) {
+  q = q.trim();
+  if (!q) return;
+  searchQ = q; $("#list").innerHTML = `<p class="muted" style="padding:16px">Ищу «${esc(q)}» на Deezer…</p>`;
+  const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`).then(x => x.json()).catch(e => ({error: String(e)}));
+  if (r.error) { $("#list").innerHTML = `<p class="err" style="padding:16px">${esc(r.error)}</p>`; return; }
+  searchView = [...r.artists, ...r.albums, ...r.tracks].map(x => ({...x, key: `${x.type}:${x.id}`}));
+  rates = r.rates || rates;
+  await loadPlanArtists();
+  cur = 0; filter();
+}
+
+function searchMeta(r) {
+  if (r.type === "artist") {
+    const lib = r.lib.albums ? `в библиотеке ${r.lib.albums} альб.` : r.lib.similar.length ? `похожие в библиотеке: ${r.lib.similar.join(", ")}` : "в библиотеке нет";
+    return `${r.nb_album} альб. на Deezer · ${r.nb_fan?.toLocaleString("ru")} фан. · ${lib}`;
+  }
+  if (r.type === "album") return `${r.artist} · ${r.record_type || "альбом"} · ${r.nb_tracks} тр. · ${r.have ? "есть в библиотеке" : "в библиотеке нет"}`;
+  return `${r.artist} · ${r.album} · ${r.have ? `есть: ${r.have}` : "в библиотеке нет"}`;
+}
+
+function renderSearchList() {
+  const head = {artist: "Артисты", album: "Альбомы", track: "Треки"};
+  let last = null;
+  $("#counts").textContent = searchQ ? `«${searchQ}»: ${searchView.length} результатов` : "";
+  $("#list").innerHTML = !searchQ ? `<p class="muted" style="padding:16px">Введи в поле «поиск» артиста, альбом или трек и нажми Enter.</p>`
+    : searchView.map((r, i) => {
+      const h = r.type !== last ? `<div class="shead">${head[r.type]}</div>` : "";
+      last = r.type;
+      const d = decision(r);
+      return h + `<div class="row srow${i === cur ? " cur" : ""}" data-i="${i}">
+        <img src="${r.cover || ""}" alt="" loading="lazy">
+        <div><div class="name">${esc(r.title)} ${r.type === "artist" ? planPill(r.id) : ""}</div><div class="meta">${esc(searchMeta(r))}</div></div>
+        ${d ? `<span class="tag t-${d}">${esc(SEARCH_ACTIONS[r.type].find(a => a[0] === d)?.[1] || d)}</span>` : "<span></span>"}</div>`;
+    }).join("") || `<p class="muted" style="padding:16px">Ничего не найдено.</p>`;
+  $("#list .cur")?.scrollIntoView({block: "nearest"});
+}
+
+async function renderSearchDetail() {
+  const r = view[cur];
+  if (!r) { $("#detail").innerHTML = ""; return; }
+  const d = decision(r);
+  const title = r.type === "artist" ? r.title : `${r.artist} — ${r.title}`;
+  $("#detail").innerHTML = `
+    <h2>${esc(title)}</h2>
+    <div class="links"><a href="${r.link}" target="_blank">Deezer</a>
+      <a href="https://www.deezer.com/artist/${r.artist_id}" target="_blank">артист на Deezer</a>
+      <a href="${discogs(r.artist, "artist")}" target="_blank">Discogs: артист</a>
+      ${r.type !== "artist" ? `<a href="${discogs(`${r.artist} ${r.type === "album" ? r.title : r.album}`, "release")}" target="_blank">Discogs: релиз</a>` : ""}</div>
+    <div class="actions">${SEARCH_ACTIONS[r.type].map(([k, label], i) =>
+      `<button class="btn${d === k ? " on" : ""}" data-act="${k}"><kbd>${i + 1}</kbd>${label}</button>`).join("")}
+      ${d ? `<button class="btn" data-act=""><kbd>0</kbd>сбросить</button>` : ""}</div>
+    ${r.type === "track" ? `<p>${r.have ? `<b>Трек уже есть в библиотеке:</b> ${esc(r.have)}` : "Трека в библиотеке нет."}
+      ${r.duration ? `<span class="muted">${fmtDur(r.duration)} · ${sizeOf(r.duration)}</span>` : ""}</p>` : ""}
+    ${planArtists[String(r.artist_id)] ? `<p>${planPill(r.artist_id)} <span class="muted">${esc(planArtists[String(r.artist_id)].name)}</span></p>` : ""}
+    <div id="ev"><p class="muted">Смотрю библиотеку…</p></div>
+    <div id="disco"></div>
+    <div id="related"></div>
+    <p class="help">↑/↓ или j/k — навигация · 1–3 — решение · 0 — сбросить · решения уходят в план на странице «Решения и загрузки»</p>`;
+  loadDisco(r.artist_id, r.type === "album" ? r.id : r.album_id);
+  const lib = await fetch(`/api/lib/artist?q=${encodeURIComponent(r.artist)}`).then(x => x.json());
+  if (view[cur] !== r) return;
+  const list = (items, f) => `<ul class="ev">${items.map(f).join("")}</ul>`;
+  $("#ev").innerHTML = `<h3>Что есть в библиотеке</h3>` +
+    (lib.exact.length ? `<p><b>У ${esc(r.artist)} в Navidrome:</b></p>${list(lib.exact, a => `<li>${a.year || "—"} · ${esc(a.name)} <span class="muted">(${a.songs} тр.)</span></li>`)}`
+                      : `<p><b>В Navidrome по этому имени ничего нет.</b></p>`) +
+    (lib.similar.length ? `<p class="warn">Похожие имена в библиотеке — возможно, это он же:</p>${list(lib.similar, s => `<li>${esc(s.name)} <span class="muted">(${s.albums} альб.: ${(s.titles || []).map(esc).join(", ")})</span></li>`)}` : "") +
+    (lib.joint?.length ? `<p><b>Совместные записи</b> <span class="muted">(в титрах вместе с другими артистами — обычно сборник)</span>:</p>${list(lib.joint, j => `<li>${(j.titles || []).map(esc).join(", ")} <span class="muted">(+${j.others} артистов в титрах)</span></li>`)}` : "");
+  const rel = await fetch(`/api/deezer/related?id=${r.artist_id}`).then(x => x.json()).catch(() => []);
+  if (view[cur] !== r || !rel.length) return;
+  $("#related").innerHTML = `<h3>Похожие артисты на Deezer</h3><div class="rel-grid">${rel.map(a => `
+    <div class="relart" data-search="${esc(a.name)}" title="искать ${esc(a.name)}"><img src="${a.cover}" loading="lazy" alt="">
+      <span><b>${esc(a.name)}</b> ${planPill(a.id)}<small>${a.nb_fan?.toLocaleString("ru")} фан. · ${a.lib.albums ? `<span class="pill-ok">в библиотеке ${a.lib.albums} альб.</span>`
+        : a.lib.similar.length ? `похоже есть: ${esc(a.lib.similar[0])}` : "в библиотеке нет"}</small></span></div>`).join("")}</div>`;
+}
+
+async function decideSearch(act) {
+  const r = view[cur];
+  if (!r) return;
+  const k = dkey(r);
+  const body = act ? {kind: "search", key: r.key, decision: act, artist: r.artist, title: r.title,
+    name: r.type === "artist" ? r.title : `${r.artist} — ${r.title}`,
+    artist_id: r.artist_id,
+    album_id: act === "discography" ? null : r.album_id ?? null,
+    track_id: act === "track" ? r.id : null,
+    album_title: r.type === "album" ? `${r.artist} — ${r.title}` : r.album ? `${r.artist} — ${r.album}` : null,
+    deezer_link: r.link} : {kind: "search", key: r.key, decision: ""};
+  await fetch("/api/decision", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  if (act) data.decisions[k] = body; else delete data.decisions[k];
+  flash(act ? `В план: ${body.name} — ${SEARCH_ACTIONS[r.type].find(a => a[0] === act)[1].toLowerCase()}` : "Решение сброшено");
+  await loadPlanArtists();
+  renderSearchList(); renderSearchDetail();
+}
+
+// ---------- лейблы: каталог с Beatport, релизы найдены на Deezer по UPC ----------
+let labelView = [], labelQ = "", planned = {};
+const labelData = {};                      // ключ решения (bp:id) → готовый каталог
+const lkey = id => `bp:${id}`;
+const LTYPE = {album: "альбом", ep: "EP", single: "сингл", compile: "сборник", more: "другое"};
+
+async function runLabelSearch(q) {
+  q = q.trim();
+  if (!q) return;
+  labelQ = q; $("#list").innerHTML = `<p class="muted" style="padding:16px">Ищу лейбл «${esc(q)}» на Beatport…</p>`;
+  const r = await fetch(`/api/beatport/labels?q=${encodeURIComponent(q)}`).then(x => x.json()).catch(e => ({error: String(e)}));
+  if (r.error) { $("#list").innerHTML = `<p class="err" style="padding:16px">${esc(r.error)}</p>`; return; }
+  labelView = r.labels.map(l => ({...l, key: `${l.id}`}));
+  cur = 0; filter();
+}
+
+function renderLabelList() {
+  $("#counts").textContent = labelQ ? `«${labelQ}»: ${labelView.length} лейблов на Beatport` : "";
+  $("#list").innerHTML = !labelQ ? `<p class="muted" style="padding:16px">Введи в поле «поиск» название лейбла или ссылку на Beatport и нажми Enter.</p>`
+    : labelView.map((l, i) => {
+      const d = data.decisions[`labels:${lkey(l.id)}`];
+      return `<div class="row srow${i === cur ? " cur" : ""}" data-i="${i}">
+        ${l.thumb ? `<img src="${l.thumb}" alt="" loading="lazy">` : `<span></span>`}
+        <div><div class="name">${esc(l.name)}</div><div class="meta">Beatport #${l.id}</div></div>
+        ${d ? `<span class="tag t-discography">в плане</span>` : "<span></span>"}</div>`;
+    }).join("") || `<p class="muted" style="padding:16px">Ничего не найдено.</p>`;
+  $("#list .cur")?.scrollIntoView({block: "nearest"});
+}
+
+async function renderLabelDetail() {
+  const l = view[cur];
+  if (!l) { $("#detail").innerHTML = ""; return; }
+  const k = lkey(l.id), dec = data.decisions[`labels:${k}`];
+  $("#detail").innerHTML = `
+    <h2>${esc(l.name)}</h2>
+    <div class="links"><a href="${l.url}" target="_blank">Beatport</a>
+      <a href="https://www.discogs.com/search/?q=${encodeURIComponent(l.name)}&type=label" target="_blank">Discogs</a></div>
+    <div class="actions">
+      <button class="btn${dec ? " on" : ""}" data-lact="label"><kbd>1</kbd>В план: каталог лейбла</button>
+      ${dec ? `<button class="btn" data-lact=""><kbd>0</kbd>убрать из плана</button>` : ""}</div>
+    <div id="lbody"><p class="muted">Собираю каталог…</p></div>
+    <p class="help">Каталог — с Beatport; на Deezer релиз ищется по UPC (точно), без UPC — по названию и артисту.
+      В плане отмечаются найденные на Deezer и отсутствующие в библиотеке — по типам, выбранным на странице плана.</p>`;
+  let r;
+  while (true) {
+    r = labelData[k] || await fetch(`/api/beatport/label?id=${l.id}`).then(x => x.json()).catch(e => ({status: "error", error: String(e)}));
+    if (view[cur] !== l) return;
+    if (r.status !== "running") break;
+    $("#lbody").innerHTML = `<p class="muted">${r.total ? `Ищу релизы на Deezer по UPC — ${r.done} из ${r.total}…`
+      : "Получаю список релизов с Beatport (у больших лейблов — десятки страниц)…"}</p>`;
+    await new Promise(ok => setTimeout(ok, 1500));
+  }
+  if (r.status === "error") { $("#lbody").innerHTML = `<p class="warn">${esc(r.error)}</p>`; return; }
+  labelData[k] = r;
+  // что уже отмечено в плане (по типам, выбранным на странице плана) — чтобы не добавлять дважды
+  let types = "";
+  try { types = (JSON.parse(localStorage.getItem("planPrefs") || "null")?.types || []).join(","); } catch {}
+  planned = await fetch(`/api/plan/urls?types=${types}`).then(x => x.json()).catch(() => ({}));
+  if (view[cur] !== l) return;
+  renderLabelBody(r);
+}
+
+function renderLabelBody(r) {
+  const f = window.lfilter || "all";
+  const inPlan = x => x.deezer && planned[x.deezer.link] && planned[x.deezer.link] !== r.name ? planned[x.deezer.link] : null;
+  const rels = r.releases.filter(x => f === "all" || (f === "missing" ? x.deezer && !x.have && !inPlan(x) : f === "have" ? x.have : !x.deezer));
+  const found = r.releases.filter(x => x.deezer).length, have = r.releases.filter(x => x.have).length;
+  const rates = r.rates || {flac: 110000, mp3: 40000};
+  const fmtDur = sec => { const m = Math.round((sec || 0) / 60); return m >= 60 ? `${Math.floor(m / 60)} ч ${m % 60} мин` : `${m} мин`; };
+  const fmtSize = b => b >= 1e9 ? `${(b / 1e9).toFixed(1).replace(".", ",")} ГБ` : `${Math.round(b / 1e6)} МБ`;
+  const stat = xs => {
+    const sec = xs.reduce((s, x) => s + (x.deezer?.duration || 0), 0), tr = xs.reduce((s, x) => s + (x.deezer?.nb_tracks || 0), 0);
+    return `<b>${xs.length}</b> рел. · ${tr} тр. · ${fmtDur(sec)} · ≈ <b>${fmtSize(sec * rates.flac)}</b> FLAC / ${fmtSize(sec * rates.mp3)} MP3`;
+  };
+  const todo = r.releases.filter(x => x.deezer && !x.have && !inPlan(x));
+  const byType = {};
+  todo.forEach(x => (byType[x.type] = byType[x.type] || []).push(x));
+  $("#lbody").innerHTML = `
+    <div class="lsum"><b>${r.releases.length}</b> релизов на Beatport · <b>${found}</b> найдено на Deezer · <b>${have}</b> есть в библиотеке</div>
+    <div class="lsum">Всё найденное на Deezer: ${stat(r.releases.filter(x => x.deezer))}</div>
+    <div class="lsum">Качать (нет в библиотеке и в плане): ${stat(todo)}</div>
+    <div class="muted" style="font-size:12px;margin:0 0 8px">${Object.entries(byType).map(([t, xs]) => `<div>${LTYPE[t] || t}: ${stat(xs)}</div>`).join("")}</div>
+    <div class="lfilter">${[["all", "все"], ["missing", "качать (на Deezer, нет в библиотеке и в плане)"], ["have", "есть в библиотеке"], ["nodz", "нет на Deezer"]]
+      .map(([k, t]) => `<label><input type="radio" name="lf" value="${k}" ${f === k ? "checked" : ""}> ${t}</label>`).join("")}</div>
+    ${rels.map(x => `<div class="lrel${x.deezer ? "" : " miss"}">
+      ${x.deezer?.cover ? `<img src="${x.deezer.cover}" loading="lazy" alt="">` : `<span class="nocover"></span>`}
+      <span>${x.year || "—"} · <b>${esc(x.artist)}</b> — ${esc(x.title)}
+        ${x.have ? `<span class="pill-ok">есть в библиотеке</span>` : ""}
+        ${inPlan(x) ? `<span class="pill-ok" style="border-color:var(--d-later);color:var(--d-later)">есть в плане: ${esc(inPlan(x))}</span>` : ""}</span>
+      <small>${esc(x.catno || "без номера")} · ${LTYPE[x.type] || x.type} · ${x.deezer?.duration ? `${x.deezer.nb_tracks} тр. · ${fmtDur(x.deezer.duration)}` : esc(x.format)} ·
+        <a href="${x.src}" target="_blank">Beatport</a> ·
+        ${x.deezer ? `<a href="${x.deezer.link}" target="_blank">Deezer: ${esc(x.deezer.artist)} — ${esc(x.deezer.title)}</a>
+          <span class="muted">(${{upc: "по UPC", "название": "по названию", "дискография": "по дискографии артиста"}[x.deezer.how] || x.deezer.how})</span>` : "нет на Deezer"}</small>
+    </div>`).join("") || `<p class="muted">Пусто.</p>`}`;
+}
+
+async function decideLabel(act) {
+  const l = view[cur];
+  if (!l) return;
+  const k = lkey(l.id);
+  const body = act ? {kind: "labels", key: k, decision: "label", name: l.name, label_id: l.id, source: "beatport", deezer_link: null}
+                   : {kind: "labels", key: k, decision: ""};
+  await fetch("/api/decision", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  if (act) data.decisions[`labels:${k}`] = body; else delete data.decisions[`labels:${k}`];
+  flash(act ? `В план: каталог ${body.name}` : "Убрано из плана");
+  renderLabelList(); renderLabelDetail();
+}
+
+function filter() {
+  const q = $("#q").value.trim().toLowerCase(), min = +$("#min").value || 0, p = $("#period").value;
+  const hide = $("#hide").checked;
+  if (tab === "search") { view = searchView; cur = Math.min(cur, Math.max(view.length - 1, 0)); renderList(); renderDetail(); return; }
+  if (tab === "labels") { view = labelView; cur = Math.min(cur, Math.max(view.length - 1, 0)); renderList(); renderDetail(); return; }
+  if (tab === "playlists") {
+    view = data.playlists.filter(pl => !q || pl.title.toLowerCase().includes(q) ||
+                                       pl.tracks.some(t => `${t.artist} ${t.title}`.toLowerCase().includes(q)))
+      .filter(pl => !hide || visibleTracks(pl).length)
+      .sort((a, b) => visibleTracks(b).length - visibleTracks(a).length);
+    cur = Math.min(cur, Math.max(view.length - 1, 0));
+    renderList(); renderPlaylist();
+    return;
+  }
+  view = data[tab].filter(r => {
+    if (hide && decision(r)) return false;
+    const text = (r.artist || r.channel || "") + " " + (r.album || r.title || "");
+    if (q && !text.toLowerCase().includes(q)) return false;
+    if (tab === "ugc") return true;
+    if (score(r) < min) return false;
+    if (tab === "artists") {
+      if (p === "old" && r.lf_2008_14 < 5) return false;
+      if (p === "ytm" && !(r.ytm_likes || r.ytm_lib_artist || r.ytm_lib_songs || r.ytm_sub)) return false;
+      if (p === "recent" && r.lf_2025_ < 1) return false;
+    }
+    return true;
+  });
+  cur = Math.min(cur, Math.max(view.length - 1, 0));
+  renderList();
+  renderDetail();
+}
+
+function meta(r) {
+  if (tab === "artists") {
+    const parts = [];
+    if (r.lf_total) parts.push(`LF ${r.lf_total} (${r.lf_2008_14}/${r.lf_2015_24}/${r.lf_2025_}) ${r.lf_first}–${r.lf_last}`);
+    if (r.ytm_likes) parts.push(`♥ ${r.ytm_likes}`);
+    if (r.ytm_lib_artist || r.ytm_sub) parts.push("в библиотеке YTM");
+    if (r.ytm_lib_songs) parts.push(`${r.ytm_lib_songs} песен в YTM`);
+    return parts.join(" · ");
+  }
+  if (tab === "albums") {
+    const parts = [`LF ${r.lf_plays}`];
+    if (r.ytm_likes) parts.push(`♥ ${r.ytm_likes}`);
+    if (r.ytm_lib) parts.push(`YTM библ. ${r.ytm_lib}`);
+    parts.push(r.artist_in_library === "yes" ? "артист есть в библиотеке" : "артиста нет");
+    if (r.maybe_in_lib_as) parts.push(`⚠ такое название есть у: ${r.maybe_in_lib_as}`);
+    return parts.join(" · ");
+  }
+  return `канал: ${r.channel}`;
+}
+
+function title(r) { return tab === "artists" ? r.artist : tab === "albums" ? `${r.artist} — ${r.album}` : r.title; }
+
+function renderList() {
+  if (tab === "search") return renderSearchList();
+  if (tab === "labels") return renderLabelList();
+  if (tab === "playlists") {
+    const all = data.playlists.flatMap(pl => pl.tracks), todo = all.filter(t => !["have_track", "gone"].includes(t.status));
+    $("#counts").textContent = `плейлистов ${view.length} · треков ${all.length} · нет в библиотеке ${todo.length} · разобрано ${todo.filter(tdec).length}`;
+    $("#list").innerHTML = view.map((pl, i) => {
+      const s = plStats(pl), left = visibleTracks(pl).length;
+      return `<div class="row${i === cur ? " cur" : ""}" data-i="${i}">
+        <div class="name">${esc(pl.title)}</div><span class="muted">${left}</span>
+        <div class="meta">${pl.tracks.length} тр. · артиста нет ${s.missing} · трека нет ${s.have_artist} · похоже есть ${s.maybe_track} · есть ${s.have_track} · разобрано ${s.decided}</div></div>`;
+    }).join("");
+    $("#list .cur")?.scrollIntoView({block: "nearest"});
+    return;
+  }
+  const total = data[tab].length, done = data[tab].filter(decision).length;
+  $("#counts").textContent = `показано ${view.length} · разобрано ${done} из ${total}`;
+  $("#list").innerHTML = view.slice(0, 600).map((r, i) => {
+    const d = decision(r);
+    return `<div class="row${i === cur ? " cur" : ""}" data-i="${i}">
+      <div class="name">${esc(title(r))}</div>
+      ${d ? `<span class="tag t-${d}">${esc(ACTIONS[tab].find(a => a[0] === d)?.[1] || d)}</span>` : `<span class="muted">${tab === "ugc" ? "" : score(r)}</span>`}
+      <div class="meta">${esc(meta(r))}</div></div>`;
+  }).join("") + (view.length > 600 ? `<div class="row muted">…ещё ${view.length - 600}, сузь фильтр</div>` : "");
+  $("#list .cur")?.scrollIntoView({block: "nearest"});
+}
+
+function links(r) {
+  const q = tab === "artists" ? r.artist : tab === "albums" ? `${r.artist} ${r.album}` : r.title;
+  const e = encodeURIComponent(q);
+  const out = [`<a href="${discogs(r.artist || q, "artist")}" target="_blank">Discogs: артист</a>`];
+  if (tab === "albums") out.push(`<a href="${discogs(q, "release")}" target="_blank">Discogs: релиз</a>`);
+  out.push(`<a href="https://www.deezer.com/search/${e}" target="_blank">Deezer</a>`,
+           `<a href="https://music.youtube.com/search?q=${e}" target="_blank">YT Music</a>`);
+  if (tab !== "ugc") out.push(`<a href="https://www.last.fm/music/${encodeURIComponent(r.artist)}" target="_blank">Last.fm</a>`);
+  if (tab === "ugc") out.unshift(`<a href="https://music.youtube.com/watch?v=${r.videoId}" target="_blank">Видео</a>`);
+  return out.join("");
+}
+
+function statsHtml(r) {
+  const s = tab === "artists"
+    ? [["интерес", r.interest], ["LF всего", r.lf_total], ["LF 2008–14", r.lf_2008_14], ["LF 2015–24", r.lf_2015_24],
+       ["LF 2025+", r.lf_2025_], ["разных треков", r.lf_tracks], ["LF loved", r.lf_loved], ["лайки YTM", r.ytm_likes],
+       ["песни в YTM", r.ytm_lib_songs], ["альбомы в YTM", r.ytm_lib_albums]]
+    : tab === "albums" ? [["LF прослушиваний", r.lf_plays], ["лайки YTM", r.ytm_likes], ["в библиотеке YTM", r.ytm_lib]] : [];
+  return s.filter(([, v]) => v !== "" && v !== undefined)
+          .map(([k, v]) => `<div class="stat"><b>${esc(v)}</b><span>${k}</span></div>`).join("");
+}
+
+async function renderDetail() {
+  if (tab === "playlists") return renderPlaylist();
+  if (tab === "search") return renderSearchDetail();
+  if (tab === "labels") return renderLabelDetail();
+  const r = view[cur];
+  if (!r) { $("#detail").innerHTML = `<p class="muted">Пусто — поменяй фильтр.</p>`; return; }
+  const d = decision(r);
+  $("#detail").innerHTML = `
+    <h2>${esc(title(r))}</h2>
+    <div class="links">${links(r)}</div>
+    <div class="actions">${ACTIONS[tab].map(([k, label], i) =>
+      `<button class="btn${d === k ? " on" : ""}" data-act="${k}"><kbd>${i + 1}</kbd>${label}</button>`).join("")}
+      ${d ? `<button class="btn" data-act=""><kbd>0</kbd>сбросить</button>` : ""}</div>
+    <div id="ev">${tab === "ugc" ? "" : `<p class="muted">Собираю данные…</p>`}</div>
+    <div id="dz">${tab === "ugc" ? "" : `<p class="muted">Deezer…</p>`}</div>
+    <p class="help">↑/↓ или j/k — навигация · 1–5 — решение (и к следующему) · 0 — сбросить</p>`;
+  if (tab !== "ugc") { loadEvidence(r); loadDeezer(r); }
+}
+
+const evCache = {};
+async function loadEvidence(r) {
+  const k = dkey(r);
+  if (!evCache[k]) evCache[k] = await fetch(`/api/evidence?kind=${tab}&key=${encodeURIComponent(r.key)}`).then(x => x.json());
+  if (view[cur] !== r) return;
+  const ev = evCache[k];
+  if (ev.error) { $("#ev").innerHTML = `<p class="err">${esc(ev.error)}</p>`; return; }
+  const lib = ev.library, lf = ev.lastfm, y = ev.ytm;
+  const list = (items, f) => items.length ? `<ul class="ev">${items.map(f).join("")}</ul>` : "";
+  const libHtml = lib.exact.length
+    ? `<p><b>У артиста есть в Navidrome:</b></p>${list(lib.exact, a => `<li>${a.year || "—"} · ${esc(a.name)} <span class="muted">(${a.songs} тр.)</span></li>`)}`
+    : `<p><b>В Navidrome по этому имени ничего нет.</b></p>`;
+  const simHtml = (lib.similar.length
+    ? `<p class="warn">Похожие имена в библиотеке — возможно, это он же:</p>${list(lib.similar, s => `<li>${esc(s.name)} <span class="muted">(${s.albums} альб.: ${(s.titles || []).map(esc).join(", ")})</span></li>`)}` : "") +
+    (lib.joint?.length ? `<p><b>Совместные записи</b> <span class="muted">(в титрах вместе с другими артистами — обычно сборник)</span>:</p>${list(lib.joint, j => `<li>${(j.titles || []).map(esc).join(", ")} <span class="muted">(+${j.others} артистов в титрах)</span></li>`)}` : "");
+  const lfHtml = lf.total ? `
+      <p><b>Last.fm:</b> ${lf.total} скробблов, ${lf.first} — ${lf.last}${lf.loved.length ? ` · ♥ ${lf.loved.map(esc).join(", ")}` : ""}</p>
+      <div class="cols"><div><span class="muted">треки</span>${list(lf.tracks, t => `<li>${esc(t.name)} <span class="muted">×${t.n}</span></li>`)}</div>
+      <div><span class="muted">альбомы</span>${list(lf.albums, t => `<li>${esc(t.name)} <span class="muted">×${t.n}</span></li>`) || `<p class="muted">—</p>`}</div></div>` : "";
+  const ytFlags = [y.library_artist && "артист в библиотеке YTM", y.subscribed && "подписка"].filter(Boolean).join(" · ");
+  const ytHtml = (y.likes.length || y.library_songs.length || y.library_albums.length || ytFlags || y.history.length) ? `
+      <p><b>YouTube Music:</b> ${ytFlags}</p>
+      ${y.likes.length ? `<span class="muted">лайки</span>${list(y.likes, l => `<li>${esc(l.title)}${l.album ? ` <span class="muted">— ${esc(l.album)}</span>` : ""}${l.via.startsWith("channel=") ? ` <span class="muted">(${esc(l.via.slice(8))})</span>` : ""}</li>`)}` : ""}
+      ${y.library_songs.length ? `<span class="muted">песни в библиотеке YTM</span>${list(y.library_songs, l => `<li>${esc(l.title)} <span class="muted">— ${esc(l.album)}</span></li>`)}` : ""}
+      ${y.library_albums.length ? `<span class="muted">альбомы в библиотеке YTM</span>${list(y.library_albums, a => `<li>${esc(a)}</li>`)}` : ""}
+      ${y.history.length ? `<span class="muted">недавняя история</span>${list(y.history, h => `<li>${esc(h)}</li>`)}` : ""}` : "";
+  $("#ev").innerHTML = `<h3>Что есть в библиотеке</h3>${libHtml}${simHtml}
+    <h3>Откуда взялось</h3>${lfHtml}${ytHtml}` + (!lfHtml && !ytHtml ? `<p class="muted">нет данных</p>` : "");
+}
+
+const dzReq = {};
+function fetchDeezer(r) {  // один запрос на карточку; решение ждёт его же, а не сохраняется пустым
+  const k = dkey(r);
+  if (!dzReq[k]) {
+    const kind = tab === "artists" ? "artist" : "album";
+    const q = tab === "artists" ? r.artist : `${r.artist} ${r.album}`;
+    dzReq[k] = fetch(`/api/deezer/${kind}?q=${encodeURIComponent(q)}`).then(x => x.json())
+      .catch(e => ({error: String(e)})).then(res => (dz[k] = res));
+  }
+  return dzReq[k];
+}
+
+async function loadDeezer(r) {
+  const k = dkey(r);
+  if (!dz[k]) await fetchDeezer(r);
+  if (view[cur] !== r) return;
+  const res = dz[k];
+  if (res.error) { $("#dz").innerHTML = `<p class="muted">Deezer: ${esc(res.error)}</p>`; return; }
+  const cands = res.candidates || [];
+  if (chosen[k] === undefined) chosen[k] = data.decisions[k]?.deezer_id ?? cands[0]?.id;
+  const cHtml = cands.map(c => tab === "artists"
+    ? `<div class="cand${c.id === chosen[k] ? " on" : ""}" data-id="${c.id}"><img src="${c.picture_medium}" alt="">
+         <div><b>${esc(c.name)}</b>${c.exact ? ` <span class="pill-ok">точное имя</span>` : ""}<small>${c.nb_album} альб. · ${c.nb_fan?.toLocaleString("ru")} фан. · <a href="${c.link}" target="_blank">открыть</a></small></div></div>`
+    : `<div class="cand${c.id === chosen[k] ? " on" : ""}" data-id="${c.id}"><img src="${c.cover}" alt="">
+         <div><b>${esc(c.artist)} — ${esc(c.title)}</b><small>${c.nb_tracks} тр. · <a href="${c.link}" target="_blank">открыть</a></small></div></div>`).join("");
+  $("#dz").innerHTML = cands.length
+    ? `<h3>Кого качать на Deezer</h3><p class="muted" style="margin:0 0 6px">Результаты поиска по имени. Выделенный уйдёт в загрузку — кликни другого, если это не он.</p><div class="cands">${cHtml}</div><div id="disco"></div>`
+    : `<p class="muted">На Deezer не найдено.</p>`;
+  $("#dz").dataset.key = k;
+  if (tab === "artists" && chosen[k]) loadDisco(chosen[k]);
+}
+
+const discoCache = {};
+let rates = {flac: 110000, mp3: 40000};  // байт/с по своей библиотеке, приходит с сервера
+const fmtDur = sec => { const m = Math.round((sec || 0) / 60); return m >= 60 ? `${Math.floor(m / 60)} ч ${m % 60} мин` : `${m} мин`; };
+const fmtSize = b => b >= 1e9 ? `${(b / 1e9).toFixed(1).replace(".", ",")} ГБ` : `${Math.round(b / 1e6)} МБ`;
+const sizeOf = sec => `≈ ${fmtSize(sec * rates.flac)} FLAC / ${fmtSize(sec * rates.mp3)} MP3`;
+// метки «в плане / отправлено» у артистов — по решениям, без расчёта плана
+let planArtists = {};
+const loadPlanArtists = () => fetch("/api/plan/artists").then(x => x.json()).then(r => planArtists = r).catch(() => {});
+const planPill = id => { const p = planArtists[String(id)]; return !p ? "" : p.status === "plan"
+  ? `<span class="pill-ok" style="border-color:var(--d-later);color:var(--d-later)" title="${esc(p.name)}">в плане</span>`
+  : `<span class="pill-ok" title="${esc(p.name)}">отправлено</span>`; };
+const discoSizes = {};
+const TYPE_NAME = {album: "Альбомы", ep: "EP", single: "Синглы", compile: "Сборники", featured: "Участие", more: "Ещё"};
+async function loadDisco(id, highlight = null) {
+  const box = $("#disco");
+  if (!box) return;
+  box.innerHTML = `<p class="muted">Загружаю дискографию с Deezer…</p>`;
+  if (!discoCache[id]) discoCache[id] = await fetch(`/api/deezer/discography?id=${id}`).then(x => x.json()).catch(e => ({error: String(e)}));
+  const d = discoCache[id];
+  if ($("#disco") !== box) return;
+  if (tab === "artists" && chosen[$("#dz").dataset.key] !== id) return;
+  if (d.error) { box.innerHTML = `<p class="muted">Дискография: ${esc(d.error)}</p>`; return; }
+  const groups = {};
+  d.releases.forEach(r => (groups[r.type] = groups[r.type] || []).push(r));
+  const have = d.releases.filter(r => r.have).length;
+  box.innerHTML = `<h3>Что у ${esc(d.name)} на Deezer</h3>
+    <p class="muted" style="margin:0 0 6px">${d.releases.length} релизов · уже в библиотеке ${have} · <a href="${d.link}" target="_blank">открыть на Deezer</a></p>` +
+    `<p class="muted dsum" style="margin:0 0 6px;font-size:12px">объём считаю…</p>` +
+    Object.entries(groups).map(([t, rs]) => `<details ${t === "album" || t === "ep" || rs.length <= 8 ? "open" : ""}>
+      <summary>${TYPE_NAME[t] || t} <span class="muted">${rs.length}</span> <span class="muted gsum" data-type="${t}" style="font-weight:400;font-size:12px"></span></summary>
+      ${rs.map(r => `<div class="drel${r.have ? " have" : ""}${String(r.id) === String(highlight) ? " hl" : ""}"><img src="${r.cover}" loading="lazy" alt="">
+        <span>${r.year} · <a href="${r.url}" target="_blank">${esc(r.title)}</a>
+        <small class="muted rdur" data-rid="${r.id}"></small>
+        ${r.have ? `<span class="pill-ok">есть в библиотеке</span>` : ""}${r.dup ? ` <span class="muted">(ещё одно издание)</span>` : ""}</span></div>`).join("")}
+    </details>`).join("");
+  if (!discoSizes[id]) discoSizes[id] = await fetch(`/api/deezer/discography_sizes?id=${id}`).then(x => x.json()).catch(() => null);
+  const sz = discoSizes[id];
+  if (!sz || $("#disco") !== box) return;
+  rates = sz.rates || rates;
+  const dur = r => sz.releases[String(r.id)]?.duration || 0, trk = r => sz.releases[String(r.id)]?.nb_tracks || 0;
+  const line = rs => { const sec = rs.reduce((s, r) => s + dur(r), 0); return `${rs.length} рел. · ${rs.reduce((s, r) => s + trk(r), 0)} тр. · ${fmtDur(sec)} · ${sizeOf(sec)}`; };
+  box.querySelectorAll(".rdur").forEach(el => { const x = sz.releases[el.dataset.rid]; if (x?.duration) el.textContent = `${x.nb_tracks} тр. · ${fmtDur(x.duration)}`; });
+  box.querySelectorAll(".gsum").forEach(el => { el.textContent = "· " + line(groups[el.dataset.type].filter(r => !r.dup)); });
+  const uniq = d.releases.filter(r => !r.dup);  // другие издания того же релиза — не считаем дважды
+  box.querySelector(".dsum").innerHTML = `Всё (без повторных изданий): ${line(uniq)}<br>Чего нет в библиотеке: <b>${line(uniq.filter(r => !r.have))}</b>`;
+}
+
+let playIdx = -1;
+function play(i) {
+  const res = dz[dkey(view[cur])], t = res?.top?.[i];
+  if (!t?.preview) return;
+  const p = $("#player");
+  if (playIdx === i && !p.paused) { p.pause(); return; }
+  playIdx = i; p.src = t.preview; p.play();
+}
+
+async function decide(act) {
+  const r = view[cur];
+  if (!r) return;
+  const k = dkey(r);
+  let cand = null, artistId = null;
+  if (tab !== "ugc" && ["discography", "album", "download"].includes(act)) {
+    if (!dz[k]) { flash("Жду ответа Deezer…"); await fetchDeezer(r); }
+    const cands = dz[k]?.candidates || [];
+    cand = cands.find(c => c.id === (chosen[k] ?? cands[0]?.id)) || null;
+    if (tab === "albums" && act === "discography") {
+      // артист альбома: из выбранного на Deezer альбома, иначе по имени
+      artistId = cand?.artist_id ?? (await fetch(`/api/deezer/find_artist?q=${encodeURIComponent(r.artist)}`)
+                                          .then(x => x.json())).artist?.id ?? null;
+      if (!artistId) return flash(`Артист «${r.artist}» на Deezer не найден — дискографию качать не из чего.`);
+    } else if (!cand) {
+      return flash("На Deezer не найдено — качать не из чего.");
+    }
+  }
+  const body = {kind: tab, key: r.key, decision: act, name: title(r),
+                deezer_id: cand?.id ?? null, deezer_link: cand?.link ?? null,
+                artist_id: artistId ?? (tab === "artists" ? cand?.id : cand?.artist_id) ?? null};
+  await fetch("/api/decision", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  if (act) data.decisions[k] = body; else delete data.decisions[k];
+  $("#player").pause(); playIdx = -1;
+  if (act && !$("#hide").checked) cur = Math.min(cur + 1, view.length - 1);
+  filter();
+}
+
+function move(d) { const was = cur; cur = Math.max(0, Math.min(view.length - 1, cur + d)); if (cur !== was) tcur = 0; $("#player").pause(); playIdx = -1; renderList(); renderDetail(); }
+function moveTrack(d) {
+  const n = visibleTracks(view[cur]).length;
+  tcur = Math.max(0, Math.min(n - 1, tcur + d)); $("#player").pause(); playIdx = -1; refreshTrackRowsNow();
+}
+function refreshTrackRowsNow() {
+  const pl = view[cur]; if (!pl || !$("#tracks")) return;
+  $("#tracks").innerHTML = visibleTracks(pl).map((t, i) => trackRow(t, i)).join("");
+  $("#tracks .cur")?.scrollIntoView({block: "nearest"});
+}
+
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input, select")) return;
+  if (tab === "labels") {
+    if (e.key === "ArrowDown" || e.key === "j") { e.preventDefault(); move(1); }
+    else if (e.key === "ArrowUp" || e.key === "k") { e.preventDefault(); move(-1); }
+    else if (e.key === "1") decideLabel("label");
+    else if (e.key === "0") decideLabel("");
+    return;
+  }
+  if (tab === "search") {
+    const r = view[cur];
+    if (e.key === "ArrowDown" || e.key === "j") { e.preventDefault(); move(1); }
+    else if (e.key === "ArrowUp" || e.key === "k") { e.preventDefault(); move(-1); }
+    else if (e.key === "0" && r) decideSearch("");
+    else if (/^[1-3]$/.test(e.key) && r) { const a = SEARCH_ACTIONS[r.type][+e.key - 1]; if (a) decideSearch(a[0]); }
+    return;
+  }
+  if (tab === "playlists") {
+    const t = visibleTracks(view[cur])[tcur];
+    if (e.key === "ArrowDown" || e.key === "j") { e.preventDefault(); moveTrack(1); }
+    else if (e.key === "ArrowUp" || e.key === "k") { e.preventDefault(); moveTrack(-1); }
+    else if (e.key === "PageDown" || e.key === "]") { e.preventDefault(); move(1); }
+    else if (e.key === "PageUp" || e.key === "[") { e.preventDefault(); move(-1); }
+    else if (e.key === " ") { e.preventDefault(); playTrack(tcur); }
+    else if (e.key === "c" && t) { const n = dzT[t.key]?.candidates?.length || 1; savePick(t, ((pickT[t.key] || 0) + 1) % n); }
+    else if (e.key === "0") decideTrack("");
+    else if (e.key === "Escape" && pickerFor) { pickerFor = null; refreshTrackRowsNow(); }
+    else if (/^[1-6]$/.test(e.key)) decideTrack(TRACK_ACTIONS[+e.key - 1][0]);
+    return;
+  }
+  if (e.key === "ArrowDown" || e.key === "j") { e.preventDefault(); move(1); }
+  else if (e.key === "ArrowUp" || e.key === "k") { e.preventDefault(); move(-1); }
+  else if (e.key === " ") { e.preventDefault(); play(playIdx < 0 ? 0 : playIdx); }
+  else if (e.key === "n") play(playIdx + 1);
+  else if (e.key === "0") decide("");
+  else if (/^[1-5]$/.test(e.key)) { const a = ACTIONS[tab][+e.key - 1]; if (a) decide(a[0]); }
+});
+$("#list").addEventListener("click", e => { const row = e.target.closest(".row[data-i]"); if (row) { cur = +row.dataset.i; move(0); } });
+$("#detail").addEventListener("change", e => {
+  if (tab !== "labels") return;
+  if (e.target.name === "lf") { window.lfilter = e.target.value; renderLabelBody(labelData[lkey(view[cur].id)]); }
+});
+$("#detail").addEventListener("click", e => {
+  if (tab === "labels") { const a = e.target.closest("[data-lact]"); if (a) decideLabel(a.dataset.lact); return; }
+  if (tab === "search") {
+    const ra = e.target.closest(".relart"); if (ra) { $("#q").value = ra.dataset.search; return runSearch(ra.dataset.search); }
+    const a = e.target.closest("[data-act]"); if (a) return decideSearch(a.dataset.act);
+    return;
+  }  if (tab === "playlists") {
+    if (e.target.closest("a")) return;
+    const pb = e.target.closest("[data-tplay]"); if (pb) return playTrack(+pb.dataset.tplay);
+    const cy = e.target.closest("[data-cycle]"); if (cy) {
+      const t = visibleTracks(view[cur])[+cy.dataset.cycle], n = dzT[t.key].candidates.length;
+      return savePick(t, ((pickT[t.key] || 0) + 1) % n);
+    }
+    const pk = e.target.closest("[data-pick]"); if (pk) return decideTrack("have", {id: pk.dataset.pick, label: pk.dataset.label});
+    if (e.target.closest(".picker")) return;
+    const ta = e.target.closest("[data-tact]"); if (ta) return decideTrack(ta.dataset.tact);
+    const row = e.target.closest(".trow"); if (row) { tcur = +row.dataset.t; refreshTrackRowsNow(); }
+    return;
+  }
+  const a = e.target.closest("[data-act]"); if (a) return decide(a.dataset.act);
+  const p = e.target.closest("[data-play]"); if (p) return play(+p.dataset.play);
+  const c = e.target.closest(".cand"); if (c && !e.target.closest("a")) {
+    chosen[$("#dz").dataset.key] = +c.dataset.id;
+    document.querySelectorAll(".cand").forEach(x => x.classList.toggle("on", x === c));
+    if (tab === "artists") loadDisco(+c.dataset.id);
+  }
+});
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  tab = b.dataset.tab; cur = 0;
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
+  $("#period").disabled = tab !== "artists";
+  $("#min").disabled = tab === "playlists" || tab === "ugc";
+  $("#min").value = tab === "albums" ? 20 : tab === "artists" ? 10 : 0;
+  $("#min").disabled = $("#min").disabled || tab === "search" || tab === "labels";
+  $("#q").placeholder = tab === "search" ? "артист, альбом, трек… Enter" : tab === "labels" ? "лейбл или ссылка Beatport… Enter" : "поиск";
+  if (tab === "search") { $("#q").value = searchQ; $("#q").focus(); }
+  if (tab === "labels") { $("#q").value = labelQ; $("#q").focus(); }
+  filter();
+});
+document.addEventListener("input", e => {  // фильтр в выборе трека из библиотеки
+  if (!e.target.classList.contains("pk-filter")) return;
+  const q = e.target.value.toLowerCase();
+  document.querySelectorAll(".picker .pk").forEach(p => p.hidden = q && !p.textContent.toLowerCase().includes(q));
+});
+["#q", "#min", "#period", "#hide"].forEach(s => $(s).addEventListener("input", () => { if (tab === "search" || tab === "labels") return; cur = 0; filter(); }));
+$("#q").addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  if (tab === "search") runSearch($("#q").value);
+  if (tab === "labels") runLabelSearch($("#q").value);
+});
+
+loadPlanArtists();
+fetch("/api/data").then(x => x.json()).then(d => { data = d; applyMatches(d.matches); document.querySelector('[data-tab="artists"]').click(); pollMatching(); });
+</script>
+<script>
+(() => {
+  const ts = document.getElementById("snapts"), btn = document.getElementById("snapbtn");
+  fetch("/api/snapshot").then(x => x.json()).then(s => ts.textContent = s.text);
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = "выгружаю Navidrome…";
+    const r = await fetch("/api/refresh", {method: "POST"}).then(x => x.json()).catch(e => ({error: String(e)}));
+    if (r.error) { btn.textContent = "ошибка"; alert(r.error); btn.disabled = false; return; }
+    location.reload();
+  };
+})();
+</script></body>
+</html>

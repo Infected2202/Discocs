@@ -76,7 +76,17 @@ pipeline {
           // валит фиксабельные HIGH/CRITICAL, просто новый пакет приезжает
           // с первым билдом суток, а не с первым билдом после коммита.
           env.SECURITY_REFRESH = sh(script: 'date -u +%Y-%m-%d', returnStdout: true).trim()
-          echo "commit=${env.GIT_SHA} branch=${env.BRANCH_NAME ?: 'n/a'} deploy=${env.IS_MAIN} security_refresh=${env.SECURITY_REFRESH}"
+          // Коммиты, меняющие только tools/ (локальные инструменты, см. tools/README.md), не собираем
+          // и не деплоим: тесты, образы, Sonar и Trivy их не касаются. Сравниваем с последним успешным
+          // билдом; нет базы или git diff не смог — собираем как обычно.
+          def base = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT
+          def changed = base ? sh(script: "git diff --name-only ${base} HEAD 2>/dev/null || true", returnStdout: true).trim() : ''
+          env.ONLY_TOOLS = (changed && changed.readLines().every { it.startsWith('tools/') }) ? 'true' : 'false'
+          if (env.ONLY_TOOLS == 'true') {
+            env.IS_MAIN = 'false'
+            currentBuild.description = 'только tools/ — сборка и деплой пропущены'
+          }
+          echo "commit=${env.GIT_SHA} branch=${env.BRANCH_NAME ?: 'n/a'} deploy=${env.IS_MAIN} only_tools=${env.ONLY_TOOLS} security_refresh=${env.SECURITY_REFRESH}"
         }
       }
     }
@@ -91,6 +101,7 @@ pipeline {
     // Все ветки живут в одном воркспейсе (agent наследуется, отдельных node
     // нет), поэтому coverage-/junit-файлы видны следующим стадиям как раньше.
     stage('Checks') {
+      when { expression { env.ONLY_TOOLS != 'true' } }
       parallel {
         stage('Tests: backend') {
           steps {
@@ -171,6 +182,7 @@ pipeline {
     }
 
     stage('Build & Push') {
+      when { expression { env.ONLY_TOOLS != 'true' } }
       stages {
         stage('Docker Login') {
           steps {
@@ -256,6 +268,7 @@ pipeline {
     // под ней 52-секундный Sonar стало нечем — он держал стадию один. Теперь
     // он перекрывается сканом образов, который длится дольше него.
     stage('Analyze & Scan') {
+      when { expression { env.ONLY_TOOLS != 'true' } }
       parallel {
         stage('Sonar') {
           steps {
@@ -391,6 +404,8 @@ pipeline {
             '''
           }
           echo "Deployed discocs @ ${env.GIT_SHA}"
+        } else if (env.ONLY_TOOLS == 'true') {
+          echo 'Изменён только tools/ — сборка и деплой пропущены'
         } else {
           echo "Ветка ${env.BRANCH_NAME} — образы собраны и запушены по :sha, деплой пропущен"
         }

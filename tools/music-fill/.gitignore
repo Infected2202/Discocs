@@ -1,0 +1,9 @@
+# В git — только код. Всё остальное здесь — личные данные и секреты:
+# config.json (ARL, ключи Discogs/Beatport/slskd/Last.fm, пароль Navidrome), browser.json (куки YouTube Music),
+# решения, журнал отправок, кэши (сотни МБ), выгрузки, логи, бэкапы.
+*
+!.gitignore
+!README.md
+!config.example.json
+!*.py
+!*.html

@@ -1,0 +1,56 @@
+# music-fill
+
+Локальный инструмент: добирать в библиотеку Navidrome недостающее — по истории прослушиваний
+(YouTube Music, Last.fm), по дискографиям артистов и по каталогам лейблов. Качает deemix (Deezer),
+а то, чего на Deezer нет, — Soulseek через slskd.
+
+Работает на рабочей машине, не в CI и не в образах discocs (см. [../README.md](../README.md)).
+
+## Запуск
+
+```bash
+python review_server.py      # http://127.0.0.1:8765
+```
+
+- `/` — разбор: артисты, альбомы-дыры, треки плейлистов, поиск, лейблы (Beatport); решения «в план».
+- `/decisions` — план загрузки в deemix, очередь и сверка с диском, вкладка Soulseek, журнал.
+
+Нужны: Python 3.11+ (`requests`, `mutagen`, `websocket-client`), `ffmpeg` в PATH (WAV/ALAC → FLAC),
+запущенный deemix-gui (`http://127.0.0.1:6595`), slskd с API-ключом.
+
+## Настройка
+
+`config.json` рядом со скриптами — по образцу [config.example.json](config.example.json). Вход в Beatport —
+`python beatport_login.py` (пишет в config.json только токены). Секреты в git не попадают — см. `.gitignore`.
+
+## Данные (не в git)
+
+| файл / каталог | что это |
+|---|---|
+| `raw/`, `out/` | выгрузки Navidrome, YouTube Music, Last.fm и собранное сравнение (`build.py`) |
+| `decisions.json` | решения: что качать (дискография, альбом, каталог лейбла…) |
+| `downloads.json`, `plan_state.json` | что отправлено в deemix, ручные галки плана |
+| `slsk_queue.json` | очередь Soulseek: найденное, загрузки, разложенное |
+| `matches.json` | сопоставление треков плейлистов с Deezer |
+| `cache/` | кэши Deezer / Beatport / Discogs / Soulseek / дискографий / каталогов лейблов |
+| `logs/` | `events.jsonl` (журнал событий), `server.log`; `backups/` — ежедневные копии состояния |
+
+## Модули
+
+| | |
+|---|---|
+| `review_server.py` | HTTP-сервер и вся логика плана: Deezer, deemix, сверка с диском, лейблы, Soulseek |
+| `build.py` | сравнение истории прослушиваний с библиотекой; нормализация названий и артистов |
+| `beatport.py`, `discogs.py` | клиенты каталогов; `discogs.title_keys` — общие правила сравнения названий |
+| `slsk.py` | поиск в Soulseek каскадом (каталожный номер → артист + релиз → варианты → треки), сверка по длительностям, загрузки slskd |
+| `tagger.py` | раскладка скачанного из Soulseek как у deemix: папки, имена, теги, FLAC |
+| `journal.py` | журнал событий и бэкапы |
+| `*_dump.py` | выгрузки Navidrome / YouTube Music / Last.fm |
+
+## Теги файлов из Soulseek
+
+Кроме набора deemix (title, artist, album, albumartist, номер, дата, жанр, ISRC, штрихкод, лейбл, обложка
+внутри файла) — свои поля (во FLAC — Vorbis comment, в MP3 — TXXX):
+`SOURCE=Soulseek`, `SOURCE_DATE`, `SOURCE_FORMAT` (что было у пира до перегонки), `SOULSEEK_USER`,
+`SOULSEEK_FILE`, `MATCH`, `MATCH_DURATION` (ожидали/у файла, с), `BEATPORT_RELEASE_ID`/`BEATPORT_TRACK_ID`
+или `DEEZER_ALBUM_ID`/`DEEZER_TRACK_ID`. Picard с «Clear existing tags» их сотрёт.

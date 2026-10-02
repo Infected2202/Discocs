@@ -1,0 +1,13 @@
+{
+  "navidrome_url": "http://192.168.1.41:4533",
+  "navidrome_user": "",
+  "navidrome_password": "",
+  "lastfm_api_key": "",
+  "lastfm_user": "",
+  "deemix_arl": "",
+  "discogs_key": "",
+  "discogs_secret": "",
+  "slskd_url": "http://192.168.1.41:5030",
+  "slskd_api_key": "",
+  "slsk_local_dir": "H:\\data\\media\\music\\soulseek"
+}

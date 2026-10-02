@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Решения и загрузки</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root {
+  --bg: #f6f6f4; --panel: #fff; --line: #e3e3de; --text: #1d1d1b; --muted: #74746e;
+  --accent: #2f6fdf; --ok: #1f8a4c; --warn: #9a7b12; --bad: #a33a3a;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #151514; --panel: #1e1e1c; --line: #33332f; --text: #e9e9e4; --muted: #94948c;
+          --accent: #6d9cf2; --ok: #4cc27f; --warn: #d6b24a; --bad: #e07070; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, "Segoe UI", sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px;
+         border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+header a { color: var(--accent); font-weight: 600; text-decoration: none; }
+.tabs button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+                     padding: 5px 10px; border-radius: 6px; cursor: pointer; }
+.tabs button.on, .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn:disabled { opacity: .5; cursor: default; }
+select { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
+section { padding: 12px 16px; }
+.bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+.muted { color: var(--muted); }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+details ul { margin: 4px 0 0; padding-left: 18px; font-size: 12px; }
+.skip { color: var(--muted); text-decoration: line-through; }
+.pill { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid currentColor; white-space: nowrap; }
+.p-ok { color: var(--ok); } .p-warn { color: var(--warn); } .p-bad { color: var(--bad); } .p-run { color: var(--accent); }
+.p-dg, .rel a.p-dg, .dga a.p-dg { color: #c98a3a; text-decoration: none; }
+.p-bp, .rel a.p-bp, .dga a.p-bp { color: #3fbf9f; text-decoration: none; }
+.dga { font-size: 12px; }
+.prog { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; min-width: 80px; }
+.prog i { display: block; height: 100%; background: var(--accent); }
+.err { color: var(--bad); }
+h2 { font-size: 16px; margin: 18px 0 8px; }
+.scroll { overflow-x: auto; }
+.grp summary { color: var(--text); font-size: 13px; padding: 2px 0; }
+.rels { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 2px 16px; padding-left: 18px; }
+.rel { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 13px; cursor: pointer; min-width: 0; }
+.rel > span { min-width: 0; overflow-wrap: anywhere; }
+.rel img, .rel .nocover { width: 32px; height: 32px; border-radius: 3px; object-fit: cover; flex: none; background: var(--line); }
+.rel a { color: var(--accent); text-decoration: none; }
+.rel.dim > span { color: var(--muted); }
+.fix { display: flex; gap: 8px; align-items: center; margin-top: 4px; flex-wrap: wrap; }
+.fix a { color: var(--accent); }
+.linkin { flex: 1; min-width: 260px; font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
+.btn.dismiss { margin-top: 6px; padding: 2px 8px; font-size: 12px; }
+.snap { font-size: 12px; color: var(--muted); }
+.snap .btn { padding: 2px 8px; font-size: 12px; }
+/* Soulseek */
+.sl-row { display: flex; gap: 8px; align-items: baseline; padding: 3px 0 3px 18px; font-size: 13px; flex-wrap: wrap; }
+.sl-row .t { min-width: 0; overflow-wrap: anywhere; flex: 1 1 320px; }
+.sl-row.off .t { color: var(--muted); text-decoration: line-through; }
+.sl-row .btn { padding: 1px 7px; font-size: 11px; }
+.pop { position: relative; display: inline-block; cursor: help; }
+.pop > .popc { display: none; position: absolute; z-index: 5; left: 0; top: 100%; margin-top: 4px; width: min(560px, 86vw);
+               background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+               box-shadow: 0 6px 24px rgba(0,0,0,.18); font-size: 12px; color: var(--text); cursor: auto; }
+.pop:hover > .popc, .pop:focus-within > .popc, .pop.open > .popc { display: block; }
+.popc table { border: 0; background: none; } .popc td { padding: 1px 6px 1px 0; border: 0; font-size: 12px; }
+.popc .path { color: var(--muted); overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">← Разбор</a>
+  <div class="tabs">
+    <button data-tab="plan">К загрузке</button>
+    <button data-tab="queue">Загрузки</button>
+    <button data-tab="slsk">Soulseek</button>
+    <button data-tab="all">Все решения</button>
+    <button data-tab="log">Журнал</button>
+  </div>
+  <span class="muted" id="status"></span>
+  <span class="snap">библиотека: снимок <b id="snapts">…</b> <button class="btn" id="snapbtn" title="заново выгрузить Navidrome и пересобрать сравнение">обновить</button></span>
+</header>
+
+<section id="plan">
+  <div class="bar">
+    <button class="btn" id="reload">Пересчитать план</button>
+    <button class="btn" id="resetmarks" title="вернуть отметки по умолчанию во всём плане">сбросить мои отметки</button>
+    <label>качество
+      <select id="bitrate">
+        <option value="">как в deemix</option>
+        <option value="9">FLAC</option>
+        <option value="3">MP3 320</option>
+        <option value="1">MP3 128</option>
+      </select></label>
+    <span>по умолчанию отмечать:
+      <label><input type="checkbox" class="rtype" value="album" checked> альбомы</label>
+      <label><input type="checkbox" class="rtype" value="ep" checked> EP</label>
+      <label><input type="checkbox" class="rtype" value="single" checked> синглы</label>
+      <label><input type="checkbox" class="rtype" value="compile"> сборники</label>
+      <label><input type="checkbox" class="rtype" value="featured"> участие</label></span>
+    <label title="уже отправленные дискографии: показать релизы, которые ещё не уходили (новые, другие типы)"><input type="checkbox" id="topup"> показать дозагрузку отправленных</label>
+    <button class="btn primary" id="send" disabled>Отправить в deemix</button>
+    <span class="muted" id="plansum"></span>
+  </div>
+  <div class="scroll"><table>
+    <thead><tr><th style="width:240px">что</th><th>релизы — отметь, что качать</th></tr></thead>
+    <tbody id="plantbody"><tr><td colspan="2" class="muted">Считаю план…</td></tr></tbody>
+  </table></div>
+</section>
+
+<section id="queue" hidden>
+  <div class="bar">
+    <button class="btn" id="clear">Убрать завершённые из очереди deemix</button>
+    <span class="muted" id="qsum"></span>
+  </div>
+  <h2>Сверка с диском</h2>
+  <div class="bar"><button class="btn" id="auditbtn">Сверить отправленное с диском</button>
+    <button class="btn primary" id="retrybtn" hidden>Повторить</button> <span class="muted" id="auditsum"></span></div>
+  <div id="auditlist" style="font-size:13px"></div>
+  <h2>Отправлено отсюда</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>что</th><th>когда</th><th>элементов</th><th>статус</th></tr></thead>
+    <tbody id="senttbody"></tbody>
+  </table></div>
+  <h2>Очередь deemix целиком</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>релиз</th><th>треков</th><th>прогресс</th><th>статус</th></tr></thead>
+    <tbody id="qtbody"></tbody>
+  </table></div>
+</section>
+
+<section id="slsk" hidden>
+  <div class="bar">
+    <label><input type="checkbox" id="slhide" checked> скрыть убранные</label>
+    <select id="slfilter">
+      <option value="">все</option><option value="found">найдено целиком</option><option value="partial">частично</option>
+      <option value="none">не найдено</option><option value="wait">ждут поиска</option><option value="downloading">качается</option>
+      <option value="placed">в библиотеке</option><option value="error">ошибки</option>
+    </select>
+    <button class="btn primary" id="slsend" title="отправить в загрузку всё отмеченное">Отправить отмеченное в Soulseek</button>
+    <span class="muted" id="slsum"></span>
+  </div>
+  <p class="muted" style="font-size:12px;margin:0 0 8px">Сюда сами попадают релизы лейблов из плана, которых нет на Deezer,
+    и треки, которые deemix не смог скачать. Поиск идёт фоном: точнее сначала (каталожный номер, артист + релиз),
+    потом мягче; совпадение — по названиям и длительностям треков. Не найденное ищется снова через сутки, частичное — через 3 дня.
+    Качается только отправленное: отметь и нажми «отправить». Отмечено заранее найденное целиком в FLAC / MP3 320;
+    частичное и не найденное можно отметить руками — частичное скачается как есть, не найденное — когда найдётся.
+    Пир ушёл или не отдаёт — берётся следующий; у всех не вышло — поиск заново (до 3 раз).</p>
+  <div id="sllist"></div>
+</section>
+
+<section id="log" hidden>
+  <div class="bar">
+    <input id="logq" placeholder="задача, релиз, ошибка…" size="28">
+    <label><input type="checkbox" id="logproblems"> только проблемы</label>
+    <button class="btn" id="logreload">обновить</button>
+    <span class="muted" id="logsum"></span>
+  </div>
+  <div class="scroll"><table>
+    <thead><tr><th style="width:150px">когда</th><th style="width:170px">событие</th><th>подробности</th></tr></thead>
+    <tbody id="logtbody"></tbody>
+  </table></div>
+</section>
+
+<section id="all" hidden>
+  <div class="bar"><select id="allfilter"></select> <span class="muted" id="allsum"></span></div>
+  <div class="scroll"><table>
+    <thead><tr><th>что</th><th>раздел</th><th>решение</th><th>Deezer</th><th></th></tr></thead>
+    <tbody id="alltbody"></tbody>
+  </table></div>
+</section>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const LABEL = {discography: "дискография", album: "альбом", download: "качать альбом", track: "трек", label: "каталог лейбла",
+               later: "позже", junk: "не надо", have: "уже есть"};
+const KIND = {artists: "артист", albums: "альбом-дыра", tracks: "трек из плейлиста", ugc: "видео", search: "поиск", labels: "лейбл"};
+let plan = [], sent = {}, queue = {queue: {}, queueOrder: []}, decisions = {}, rates = {flac: 110000, mp3: 40000};
+// объём — по длительности у Deezer и среднему байт/с своей библиотеки (FLAC / MP3 320)
+const fmtDur = sec => { const m = Math.round((sec || 0) / 60); return m >= 60 ? `${Math.floor(m / 60)} ч ${m % 60} мин` : `${m} мин`; };
+const fmtSize = b => b >= 1e9 ? `${(b / 1e9).toFixed(1).replace(".", ",")} ГБ` : `${Math.round(b / 1e6)} МБ`;
+const sizeLine = (sec, n) => sec ? `${n ? `${n} тр. · ` : ""}${fmtDur(sec)} · ≈ ${fmtSize(sec * rates.flac)} FLAC / ${fmtSize(sec * rates.mp3)} MP3` : "";
+
+// ---------- план ----------
+const types = () => [...document.querySelectorAll(".rtype:checked")].map(c => c.value);
+document.querySelectorAll(".rtype").forEach(c => c.onchange = loadPlan);
+document.getElementById("topup").onchange = () => loadPlan();
+async function loadPlan() {
+  $("#plantbody").innerHTML = `<tr><td colspan="2" class="muted">Считаю план… (новых артистов дискография запрашивается через deemix, остальное из кэша)</td></tr>`;
+  $("#send").disabled = true;
+  const r = await fetch(`/api/plan?types=${types().join(",")}&topup=${$("#topup").checked ? 1 : 0}`).then(x => x.json());
+  if (r.error) { $("#plantbody").innerHTML = `<tr><td colspan="2" class="err">${esc(r.error)}</td></tr>`; return; }
+  plan = r.plan; rates = r.rates || rates;
+  renderPlan();
+}
+
+const TYPE_NAME = {album: "Альбомы", ep: "EP", single: "Синглы", compile: "Сборники", featured: "Участие", more: "Ещё", track: "Трек"};
+
+function releaseRow(p, r) {
+  const flags = [r.have && `<span class="pill p-ok">есть в библиотеке</span>`,
+                 r.sent && `<span class="pill p-run">уже отправлено</span>`,
+                 r.excluded && `<span class="pill p-warn" title="при отправке этот релиз не отмечался — сам не отмечается; поставь галку, если нужен">не отправлялось</span>`,
+                 r.in_deemix && `<span class="pill p-run">${r.in_deemix}</span>`,
+                 r.in_plan && `<span class="pill p-warn" title="этот альбом уже отмечен в другой задаче плана — уйдёт с ней">есть в плане: ${esc(r.in_plan)}</span>`,
+                 r.dup && `<span class="pill p-warn" title="такое же название уже есть в списке">дубль: ${esc(r.dup)}</span>`,
+                 r.src ? `<a class="pill p-bp" href="${r.src}" target="_blank" title="релиз из каталога лейбла">${esc(r.src_name)} ✓</a>`
+                       : p.artist_link && r.id ? SOURCES.map(([k]) => `<span class="src-${k}" data-rid="${r.id}"></span>`).join(" ") : ""].filter(Boolean).join(" ");
+  return `<label class="rel${r.have || r.sent || r.in_deemix || r.in_plan ? " dim" : ""}">
+    <input type="checkbox" class="rel-pick" data-key="${esc(p.key)}" value="${esc(r.url)}" ${r.checked ? "checked" : ""}>
+    ${r.cover ? `<img src="${r.cover}" loading="lazy" alt="">` : `<span class="nocover"></span>`}
+    <span>${esc(r.year ? `${r.year} · ${r.title}` : r.title)} <a href="${r.url}" target="_blank">↗</a>
+      ${r.duration ? `<small class="muted">${r.nb_tracks ? `${r.nb_tracks} тр. · ` : ""}${fmtDur(r.duration)}</small>` : ""} ${flags}</span></label>`;
+}
+
+function releasesHtml(p) {
+  const groups = {};
+  p.releases.forEach(r => (groups[r.type] = groups[r.type] || []).push(r));
+  return Object.entries(groups).map(([t, rs]) => {
+    const on = rs.filter(r => r.checked).length;
+    return `<details class="grp"><summary>
+        <input type="checkbox" class="grp-pick" data-key="${esc(p.key)}" data-type="${t}" ${on === rs.length ? "checked" : ""}>
+        ${TYPE_NAME[t] || t} <span class="muted">${on}/${rs.length}</span></summary>
+      <div class="rels">${rs.map(r => releaseRow(p, r)).join("")}</div></details>`;
+  }).join("");
+}
+
+function problemHtml(p) {
+  return `<div class="err">${esc(p.problem)}</div><a href="${p.search}" target="_blank">искать на Deezer ↗</a>`;
+}
+
+function renderPlan() {
+  $("#plantbody").innerHTML = plan.map(p => `
+    <tr ${p.artist_link ? `data-aid="${p.artist_link.split("/").pop()}"` : ""}>
+      <td>${esc(p.name)}<br><span class="muted">${KIND[p.kind] || p.kind} · ${LABEL[p.decision] || p.decision}</span>
+        ${p.artist_link ? `<br><a href="${p.artist_link}" target="_blank">артист на Deezer</a>` +
+          SOURCES.map(([k, name]) => `<br><span class="dga muted" data-src="${k}">${name}: проверяю…</span>`).join("") : ""}
+        ${p.label_link ? `<br><a href="${p.label_link}" target="_blank">лейбл на Beatport</a>` : ""}
+        ${p.top_up ? `<br><span class="pill p-warn">дозагрузка: ${p.top_up} уже отправлено</span>` : ""}
+        <br><span class="muted tsize" data-size-key="${esc(p.key)}" style="font-size:12px"></span>
+        <br><button class="btn primary" data-send-key="${esc(p.key)}" title="отправить в deemix только отмеченное в этой задаче">отправить в deemix</button>
+        <button class="btn dismiss" data-dismiss="${esc(p.keys.join("\n"))}" title="убрать из плана, ничего не отправляя">убрать из плана</button></td>
+      <td>${p.resolved ? `<div class="muted" style="font-size:12px">${esc(p.resolved)}</div>` : ""}${p.problem ? problemHtml(p) : releasesHtml(p)}</td>
+    </tr>`).join("") || `<tr><td colspan="2" class="muted">Нечего качать — всё отправлено или решений «качать» ещё нет.</td></tr>`;
+  updateSum();
+  confirmSources();
+}
+
+// ---------- пометки «релиз есть у этого артиста на Discogs / Beatport» (на галки не влияют) ----------
+// охваты разные: Discogs — шире по жанрам, но неполный; Beatport — только электроника, зато полно
+const SOURCES = [["discogs", "Discogs"], ["beatport", "Beatport"]];
+const srcCache = {};
+let srcRun = 0;
+function confirmSources() {
+  const run = ++srcRun;  // перерисовали план — прежние проходы бросаем
+  const ids = [...new Set([...document.querySelectorAll("#plantbody tr[data-aid]")].map(tr => tr.dataset.aid))];
+  SOURCES.forEach(([src, name]) => {  // у каждого источника своя очередь: медленный Discogs не держит Beatport
+    const queue = [...ids];
+    const next = async () => {
+      while (queue.length && run === srcRun) {
+        const id = queue.shift(), key = `${src}:${id}`;
+        srcCache[key] = srcCache[key] || await fetch(`/api/${src}/confirm?artist_id=${id}`).then(x => x.json()).catch(e => ({error: String(e)}));
+        if (run === srcRun) paintSource(src, name, id, srcCache[key]);
+      }
+    };
+    next(); next();
+  });
+}
+
+function paintSource(src, name, id, r) {
+  document.querySelectorAll(`#plantbody tr[data-aid="${id}"]`).forEach(tr => {
+    const a = tr.querySelector(`.dga[data-src="${src}"]`);
+    if (a) a.innerHTML = r.error ? `<span class="err">${name}: ${esc(r.error)}</span>`
+      : !r.artist ? `на ${name} не найден`
+      : `<a class="p-${src === "discogs" ? "dg" : "bp"}" href="${r.artist.url}" target="_blank">${name}: ${esc(r.artist.name)}</a> · подтверждено ${Object.keys(r.confirmed).length} из ${r.total}`;
+    tr.querySelectorAll(`.src-${src}`).forEach(el => {
+      const url = r.confirmed?.[el.dataset.rid];
+      el.innerHTML = url ? `<a class="pill p-${src === "discogs" ? "dg" : "bp"}" href="${url}" target="_blank" title="этот релиз есть у артиста на ${name}">${name} ✓</a>` : "";
+    });
+  });
+}
+
+function selection() {
+  const sel = {};
+  document.querySelectorAll(".rel-pick:checked").forEach(c => (sel[c.dataset.key] = sel[c.dataset.key] || []).push(c.value));
+  return sel;
+}
+
+function updateSum() {
+  const sel = selection(), n = Object.values(sel).reduce((s, a) => s + a.length, 0);
+  // длительность отмеченного: по задаче и всего (один релиз в двух задачах не считаем дважды)
+  const durOf = key => { const p = plan.find(x => x.key === key); return p ? Object.fromEntries(p.releases.map(r => [r.url, r])) : {}; };
+  const all = {};
+  Object.entries(sel).forEach(([key, urls]) => { const rs = durOf(key); urls.forEach(u => all[u] = rs[u]); });
+  document.querySelectorAll("[data-size-key]").forEach(el => {
+    const rs = durOf(el.dataset.sizeKey), urls = sel[el.dataset.sizeKey] || [];
+    const sec = urls.reduce((s, u) => s + (rs[u]?.duration || 0), 0), tr = urls.reduce((s, u) => s + (rs[u]?.nb_tracks || 0), 0);
+    el.textContent = urls.length ? `отмечено ${urls.length}: ${sizeLine(sec, tr)}` : "ничего не отмечено";
+  });
+  const sec = Object.values(all).reduce((s, r) => s + (r?.duration || 0), 0), tr = Object.values(all).reduce((s, r) => s + (r?.nb_tracks || 0), 0);
+  $("#plansum").textContent = `${plan.length} решений · отмечено ${n} релизов из ${Object.keys(sel).length} решений` + (sec ? ` · ${sizeLine(sec, tr)}` : "");
+  $("#send").disabled = !n;
+  document.querySelectorAll(".grp").forEach(g => {
+    const cs = [...g.querySelectorAll(".rel-pick")], on = cs.filter(c => c.checked).length;
+    g.querySelector(".grp-pick").checked = on === cs.length;
+    g.querySelector(".grp-pick").indeterminate = on > 0 && on < cs.length;
+    g.querySelector("summary .muted").textContent = `${on}/${cs.length}`;
+  });
+}
+
+$("#plantbody").addEventListener("change", e => {
+  const boxes = e.target.classList.contains("grp-pick")
+    ? [...e.target.closest(".grp").querySelectorAll(".rel-pick")]
+    : e.target.classList.contains("rel-pick") ? [e.target] : [];
+  if (e.target.classList.contains("grp-pick")) boxes.forEach(c => c.checked = e.target.checked);
+  if (boxes.length) {  // галочки запоминаются на сервере — переживают обновление страницы
+    const marks = Object.fromEntries(boxes.map(c => [c.value, c.checked]));
+    fetch("/api/plan/check", {method: "POST", headers: {"Content-Type": "application/json"},
+                              body: JSON.stringify({key: boxes[0].dataset.key, marks})});
+  }
+  updateSum();
+});
+
+// настройки вверху (типы, качество, дозагрузка) — в localStorage этого браузера
+const PREFS = "planPrefs";
+function savePrefs() {
+  try { localStorage.setItem(PREFS, JSON.stringify({types: types(), bitrate: $("#bitrate").value, topup: $("#topup").checked})); } catch {}
+}
+function loadPrefs() {
+  let p; try { p = JSON.parse(localStorage.getItem(PREFS) || "null"); } catch {}
+  if (!p) return;
+  document.querySelectorAll(".rtype").forEach(c => c.checked = p.types.includes(c.value));
+  $("#bitrate").value = p.bitrate ?? ""; $("#topup").checked = !!p.topup;
+}
+loadPrefs();
+["#bitrate", "#topup"].forEach(s => $(s).addEventListener("change", savePrefs));
+document.querySelectorAll(".rtype").forEach(c => c.addEventListener("change", savePrefs));
+$("#plantbody").addEventListener("click", async e => {
+  const b = e.target.closest("[data-dismiss]"); if (!b) return;
+  await fetch("/api/dismiss", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({keys: b.dataset.dismiss.split("\n")})});
+  b.closest("tr").remove(); updateSum();
+});
+$("#plantbody").addEventListener("click", e => {  // галка в summary не должна сворачивать группу
+  if (e.target.classList.contains("grp-pick")) e.stopPropagation();
+}, true);
+
+$("#resetmarks").onclick = async () => {
+  await fetch("/api/plan/reset", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({keys: plan.map(p => p.key)})});
+  loadPlan();
+};
+$("#reload").onclick = loadPlan;
+$("#send").onclick = () => sendSelection(selection());
+$("#plantbody").addEventListener("click", e => {
+  const b = e.target.closest("[data-send-key]"); if (!b) return;
+  const key = b.dataset.sendKey, sel = selection();
+  if (!sel[key]?.length) { alert("В этой задаче ничего не отмечено."); return; }
+  sendSelection({[key]: sel[key]}, plan.find(p => p.key === key)?.name);
+});
+async function sendSelection(sel, name = null) {
+  const keys = Object.keys(sel);
+  const n = Object.values(sel).reduce((s, a) => s + a.length, 0);
+  if (!n) return;
+  if (!confirm(name ? `Отправить в deemix «${name}»: ${n} релизов?` : `Отправить в deemix ${n} релизов (${keys.length} решений)?`)) return;
+  $("#send").disabled = true; $("#status").textContent = "отправляю…";
+  const bitrate = $("#bitrate").value ? +$("#bitrate").value : null;
+  const r = await fetch("/api/send", {method: "POST", headers: {"Content-Type": "application/json"},
+                                      body: JSON.stringify({selection: sel, bitrate, types: types(), top_up: $("#topup").checked})}).then(x => x.json());
+  const bad = (r.results || []).filter(x => !x.ok);
+  $("#status").textContent = r.error ? `ошибка: ${r.error}`
+    : `отправлено ${(r.results || []).length - bad.length}` + (bad.length ? `, ошибок ${bad.length}: ${bad.map(b => b.error).join(", ")}` : "");
+  await loadPlan(); await loadQueue();
+  if (!bad.length && !r.error && !name) showTab("queue");  // отправка одной задачи — остаёмся в плане
+}
+
+// ---------- очередь ----------
+function qStatus(item) {
+  if (!item) return ["нет в очереди", "p-warn"];
+  if (item.status === "completed") return ["готово", "p-ok"];
+  if (item.status === "withErrors") return [`с ошибками (${item.failed})`, "p-bad"];
+  if (item.status === "failed") return ["ошибка", "p-bad"];
+  if (item.status === "downloading") return [`качается ${item.progress || 0}%`, "p-run"];
+  return ["в очереди", "p-run"];
+}
+
+async function loadQueue() {
+  [sent, queue] = await Promise.all([fetch("/api/sent").then(x => x.json()),
+                                     fetch("/api/queue").then(x => x.json()).catch(e => ({error: String(e)}))]);
+  if (queue.error) { $("#qsum").innerHTML = `<span class="err">deemix недоступен: ${esc(queue.error)}</span>`; queue = {queue: {}, queueOrder: []}; }
+  renderQueue();
+}
+
+function renderQueue() {
+  const q = queue.queue || {};
+  const items = Object.values(q);
+  const c = s => items.filter(i => i.status === s).length;
+  $("#qsum").textContent = `в deemix: ${items.length} · качается ${c("downloading")} · ждёт ${c("inQueue")} · готово ${c("completed")} · с ошибками ${c("withErrors") + c("failed")}`;
+
+  const rows = Object.entries(sent).filter(([, s]) => !s.dismissed && !s.merged_into).sort((a, b) => b[1].ts - a[1].ts);
+  $("#senttbody").innerHTML = rows.map(([k, s]) => {
+    const its = (s.uuids || []).map(u => q[u]);
+    const done = its.filter(i => i?.status === "completed").length;
+    const bad = its.filter(i => i && ["withErrors", "failed"].includes(i.status)).length;
+    const gone = its.filter(i => !i).length;
+    const run = its.length - done - bad - gone;
+    const pills = [done && `<span class="pill p-ok">готово ${done}</span>`, run && `<span class="pill p-run">в работе ${run}</span>`,
+                   bad && `<span class="pill p-bad">с ошибками ${bad}</span>`, gone && `<span class="pill p-warn">убрано из очереди ${gone}</span>`]
+                  .filter(Boolean).join(" ");
+    return `<tr><td>${esc(s.name)}</td><td class="num">${new Date(s.ts * 1000).toLocaleString("ru")}</td>
+      <td class="num">${its.length}</td><td>${pills}</td></tr>`;
+  }).join("") || `<tr><td colspan="4" class="muted">Отсюда пока ничего не отправлялось.</td></tr>`;
+
+  const order = (queue.queueOrder || []).concat(Object.keys(q).filter(k => !(queue.queueOrder || []).includes(k)));
+  $("#qtbody").innerHTML = order.map(u => q[u]).filter(Boolean).reverse().map(i => {
+    const [label, cls] = qStatus(i);
+    return `<tr><td>${esc(i.artist)} — ${esc(i.title)}</td><td class="num">${i.downloaded ?? 0}/${i.size ?? "?"}${i.failed ? ` <span class="err">(−${i.failed})</span>` : ""}</td>
+      <td><div class="prog"><i style="width:${i.progress || 0}%"></i></div></td><td><span class="pill ${cls}">${label}</span></td></tr>`;
+  }).join("") || `<tr><td colspan="4" class="muted">Очередь deemix пуста.</td></tr>`;
+}
+
+$("#clear").onclick = async () => { await fetch("/api/deemix/clear", {method: "POST"}); loadQueue(); };
+
+// сверка: отправленное → на диске / упало / застряло в очереди / не найдено; повтор — через deemix
+async function runAudit() {
+  $("#auditsum").textContent = "сверяю с диском…"; $("#retrybtn").hidden = true;
+  const a = await fetch("/api/downloads/audit").then(x => x.json()).catch(e => ({error: String(e)}));
+  if (a.error) { $("#auditsum").innerHTML = `<span class="err">${esc(a.error)}</span>`; return; }
+  const bad = a.failed.length + a.stuck.length + a.missing.length;
+  $("#auditsum").textContent = `на диске ${a.on_disk} · в очереди ${a.queued} · упало ${a.failed.length} · застряло ${a.stuck.length} · не найдено на диске ${a.missing.length}`;
+  $("#retrybtn").hidden = !bad; $("#retrybtn").textContent = `Повторить ${bad}`;
+  const sect = (t, rows) => rows.length ? `<details><summary>${t} (${rows.length})</summary><ul>${rows.map(r =>
+    `<li>${esc(r.task)} · ${esc(r.label)} <a href="${r.url}" target="_blank">↗</a>${r.error ? ` <span class="muted">${esc(r.error)}</span>` : ""}</li>`).join("")}</ul></details>` : "";
+  $("#auditlist").innerHTML = sect("упало в deemix", a.failed) + sect("застряло в очереди deemix", a.stuck) +
+    sect("не найдено на диске (синглы с другим названием трека тоже сюда попадают — повтор безвреден)", a.missing);
+}
+$("#auditbtn").onclick = runAudit;
+$("#retrybtn").onclick = async () => {
+  $("#retrybtn").disabled = true; $("#auditsum").textContent = "ставлю заново в deemix…";
+  const r = await fetch("/api/downloads/retry", {method: "POST"}).then(x => x.json()).catch(e => ({error: String(e)}));
+  $("#retrybtn").disabled = false;
+  $("#auditsum").textContent = r.error ? `ошибка: ${r.error}` : `поставлено заново: ${r.retried}` + (r.errors.length ? `, ошибок ${r.errors.length}: ${r.errors.slice(0, 3).join("; ")}` : "");
+  loadQueue();
+};
+
+// ---------- все решения ----------
+async function loadAll() {
+  decisions = (await fetch("/api/data").then(x => x.json())).decisions;
+  const counts = {};
+  Object.values(decisions).forEach(d => counts[d.decision] = (counts[d.decision] || 0) + 1);
+  const cur = $("#allfilter").value;
+  $("#allfilter").innerHTML = `<option value="">все (${Object.keys(decisions).length})</option>` +
+    Object.entries(counts).map(([k, n]) => `<option value="${k}">${LABEL[k] || k} (${n})</option>`).join("");
+  $("#allfilter").value = cur;
+  renderAll();
+}
+
+function renderAll() {
+  const f = $("#allfilter").value;
+  const rows = Object.entries(decisions).filter(([, d]) => !f || d.decision === f).sort((a, b) => b[1].ts - a[1].ts);
+  $("#allsum").textContent = `${rows.length} шт.`;
+  $("#alltbody").innerHTML = rows.map(([k, d]) => `<tr>
+      <td>${esc(d.name)}${d.playlist ? `<br><span class="muted">плейлист: ${esc(d.playlist)}</span>` : ""}</td>
+      <td>${KIND[d.kind] || d.kind}</td><td>${LABEL[d.decision] || d.decision}${sent[k] ? (sent[k].dismissed ? ` <span class="pill p-warn">убрано из плана</span>` : ` <span class="pill p-ok">отправлено</span>`) : ""}</td>
+      <td>${d.deezer_link ? `<a href="${d.deezer_link}" target="_blank">открыть</a>` : ""}</td>
+      <td><button class="btn" data-reset="${esc(k)}">сбросить</button></td></tr>`).join("");
+}
+
+$("#allfilter").onchange = renderAll;
+$("#alltbody").onclick = async e => {
+  const b = e.target.closest("[data-reset]"); if (!b) return;
+  const d = decisions[b.dataset.reset];
+  const [kind, ...rest] = b.dataset.reset.split(":");
+  await fetch("/api/decision", {method: "POST", headers: {"Content-Type": "application/json"},
+                                body: JSON.stringify({kind, key: rest.join(":"), decision: ""})});
+  delete decisions[b.dataset.reset];
+  renderAll();
+};
+
+// ---------- журнал ----------
+const EV = {
+  server_start: "сервер запущен", server_stop: "сервер остановлен", decision: "решение", dismiss: "убрано из плана",
+  plan_checks: "галки", plan_reset: "сброс галок", send_start: "отправка: начало", send_chunk: "отправлено в deemix",
+  send_task_done: "задача отправлена", send_skipped: "задача пропущена", send_failed: "ОТПРАВКА ОБОРВАЛАСЬ",
+  send_done: "отправка: конец", retry: "повтор", retry_failed: "ПОВТОР: ошибки", audit: "сверка с диском",
+  library_refresh: "снимок библиотеки", deemix_completed: "скачано", deemix_failed: "DEEMIX: ОШИБКА",
+  deemix_down: "DEEMIX НЕДОСТУПЕН", deemix_up: "deemix снова доступен", deemix_stuck: "ОЧЕРЕДЬ: ЗАСТРЯЛО",
+  deemix_stalled: "ОЧЕРЕДЬ СТОИТ", deemix_clear_finished: "очищены завершённые", backup: "копия состояния",
+  manual: "ручная правка", error: "ОШИБКА СЕРВЕРА",
+  slsk_queued: "Soulseek: в очередь", slsk_research: "Soulseek: искать снова", slsk_dismiss: "Soulseek: убрано", slsk_restore: "Soulseek: возвращено",
+  slsk_send: "Soulseek: отправлено", slsk_research: "Soulseek: ищу заново (не скачалось)",
+  slsk_download: "Soulseek: качаю", slsk_placed: "Soulseek: в библиотеке", slsk_switch: "Soulseek: другой пир",
+  slsk_dl_failed: "SOULSEEK: НЕ СКАЧАЛОСЬ", slsk_place_failed: "SOULSEEK: НЕ РАЗЛОЖИЛОСЬ",
+};
+const PROBLEM = new Set(["error", "send_failed", "deemix_failed", "deemix_down", "deemix_stuck", "deemix_stalled", "retry_failed", "slsk_dl_failed", "slsk_place_failed"]);
+function evDetails(e) {
+  const skip = new Set(["ts", "event", "urls", "uuid"]);
+  return Object.entries(e).filter(([k]) => !skip.has(k)).map(([k, v]) => {
+    const val = Array.isArray(v) ? (v.length > 6 ? `${v.slice(0, 6).map(String).join("; ")} … и ещё ${v.length - 6}` : v.join("; ")) : String(v ?? "");
+    return `<span class="muted">${esc(k)}:</span> ${esc(val)}`;
+  }).join(" · ");
+}
+async function loadLog() {
+  const q = $("#logq").value.trim(), pr = $("#logproblems").checked ? 1 : 0;
+  const rows = await fetch(`/api/events?limit=1000&problems=${pr}&q=${encodeURIComponent(q)}`).then(x => x.json()).catch(e => ({error: String(e)}));
+  if (rows.error) { $("#logsum").innerHTML = `<span class="err">${esc(rows.error)}</span>`; return; }
+  $("#logsum").textContent = `${rows.length} событий (новые сверху)`;
+  $("#logtbody").innerHTML = rows.map(e => `<tr${PROBLEM.has(e.event) ? ' style="color:var(--bad)"' : ""}>
+    <td class="num">${esc(e.ts)}</td><td>${esc(EV[e.event] || e.event)}</td><td style="font-size:12px">${evDetails(e)}</td></tr>`).join("")
+    || `<tr><td colspan="3" class="muted">Пусто.</td></tr>`;
+}
+let logTimer;
+$("#logq").addEventListener("input", () => { clearTimeout(logTimer); logTimer = setTimeout(loadLog, 300); });
+$("#logproblems").onchange = loadLog;
+$("#logreload").onclick = loadLog;
+
+// ---------- Soulseek ----------
+const SL_ST = {queued: ["ждёт поиска", "p-run"], searching: ["ищу…", "p-run"], found: ["", "p-ok"], partial: ["частично", "p-warn"],
+               none: ["не найдено", "p-bad"], error: ["ошибка", "p-bad"], dismissed: ["убрано", ""],
+               download_requested: ["скоро качаю", "p-run"], placed: ["в библиотеке", "p-ok"],
+               dl_failed: ["не скачалось", "p-bad"], place_failed: ["не разложилось", "p-bad"]};
+const SL_KIND = {label: "лейбл", deemix: "не скачалось в deemix", artist: "артист"};
+let slData = {items: []};
+const fmtAgo = ts => { if (!ts) return ""; const m = Math.round((Date.now() / 1000 - ts) / 60);
+  return m < 60 ? `${m} мин назад` : m < 1440 ? `${Math.round(m / 60)} ч назад` : `${Math.round(m / 1440)} дн назад`; };
+const fmtLen = s => s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "—";
+
+function slPill(it) {
+  const r = it.result || {}, b = r.best;
+  if (it.status === "queued" && it.want) return `<span class="pill p-run">найду и скачаю</span>`;
+  if (it.status === "download_requested") return `<span class="pill p-run">в очереди загрузки</span>`;
+  if (it.status === "downloading") return `<span class="pill p-run">качаю ${it.dl?.format || ""} ${it.dl?.progress || 0}%</span>`;
+  if (it.status === "placed") return `<span class="pill p-ok">в библиотеке · ${esc(it.dl?.format || "")}</span>`;
+  if (it.status === "found" || it.status === "partial") {
+    const txt = `${b.format}${it.status === "partial" ? ` · ${b.matched}/${b.total}` : ""}`;
+    return `<span class="pill ${b.quality >= 2 && it.status === "found" ? "p-ok" : "p-warn"}">${esc(txt)}</span>`;
+  }
+  const [t, c] = SL_ST[it.status] || [it.status, ""];
+  return `<span class="pill ${c}">${t}</span>`;
+}
+
+function slPop(it) {
+  const r = it.result || {}, b = r.best;
+  const tried = (r.tried || []).map(t => `<tr><td>${esc(t.how)}</td><td>«${esc(t.query)}»</td><td class="num">${t.files} файлов</td></tr>`).join("");
+  const dl = it.dl;
+  const head = (["error", "place_failed"].includes(it.status) ? `<div class="err">${esc(it.error)}</div>` : "")
+    + (it.status === "downloading" ? `<div><b>качаю</b> у ${esc(dl.user)}: ${dl.progress}% · начал ${fmtAgo(dl.started)}${dl.tried?.length > 1 ? ` · это уже ${dl.tried.length}-й пир` : ""}</div>` : "")
+    + (it.status === "dl_failed" ? `<div class="err">ни у одного пира не скачалось (пробовал ${dl?.tried?.length || 0}); поиск заново через сутки</div>` : "")
+    + (it.placed ? `<div><b>разложено:</b></div><div class="path">${it.placed.map(esc).join("<br>")}</div><hr>` : "");
+  if (!b) return `${head}<div>${it.searched ? `Искал ${fmtAgo(it.searched)}` : "Ещё не искал"}${it.status === "none" ? ", повтор через сутки" : ""}.</div>
+    ${tried ? `<table>${tried}</table>` : ""}`;
+  const want = it.tracks || [];
+  const files = b.files.map((f, i) => `<tr><td class="num">${fmtLen(f.length)}</td><td>${esc(f.name)}</td>
+      <td class="num">${f.bitdepth ? `${f.bitdepth}/${Math.round((f.samplerate || 0) / 1000)}` : f.bitrate ? `${f.bitrate} kbps` : ""}</td>
+      <td class="num">${Math.round(f.size / 1048576)} МБ</td></tr>`).join("");
+  const miss = it.status === "partial" ? want.filter(t => !b.files.some(f => f.length && t.duration && Math.abs(f.length - t.duration) <= 3))
+    .map(t => `<li>${esc(t.title)} <span class="muted">${fmtLen(t.duration)}</span></li>`).join("") : "";
+  return `${head}<div><b>${esc(b.user)}</b> · ${b.slot ? "слот свободен" : "слот занят"} · очередь ${b.queue} · ${Math.round(b.speed / 1024)} КБ/с</div>
+    <div class="path">${esc(b.dir)}</div>
+    <div>как нашлось: <b>${esc(b.how)}</b> «${esc(b.query)}»${b.catno ? " · каталожный номер в пути" : ""} · совпало ${b.matched} из ${b.total} по названию и длительности</div>
+    <table>${files}</table>
+    ${miss ? `<div class="muted">не нашлось:</div><ul>${miss}</ul>` : ""}
+    ${r.alternatives?.length ? `<div class="muted">ещё ${r.count - 1} вариант(ов): ${r.alternatives.map(a => `${esc(a.user)} (${a.format} ${a.matched}/${a.total})`).join(", ")}</div>` : ""}
+    <div class="muted">искал ${fmtAgo(it.searched)} · запросов: ${(r.tried || []).length}</div>`;
+}
+
+const SL_BUSY = ["downloading", "download_requested", "placed", "dismissed"];
+const slPicked = it => !SL_BUSY.includes(it.status) && !(it.status === "queued" && it.want)
+  && (it.pick ?? (it.status === "found" && !!it.result?.checkable));
+
+function slRow(it) {
+  const off = it.status === "dismissed";
+  const what = it.mode === "track" ? `${esc(it.artist)} — ${esc(it.title)}${it.album ? ` <span class="muted">(из «${esc(it.album)}»)</span>` : ""}`
+    : `${it.year ? `${esc(it.year)} · ` : ""}${esc(it.artist)} — ${esc(it.title)}${it.catno ? ` <span class="muted">[${esc(it.catno)}]</span>` : ""}`;
+  const busy = SL_BUSY.includes(it.status) || (it.status === "queued" && it.want);
+  return `<div class="sl-row${off ? " off" : ""}">
+    <input type="checkbox" class="sl-pick" data-id="${esc(it.id)}" ${slPicked(it) ? "checked" : ""} ${busy ? "disabled" : ""}>
+    <span class="pop" tabindex="0">${slPill(it)}<div class="popc">${slPop(it)}</div></span>
+    <span class="t">${what} <a href="${it.link}" target="_blank">↗</a></span>
+    ${off ? `<button class="btn" data-sl="restore" data-id="${esc(it.id)}">вернуть</button>`
+          : `${["none", "partial", "error", "found", "dl_failed", "place_failed"].includes(it.status) ? `<button class="btn" data-sl="research" data-id="${esc(it.id)}" title="искать снова сейчас">искать снова</button>` : ""}
+             <button class="btn" data-sl="dismiss" data-id="${esc(it.id)}" title="не искать и не качать">убрать</button>`}
+  </div>`;
+}
+
+const slOpen = new Set();
+function renderSlsk() {
+  const f = $("#slfilter").value, hide = $("#slhide").checked;
+  const pass = it => (!hide || it.status !== "dismissed") && (!f || (f === "wait" ? ["queued", "searching"].includes(it.status)
+    : f === "error" ? ["error", "dl_failed", "place_failed"].includes(it.status) : it.status === f));
+  const items = slData.items.filter(pass);
+  const groups = {};
+  items.forEach(it => { const k = it.source?.key || "?"; (groups[k] = groups[k] || {src: it.source || {}, items: []}).items.push(it); });
+  const all = slData.items.filter(it => it.status !== "dismissed"), cnt = st => all.filter(it => it.status === st).length;
+  $("#slsum").textContent = `${all.length} в очереди · в библиотеке ${cnt("placed")} · качаю ${cnt("downloading")} · найдено ${cnt("found")} · частично ${cnt("partial")} · не найдено ${cnt("none")} · ждут поиска ${cnt("queued") + cnt("searching")}`
+    + (slData.searching.length ? ` · сейчас ищу ${slData.searching.length}` : "") + (slData.error ? ` · ошибка сбора: ${slData.error}` : "");
+  $("#sllist").innerHTML = Object.entries(groups).sort((a, b) => a[1].src.name?.localeCompare(b[1].src.name)).map(([k, g]) => {
+    const c = st => g.items.filter(it => it.status === st).length;
+    const pickable = g.items.filter(it => !SL_BUSY.includes(it.status) && !(it.status === "queued" && it.want));
+    const on = pickable.filter(slPicked).length;
+    return `<details class="grp" data-slk="${esc(k)}" ${slOpen.has(k) ? "open" : ""}><summary>
+        <input type="checkbox" class="sl-grp" data-slk="${esc(k)}" ${on && on === pickable.length ? "checked" : ""} ${pickable.length ? "" : "disabled"}>
+        ${esc(g.src.name)} <span class="muted">отмечено ${on}</span>
+        <button class="btn primary" data-sl-send="${esc(k)}" style="padding:1px 8px;font-size:11px" ${on ? "" : "disabled"}>отправить в Soulseek</button>
+        <span class="muted">${SL_KIND[g.src.kind] || g.src.kind} · ${g.items.length}: в библиотеке ${c("placed")}, качаю ${c("downloading")}, найдено ${c("found")}, частично ${c("partial")}, нет ${c("none")}, ждут ${c("queued") + c("searching")}</span></summary>
+      ${g.items.sort((a, b) => (a.year || "").localeCompare(b.year || "")).map(slRow).join("")}</details>`;
+  }).join("") || `<p class="muted">Пусто.</p>`;
+}
+
+async function loadSlsk() {
+  if (document.querySelector("#sllist .pop:hover, #sllist .pop:focus-within")) return;  // не дёргаем открытый поповер
+  slData = await fetch("/api/slsk").then(x => x.json()).catch(e => ({items: [], searching: [], error: String(e)}));
+  renderSlsk();
+}
+$("#slfilter").onchange = renderSlsk;
+$("#slhide").onchange = renderSlsk;
+$("#sllist").addEventListener("toggle", e => { const k = e.target.dataset?.slk; if (k) e.target.open ? slOpen.add(k) : slOpen.delete(k); }, true);
+async function slPick(ids, on) {
+  ids.forEach(id => { const it = slData.items.find(x => x.id === id); if (it) it.pick = on; });
+  await Promise.all(ids.map(id => fetch("/api/slsk/action", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id, action: "pick", on})})));
+  renderSlsk();
+}
+async function slSend(items) {
+  const ids = items.filter(slPicked).map(it => it.id);
+  if (!ids.length) return;
+  if (!confirm(`Отправить в Soulseek: ${ids.length}?`)) return;
+  const r = await fetch("/api/slsk/send", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ids})}).then(x => x.json()).catch(e => ({error: String(e)}));
+  if (r.error) alert(r.error);
+  await loadSlsk();
+}
+$("#slsend").onclick = () => slSend(slData.items);
+$("#sllist").addEventListener("change", e => {
+  if (e.target.classList.contains("sl-pick")) slPick([e.target.dataset.id], e.target.checked);
+  if (e.target.classList.contains("sl-grp")) {
+    const k = e.target.dataset.slk;
+    slPick(slData.items.filter(it => it.source?.key === k && !SL_BUSY.includes(it.status) && !(it.status === "queued" && it.want)).map(it => it.id), e.target.checked);
+  }
+});
+$("#sllist").addEventListener("click", async e => {
+  if (e.target.closest(".sl-grp, .sl-pick")) { if (e.target.closest("summary")) e.stopPropagation(); return; }
+  const send = e.target.closest("[data-sl-send]");
+  if (send) { e.preventDefault(); return slSend(slData.items.filter(it => it.source?.key === send.dataset.slSend)); }
+  const b = e.target.closest("[data-sl]");
+  if (!b) { const p = e.target.closest(".pop"); if (p && !e.target.closest(".popc")) p.classList.toggle("open"); return; }
+  b.disabled = true;
+  await fetch("/api/slsk/action", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id: b.dataset.id, action: b.dataset.sl})});
+  await loadSlsk();
+});
+
+// ---------- вкладки ----------
+let timer;
+function showTab(t) {
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
+  ["plan", "queue", "slsk", "all", "log"].forEach(s => $("#" + s).hidden = s !== t);
+  clearInterval(timer);
+  if (t === "queue") { loadQueue(); timer = setInterval(loadQueue, 3000); }
+  if (t === "all") loadAll();
+  if (t === "slsk") { loadSlsk(); timer = setInterval(loadSlsk, 10000); }
+  if (t === "log") loadLog();
+  if (t === "plan" && !plan.length) loadPlan();
+  history.replaceState(null, "", "#" + t);
+}
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+fetch("/api/sent").then(x => x.json()).then(s => { sent = s; showTab(location.hash.slice(1) || "plan"); });
+</script>
+<script>
+(() => {
+  const ts = document.getElementById("snapts"), btn = document.getElementById("snapbtn");
+  fetch("/api/snapshot").then(x => x.json()).then(s => ts.textContent = s.text);
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = "выгружаю Navidrome…";
+    const r = await fetch("/api/refresh", {method: "POST"}).then(x => x.json()).catch(e => ({error: String(e)}));
+    if (r.error) { btn.textContent = "ошибка"; alert(r.error); btn.disabled = false; return; }
+    location.reload();
+  };
+})();
+</script></body>
+</html>
