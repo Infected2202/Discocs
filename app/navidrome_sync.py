@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 import json
 import logging
 import sqlite3
-from typing import Callable
+from typing import Callable, cast
 
 from app.navidrome import NavidromeClient, NavidromeSong
 from app.library import envelope_from_navidrome_song, explicit_release_type
@@ -248,28 +248,31 @@ def _fetch_album_metadata(client: NavidromeClient) -> dict[str, dict[str, object
     try:
         for album in client.iter_albums():
             album_id = str(album.get("id") or "")
-            if not album_id:
-                continue
-            fields: dict[str, object] = {}
-            release_types = album.get("releaseTypes") or []
-            if isinstance(release_types, list) and release_types:
-                raw_type = str(release_types[0])
-            else:
-                raw_type = str(album.get("releaseType") or "")
-            release_type = explicit_release_type(raw_type)
-            if release_type != "unknown":
-                fields["releaseType"] = release_type
-            # Всегда, даже пустым: «у альбома нет лейблов» должно снимать
-            # старые связи, а отсутствие ключа значит «не знаем».
-            labels = album.get("recordLabels")
-            fields["recordLabels"] = labels if isinstance(labels, list) else []
-            release_date = album.get("releaseDate")
-            if release_date:
-                fields["releaseDate"] = release_date
-            result[album_id] = fields
+            if album_id:
+                result[album_id] = _album_song_fields(album)
     except Exception:
         logger.warning("Failed to fetch album list for album metadata; proceeding without")
     return result
+
+
+def _album_song_fields(album: dict[str, object]) -> dict[str, object]:
+    fields: dict[str, object] = {}
+    release_types = album.get("releaseTypes") or []
+    if isinstance(release_types, list) and release_types:
+        raw_type = str(release_types[0])
+    else:
+        raw_type = str(album.get("releaseType") or "")
+    release_type = explicit_release_type(raw_type)
+    if release_type != "unknown":
+        fields["releaseType"] = release_type
+    # Всегда, даже пустым: «у альбома нет лейблов» должно снимать
+    # старые связи, а отсутствие ключа значит «не знаем».
+    labels = album.get("recordLabels")
+    fields["recordLabels"] = labels if isinstance(labels, list) else []
+    release_date = album.get("releaseDate")
+    if release_date:
+        fields["releaseDate"] = release_date
+    return fields
 
 
 def _inject_album_metadata(
@@ -283,7 +286,7 @@ def _inject_album_metadata(
     fields = album_metadata.get(album_id) if album_id else None
     if not fields:
         return song
-    return replace(song, raw={**song.raw, **fields})
+    return cast(NavidromeSong, replace(song, raw={**song.raw, **fields}))
 
 
 def _song_to_scanned_track(song: NavidromeSong) -> ScannedTrack:

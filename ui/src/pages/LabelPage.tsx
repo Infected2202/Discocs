@@ -10,7 +10,7 @@ import ArtworkImage from "@/components/media/ArtworkImage"
 import CollectionHeader from "@/components/media/CollectionHeader"
 import Shelf from "@/components/media/Shelf"
 import { usePlayerStore } from "@/store/playerStore"
-import type { LabelDetail, LabelReleaseSort, ReleaseSummary } from "@/api/types"
+import type { LabelDescriptionSegment, LabelDetail, LabelReleaseSort, ReleaseSummary } from "@/api/types"
 
 const SORTS: LabelReleaseSort[] = ["release_date_desc", "release_date_asc"]
 
@@ -18,6 +18,16 @@ function releaseSubtitle(release: ReleaseSummary): string | null {
   const artists = release.artists.map((artist) => artist.name).join(", ")
   const year = release.release_year ? String(release.release_year) : ""
   return [artists, year].filter(Boolean).join(" · ") || null
+}
+
+/** Segments keyed by their character offset in the text — stable and unique. */
+function keyedSegments(segments: LabelDescriptionSegment[]) {
+  let offset = 0
+  return segments.map((segment) => {
+    const key = `${offset}-${segment.type}`
+    offset += segment.text.length
+    return { key, segment }
+  })
 }
 
 function linkTitle(link: { url: string; title?: string | null }): string {
@@ -57,17 +67,17 @@ function LabelDescription({ label }: { readonly label: LabelDetail }) {
               !expanded && "line-clamp-4",
             )}
           >
-            {description.segments.map((segment, index) =>
+            {keyedSegments(description.segments).map(({ key, segment }) =>
               segment.type === "artist" && segment.artist_id !== null ? (
                 <Link
-                  key={index}
+                  key={key}
                   to={`/artists/${segment.artist_id}`}
                   className="font-medium hover:underline"
                 >
                   {segment.text}
                 </Link>
               ) : (
-                <span key={index}>{segment.text}</span>
+                <span key={key}>{segment.text}</span>
               ),
             )}
           </p>

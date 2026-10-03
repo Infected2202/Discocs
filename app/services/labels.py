@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import base64
-import binascii
 import io
 import re
 from dataclasses import dataclass
@@ -15,7 +14,7 @@ from app.store import Store
 PLACEHOLDER_IMAGE = Path(__file__).resolve().parent.parent / "assets" / "label-placeholder.jpg"
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 _IMAGE_FORMATS = {"JPEG": ("jpg", "image/jpeg"), "PNG": ("png", "image/png"), "WEBP": ("webp", "image/webp")}
-_EXTENSION_MEDIA_TYPES = {ext: media for ext, media in _IMAGE_FORMATS.values()}
+_EXTENSION_MEDIA_TYPES = dict(_IMAGE_FORMATS.values())
 
 # Упоминание артиста в описании: «[a=Nina Kraviz]». Скрипт сводит к нему
 # разметку Discogs, остальное приходит обычным текстом.
@@ -36,19 +35,19 @@ def decode_label_image(image_base64: str) -> DecodedImage:
     """base64 → проверенная картинка (JPEG/PNG/WebP), иначе LabelImageError."""
     try:
         payload = base64.b64decode(image_base64, validate=True)
-    except (binascii.Error, ValueError) as exc:
+    except ValueError as exc:  # binascii.Error и не-ASCII строка — оба ValueError
         raise LabelImageError("Image is not valid base64") from exc
     if not payload:
         raise LabelImageError("Image is empty")
     if len(payload) > MAX_IMAGE_BYTES:
         raise LabelImageError("Image is too large")
-    from PIL import Image, UnidentifiedImageError  # noqa: PLC0415
+    from PIL import Image  # noqa: PLC0415
 
     try:
         with Image.open(io.BytesIO(payload)) as image:
             image_format = image.format
             image.verify()
-    except (UnidentifiedImageError, OSError, SyntaxError) as exc:
+    except (OSError, SyntaxError) as exc:  # UnidentifiedImageError — подкласс OSError
         raise LabelImageError("Image is not a readable picture") from exc
     if image_format not in _IMAGE_FORMATS:
         raise LabelImageError(f"Unsupported image format: {image_format}")

@@ -347,6 +347,11 @@ def test_label_metadata_rejects_bad_image_and_unsafe_links(tmp_path, monkeypatch
     assert bad_image.status_code == 400
     assert bad_image.json()["error"]["code"] == "invalid_image"
 
+    for broken in ("not*base64!", "картинка"):
+        response = client.put("/api/v1/labels/metadata", json={"name": "X", "image_base64": broken})
+        assert response.status_code == 400, broken
+        assert response.json()["error"]["message"] == "Image is not valid base64"
+
     unsafe = client.put(
         "/api/v1/labels/metadata",
         json={"name": "X", "links": [{"url": "javascript:alert(1)"}]},
