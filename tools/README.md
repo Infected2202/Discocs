@@ -12,3 +12,4 @@
 |---|---|
 | [music-fill](music-fill/README.md) | добирает недостающее в библиотеку: план загрузок deemix по истории прослушиваний, дискографиям и каталогам лейблов; чего нет на Deezer — из Soulseek |
 | [label-sync](label-sync/README.md) | картинки, описания и ссылки лейблов для discocs: лейбл ищется на Beatport/Discogs через штрихкод релиза |
+| [library-tags](library-tags/README.md) | тип релиза и ID Deezer в теги библиотеки: релизы deemix сопоставляются с Deezer по штрихкоду |
