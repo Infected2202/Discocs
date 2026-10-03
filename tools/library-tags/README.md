@@ -19,11 +19,22 @@ deemix лежат россыпью в папке артиста). Каждый �
 ## Запуск
 
 ```bash
-python dry_run.py                         # H:\data\media\music\Deezer; файлы не меняет
-python dry_run.py "H:\data\media\music\Deezer\Apparat"
+python dry_run.py                         # H:\data\media\music\Deezer; файлы не меняет — отчёт out/dry_run.txt
+python apply.py --sample 20               # пробно; --all — все подтверждённые релизы; --undo — откат
+python various.py --dry                   # «Różni wykonawcy», «Различные исполнители», «VA»… → «Various Artists»
+python ignore_dupes.py                    # скрыть дубли от Navidrome (.ndignore); --undo — убрать
+python navidrome.py scan | check          # сканирование Navidrome / видит ли он записанные типы
 ```
 
-Нужны Python 3.11+ с `requests` и `mutagen`.
+Нужны Python 3.11+ с `requests` и `mutagen`. Учётка Navidrome — из `../music-fill/config.json`.
+
+- **Что пишется.** `RELEASETYPE` (album / ep / single / compilation, как у Deezer) — только если у релиза
+  типа ещё нет (существующий — из MusicBrainz, точнее); `DEEZER_ALBUM_ID`, `DEEZER_TRACK_ID`. FLAC —
+  Vorbis comment, MP3 — TXXX. Пути не меняются — ID треков в Navidrome прежние.
+- **Скорость.** Библиотека на SMB-шаре: упор в сетевые задержки, не в диск, — файлы обрабатываются в 8
+  потоков (~80 файлов/с вместо ~5).
+- **`.ndignore`.** Navidrome превращает шаблон в регулярку: скобки в имени файла становятся группой,
+  ведущий `/` не работает — шаблоны писать без скобок, через `*`. Пустой файл скрывает всю папку.
 
 ## Данные (не в git)
 
@@ -32,3 +43,5 @@ python dry_run.py "H:\data\media\music\Deezer\Apparat"
 | `cache/scan.json` | теги файлов (перечитываются только изменённые — по размеру и mtime) |
 | `cache/deezer_albums.json` | ответы Deezer `album/upc:…` целиком, по штрихкоду |
 | `out/dry_run.json`, `out/dry_run.txt` | отчёт пробного прогона: по релизам и сводка с проблемами |
+| `out/apply_log.jsonl`, `out/various_log.jsonl` | что записано и что было до (для `--undo`) |
+| `out/ignored.json` | какие `.ndignore` положены и какая копия оставлена |
