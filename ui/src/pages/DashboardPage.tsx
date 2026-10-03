@@ -5,22 +5,8 @@ import ForYouShelf from "@/components/media/ForYouShelf"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiFetch } from "@/api/client"
 import { usePlayerStore } from "@/store/playerStore"
-import type { MediaCardProps } from "@/components/media/MediaCard"
+import { shelfItemToCard } from "@/components/media/shelfItemToCard"
 import type { PlaybackEnvelope, ShelfItem } from "@/api/types"
-
-function shelfItemToCard(item: ShelfItem, onPlay: (item: ShelfItem) => void): MediaCardProps {
-  return {
-    id: item.entity_id,
-    type: item.entity_type,
-    title: item.title,
-    subtitle: item.subtitle,
-    subtitleLinks: item.subtitle_links,
-    href: item.action?.target,
-    reason: item.reason,
-    artwork: item.artwork,
-    onPlay: item.play_action ? () => onPlay(item) : undefined,
-  }
-}
 
 function DashboardSkeleton() {
   return (
@@ -86,7 +72,7 @@ export default function DashboardPage() {
           key={shelf.key}
           title={t(`shelves.${shelf.key}`, { defaultValue: shelf.title })}
           shelfKey={shelf.key}
-          items={shelf.items.map((item) => shelfItemToCard(item, handlePlayShelfItem))}
+          items={shelf.items.map((item) => shelfItemToCard(item, handlePlayShelfItem, t))}
         />
       ))}
     </div>

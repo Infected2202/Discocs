@@ -16,6 +16,7 @@ import enRelease from "./locales/en/release.json"
 import enMix from "./locales/en/mix.json"
 import enPlaylist from "./locales/en/playlist.json"
 import enShare from "./locales/en/share.json"
+import enLabel from "./locales/en/label.json"
 
 import ruCommon from "./locales/ru/common.json"
 import ruNav from "./locales/ru/nav.json"
@@ -31,6 +32,7 @@ import ruRelease from "./locales/ru/release.json"
 import ruMix from "./locales/ru/mix.json"
 import ruPlaylist from "./locales/ru/playlist.json"
 import ruShare from "./locales/ru/share.json"
+import ruLabel from "./locales/ru/label.json"
 
 export const SUPPORTED_LANGUAGES = ["en", "ru"] as const
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number]
@@ -44,7 +46,7 @@ export const LANGUAGE_STORAGE_KEY = "discocs-language"
 
 export const NAMESPACES = [
   "common", "nav", "profile", "auth", "settings", "player",
-  "dashboard", "media", "search", "artist", "release", "mix", "playlist", "share",
+  "dashboard", "media", "search", "artist", "release", "mix", "playlist", "share", "label",
 ] as const
 
 void i18n
@@ -56,13 +58,13 @@ void i18n
         common: enCommon, nav: enNav, profile: enProfile, auth: enAuth,
         settings: enSettings, player: enPlayer, dashboard: enDashboard,
         media: enMedia, search: enSearch, artist: enArtist, release: enRelease,
-        mix: enMix, playlist: enPlaylist, share: enShare,
+        mix: enMix, playlist: enPlaylist, share: enShare, label: enLabel,
       },
       ru: {
         common: ruCommon, nav: ruNav, profile: ruProfile, auth: ruAuth,
         settings: ruSettings, player: ruPlayer, dashboard: ruDashboard,
         media: ruMedia, search: ruSearch, artist: ruArtist, release: ruRelease,
-        mix: ruMix, playlist: ruPlaylist, share: ruShare,
+        mix: ruMix, playlist: ruPlaylist, share: ruShare, label: ruLabel,
       },
     },
     fallbackLng: "en",

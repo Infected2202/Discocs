@@ -30,6 +30,8 @@ from app.library import (
     envelope_from_track_row,
     normalize_text,
     parse_artist_credit,
+    record_labels_from_raw,
+    release_date_from_raw,
     release_identity_key,
     release_title_for_envelope,
 )
@@ -357,7 +359,7 @@ def _envelope_from_track_with_external(
     album_id = _raw_value(raw, "albumId", "album_id")
     album_artist = _raw_value(raw, "albumArtist", "albumartist", "album_artist")
     cover_art_id = _raw_value(raw, "coverArt", "coverArtId", "cover_art_id")
-    release_date = _raw_value(raw, "releaseDate", "date")
+    release_date = release_date_from_raw(raw)
     release_type = _raw_release_type(_raw_value(raw, "releaseType", "albumType", "mediaType"))
     return TrackMetadataEnvelope(
         title=fallback.title,
@@ -379,6 +381,7 @@ def _envelope_from_track_with_external(
         provider_release_id=album_id,
         provider_artist_id=_raw_value(raw, "artistId", "artist_id"),
         raw_json=raw_json,
+        record_labels=record_labels_from_raw(raw),
     )
 
 

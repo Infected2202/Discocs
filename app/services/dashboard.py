@@ -440,6 +440,18 @@ def _dashboard_albums_for_you(
     return page, len(shuffled)
 
 
+def _dashboard_labels(
+    store: Store,
+    limit: int,
+    offset: int,
+    _include_debug: bool = False,
+) -> tuple[list[dict[str, object]], int]:
+    from app.serializers.labels import label_shelf_item  # noqa: PLC0415
+
+    labels, total = store.list_labels(limit=limit, offset=offset)
+    return [label_shelf_item(label) for label in labels], total
+
+
 def _dashboard_playlists(
     store: Store,
     limit: int,
@@ -486,6 +498,7 @@ def dashboard_shelf_response(
         "new_releases": ("New Releases", ""),
         "liked_artists": ("Favourite Artists", ""),
         "liked_releases": ("Favourite Albums", ""),
+        "labels": ("Labels", ""),
         "playlists": ("Playlists", ""),
     }
     if key not in titles:
@@ -508,6 +521,8 @@ def dashboard_shelf_response(
         items, total = _dashboard_liked_artists(store, limit, offset, include_debug)
     elif key == "liked_releases":
         items, total = _dashboard_liked_releases(store, limit, offset, include_debug)
+    elif key == "labels":
+        items, total = _dashboard_labels(store, limit, offset, include_debug)
     elif key == "playlists":
         items, total = _dashboard_playlists(store, limit, offset, include_debug)
     else:

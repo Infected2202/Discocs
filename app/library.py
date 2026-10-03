@@ -51,6 +51,9 @@ class TrackMetadataEnvelope:
     provider_release_id: str | None = None
     provider_artist_id: str | None = None
     raw_json: str | None = None
+    # None — источник про лейблы ничего не сказал (сохранённые не трогать);
+    # пустой кортеж — сказал, что лейблов нет.
+    record_labels: tuple[str, ...] | None = None
 
 
 def normalize_text(value: str | None) -> str:
@@ -160,7 +163,7 @@ def envelope_from_navidrome_song(song: Any, raw_json: str | None = None) -> Trac
     release_type = _normalize_release_type(
         _first_raw_value(raw, "releaseType", "releaseTypes", "albumType", "mediaType")
     )
-    release_date = clean_display_text(_first_raw_value(raw, "releaseDate", "date"))
+    release_date = release_date_from_raw(raw)
     return TrackMetadataEnvelope(
         title=song.title,
         artist=song.artist,
@@ -181,7 +184,65 @@ def envelope_from_navidrome_song(song: Any, raw_json: str | None = None) -> Trac
         provider_release_id=album_id,
         provider_artist_id=getattr(song, "artist_id", None) or _first_raw_value(raw, "artistId", "artist_id"),
         raw_json=raw_json,
+        record_labels=record_labels_from_raw(raw),
     )
+
+
+# Спецзначение MusicBrainz/Picard «релиз вышел без лейбла» — не лейбл.
+_NOT_A_LABEL = {"[no label]"}
+
+
+def record_labels_from_raw(raw: dict[str, Any]) -> tuple[str, ...] | None:
+    """Лейблы релиза из OpenSubsonic ``recordLabels`` (``[{"name": ...}]``).
+
+    Navidrome отдаёт их только у альбома (getAlbumList2); синк кладёт их в raw
+    песни. Нет ключа — источник о лейблах молчит (None), а не «лейблов нет».
+    """
+    if "recordLabels" not in raw:
+        return None
+    value = raw.get("recordLabels")
+    items = value if isinstance(value, list) else [value]
+    labels: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        name = item.get("name") if isinstance(item, dict) else item
+        text = clean_display_text(str(name)) if name is not None else None
+        key = normalize_text(text)
+        if not text or key in _NOT_A_LABEL or key in seen:
+            continue
+        seen.add(key)
+        labels.append(text)
+    return tuple(labels)
+
+
+def release_date_from_raw(raw: dict[str, Any]) -> str | None:
+    """Дата релиза как ISO-строка той точности, что известна: YYYY, YYYY-MM или YYYY-MM-DD.
+
+    OpenSubsonic отдаёт ``releaseDate`` объектом ``{"year", "month", "day"}``
+    (только у альбома); старые источники — строкой.
+    """
+    for key in ("releaseDate", "date"):
+        value = raw.get(key)
+        if isinstance(value, dict):
+            text = _item_date_text(value)
+        else:
+            text = clean_display_text(str(value)) if value is not None else None
+        if text:
+            return text
+    return None
+
+
+def _item_date_text(value: dict[str, Any]) -> str | None:
+    year = _optional_int(value.get("year"))
+    if not year:
+        return None
+    month = _optional_int(value.get("month"))
+    day = _optional_int(value.get("day"))
+    if month and 1 <= month <= 12:
+        if day and 1 <= day <= 31:
+            return f"{year:04d}-{month:02d}-{day:02d}"
+        return f"{year:04d}-{month:02d}"
+    return f"{year:04d}"
 
 
 def release_title_for_envelope(envelope: TrackMetadataEnvelope) -> str:

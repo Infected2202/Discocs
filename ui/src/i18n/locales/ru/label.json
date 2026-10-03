@@ -1,0 +1,27 @@
+{
+  "notFound": "Лейбл не найден.",
+  "kicker": "Лейбл",
+  "releaseCount_one": "{{count}} релиз",
+  "releaseCount_few": "{{count}} релиза",
+  "releaseCount_many": "{{count}} релизов",
+  "releaseCount_other": "{{count}} релиза",
+  "releases": "Релизы",
+  "sort": {
+    "label": "Сортировка",
+    "release_date_desc": "Сначала новые",
+    "release_date_asc": "Сначала старые"
+  },
+  "description": {
+    "showMore": "Показать полностью",
+    "showLess": "Свернуть",
+    "source": "Источник: {{source}}",
+    "sources": {
+      "wikipedia_ru": "Википедия",
+      "wikipedia_en": "Wikipedia (англ.)",
+      "discogs": "Discogs",
+      "beatport": "Beatport"
+    }
+  },
+  "links": "Ссылки",
+  "empty": "У лейбла нет релизов в библиотеке."
+}

@@ -143,6 +143,41 @@ export interface ReleaseAvailabilityStub {
 }
 
 // ----------------------------------------------------------------------------
+// Label
+// ----------------------------------------------------------------------------
+
+export interface LabelSummary {
+  id: number
+  name: string
+  release_count: number
+  artwork: ImageRef
+}
+
+export type LabelDescriptionSegment =
+  | { type: "text"; text: string }
+  | { type: "artist"; text: string; artist_id: number | null }
+
+export type LabelDescriptionSource = "wikipedia_ru" | "wikipedia_en" | "discogs" | "beatport"
+
+export interface LabelDetail extends LabelSummary {
+  description: { segments: LabelDescriptionSegment[]; source: LabelDescriptionSource | null } | null
+  links: { url: string; title?: string | null }[]
+}
+
+export interface LabelResponse {
+  label: LabelDetail
+  links: Record<string, string>
+}
+
+export type LabelReleaseSort = "release_date_desc" | "release_date_asc"
+
+export interface LabelReleasesResponse {
+  label: { id: number; name: string }
+  sort: LabelReleaseSort
+  items: ReleaseSummary[]
+}
+
+// ----------------------------------------------------------------------------
 // Track (shared summary used in search / queue)
 // ----------------------------------------------------------------------------
 
@@ -185,7 +220,7 @@ export interface SearchResponse {
 // Dashboard
 // ----------------------------------------------------------------------------
 
-export type ShelfItemType = "artist" | "release" | "generated_mix" | "track" | "playlist"
+export type ShelfItemType = "artist" | "release" | "generated_mix" | "track" | "playlist" | "label"
 
 export interface SubtitleLink {
   label: string
@@ -201,6 +236,8 @@ export interface ShelfItem {
   subtitle_links?: SubtitleLink[]
   artwork: ImageRef
   reason: string | null
+  /** Only on label cards: the subtitle is built from it on the client (i18n plurals). */
+  release_count?: number
   action?: { type: string; target: string }
   play_action:
     | { type: "play"; source_type: string; source_id: number | string; source_label?: string }

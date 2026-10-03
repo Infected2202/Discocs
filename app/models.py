@@ -73,6 +73,33 @@ class Release:
 
 
 @dataclass(frozen=True)
+class Label:
+    id: int
+    name: str
+    normalized_name: str
+    image_path: str | None
+    image_source: str | None
+    description: str | None
+    description_source: str | None
+    links: list[dict[str, str]]
+    external_ids: dict[str, str]
+    metadata_synced_at: str | None
+    release_count: int = 0
+
+
+@dataclass(frozen=True)
+class LabelMetadata:
+    """То, что присылает tools/label-sync: всё, кроме картинки, необязательно."""
+
+    name: str
+    image_source: str | None = None
+    description: str | None = None
+    description_source: str | None = None
+    links: list[dict[str, str]] | None = None
+    external_ids: dict[str, str] | None = None
+
+
+@dataclass(frozen=True)
 class ReleaseAggregate:
     release_id: int
     track_count: int

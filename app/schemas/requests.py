@@ -428,3 +428,24 @@ class FlowEventRequest(BaseModel):
     track_id: int | None = None
     artist_id: int | None = None
     release_id: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# Labels (tools/label-sync)
+# ---------------------------------------------------------------------------
+
+class LabelLinkItem(BaseModel):
+    url: str = Field(min_length=1, max_length=2000, pattern=r"^https?://")
+    title: str | None = Field(default=None, max_length=200)
+
+
+class LabelMetadataRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=500)
+    image_base64: str | None = Field(default=None, max_length=8 * 1024 * 1024)
+    image_source: Literal["beatport", "discogs"] | None = None
+    description: str | None = Field(default=None, max_length=20000)
+    description_source: Literal["wikipedia_ru", "wikipedia_en", "discogs", "beatport"] | None = None
+    links: list[LabelLinkItem] = Field(default_factory=list, max_length=50)
+    external_ids: dict[str, str] = Field(default_factory=dict)

@@ -59,6 +59,7 @@ Defined in `ui/src/router.tsx`:
 /search                -> SearchPage
 /artists/:id           -> ArtistPage
 /releases/:id          -> ReleasePage
+/labels/:id            -> LabelPage
 /mixes/:id             -> MixPage
 /settings               -> SettingsPage
 /shelf/:key             -> ShelfPage
@@ -169,6 +170,25 @@ the same Navidrome `getArtistInfo2` path used by search and artist pages, then
 served through the backend cover proxy. There is no tabbed Discography/Top
 Tracks/Similar Artists/Bio navigation on this page; it remains a single
 scrolling page with sequential sections.
+
+### Label page (`/labels/:id`, `LabelPage.tsx`)
+
+Backend calls: `useLabel`, `useLabelReleases` (`GET /api/v1/labels/{id}`,
+`/releases?sort=release_date_desc|release_date_asc`).
+
+Layout: square label image (`144px`, from `/api/v1/labels/{id}/image` — the
+stored logo or the bundled Beatport placeholder), "Label" kicker, name and
+release count. No Play/Shuffle/like actions and no release-type filters —
+by design. Below the header, when present: the description (clamped to four
+lines with "Show more"/"Show less", `[a=Name]` mentions rendered as links to
+artists that exist in the library, plain text otherwise, plus a
+"Source: …" caption) and the label's external links (new tab,
+`rel="noopener noreferrer"`). Then a "Releases" heading with a
+newest/oldest-first select and one grid `Shelf` of release cards (subtitle
+`artists · year`). Sorting is by release date; year-only releases sit by
+year and are ordered by title inside it; undated releases go last in both
+directions. Images, descriptions and links come from `tools/label-sync`
+(see `plans/labels-shelf.md`).
 
 ### Mix page (`/mixes/:id`, `MixPage.tsx`)
 
@@ -362,7 +382,7 @@ fetchable through `GET /api/v1/dashboard/shelves/{key}`:
 ```text
 recently_added, history, listen_again, long_time_no_listen,
 mixes_for_you, albums_for_you, discover_random, new_releases,
-liked_artists, liked_releases
+liked_artists, liked_releases, labels, playlists
 ```
 
 `GET /api/v1/dashboard` returns a `hero` block (Flow entry — `available` only
@@ -412,6 +432,11 @@ Additional shelves beyond the original plan, all backed by
   preference row (no dislike, no plays), randomized.
 - `new_releases` — releases ordered by `release_year` desc then `added_at`
   desc (year must be set and `<= 2030`).
+- `labels` — record labels ordered by the number of their releases that
+  still have an available track (no minimum), then by name. Cards
+  (`entity_type: "label"`) carry `release_count` instead of a subtitle — the
+  client renders a pluralized "N releases" — and `play_action: null`, so
+  there is no Play button. Same data as `GET /api/v1/labels`.
 - `liked_artists` / `liked_releases` — listings from
   `user_artist_preferences` / `user_release_preferences` where `liked = 1`,
   ordered by `COALESCE(liked_at, updated_at)` desc so the newest like is first

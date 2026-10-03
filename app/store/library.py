@@ -204,6 +204,8 @@ class LibraryStoreMixin:
             identity_confidence=identity_confidence,
             now=now,
         )
+        if envelope.record_labels is not None:
+            self._replace_release_labels(conn, release_id, envelope.record_labels, now)
 
         position = envelope.track_number or track_id
         previous_release_ids = [
@@ -967,6 +969,19 @@ class LibraryStoreMixin:
             track_count=int(stats["track_count"] or 0),
             release_count=int(stats["release_count"] or 0),
         )
+
+    def artist_ids_by_names(self, names: list[str]) -> dict[str, int]:
+        """normalized name → artist id, только для артистов из библиотеки."""
+        keys = sorted({normalize_text(name) for name in names if normalize_text(name)})
+        if not keys:
+            return {}
+        placeholders = ",".join("?" for _key in keys)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT id, normalized_name FROM artists WHERE normalized_name IN ({placeholders})",
+                keys,
+            ).fetchall()
+        return {str(row["normalized_name"]): int(row["id"]) for row in rows}
 
     def top_tracks_for_artist(self, artist_id: int, limit: int = 100) -> list[tuple[Track, int]]:
         with self.connect() as conn:

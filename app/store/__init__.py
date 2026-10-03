@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from app.store.base import INITIALIZED_DB_PATHS, StoreBase
 from app.store.library import LibraryStoreMixin
+from app.store.labels import LabelsStoreMixin
 from app.store.playback import PlaybackStoreMixin
 from app.store.mixes import MixesStoreMixin
 from app.store.files import FilesStoreMixin
@@ -104,6 +105,7 @@ from app.models import (  # noqa: F401
 class Store(
     StoreBase,
     LibraryStoreMixin,
+    LabelsStoreMixin,
     PlaybackStoreMixin,
     MixesStoreMixin,
     FilesStoreMixin,

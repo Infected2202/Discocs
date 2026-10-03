@@ -11,12 +11,13 @@ const ENTITY_HREFS = {
   release: (id: number | string) => `/releases/${id}`,
   generated_mix: (id: number | string) => `/mixes/${id}`,
   playlist: (id: number | string) => `/playlists/${id}`,
+  label: (id: number | string) => `/labels/${id}`,
   shelf: (id: number | string) => `/shelf/${id}`,
 } as const
 
 export interface MediaCardProps {
   readonly id: number | string
-  readonly type: "artist" | "release" | "generated_mix" | "track" | "playlist" | "shelf" | "static"
+  readonly type: "artist" | "release" | "generated_mix" | "track" | "playlist" | "label" | "shelf" | "static"
   readonly title: string
   readonly subtitle?: string | null
   readonly subtitleLinks?: SubtitleLink[]

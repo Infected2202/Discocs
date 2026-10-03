@@ -94,6 +94,44 @@ Key columns: `id`, `title`, `normalized_title`, `release_type` (defaults to
 `identity_key` (unique — how scanned tracks are grouped into a release),
 `identity_confidence` (defaults to `'derived'`), `added_at`.
 
+Navidrome gives the release type, record labels and release date only on the
+album (`getAlbumList2`), not on songs, so the catalog sync fetches the album
+list first and merges `releaseType`, `recordLabels` and `releaseDate` into
+each song's raw JSON (`_inject_album_metadata` in `app/navidrome_sync.py`).
+`release_date` is an ISO string of whatever precision is known — `YYYY`,
+`YYYY-MM` or `YYYY-MM-DD` (OpenSubsonic sends `{year, month, day}`).
+`label` is a denormalized display copy (`"A / B"`) of the release's labels;
+the source of truth is `release_labels`.
+
+### Labels
+
+`labels`: `id`, `name` (display name of the first spelling seen — later
+syncs do not rename it), `normalized_name` (unique; `normalize_text`, so
+"trip recordings" and "Trip Recordings" are one label), `image_path`
+(file under `data/label_images/`, NULL → the bundled Beatport placeholder
+`app/assets/label-placeholder.jpg` is served), `image_source`
+(`beatport`/`discogs`), `description` (plain text; `[a=Name]` marks an
+artist mention), `description_source`
+(`wikipedia_ru`/`wikipedia_en`/`discogs`/`beatport`), `links_json`,
+`external_ids_json` (`beatport`, `discogs`, `wikidata` ids),
+`metadata_synced_at`.
+
+`release_labels` (`release_id`, `label_id`, `position`; PK
+`(release_id, label_id)`, both cascade) links releases to their labels in
+tag order — a release can have several (474 of ~12.5k labelled albums in the
+current library). It is replaced from the album's `recordLabels` on every
+sync; when the album list could not be fetched the existing links are kept
+(no `recordLabels` key means "unknown", an empty list means "no labels").
+MusicBrainz's `[no label]` marker is not treated as a label. Spelling
+variants, distributors-as-labels and sub-labels are not merged yet — see
+`plans/labels-shelf.md`.
+
+Image, description and links are written by `tools/label-sync` through
+`PUT /api/v1/labels/metadata` (label matched by normalized name, created if
+missing; description/links/ids replaced, image only replaced when sent).
+Label lists and counts only consider releases with at least one available
+track.
+
 ### Release Tracks
 
 `release_tracks` joins releases and tracks and carries per-release track

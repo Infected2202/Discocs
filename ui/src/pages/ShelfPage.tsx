@@ -7,23 +7,9 @@ import { usePlayerStore } from "@/store/playerStore"
 import { apiFetch } from "@/api/client"
 import MediaCard from "@/components/media/MediaCard"
 import VirtualCardGrid from "@/components/media/VirtualCardGrid"
+import { shelfItemToCard } from "@/components/media/shelfItemToCard"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { MediaCardProps } from "@/components/media/MediaCard"
 import type { ShelfItem, PlaybackEnvelope } from "@/api/types"
-
-function shelfItemToCard(item: ShelfItem, onPlay: (item: ShelfItem) => void): MediaCardProps {
-  return {
-    id: item.entity_id,
-    type: item.entity_type,
-    title: item.title,
-    subtitle: item.subtitle,
-    subtitleLinks: item.subtitle_links,
-    href: item.action?.target,
-    reason: item.reason,
-    artwork: item.artwork,
-    onPlay: item.play_action ? () => onPlay(item) : undefined,
-  }
-}
 
 function GridSkeleton() {
   return (
@@ -111,7 +97,7 @@ export default function ShelfPage() {
             getKey={(item) => `${item.entity_type}-${item.entity_id}`}
             renderItem={(item) => (
               <MediaCard
-                {...shelfItemToCard(item, handlePlayShelfItem)}
+                {...shelfItemToCard(item, handlePlayShelfItem, t)}
                 variant="shelf"
                 className="w-full"
               />

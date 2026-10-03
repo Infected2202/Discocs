@@ -1,0 +1,109 @@
+"""Labels API routes: список и страница лейбла, картинка, приём данных из tools/label-sync."""
+from __future__ import annotations
+
+from typing import Annotated
+
+from fastapi import APIRouter, Query
+from fastapi.responses import FileResponse, JSONResponse
+
+from app.api.deps import api_error, context
+from app.models import LabelMetadata
+from app.schemas.requests import LabelMetadataRequest
+from app.serializers.entities import release_summary_dict
+from app.serializers.labels import label_detail_dict, label_summary_dict
+from app.services.labels import (
+    LabelImageError,
+    decode_label_image,
+    label_image_file,
+    save_label_metadata,
+)
+
+router = APIRouter(prefix="/api/v1")
+
+_LABEL_NOT_FOUND = "Label not found"
+
+
+@router.get("/labels", response_model=None)
+def api_v1_labels(
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict[str, object]:
+    store, _settings = context()
+    labels, total = store.list_labels(limit=limit, offset=offset)
+    return {
+        "items": [label_summary_dict(label) for label in labels],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "next_offset": offset + limit if offset + limit < total else None,
+    }
+
+
+@router.get("/labels/{label_id}", response_model=None)
+def api_v1_label(label_id: int) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    label = store.get_label(label_id)
+    if label is None:
+        return api_error(404, "not_found", _LABEL_NOT_FOUND)
+    return {
+        "label": label_detail_dict(store, label),
+        "links": {
+            "releases": f"/api/v1/labels/{label_id}/releases",
+            "image": f"/api/v1/labels/{label_id}/image",
+        },
+    }
+
+
+@router.get("/labels/{label_id}/releases", response_model=None)
+def api_v1_label_releases(
+    label_id: int,
+    sort: Annotated[str, Query(pattern="^(release_date_desc|release_date_asc)$")] = "release_date_desc",
+) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    label = store.get_label(label_id)
+    if label is None:
+        return api_error(404, "not_found", _LABEL_NOT_FOUND)
+    releases = store.label_releases(label_id, newest_first=sort == "release_date_desc")
+    return {
+        "label": {"id": label.id, "name": label.name},
+        "sort": sort,
+        "items": [release_summary_dict(row) for row in releases],
+    }
+
+
+@router.get("/labels/{label_id}/image", response_model=None)
+def api_v1_label_image(label_id: int) -> FileResponse | JSONResponse:
+    store, _settings = context()
+    label = store.get_label(label_id)
+    if label is None:
+        return api_error(404, "not_found", _LABEL_NOT_FOUND)
+    path, media_type = label_image_file(label.image_path)
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.put("/labels/metadata", response_model=None)
+def api_v1_put_label_metadata(request: LabelMetadataRequest) -> dict[str, object] | JSONResponse:
+    """Картинка, описание и ссылки лейбла от tools/label-sync; лейбл — по названию."""
+    store, settings = context()
+    image = None
+    if request.image_base64:
+        try:
+            image = decode_label_image(request.image_base64)
+        except LabelImageError as exc:
+            return api_error(400, "invalid_image", str(exc))
+    metadata = LabelMetadata(
+        name=request.name,
+        image_source=request.image_source,
+        description=request.description,
+        description_source=request.description_source,
+        links=[link.model_dump(exclude_none=True) for link in request.links],
+        external_ids=dict(request.external_ids),
+    )
+    try:
+        label_id = save_label_metadata(store, settings.data_dir, metadata, image)
+    except ValueError as exc:
+        return api_error(400, "invalid_label", str(exc))
+    label = store.get_label(label_id)
+    if label is None:
+        return api_error(404, "not_found", _LABEL_NOT_FOUND)
+    return {"label": label_detail_dict(store, label)}

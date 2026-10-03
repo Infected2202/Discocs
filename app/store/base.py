@@ -326,6 +326,33 @@ class StoreBase:
                 CREATE INDEX IF NOT EXISTS idx_releases_year ON releases(release_year);
                 CREATE INDEX IF NOT EXISTS idx_releases_type ON releases(release_type);
 
+                CREATE TABLE IF NOT EXISTS labels (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    normalized_name TEXT NOT NULL UNIQUE,
+                    image_path TEXT,
+                    image_source TEXT,
+                    description TEXT,
+                    description_source TEXT,
+                    links_json TEXT,
+                    external_ids_json TEXT,
+                    metadata_synced_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS release_labels (
+                    release_id INTEGER NOT NULL,
+                    label_id INTEGER NOT NULL,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (release_id, label_id),
+                    FOREIGN KEY (release_id) REFERENCES releases(id) ON DELETE CASCADE,
+                    FOREIGN KEY (label_id) REFERENCES labels(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_release_labels_label
+                    ON release_labels(label_id);
+
                 CREATE TABLE IF NOT EXISTS release_tracks (
                     release_id INTEGER NOT NULL,
                     track_id INTEGER NOT NULL,

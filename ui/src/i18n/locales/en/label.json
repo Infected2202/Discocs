@@ -1,0 +1,25 @@
+{
+  "notFound": "Label not found.",
+  "kicker": "Label",
+  "releaseCount_one": "{{count}} release",
+  "releaseCount_other": "{{count}} releases",
+  "releases": "Releases",
+  "sort": {
+    "label": "Sort",
+    "release_date_desc": "Newest first",
+    "release_date_asc": "Oldest first"
+  },
+  "description": {
+    "showMore": "Show more",
+    "showLess": "Show less",
+    "source": "Source: {{source}}",
+    "sources": {
+      "wikipedia_ru": "Wikipedia (Russian)",
+      "wikipedia_en": "Wikipedia",
+      "discogs": "Discogs",
+      "beatport": "Beatport"
+    }
+  },
+  "links": "Links",
+  "empty": "This label has no releases in the library."
+}
