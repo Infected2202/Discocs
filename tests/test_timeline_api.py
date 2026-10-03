@@ -59,7 +59,7 @@ def test_manifest_reports_stale_identity(tmp_path: Path, monkeypatch):
     publish(store, track, tmp_path / "timeline")
     store.upsert_track(ScannedTrack(
         path=Path(track.path), artist="A", title="T", album="R",
-        duration=5.0, file_size=6, mtime=10,
+        duration=9.0, file_size=6, mtime=10,
     ))
     client = TestClient(app)
 
