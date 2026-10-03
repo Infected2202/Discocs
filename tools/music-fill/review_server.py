@@ -1755,7 +1755,9 @@ def slsk_syncer() -> None:
 # ушёл, часами в очереди, загрузка встала) — следующий вариант из найденных; кончились варианты —
 # поиск заново и загрузка найденного (до SLSK_CYCLES раз), потом «не скачалось».
 
-SLSK_ACTIVE = 4              # релизов качается одновременно
+SLSK_ACTIVE = 4              # релизов реально качается (идут байты) одновременно
+SLSK_PENDING = 30            # всего заявок у пиров (вместе с ждущими в их очередях)
+SLSK_MAX_PLACE = 50          # место в очереди у пира дальше этого — сразу пробуем следующий вариант
 SLSK_QUEUE_WAIT = 3 * 3600   # с: столько ждём, пока пир начнёт отдавать
 SLSK_STALL = 1800            # с: без прогресса во время загрузки
 SLSK_CYCLES = 3              # столько раз искать заново, если у всех найденных пиров не скачалось
@@ -1926,10 +1928,25 @@ def slsk_poll(it: dict) -> None:
     now = time.time()
     total = sum(f["size"] for f in dl["files"]) or 1
     done = sum((s or {}).get("bytesTransferred", 0) for s in states)
+    # для «Сейчас качается»: по файлам — состояние и процент; скорость; место в очереди у пира
+    queued = [s for s in states if s and s.get("state", "").startswith("Queued")]
+    place = None
+    if queued and now - dl.get("place_ts", 0) > 120:  # пир отвечает не сразу — не чаще раза в 2 мин
+        places = [p for p in (slsk.place_in_queue(dl["user"], s["id"]) for s in queued[:1]) if p is not None]
+        place = min(places) if places else None
+    speed = sum(s.get("averageSpeed") or 0 for s in states if s and s.get("state") == "InProgress")
     with slsk_lock:
         dl["progress"] = round(100 * done / total)
         if done != dl.get("last_bytes"):
             dl["last_bytes"], dl["last_change"] = done, int(now)
+        dl["speed"] = round(speed)
+        dl["remaining"] = total - done
+        dl["files_state"] = [{"name": f["name"], "state": (s or {}).get("state", "нет у slskd"),
+                              "pct": round((s or {}).get("percentComplete") or 0)} for f, s in zip(dl["files"], states)]
+        if queued and place is not None:
+            dl["place"], dl["place_ts"] = place, int(now)
+        elif not queued:
+            dl.pop("place", None)
     if all(s and s.get("state") == slsk.DONE_OK for s in states):
         try:
             slsk_place(it)
@@ -1941,14 +1958,28 @@ def slsk_poll(it: dict) -> None:
         return
     bad = any(s and any(w in s.get("state", "") for w in FAILED) for s in states) or any(s is None for s in states)
     waiting = done == 0 and now - dl["started"] > SLSK_QUEUE_WAIT
+    # очередь у пира на тысячи файлов — ждать часами незачем, если есть кого ещё попробовать
+    if done == 0 and (dl.get("place") or 0) > SLSK_MAX_PLACE and slsk_has_untried(it):
+        waiting = True
     stalled = done > 0 and now - dl["last_change"] > SLSK_STALL
     if bad or waiting or stalled:
-        why = "ошибка у пира" if bad else "пир не начал отдавать" if waiting else "загрузка встала"
+        why = "ошибка у пира" if bad else             (f"очередь у пира: место {dl.get('place')}" if (dl.get("place") or 0) > SLSK_MAX_PLACE else "пир не начал отдавать")             if waiting else "загрузка встала"
         for f, s in zip(dl["files"], states):
             if s and s.get("state") != slsk.DONE_OK:
                 slsk.cancel(dl["user"], s["id"])
         event("slsk_switch", id=it["id"], title=f"{it['artist']} — {it['title']}", user=dl["user"], reason=why)
         slsk_start(it, 0)  # следующий вариант (уже пробованные пропускаются)
+
+
+def slsk_has_untried(it: dict) -> bool:
+    tried = {tuple(t) for t in it.get("dl", {}).get("tried", [])}
+    return any((c["user"], c["dir"]) not in tried for c in slsk_candidates(it, it.get("manual", False)))
+
+
+def slsk_running(it: dict) -> bool:
+    """Идут байты (а не стоит в чужой очереди) — только такие занимают слот SLSK_ACTIVE."""
+    dl = it.get("dl") or {}
+    return (dl.get("last_bytes") or 0) > 0 or any(f.get("state") == "InProgress" for f in dl.get("files_state") or [])
 
 
 def slsk_downloader() -> None:
@@ -1959,13 +1990,23 @@ def slsk_downloader() -> None:
                 ready = [it for it in slsk_items.values() if it.get("status") == "download_requested"]
             for it in active:
                 slsk_poll(it)
-            for it in ready[:max(0, SLSK_ACTIVE - len(active))]:
+            running = sum(slsk_running(it) for it in active)
+            # новые заявки — пока реально качается меньше SLSK_ACTIVE; ждущие в очередях пиров слот не держат
+            for it in ready[:max(0, min(SLSK_ACTIVE - running, SLSK_PENDING - len(active)))]:
                 slsk_start(it, 0)
             if active or ready:
                 slsk_save()
         except Exception:  # noqa: BLE001
             journal.log.exception("slsk_downloader")
         time.sleep(20)
+
+
+def slsk_active() -> list[dict]:
+    """Идущие и ждущие загрузки Soulseek — для вкладки «Загрузки»."""
+    with slsk_lock:
+        its = [it for it in slsk_items.values() if it.get("status") in ("downloading", "download_requested")]
+        return json.loads(json.dumps([{k: it.get(k) for k in ("id", "status", "artist", "title", "source", "dl", "link")}
+                                      for it in its]))
 
 
 def slsk_view() -> dict:
@@ -2070,6 +2111,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/plan/artists": plan_artists,
             "/api/downloads/audit": audit_logged,
             "/api/slsk": slsk_view,
+            "/api/slsk/active": slsk_active,
             "/api/events": lambda: journal.read_events(int(qs.get("limit", ["500"])[0]), q,
                                                      qs.get("problems", [""])[0] == "1"),
             "/api/deezer/discography_sizes": lambda: discography_sizes(int(qs.get("id", ["0"])[0])),

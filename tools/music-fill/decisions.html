@@ -120,10 +120,11 @@ h2 { font-size: 16px; margin: 18px 0 8px; }
   <div class="bar"><button class="btn" id="auditbtn">Сверить отправленное с диском</button>
     <button class="btn primary" id="retrybtn" hidden>Повторить</button> <span class="muted" id="auditsum"></span></div>
   <div id="auditlist" style="font-size:13px"></div>
-  <h2>Отправлено отсюда</h2>
+  <h2>Сейчас качается</h2>
+  <div class="muted" id="actsum" style="font-size:12px;margin-bottom:6px"></div>
   <div class="scroll"><table>
-    <thead><tr><th>что</th><th>когда</th><th>элементов</th><th>статус</th></tr></thead>
-    <tbody id="senttbody"></tbody>
+    <thead><tr><th style="width:80px">откуда</th><th>что</th><th style="width:140px">прогресс</th><th>состояние</th></tr></thead>
+    <tbody id="acttbody"></tbody>
   </table></div>
   <h2>Очередь deemix целиком</h2>
   <div class="scroll"><table>
@@ -386,8 +387,11 @@ function qStatus(item) {
 }
 
 async function loadQueue() {
-  [sent, queue] = await Promise.all([fetch("/api/sent").then(x => x.json()),
-                                     fetch("/api/queue").then(x => x.json()).catch(e => ({error: String(e)}))]);
+  let act;
+  [sent, queue, act] = await Promise.all([fetch("/api/sent").then(x => x.json()),
+                                     fetch("/api/queue").then(x => x.json()).catch(e => ({error: String(e)})),
+                                     fetch("/api/slsk/active").then(x => x.json()).catch(() => [])]);
+  slActive = Array.isArray(act) ? act : [];
   if (queue.error) { $("#qsum").innerHTML = `<span class="err">deemix недоступен: ${esc(queue.error)}</span>`; queue = {queue: {}, queueOrder: []}; }
   renderQueue();
 }
@@ -398,19 +402,7 @@ function renderQueue() {
   const c = s => items.filter(i => i.status === s).length;
   $("#qsum").textContent = `в deemix: ${items.length} · качается ${c("downloading")} · ждёт ${c("inQueue")} · готово ${c("completed")} · с ошибками ${c("withErrors") + c("failed")}`;
 
-  const rows = Object.entries(sent).filter(([, s]) => !s.dismissed && !s.merged_into).sort((a, b) => b[1].ts - a[1].ts);
-  $("#senttbody").innerHTML = rows.map(([k, s]) => {
-    const its = (s.uuids || []).map(u => q[u]);
-    const done = its.filter(i => i?.status === "completed").length;
-    const bad = its.filter(i => i && ["withErrors", "failed"].includes(i.status)).length;
-    const gone = its.filter(i => !i).length;
-    const run = its.length - done - bad - gone;
-    const pills = [done && `<span class="pill p-ok">готово ${done}</span>`, run && `<span class="pill p-run">в работе ${run}</span>`,
-                   bad && `<span class="pill p-bad">с ошибками ${bad}</span>`, gone && `<span class="pill p-warn">убрано из очереди ${gone}</span>`]
-                  .filter(Boolean).join(" ");
-    return `<tr><td>${esc(s.name)}</td><td class="num">${new Date(s.ts * 1000).toLocaleString("ru")}</td>
-      <td class="num">${its.length}</td><td>${pills}</td></tr>`;
-  }).join("") || `<tr><td colspan="4" class="muted">Отсюда пока ничего не отправлялось.</td></tr>`;
+  renderActive(q);
 
   const order = (queue.queueOrder || []).concat(Object.keys(q).filter(k => !(queue.queueOrder || []).includes(k)));
   $("#qtbody").innerHTML = order.map(u => q[u]).filter(Boolean).reverse().map(i => {
@@ -418,6 +410,42 @@ function renderQueue() {
     return `<tr><td>${esc(i.artist)} — ${esc(i.title)}</td><td class="num">${i.downloaded ?? 0}/${i.size ?? "?"}${i.failed ? ` <span class="err">(−${i.failed})</span>` : ""}</td>
       <td><div class="prog"><i style="width:${i.progress || 0}%"></i></div></td><td><span class="pill ${cls}">${label}</span></td></tr>`;
   }).join("") || `<tr><td colspan="4" class="muted">Очередь deemix пуста.</td></tr>`;
+}
+
+// ---------- сейчас качается: deemix + Soulseek ----------
+let slActive = [];
+const fmtSpeed = b => b >= 1048576 ? `${(b / 1048576).toFixed(1).replace(".", ",")} МБ/с` : `${Math.round(b / 1024)} КБ/с`;
+const fmtEta = sec => sec < 60 ? "< 1 мин" : sec < 3600 ? `~${Math.round(sec / 60)} мин` : `~${Math.floor(sec / 3600)} ч ${Math.round(sec % 3600 / 60)} мин`;
+const SL_FILE = s => s === "InProgress" ? "качается" : s.startsWith("Queued, Remotely") ? "в очереди у пира"
+  : s.startsWith("Queued") ? "ждёт у нас" : s === "Completed, Succeeded" ? "готово" : s.startsWith("Completed") ? s.replace("Completed, ", "ошибка: ") : s;
+const progBar = (pct, label) => `<div class="prog"><i style="width:${pct || 0}%"></i></div><small class="muted">${label}</small>`;
+function renderActive(q) {
+  const dz = Object.values(q).filter(i => ["downloading", "inQueue"].includes(i.status))
+    .sort((a, b) => (b.status === "downloading") - (a.status === "downloading"));
+  const dzRun = dz.filter(i => i.status === "downloading");
+  const slRun = slActive.filter(it => it.status === "downloading"), slWait = slActive.filter(it => it.status === "download_requested");
+  const slPeerQ = slRun.filter(it => !(it.dl?.last_bytes > 0) && !(it.dl?.files_state || []).some(f => f.state === "InProgress")).length;
+  $("#actsum").textContent = `deemix: качается ${dzRun.length}, ждёт ${dz.length - dzRun.length} · Soulseek: качается ${slRun.length - slPeerQ}, в очереди у пиров ${slPeerQ}`
+    + `, ждёт своей очереди ${slWait.length}` + (slRun.length ? ` · ${fmtSpeed(slRun.reduce((s, it) => s + (it.dl?.speed || 0), 0))}` : "");
+  const dzRows = dzRun.map(i => `<tr><td>deemix</td><td>${esc(i.artist)} — ${esc(i.title)}</td>
+      <td>${progBar(i.progress, `${i.downloaded ?? 0}/${i.size ?? "?"} тр.`)}</td><td><span class="pill p-run">качается</span>${i.failed ? ` <span class="err">ошибок ${i.failed}</span>` : ""}</td></tr>`);
+  const slRows = slRun.map(it => {
+    const d = it.dl || {}, fs = d.files_state || [];
+    const run = fs.filter(f => f.state === "InProgress").length, wait = fs.filter(f => f.state.startsWith("Queued, Remotely")).length;
+    const state = run ? `<span class="pill p-run">качается</span> ${fmtSpeed(d.speed || 0)}${d.speed ? ` · ${fmtEta((d.remaining || 0) / d.speed)}` : ""}`
+      : wait ? `<span class="pill p-warn">в очереди у пира${d.place != null ? `, место ${d.place}` : ""}</span>`
+      : `<span class="pill p-run">${esc(fs.map(f => SL_FILE(f.state)).filter((v, i, a) => a.indexOf(v) === i).join(", ") || "начинаю")}</span>`;
+    const files = fs.length > 1 ? `<details><summary>файлы: ${fs.filter(f => f.state === "Completed, Succeeded").length}/${fs.length} готово</summary><ul>${
+      fs.map(f => `<li>${esc(f.name)} — ${SL_FILE(f.state)}${f.state === "InProgress" ? ` ${f.pct}%` : ""}</li>`).join("")}</ul></details>` : "";
+    return `<tr><td>Soulseek</td><td>${esc(it.artist)} — ${esc(it.title)} <a href="${it.link}" target="_blank">↗</a>
+        <br><small class="muted">${esc(it.source?.name || "")} · пир ${esc(d.user)} · ${esc(d.format || "")} · начал ${fmtAgo(d.started)}${(d.tried || []).length > 1 ? ` · ${d.tried.length}-й пир` : ""}</small>${files}</td>
+      <td>${progBar(d.progress, `${d.progress || 0}%`)}</td><td>${state}</td></tr>`;
+  });
+  const waitRow = (n, what) => n ? [`<tr><td colspan="4" class="muted">${what}</td></tr>`] : [];
+  $("#acttbody").innerHTML = [...slRows, ...dzRows,
+    ...waitRow(dz.length - dzRun.length, `deemix: ещё ${dz.length - dzRun.length} ждут в очереди (весь список — ниже)`),
+    ...waitRow(slWait.length, `Soulseek: ещё ${slWait.length} ждут своей очереди (сразу качается до 4 релизов, заявок у пиров — до 30; список — во вкладке Soulseek)`)]
+    .join("") || `<tr><td colspan="4" class="muted">Сейчас ничего не качается.</td></tr>`;
 }
 
 $("#clear").onclick = async () => { await fetch("/api/deemix/clear", {method: "POST"}); loadQueue(); };

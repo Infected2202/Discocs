@@ -393,6 +393,15 @@ def transfers(user: str) -> dict[str, dict]:
     return {f["filename"]: f for dd in (d or {}).get("directories", []) for f in dd.get("files", [])}
 
 
+def place_in_queue(user: str, transfer_id: str) -> int | None:
+    """Место файла в очереди у пира (slskd спрашивает у пира по запросу)."""
+    try:
+        v = api("GET", f"/transfers/downloads/{requests.utils.quote(user, safe='')}/{transfer_id}/position")
+        return int(v) if isinstance(v, (int, float)) else None
+    except (requests.RequestException, ValueError):
+        return None
+
+
 def cancel(user: str, transfer_id: str) -> None:
     try:
         api("DELETE", f"/transfers/downloads/{requests.utils.quote(user, safe='')}/{transfer_id}?remove=true")
