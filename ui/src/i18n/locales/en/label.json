@@ -3,7 +3,6 @@
   "kicker": "Label",
   "releaseCount_one": "{{count}} release",
   "releaseCount_other": "{{count}} releases",
-  "releases": "Releases",
   "like": "Add to favourites",
   "groups": {
     "albums": "Albums",

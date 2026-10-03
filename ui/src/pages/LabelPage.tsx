@@ -187,34 +187,33 @@ export default function LabelPage() {
         title={label.name}
         meta={t("releaseCount", { count: label.release_count })}
         actions={
-          <LikeButton
-            entity="label"
-            id={label.id}
-            liked={label.liked}
-            onToggle={() => toggleLike.mutate(!label.liked)}
-            variant="control"
-            size={18}
-            title={t("like")}
-          />
+          <>
+            <LikeButton
+              entity="label"
+              id={label.id}
+              liked={label.liked}
+              onToggle={() => toggleLike.mutate(!label.liked)}
+              variant="control"
+              size={18}
+              title={t("like")}
+            />
+            {/* Сортировка — в шапке, а не отдельной строкой над группами:
+                строка «Релизы ———» выглядела пустой группой. */}
+            <select
+              aria-label={t("sort.label")}
+              value={sort}
+              onChange={(event) => setSort(event.target.value as LabelReleaseSort)}
+              className="h-8 rounded-md border border-foreground/15 bg-background px-2 text-xs"
+            >
+              {SORTS.map((value) => (
+                <option key={value} value={value}>{t(`sort.${value}`)}</option>
+              ))}
+            </select>
+          </>
         }
       />
 
       <LabelDescription label={label} />
-
-      <div className="px-4 sm:px-6 pb-2 flex items-center gap-3">
-        <h2 className="text-sm font-semibold">{t("releases")}</h2>
-        <div aria-hidden="true" className="h-px min-w-3 flex-1 bg-primary/50" />
-        <select
-          aria-label={t("sort.label")}
-          value={sort}
-          onChange={(event) => setSort(event.target.value as LabelReleaseSort)}
-          className="h-8 rounded-md border border-foreground/15 bg-background px-2 text-xs"
-        >
-          {SORTS.map((value) => (
-            <option key={value} value={value}>{t(`sort.${value}`)}</option>
-          ))}
-        </select>
-      </div>
 
       {!releasesLoading && groups.length === 0 ? (
         <p className="px-4 sm:px-6 text-sm text-muted-foreground">{t("empty")}</p>

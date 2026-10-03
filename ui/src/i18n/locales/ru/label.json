@@ -5,7 +5,6 @@
   "releaseCount_few": "{{count}} релиза",
   "releaseCount_many": "{{count}} релизов",
   "releaseCount_other": "{{count}} релиза",
-  "releases": "Релизы",
   "like": "В избранное",
   "groups": {
     "albums": "Альбомы",

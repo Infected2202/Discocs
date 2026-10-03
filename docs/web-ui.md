@@ -189,9 +189,10 @@ actions and no release-type filters — by design. Below the header, when presen
 lines with "Show more"/"Show less", `[a=Name]` mentions rendered as links to
 artists that exist in the library, plain text otherwise, plus a
 "Source: …" caption) and the label's external links (new tab,
-`rel="noopener noreferrer"`). Then a "Releases" heading with a
-newest/oldest-first select and one grid `Shelf` per non-empty release-type
-group — Albums, EPs, Singles, Compilations, Other releases (soundtracks,
+`rel="noopener noreferrer"`). The newest/oldest-first sort select sits in
+the header actions next to the heart (no separate "Releases" heading row —
+it read as an empty group above the real ones). Then one grid `Shelf` per
+non-empty release-type group — Albums, EPs, Singles, Compilations, Other releases (soundtracks,
 mixes, unknown type), in that order, from `groups` of the releases response —
 with release cards (subtitle `artists · year`). Sorting is by release date; year-only releases sit by
 year and are ordered by title inside it; undated releases go last in both

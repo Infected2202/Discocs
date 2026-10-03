@@ -192,6 +192,8 @@ describe("LabelPage", () => {
     expect(shelves.map((shelf) => shelf.getAttribute("aria-label"))).toEqual([
       "Albums", "EPs", "Singles", "Other releases",
     ])
+    // Над группами нет общего заголовка «Releases» — он выглядел пустой группой.
+    expect(screen.queryByRole("heading", { name: "Releases" })).not.toBeInTheDocument()
     expect(shelves[1]).toHaveTextContent("Some EP")
     expect(shelves[1]).not.toHaveTextContent("New One")
   })
