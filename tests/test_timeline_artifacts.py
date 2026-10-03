@@ -52,11 +52,20 @@ def test_artifact_publish_round_trip_and_exact_source_invalidation(tmp_path: Pat
     }
     assert loaded[0]["payload"]["sha256"] == manifest["payload"]["sha256"]
     assert loaded[1] == payload
-    changed = ScannedTrack(
+    retagged = ScannedTrack(
         path=Path(track.path), artist=track.artist, title=track.title, album=track.album,
-        duration=track.duration, file_size=track.file_size + 1, mtime=track.mtime,
+        duration=track.duration, file_size=track.file_size + 1, mtime=track.mtime + 1,
     )
-    store.upsert_track(changed)
+    store.upsert_track(retagged)
+    retagged_track = store.get_track(track.id)
+    assert load_valid_artifact(store, root, retagged_track, PACK_NAME, EXTRACTOR) is not None
+    assert store.timeline_artifact_counts(PACK_NAME, EXTRACTOR)["ready"] == 1
+
+    replaced_audio = ScannedTrack(
+        path=Path(track.path), artist=track.artist, title=track.title, album=track.album,
+        duration=track.duration + 30, file_size=track.file_size + 2, mtime=track.mtime + 2,
+    )
+    store.upsert_track(replaced_audio)
     with pytest.raises(TimelineFormatError, match="stale"):
         load_valid_artifact(store, root, store.get_track(track.id), PACK_NAME, EXTRACTOR)
     assert store.timeline_artifact_counts(PACK_NAME, EXTRACTOR) == {

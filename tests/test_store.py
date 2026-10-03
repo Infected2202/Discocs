@@ -42,7 +42,7 @@ def test_store_upsert_and_embedding_round_trip(tmp_path: Path):
     assert store.get_track(track_id).genre == "Techno"
     assert store.get_track(track_id).year == 1998
 
-    changed_scan = ScannedTrack(
+    retagged = ScannedTrack(
         path=scanned.path,
         artist="Artist",
         title="Title",
@@ -53,11 +53,48 @@ def test_store_upsert_and_embedding_round_trip(tmp_path: Path):
         file_size=101,
         mtime=2,
     )
-    same_id, changed = store.upsert_track(changed_scan)
+    same_id, changed = store.upsert_track(retagged)
+
+    # A tag rewrite changes size and mtime but not the audio: the embedding stays.
+    assert same_id == track_id
+    assert changed is False
+    assert store.get_track(track_id).file_size == 101
+    assert np.allclose(store.load_embedding(track_id, "discogs_multi"), vector)
+
+    replaced_audio = ScannedTrack(
+        path=scanned.path,
+        artist="Artist",
+        title="Title",
+        album="Album",
+        genre="Techno",
+        year=1999,
+        duration=150.0,
+        file_size=102,
+        mtime=3,
+    )
+    same_id, changed = store.upsert_track(replaced_audio)
 
     assert same_id == track_id
     assert changed is True
     assert store.load_embedding(track_id, "discogs_multi") is None
+
+
+def test_rewritten_file_with_same_duration_keeps_embedding_within_tolerance(tmp_path: Path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    path = (tmp_path / "track.mp3").resolve()
+    track_id, _changed = store.upsert_track(
+        ScannedTrack(path=path, artist="A", title="T", album="R", duration=200.0, file_size=10, mtime=1)
+    )
+    vector = np.array([0.1, 0.2, 0.3], dtype=np.float32)
+    store.save_embedding(track_id, "discogs_multi", vector)
+
+    _same, changed = store.upsert_track(
+        ScannedTrack(path=path, artist="A", title="T", album="R", duration=200.9, file_size=20, mtime=2)
+    )
+
+    assert changed is False
+    assert np.allclose(store.load_embedding(track_id, "discogs_multi"), vector)
 
 
 def test_added_at_is_preserved_and_release_added_at_is_derived(tmp_path: Path):
@@ -85,7 +122,7 @@ def test_added_at_is_preserved_and_release_added_at_is_derived(tmp_path: Path):
             artist="Added Artist",
             title="First Updated",
             album="Added Release",
-            duration=101.0,
+            duration=130.0,
             file_size=2,
             mtime=2,
         )
@@ -863,7 +900,7 @@ def test_changed_file_scan_removes_predictions(tmp_path: Path):
             album="Album",
             genre=None,
             year=None,
-            duration=123.0,
+            duration=150.0,
             file_size=101,
             mtime=2,
         )
@@ -988,7 +1025,7 @@ def test_track_release_move_refreshes_old_release_sidecars(tmp_path: Path):
     )
 
     assert refreshed_id == track_id
-    assert changed is True
+    assert changed is False
     old_release = store.get_release(old_release_id)
     assert old_release is not None
     assert old_release.release.track_count == 0

@@ -438,6 +438,45 @@ def _json_loads(value: str | None) -> dict[str, object]:
     return decoded if isinstance(decoded, dict) else {}
 
 
+AUDIO_DURATION_TOLERANCE_SECONDS = 1.0
+
+
+def reconcile_rewritten_track_file(
+    conn: sqlite3.Connection,
+    track_id: int,
+    path: str,
+    old_duration: float | None,
+    scanned: ScannedTrack,
+) -> bool:
+    """Decide what a rewritten file at an unchanged path means for derived audio data.
+
+    Size and mtime change on every tag edit while the audio stays the same, so they are
+    not a reason to recompute embeddings, predictions, features or timelines. Only a
+    duration change means different audio at the same path. Returns True when derived
+    data was invalidated; otherwise the timeline's recorded source identity follows the
+    file so the artifact stays valid.
+    """
+    if (
+        old_duration is not None
+        and scanned.duration is not None
+        and abs(float(old_duration) - float(scanned.duration)) > AUDIO_DURATION_TOLERANCE_SECONDS
+    ):
+        logger.info("Track audio changed, invalidating derived data track_id=%s path=%s", track_id, path)
+        conn.execute("DELETE FROM embeddings WHERE track_id = ?", (track_id,))
+        conn.execute("DELETE FROM track_model_outputs WHERE track_id = ?", (track_id,))
+        conn.execute("DELETE FROM track_predictions WHERE track_id = ?", (track_id,))
+        conn.execute("DELETE FROM track_features WHERE track_id = ?", (track_id,))
+        return True
+    conn.execute(
+        """
+        UPDATE track_timeline_artifacts SET source_mtime = ?, source_file_size = ?
+        WHERE track_id = ? AND source_path = ?
+        """,
+        (scanned.mtime, scanned.file_size, track_id, path),
+    )
+    return False
+
+
 def _optional_int(value: object | None) -> int | None:
     return int(value) if value is not None else None
 

@@ -27,6 +27,7 @@ from app.store._helpers import (
     playback_event_is_completion,
     playback_event_is_early_skip,
     playback_skip_score_delta,
+    reconcile_rewritten_track_file,
     row_to_analysis_job,
     row_to_analysis_task,
     row_to_analysis_worker,

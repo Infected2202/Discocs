@@ -7,7 +7,9 @@ owns its identity, paths, checksum, byte length and durable analysis state;
 generated files remain uncommitted runtime data.
 
 An artifact is usable only while `path + mtime + file_size` matches the current
-track. Manifest and payload length/checksum are validated before serving. Writes
+track. A tag-only rewrite of the file (same path and duration) moves the
+artifact's recorded `mtime`/`file_size` along with the track, so it stays valid;
+a duration change leaves it stale (see `docs/data-model.md`). Manifest and payload length/checksum are validated before serving. Writes
 use temporary sibling files and atomic replacement, and metadata is committed
 only after both final files exist. Cleanup resolves targets under the configured
 `data/timeline` root before deletion.

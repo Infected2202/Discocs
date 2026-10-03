@@ -9,7 +9,7 @@ from typing import Callable
 from app.navidrome import NavidromeClient, NavidromeSong
 from app.library import envelope_from_navidrome_song, explicit_release_type
 from app.scanner import ScannedTrack
-from app.store import Store, utc_now
+from app.store import Store, reconcile_rewritten_track_file, utc_now
 
 
 NAVIDROME_PROVIDER = "navidrome"
@@ -520,11 +520,11 @@ def _upsert_track(conn: sqlite3.Connection, scanned: ScannedTrack) -> tuple[int,
     now = utc_now()
     path = str(scanned.path)
     existing = conn.execute(
-        "SELECT id, file_size, mtime FROM tracks WHERE path = ?",
+        "SELECT id, file_size, mtime, duration FROM tracks WHERE path = ?",
         (path,),
     ).fetchone()
     if existing:
-        changed = (
+        file_rewritten = (
             int(existing["file_size"]) != scanned.file_size
             or int(existing["mtime"]) != scanned.mtime
         )
@@ -549,13 +549,9 @@ def _upsert_track(conn: sqlite3.Connection, scanned: ScannedTrack) -> tuple[int,
                 existing["id"],
             ),
         )
-        if changed:
-            track_id = int(existing["id"])
-            logger.info("Track changed, invalidating derived data track_id=%s path=%s", track_id, path)
-            conn.execute("DELETE FROM embeddings WHERE track_id = ?", (track_id,))
-            conn.execute("DELETE FROM track_model_outputs WHERE track_id = ?", (track_id,))
-            conn.execute("DELETE FROM track_predictions WHERE track_id = ?", (track_id,))
-            conn.execute("DELETE FROM track_features WHERE track_id = ?", (track_id,))
+        changed = file_rewritten and reconcile_rewritten_track_file(
+            conn, int(existing["id"]), path, existing["duration"], scanned
+        )
         return int(existing["id"]), changed
 
     cursor = conn.execute(

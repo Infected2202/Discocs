@@ -53,9 +53,13 @@ Key columns: `id`, `path` (unique), `artist`/`title`/`album`/`genre`/`year`
 exist), `duration`, `file_size`, `mtime`, `audio_hash`, `missing_at`,
 `last_seen_at`, `added_at`, `created_at`, `updated_at`.
 
-- Invalidation of derived data (embeddings, predictions, features) is driven
-  by `path + mtime + file_size`; when any of these change on rescan, the row
-  is treated as modified and downstream analysis is re-run.
+- Track identity is the `path`. A rewritten file at the same path (new
+  `file_size`/`mtime` — e.g. a tag edit) keeps its derived data (embeddings,
+  predictions, model outputs, features, timeline): only a `duration` change of
+  more than 1 s means different audio and invalidates them so analysis re-runs
+  (`reconcile_rewritten_track_file` in `app/store/_helpers.py`). On a tag-only
+  rewrite the timeline artifact's recorded source `mtime`/`file_size` follow
+  the file.
 - `missing_at` implements soft-delete for files that disappear from disk —
   rows are not deleted immediately (see `docs/analysis-pipeline.md`,
   "Lost Files"). Deleting a track row cascades to `embeddings`,

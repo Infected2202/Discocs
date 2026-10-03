@@ -26,6 +26,7 @@ from app.store._helpers import (
     _discography_group_key,
     _envelope_from_track_with_external,
     _require_external_value,
+    reconcile_rewritten_track_file,
     row_to_artist,
     row_to_external_track,
     row_to_release,
@@ -106,11 +107,11 @@ class LibraryStoreMixin:
         path = str(scanned.path)
         with self.connect() as conn:
             existing = conn.execute(
-                "SELECT id, file_size, mtime FROM tracks WHERE path = ?",
+                "SELECT id, file_size, mtime, duration FROM tracks WHERE path = ?",
                 (path,),
             ).fetchone()
             if existing:
-                changed = (
+                file_rewritten = (
                     int(existing["file_size"]) != scanned.file_size
                     or int(existing["mtime"]) != scanned.mtime
                 )
@@ -135,25 +136,9 @@ class LibraryStoreMixin:
                         existing["id"],
                     ),
                 )
-                if changed:
-                    logger.info(
-                        "Track changed, invalidating derived data track_id=%s path=%s",
-                        existing["id"],
-                        path,
-                    )
-                    conn.execute("DELETE FROM embeddings WHERE track_id = ?", (existing["id"],))
-                    conn.execute(
-                        "DELETE FROM track_model_outputs WHERE track_id = ?",
-                        (existing["id"],),
-                    )
-                    conn.execute(
-                        "DELETE FROM track_predictions WHERE track_id = ?",
-                        (existing["id"],),
-                    )
-                    conn.execute(
-                        "DELETE FROM track_features WHERE track_id = ?",
-                        (existing["id"],),
-                    )
+                changed = file_rewritten and reconcile_rewritten_track_file(
+                    conn, int(existing["id"]), path, existing["duration"], scanned
+                )
                 self._upsert_normalized_track_sidecars(
                     conn,
                     int(existing["id"]),

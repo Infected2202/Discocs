@@ -27,6 +27,7 @@ def song(
     play_count: int | None = None,
     played: str | None = None,
     starred: str | None = None,
+    duration: int = 123,
 ) -> NavidromeSong:
     raw = {
         "id": item_id,
@@ -49,7 +50,7 @@ def song(
         title=title,
         artist="Artist",
         album=album,
-        duration=123,
+        duration=duration,
         size=size,
         suffix="flac",
         content_type="audio/flac",
@@ -226,6 +227,28 @@ def test_sync_navidrome_catalog_is_idempotent_and_updates_metadata(tmp_path):
     assert refreshed.file_size == 101
     assert store.count_tracks() == 1
     assert store.count_external_tracks(NAVIDROME_PROVIDER) == 1
+
+
+def test_sync_navidrome_catalog_keeps_embedding_when_only_tags_change(tmp_path):
+    import numpy as np
+
+    store = Store(tmp_path / "app.db")
+    store.init()
+    sync_navidrome_catalog(store, FakeNavidromeClient([song("song-1", "One")]))  # type: ignore[arg-type]
+    track = store.get_track_by_external_id(NAVIDROME_PROVIDER, "song-1")
+    store.save_embedding(track.id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+
+    # Retagging the file grows it, the audio (duration) stays the same.
+    sync_navidrome_catalog(store, FakeNavidromeClient([song("song-1", "One", size=180)]))  # type: ignore[arg-type]
+    retagged = store.get_track_by_external_id(NAVIDROME_PROVIDER, "song-1")
+    assert retagged.file_size == 180
+    assert store.load_embedding(track.id, "discogs_multi") is not None
+
+    # Different audio at the same path shows up as a different duration.
+    sync_navidrome_catalog(
+        store, FakeNavidromeClient([song("song-1", "One", size=200, duration=300)])  # type: ignore[arg-type]
+    )
+    assert store.load_embedding(track.id, "discogs_multi") is None
 
 
 def test_sync_navidrome_catalog_preserves_release_id_when_album_id_changes(tmp_path):
