@@ -193,3 +193,33 @@ describe("ReleasePage — состояния ошибки", () => {
     expect(screen.queryByText("Release not found.")).toBeNull()
   })
 })
+
+describe("ReleasePage — лейбл релиза", () => {
+  beforeEach(() => {
+    useReleaseTracks.mockReturnValue({ data: makeTracksData(), isLoading: false })
+    useReleaseRelated.mockReturnValue({ data: makeRelatedData() })
+    useReleaseRecommendations.mockReturnValue({ data: makeRecsData() })
+    useShareCapabilities.mockReturnValue({ data: { enabled: true, can_create: true } })
+  })
+
+  it("показывает лейблы ссылками на страницы лейблов", async () => {
+    const data = makeReleaseData()
+    data.release.labels = [{ id: 7, name: "Warp" }, { id: 8, name: "Bleep" }]
+    useRelease.mockReturnValue({ data, isLoading: false, error: null })
+
+    renderPage()
+
+    expect(await screen.findByRole("link", { name: "Warp" })).toHaveAttribute("href", "/labels/7")
+    expect(screen.getByRole("link", { name: "Bleep" })).toHaveAttribute("href", "/labels/8")
+    expect(screen.getByLabelText("Labels")).toHaveTextContent("· Warp, Bleep")
+  })
+
+  it("ничего не показывает, если у релиза нет лейбла", async () => {
+    useRelease.mockReturnValue({ data: makeReleaseData(), isLoading: false, error: null })
+
+    renderPage()
+
+    await screen.findByRole("heading", { name: "Neon Lights" })
+    expect(screen.queryByLabelText("Labels")).toBeNull()
+  })
+})

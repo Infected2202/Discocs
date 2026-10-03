@@ -144,6 +144,8 @@ Backend calls: `useRelease`, `useReleaseTracks`, `useReleaseRelated`,
 
 Layout: square cover (`ArtworkImage`, `176px`) on the left, title/metadata on
 the right — release type label, all participating artists as links, year,
+record labels as links to `/labels/:id` (`release.labels` of the detail
+response, tag order),
 track count, duration — then Play / Shuffle / like-heart actions. Below the
 header: `TrackTable` for the release's tracks, a "More from these artists"
 `Shelf` built from the related-discography response (filtering out the
@@ -178,14 +180,20 @@ Backend calls: `useLabel`, `useLabelReleases` (`GET /api/v1/labels/{id}`,
 
 Layout: square label image (`144px`, from `/api/v1/labels/{id}/image` — the
 stored logo or the bundled Beatport placeholder), "Label" kicker, name and
-release count. No Play/Shuffle/like actions and no release-type filters —
-by design. Below the header, when present: the description (clamped to four
+release count, and a like heart. Label likes are local to discocs (Navidrome
+has no label stars): `PUT`/`DELETE /api/v1/labels/{id}/like` through
+`useToggleLabelLike` (optimistic, rolls back on error, then refetches the
+dashboard and the `labels` shelf). `LikeButton` takes `liked`/`onToggle` in
+this controlled mode instead of reading `navidromeStore`. No Play/Shuffle
+actions and no release-type filters — by design. Below the header, when present: the description (clamped to four
 lines with "Show more"/"Show less", `[a=Name]` mentions rendered as links to
 artists that exist in the library, plain text otherwise, plus a
 "Source: …" caption) and the label's external links (new tab,
 `rel="noopener noreferrer"`). Then a "Releases" heading with a
-newest/oldest-first select and one grid `Shelf` of release cards (subtitle
-`artists · year`). Sorting is by release date; year-only releases sit by
+newest/oldest-first select and one grid `Shelf` per non-empty release-type
+group — Albums, EPs, Singles, Compilations, Other releases (soundtracks,
+mixes, unknown type), in that order, from `groups` of the releases response —
+with release cards (subtitle `artists · year`). Sorting is by release date; year-only releases sit by
 year and are ordered by title inside it; undated releases go last in both
 directions. Images, descriptions and links come from `tools/label-sync`
 (see `plans/labels-shelf.md`).
@@ -432,8 +440,9 @@ Additional shelves beyond the original plan, all backed by
   preference row (no dislike, no plays), randomized.
 - `new_releases` — releases ordered by `release_year` desc then `added_at`
   desc (year must be set and `<= 2030`).
-- `labels` — record labels ordered by the number of their releases that
-  still have an available track (no minimum), then by name. Cards
+- `labels` — record labels: the user's liked labels first, then (within
+  each part) by the number of their releases that still have an available
+  track (no minimum), then by name. Cards
   (`entity_type: "label"`) carry `release_count` instead of a subtitle — the
   client renders a pluralized "N releases" — and `play_action: null`, so
   there is no Play button. Same data as `GET /api/v1/labels`.

@@ -6,6 +6,14 @@
   "releaseCount_many": "{{count}} релизов",
   "releaseCount_other": "{{count}} релиза",
   "releases": "Релизы",
+  "like": "В избранное",
+  "groups": {
+    "albums": "Альбомы",
+    "eps": "EP",
+    "singles": "Синглы",
+    "compilations": "Сборники",
+    "releases": "Другие релизы"
+  },
   "sort": {
     "label": "Сортировка",
     "release_date_desc": "Сначала новые",

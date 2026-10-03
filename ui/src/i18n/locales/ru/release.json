@@ -2,6 +2,7 @@
   "notFound": "Релиз не найден.",
   "play": "Воспроизвести",
   "shuffle": "Перемешать",
+  "labels": "Лейблы",
   "trackCount_one": "{{count}} трек",
   "trackCount_few": "{{count}} трека",
   "trackCount_many": "{{count}} треков",

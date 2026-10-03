@@ -103,8 +103,18 @@ export interface ReleaseSummary {
   artwork: ImageRef
 }
 
+export interface LabelLink {
+  id: number
+  name: string
+}
+
+export interface ReleaseDetail extends ReleaseSummary {
+  /** Record labels in tag order; absent in older fixtures/responses. */
+  labels?: LabelLink[]
+}
+
 export interface ReleaseResponse {
-  release: ReleaseSummary
+  release: ReleaseDetail
   actions: EntityAction[]
   links: Record<string, string>
 }
@@ -150,6 +160,7 @@ export interface LabelSummary {
   id: number
   name: string
   release_count: number
+  liked: boolean
   artwork: ImageRef
 }
 
@@ -171,9 +182,12 @@ export interface LabelResponse {
 
 export type LabelReleaseSort = "release_date_desc" | "release_date_asc"
 
+export type LabelReleaseGroupKey = "albums" | "eps" | "singles" | "compilations" | "releases"
+
 export interface LabelReleasesResponse {
   label: { id: number; name: string }
   sort: LabelReleaseSort
+  groups: { key: LabelReleaseGroupKey; items: ReleaseSummary[] }[]
   items: ReleaseSummary[]
 }
 

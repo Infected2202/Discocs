@@ -143,8 +143,17 @@ class ReleaseAvailabilityStubResponse(BaseModel):
     basis: str
 
 
+class LabelLinkResponse(BaseModel):
+    id: int
+    name: str
+
+
+class ReleaseDetailResponse(ReleaseSummaryResponse):
+    labels: list[LabelLinkResponse] = []
+
+
 class ReleaseResponse(BaseModel):
-    release: ReleaseSummaryResponse
+    release: ReleaseDetailResponse
     actions: list[EntityActionResponse]
     links: dict[str, str]
 

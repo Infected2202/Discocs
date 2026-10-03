@@ -109,6 +109,19 @@ export default function ReleasePage() {
               </span>
             ))}
             {release.release_year && <span>· {release.release_year}</span>}
+            {(release.labels?.length ?? 0) > 0 && (
+              <span aria-label={t("labels")}>
+                ·{" "}
+                {release.labels?.map((label, i) => (
+                  <span key={label.id}>
+                    <Link to={`/labels/${label.id}`} className="hover:text-foreground hover:underline">
+                      {label.name}
+                    </Link>
+                    {i < (release.labels?.length ?? 0) - 1 && ", "}
+                  </span>
+                ))}
+              </span>
+            )}
             {release.track_count > 0 && <span>· {t("trackCount", { count: release.track_count })}</span>}
             {release.duration && <span>· {formatDuration(release.duration, t)}</span>}
           </div>

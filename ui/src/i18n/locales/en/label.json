@@ -4,6 +4,14 @@
   "releaseCount_one": "{{count}} release",
   "releaseCount_other": "{{count}} releases",
   "releases": "Releases",
+  "like": "Add to favourites",
+  "groups": {
+    "albums": "Albums",
+    "eps": "EPs",
+    "singles": "Singles",
+    "compilations": "Compilations",
+    "releases": "Other releases"
+  },
   "sort": {
     "label": "Sort",
     "release_date_desc": "Newest first",

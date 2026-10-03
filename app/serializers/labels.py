@@ -29,6 +29,7 @@ def label_summary_dict(label: Label) -> dict[str, object]:
         "id": label.id,
         "name": label.name,
         "release_count": label.release_count,
+        "liked": label.liked,
         "artwork": label_artwork(label),
     }
 

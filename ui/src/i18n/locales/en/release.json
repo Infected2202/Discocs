@@ -2,6 +2,7 @@
   "notFound": "Release not found.",
   "play": "Play",
   "shuffle": "Shuffle",
+  "labels": "Labels",
   "trackCount_one": "{{count}} track",
   "trackCount_other": "{{count}} tracks",
   "duration": {

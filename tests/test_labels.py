@@ -389,3 +389,108 @@ def test_dashboard_labels_shelf_has_label_cards_without_play(tmp_path, monkeypat
     assert first["action"]["target"] == f"/labels/{store.label_id_by_name('Warp')}"
     assert first["play_action"] is None
     assert "labels" in client.get("/api/v1/dashboard").json()["settings"]["visible_shelves"]
+
+
+# ---------------------------------------------------------------------------
+# лайки, группы по типу, лейблы релиза
+# ---------------------------------------------------------------------------
+
+def set_release_type(store: Store, release_id: int, release_type: str) -> None:
+    with store.connect() as conn:
+        conn.execute("UPDATE releases SET release_type = ? WHERE id = ?", (release_type, release_id))
+
+
+def test_liked_labels_come_first_then_by_release_count(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    for album in ("B1", "B2", "B3"):
+        add_release(store, tmp_path, album, ("Big",))
+    add_release(store, tmp_path, "M1", ("Mid",))
+    add_release(store, tmp_path, "M2", ("Mid",))
+    add_release(store, tmp_path, "S1", ("Small",))
+    small_id = store.label_id_by_name("Small")
+    client = TestClient(app)
+
+    assert client.put(f"/api/v1/labels/{small_id}/like").json() == {"label_id": small_id, "liked": True}
+
+    names = [item["name"] for item in client.get("/api/v1/labels").json()["items"]]
+    assert names == ["Small", "Big", "Mid"]
+    shelf = client.get("/api/v1/dashboard/shelves/labels").json()["items"]
+    assert [item["title"] for item in shelf] == ["Small", "Big", "Mid"]
+    assert client.get(f"/api/v1/labels/{small_id}").json()["label"]["liked"] is True
+
+    # Среди лайкнутых — те же правила: больше релизов выше.
+    client.put(f"/api/v1/labels/{store.label_id_by_name('Mid')}/like")
+    names = [item["name"] for item in client.get("/api/v1/labels").json()["items"]]
+    assert names == ["Mid", "Small", "Big"]
+
+    client.delete(f"/api/v1/labels/{small_id}/like")
+    names = [item["name"] for item in client.get("/api/v1/labels").json()["items"]]
+    assert names == ["Mid", "Big", "Small"]
+    assert client.get(f"/api/v1/labels/{small_id}").json()["label"]["liked"] is False
+
+
+def test_like_unknown_label_is_not_found(tmp_path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    assert client.put("/api/v1/labels/999999/like").status_code == 404
+    assert client.delete("/api/v1/labels/999999/like").status_code == 404
+
+
+def test_service_token_lists_labels_without_likes_and_cannot_like(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_release(store, tmp_path, "R", ("Warp",))
+    label_id = store.label_id_by_name("Warp")
+    monkeypatch.setenv("DISCOCS_AUTH_ENABLED", "true")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")
+    monkeypatch.setenv("DISCOCS_SERVICE_TOKEN", "svc-secret")
+    headers = {"X-Discocs-Service-Token": "svc-secret"}
+    client = TestClient(app)
+
+    # label-sync ходит с сервисным токеном: пользователя нет, но список и запись метаданных работают.
+    listing = client.get("/api/v1/labels", headers=headers)
+    assert listing.status_code == 200
+    assert listing.json()["items"][0]["liked"] is False
+    assert client.put("/api/v1/labels/metadata", json={"name": "Warp"}, headers=headers).status_code == 200
+    assert client.put(f"/api/v1/labels/{label_id}/like", headers=headers).status_code == 403
+
+
+def test_label_releases_are_grouped_by_release_type(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    types = {
+        "Album Old": ("album", "2001-01-01"),
+        "Album New": ("album", "2020-01-01"),
+        "Single One": ("single", "2015-01-01"),
+        "The EP": ("ep", "2016-01-01"),
+        "Soundtrack": ("soundtrack", "2010-01-01"),
+    }
+    for title, (release_type, date) in types.items():
+        _track, release_id = add_release(store, tmp_path, title, ("L",), year=int(date[:4]), release_date=date)
+        set_release_type(store, release_id, release_type)
+    label_id = store.label_id_by_name("L")
+    client = TestClient(app)
+
+    body = client.get(f"/api/v1/labels/{label_id}/releases").json()
+
+    assert [group["key"] for group in body["groups"]] == ["albums", "eps", "singles", "releases"]
+    assert [item["title"] for item in body["groups"][0]["items"]] == ["Album New", "Album Old"]
+    assert [item["title"] for item in body["groups"][3]["items"]] == ["Soundtrack"]
+    asc = client.get(f"/api/v1/labels/{label_id}/releases", params={"sort": "release_date_asc"}).json()
+    assert [item["title"] for item in asc["groups"][0]["items"]] == ["Album Old", "Album New"]
+    # Плоский список для tools/label-sync остаётся.
+    assert len(body["items"]) == 5
+
+
+def test_release_detail_lists_its_labels_in_tag_order(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    _track, release_id = add_release(store, tmp_path, "Both", ("Warp", "Bleep"))
+    _other, plain_id = add_release(store, tmp_path, "Plain", None)
+    client = TestClient(app)
+
+    labels = client.get(f"/api/v1/releases/{release_id}").json()["release"]["labels"]
+
+    assert labels == [
+        {"id": store.label_id_by_name("Warp"), "name": "Warp"},
+        {"id": store.label_id_by_name("Bleep"), "name": "Bleep"},
+    ]
+    assert client.get(f"/api/v1/releases/{plain_id}").json()["release"]["labels"] == []

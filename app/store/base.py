@@ -353,6 +353,18 @@ class StoreBase:
                 CREATE INDEX IF NOT EXISTS idx_release_labels_label
                     ON release_labels(label_id);
 
+                -- Лайки лейблов — только локальные: в Navidrome у лейблов звёзд нет.
+                CREATE TABLE IF NOT EXISTS user_label_preferences (
+                    user_id INTEGER NOT NULL,
+                    label_id INTEGER NOT NULL,
+                    liked INTEGER NOT NULL DEFAULT 0,
+                    liked_at TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, label_id),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (label_id) REFERENCES labels(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS release_tracks (
                     release_id INTEGER NOT NULL,
                     track_id INTEGER NOT NULL,

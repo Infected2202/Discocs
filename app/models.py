@@ -85,6 +85,7 @@ class Label:
     external_ids: dict[str, str]
     metadata_synced_at: str | None
     release_count: int = 0
+    liked: bool = False
 
 
 @dataclass(frozen=True)

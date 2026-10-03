@@ -2,12 +2,13 @@ import { useLayoutEffect, useRef, useState } from "react"
 import { Link, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { ExternalLink } from "lucide-react"
-import { useLabel, useLabelReleases } from "@/api/hooks/useLabel"
+import { useLabel, useLabelReleases, useToggleLabelLike } from "@/api/hooks/useLabel"
 import { isNetworkError } from "@/lib/apiErrorKind"
 import { cn } from "@/lib/utils"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import CollectionHeader from "@/components/media/CollectionHeader"
+import LikeButton from "@/components/media/LikeButton"
 import Shelf from "@/components/media/Shelf"
 import { usePlayerStore } from "@/store/playerStore"
 import type { LabelDescriptionSegment, LabelDetail, LabelReleaseSort, ReleaseSummary } from "@/api/types"
@@ -148,6 +149,7 @@ export default function LabelPage() {
   const { data: labelData, isLoading, error } = useLabel(labelId)
   const { data: releasesData, isLoading: releasesLoading } = useLabelReleases(labelId, sort)
   const playSource = usePlayerStore((s) => s.playSource)
+  const toggleLike = useToggleLabelLike(labelId)
 
   if (isLoading) return <LabelPageSkeleton />
   if (error || !labelData) {
@@ -166,7 +168,7 @@ export default function LabelPage() {
   }
 
   const { label } = labelData
-  const releases = releasesData?.items ?? []
+  const groups = releasesData?.groups ?? []
 
   return (
     <div className="relative pb-8">
@@ -184,6 +186,17 @@ export default function LabelPage() {
         kicker={t("kicker")}
         title={label.name}
         meta={t("releaseCount", { count: label.release_count })}
+        actions={
+          <LikeButton
+            entity="label"
+            id={label.id}
+            liked={label.liked}
+            onToggle={() => toggleLike.mutate(!label.liked)}
+            variant="control"
+            size={18}
+            title={t("like")}
+          />
+        }
       />
 
       <LabelDescription label={label} />
@@ -203,20 +216,26 @@ export default function LabelPage() {
         </select>
       </div>
 
-      {!releasesLoading && releases.length === 0 ? (
+      {!releasesLoading && groups.length === 0 ? (
         <p className="px-4 sm:px-6 text-sm text-muted-foreground">{t("empty")}</p>
       ) : (
-        <Shelf
-          grid
-          items={releases.map((release) => ({
-            id: release.id,
-            type: "release" as const,
-            title: release.title,
-            subtitle: releaseSubtitle(release),
-            artwork: release.artwork,
-            onPlay: () => playSource("release", release.id, release.title),
-          }))}
-        />
+        <div className="space-y-4">
+          {groups.map((group) => (
+            <Shelf
+              key={group.key}
+              grid
+              title={t(`groups.${group.key}`)}
+              items={group.items.map((release) => ({
+                id: release.id,
+                type: "release" as const,
+                title: release.title,
+                subtitle: releaseSubtitle(release),
+                artwork: release.artwork,
+                onPlay: () => playSource("release", release.id, release.title),
+              }))}
+            />
+          ))}
+        </div>
       )}
     </div>
   )

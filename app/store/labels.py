@@ -10,7 +10,11 @@ import sqlite3
 
 from app.library import clean_display_text, normalize_text
 from app.models import Label, LabelMetadata, ReleaseSummaryRow, utc_now
-from app.store._helpers import row_to_release
+from app.store._helpers import _discography_group_key, row_to_release
+
+# Порядок групп на странице лейбла — как в дискографии артиста; «releases» —
+# всё, чей тип не альбом/EP/сингл/сборник (саундтреки, миксы, неизвестный тип).
+LABEL_RELEASE_GROUPS = ("albums", "eps", "singles", "compilations", "releases")
 
 # Релиз «живой», если у него есть хоть один доступный трек — как в полках дашборда.
 _AVAILABLE_RELEASE = """
@@ -37,6 +41,7 @@ def row_to_label(row: sqlite3.Row) -> Label:
         external_ids=_json_dict(row["external_ids_json"]),
         metadata_synced_at=row["metadata_synced_at"],
         release_count=int(row["release_count"] or 0) if "release_count" in keys else 0,
+        liked=bool(row["liked"]) if "liked" in keys else False,
     )
 
 
@@ -69,6 +74,14 @@ def sort_label_releases(rows: list[ReleaseSummaryRow], *, newest_first: bool) ->
         )
 
     return sorted(rows, key=key)
+
+
+def group_label_releases(rows: list[ReleaseSummaryRow]) -> list[tuple[str, list[ReleaseSummaryRow]]]:
+    """Релизы по типу (непустые группы, порядок ``LABEL_RELEASE_GROUPS``); порядок внутри сохраняется."""
+    groups: dict[str, list[ReleaseSummaryRow]] = {key: [] for key in LABEL_RELEASE_GROUPS}
+    for row in rows:
+        groups[_discography_group_key(row.release.release_type, False)].append(row)
+    return [(key, items) for key, items in groups.items() if items]
 
 
 class LabelsStoreMixin:
@@ -127,19 +140,26 @@ class LabelsStoreMixin:
         return int(cursor.lastrowid)
 
     def list_labels(self, *, limit: int, offset: int) -> tuple[list[Label], int]:
-        """Лейблы с живыми релизами, больше релизов — выше."""
+        """Лейблы с живыми релизами: лайкнутые первыми, дальше — больше релизов выше.
+
+        Лайки — текущего пользователя. У сервисного принципала (label-sync)
+        пользователя нет: лайков у него нет, а не ошибка.
+        """
         with self.connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT l.*, COUNT(DISTINCT rl.release_id) AS release_count
+                SELECT l.*, COUNT(DISTINCT rl.release_id) AS release_count,
+                    COALESCE(MAX(p.liked), 0) AS liked
                 FROM labels l
                 JOIN release_labels rl ON rl.label_id = l.id
+                LEFT JOIN user_label_preferences p
+                  ON p.label_id = l.id AND p.user_id = ?
                 WHERE {_AVAILABLE_RELEASE}
                 GROUP BY l.id
-                ORDER BY release_count DESC, l.name COLLATE NOCASE, l.id
+                ORDER BY liked DESC, release_count DESC, l.name COLLATE NOCASE, l.id
                 LIMIT ? OFFSET ?
                 """,
-                (limit, offset),
+                (self.user_id, limit, offset),
             ).fetchall()
             total = conn.execute(
                 f"""
@@ -159,13 +179,31 @@ class LabelsStoreMixin:
                         SELECT COUNT(DISTINCT rl.release_id)
                         FROM release_labels rl
                         WHERE rl.label_id = l.id AND {_AVAILABLE_RELEASE}
-                    ) AS release_count
+                    ) AS release_count,
+                    COALESCE(p.liked, 0) AS liked
                 FROM labels l
+                LEFT JOIN user_label_preferences p
+                  ON p.label_id = l.id AND p.user_id = ?
                 WHERE l.id = ?
                 """,
-                (label_id,),
+                (self.user_id, label_id),
             ).fetchone()
         return row_to_label(row) if row is not None else None
+
+    def set_label_liked(self, label_id: int, liked: bool) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_label_preferences (user_id, label_id, liked, liked_at, updated_at)
+                VALUES (discocs_user_id(), ?, ?, ?, ?)
+                ON CONFLICT(user_id, label_id) DO UPDATE SET
+                    liked = excluded.liked,
+                    liked_at = excluded.liked_at,
+                    updated_at = excluded.updated_at
+                """,
+                (label_id, int(liked), now if liked else None, now),
+            )
 
     def label_releases(self, label_id: int, *, newest_first: bool = True) -> list[ReleaseSummaryRow]:
         with self.connect() as conn:

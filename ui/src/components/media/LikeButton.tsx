@@ -3,11 +3,17 @@ import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { useNavidromeStore } from "@/store/navidromeStore"
 
-export type LikeEntity = "track" | "album" | "artist"
+export type LikeEntity = "track" | "album" | "artist" | "label"
 
 interface LikeButtonProps {
   readonly entity: LikeEntity
   readonly id: number
+  /**
+   * Controlled mode — for likes that are not Navidrome stars (labels): the
+   * caller owns the state and the toggle, the navidromeStore is not touched.
+   */
+  readonly liked?: boolean
+  readonly onToggle?: () => void
   /**
    * "control" — always visible, icon fills when liked (player, page headers).
    * "row" — hidden until the row is hovered on desktop, colour-only (list rows).
@@ -21,11 +27,13 @@ interface LikeButtonProps {
 
 // Tracks use thumbs-up (recommendation feedback); albums/artists use heart
 // (save to favourites). Preserved from the original per-site markup.
-const ICON = { track: ThumbsUp, album: Heart, artist: Heart } as const
+const ICON = { track: ThumbsUp, album: Heart, artist: Heart, label: Heart } as const
 
 export default function LikeButton({
   entity,
   id,
+  liked: controlledLiked,
+  onToggle,
   variant = "control",
   size = 15,
   title,
@@ -33,16 +41,18 @@ export default function LikeButton({
 }: LikeButtonProps) {
   const { t } = useTranslation("media")
   const resolvedTitle = title ?? t("like")
-  const liked = useNavidromeStore((s) =>
+  const storeLiked = useNavidromeStore((s) =>
     entity === "track"
       ? s.likedIds.has(id)
       : entity === "album"
         ? s.likedAlbumIds.has(id)
         : s.likedArtistIds.has(id),
   )
-  const toggle = useNavidromeStore((s) =>
+  const storeToggle = useNavidromeStore((s) =>
     entity === "track" ? s.toggleLike : entity === "album" ? s.toggleAlbumLike : s.toggleArtistLike,
   )
+  const liked = controlledLiked ?? storeLiked
+  const toggle: (id: number) => void = onToggle ? () => onToggle() : storeToggle
 
   const Icon = ICON[entity]
   // Only the control variant fills the glyph — list rows stay colour-only so a

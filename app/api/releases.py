@@ -41,7 +41,10 @@ def api_v1_release(release_id: int) -> dict[str, object] | JSONResponse:
     if release is None:
         return api_error(404, "not_found", _RELEASE_NOT_FOUND)
     return {
-        "release": release_summary_dict(release),
+        "release": {
+            **release_summary_dict(release),
+            "labels": [{"id": label.id, "name": label.name} for label in store.labels_for_release(release_id)],
+        },
         "actions": [entity_action("play", True, None), entity_action("shuffle", True, None)],
         "links": {
             "tracks": f"/api/v1/releases/{release_id}/tracks",

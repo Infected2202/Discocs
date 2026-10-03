@@ -11,6 +11,7 @@ from app.models import LabelMetadata
 from app.schemas.requests import LabelMetadataRequest
 from app.serializers.entities import release_summary_dict
 from app.serializers.labels import label_detail_dict, label_summary_dict
+from app.store import group_label_releases
 from app.services.labels import (
     LabelImageError,
     decode_label_image,
@@ -67,8 +68,34 @@ def api_v1_label_releases(
     return {
         "label": {"id": label.id, "name": label.name},
         "sort": sort,
+        # Группы по типу релиза — для страницы лейбла; плоский items — для tools/label-sync.
+        "groups": [
+            {"key": key, "items": [release_summary_dict(row) for row in rows]}
+            for key, rows in group_label_releases(releases)
+        ],
         "items": [release_summary_dict(row) for row in releases],
     }
+
+
+@router.put("/labels/{label_id}/like", response_model=None)
+def api_v1_like_label(label_id: int) -> dict[str, object] | JSONResponse:
+    return _set_label_like(label_id, True)
+
+
+@router.delete("/labels/{label_id}/like", response_model=None)
+def api_v1_unlike_label(label_id: int) -> dict[str, object] | JSONResponse:
+    return _set_label_like(label_id, False)
+
+
+def _set_label_like(label_id: int, liked: bool) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    if store.user_id is None:
+        # Сервисный токен — не пользователь, лайкать ему нечем.
+        return api_error(403, "forbidden", "Likes require a signed-in user")
+    if store.get_label(label_id) is None:
+        return api_error(404, "not_found", _LABEL_NOT_FOUND)
+    store.set_label_liked(label_id, liked)
+    return {"label_id": label_id, "liked": liked}
 
 
 @router.get("/labels/{label_id}/image", response_model=None)

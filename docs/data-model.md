@@ -126,6 +126,13 @@ MusicBrainz's `[no label]` marker is not treated as a label. Spelling
 variants, distributors-as-labels and sub-labels are not merged yet — see
 `plans/labels-shelf.md`.
 
+`user_label_preferences` (`user_id`, `label_id`, `liked`, `liked_at`,
+`updated_at`; PK `(user_id, label_id)`) holds label likes. Unlike track/
+release/artist likes it is not a mirror of Navidrome stars — labels have no
+stars there — so it is written only by `PUT`/`DELETE
+/api/v1/labels/{id}/like`. Liked labels sort first in label lists; a
+principal without a user (the service token) simply sees no likes.
+
 Image, description and links are written by `tools/label-sync` through
 `PUT /api/v1/labels/metadata` (label matched by normalized name, created if
 missing; description/links/ids replaced, image only replaced when sent).

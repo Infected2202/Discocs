@@ -8,10 +8,12 @@ import type { LabelReleasesResponse, LabelResponse, ReleaseSummary } from "@/api
 
 const useLabel = vi.fn()
 const useLabelReleases = vi.fn()
+const toggleLikeMutate = vi.fn()
 
 vi.mock("@/api/hooks/useLabel", () => ({
   useLabel: (...args: unknown[]) => useLabel(...args),
   useLabelReleases: (...args: unknown[]) => useLabelReleases(...args),
+  useToggleLabelLike: () => ({ mutate: toggleLikeMutate }),
 }))
 
 const playSource = vi.fn()
@@ -22,10 +24,10 @@ vi.mock("@/store/playerStore", () => ({
 }))
 
 vi.mock("@/components/media/Shelf", () => ({
-  default: ({ items }: { items: Array<{ title: string; subtitle?: string | null }> }) => (
-    <div data-testid="releases">
+  default: ({ title, items }: { title: string; items: Array<{ title: string; subtitle?: string | null }> }) => (
+    <section data-testid="releases" aria-label={title}>
       {items.map((item) => <span key={item.title}>{item.title} — {item.subtitle}</span>)}
-    </div>
+    </section>
   ),
 }))
 
@@ -54,6 +56,7 @@ function makeLabel(overrides: Partial<LabelResponse["label"]> = {}): LabelRespon
       id: 5,
       name: "Trip",
       release_count: 2,
+      liked: false,
       artwork: { url: "/api/v1/labels/5/image?v=1", source: "beatport", placeholder: false },
       description: {
         source: "discogs",
@@ -75,8 +78,11 @@ function makeLabel(overrides: Partial<LabelResponse["label"]> = {}): LabelRespon
   }
 }
 
-function makeReleases(items: ReleaseSummary[]): LabelReleasesResponse {
-  return { label: { id: 5, name: "Trip" }, sort: "release_date_desc", items }
+function makeReleases(
+  items: ReleaseSummary[],
+  groups: LabelReleasesResponse["groups"] = items.length ? [{ key: "albums", items }] : [],
+): LabelReleasesResponse {
+  return { label: { id: 5, name: "Trip" }, sort: "release_date_desc", groups, items }
 }
 
 function renderPage() {
@@ -96,6 +102,7 @@ describe("LabelPage", () => {
   beforeEach(() => {
     useLabel.mockReset()
     useLabelReleases.mockReset()
+    toggleLikeMutate.mockReset()
     useLabel.mockReturnValue({ data: makeLabel(), isLoading: false, error: null })
     useLabelReleases.mockReturnValue({
       data: makeReleases([release(1, "New One", 2020), release(2, "Old One", 2001)]),
@@ -164,6 +171,49 @@ describe("LabelPage", () => {
 
     expect(screen.getByText("This label has no releases in the library.")).toBeInTheDocument()
     expect(screen.queryByTestId("releases")).not.toBeInTheDocument()
+  })
+
+  it("splits releases into release-type groups in the order the API returns them", () => {
+    const ep = { ...release(3, "Some EP", 2019), release_type: "ep", release_type_label: "EP" }
+    const single = { ...release(4, "A Single", 2018), release_type: "single", release_type_label: "Single" }
+    useLabelReleases.mockReturnValue({
+      data: makeReleases([], [
+        { key: "albums", items: [release(1, "New One", 2020)] },
+        { key: "eps", items: [ep] },
+        { key: "singles", items: [single] },
+        { key: "releases", items: [release(5, "Soundtrack", 2010)] },
+      ]),
+      isLoading: false,
+    })
+
+    renderPage()
+
+    const shelves = screen.getAllByTestId("releases")
+    expect(shelves.map((shelf) => shelf.getAttribute("aria-label"))).toEqual([
+      "Albums", "EPs", "Singles", "Other releases",
+    ])
+    expect(shelves[1]).toHaveTextContent("Some EP")
+    expect(shelves[1]).not.toHaveTextContent("New One")
+  })
+
+  it("likes a label that is not liked yet", () => {
+    renderPage()
+
+    fireEvent.click(screen.getByRole("button", { name: "Add to favourites" }))
+
+    expect(toggleLikeMutate).toHaveBeenCalledWith(true)
+  })
+
+  it("unlikes an already liked label", () => {
+    useLabel.mockReturnValue({ data: makeLabel({ liked: true }), isLoading: false, error: null })
+
+    renderPage()
+
+    const button = screen.getByRole("button", { name: "Add to favourites" })
+    expect(button).toHaveClass("text-primary")
+    fireEvent.click(button)
+
+    expect(toggleLikeMutate).toHaveBeenCalledWith(false)
   })
 
   it("shows not found for a missing label", () => {
