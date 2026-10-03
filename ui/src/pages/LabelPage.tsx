@@ -1,10 +1,11 @@
 import { useLayoutEffect, useRef, useState } from "react"
 import { Link, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
-import { ExternalLink } from "lucide-react"
+import { ExternalLink, Shuffle } from "lucide-react"
 import { useLabel, useLabelReleases, useToggleLabelLike } from "@/api/hooks/useLabel"
 import { isNetworkError } from "@/lib/apiErrorKind"
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import CollectionHeader from "@/components/media/CollectionHeader"
@@ -188,6 +189,16 @@ export default function LabelPage() {
         meta={t("releaseCount", { count: label.release_count })}
         actions={
           <>
+            <Button
+              size="icon-sm"
+              variant="outline"
+              aria-label={t("shuffle")}
+              title={t("shuffle")}
+              disabled={label.release_count === 0}
+              onClick={() => playSource("label", label.id, label.name, undefined, { shuffle: true })}
+            >
+              <Shuffle size={14} />
+            </Button>
             <LikeButton
               entity="label"
               id={label.id}

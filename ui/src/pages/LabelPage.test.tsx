@@ -103,6 +103,7 @@ describe("LabelPage", () => {
     useLabel.mockReset()
     useLabelReleases.mockReset()
     toggleLikeMutate.mockReset()
+    playSource.mockReset()
     useLabel.mockReturnValue({ data: makeLabel(), isLoading: false, error: null })
     useLabelReleases.mockReturnValue({
       data: makeReleases([release(1, "New One", 2020), release(2, "Old One", 2001)]),
@@ -196,6 +197,22 @@ describe("LabelPage", () => {
     expect(screen.queryByRole("heading", { name: "Releases" })).not.toBeInTheDocument()
     expect(shelves[1]).toHaveTextContent("Some EP")
     expect(shelves[1]).not.toHaveTextContent("New One")
+  })
+
+  it("shuffles the whole label as a playback source", () => {
+    renderPage()
+
+    fireEvent.click(screen.getByRole("button", { name: "Shuffle" }))
+
+    expect(playSource).toHaveBeenCalledWith("label", 5, "Trip", undefined, { shuffle: true })
+  })
+
+  it("disables Shuffle when the label has nothing left to play", () => {
+    useLabel.mockReturnValue({ data: makeLabel({ release_count: 0 }), isLoading: false, error: null })
+
+    renderPage()
+
+    expect(screen.getByRole("button", { name: "Shuffle" })).toBeDisabled()
   })
 
   it("likes a label that is not liked yet", () => {

@@ -180,12 +180,16 @@ Backend calls: `useLabel`, `useLabelReleases` (`GET /api/v1/labels/{id}`,
 
 Layout: square label image (`144px`, from `/api/v1/labels/{id}/image` — the
 stored logo or the bundled Beatport placeholder), "Label" kicker, name and
-release count, and a like heart. Label likes are local to discocs (Navidrome
+release count, a Shuffle button and a like heart. Shuffle starts a playback
+session with `source_type: "label"`: the backend queues a random sample of up
+to 200 available tracks across all the label's releases (a plain, unshuffled
+label session would take them newest release first, in track order), then
+autoplay continues as usual. Label likes are local to discocs (Navidrome
 has no label stars): `PUT`/`DELETE /api/v1/labels/{id}/like` through
 `useToggleLabelLike` (optimistic, rolls back on error, then refetches the
 dashboard and the `labels` shelf). `LikeButton` takes `liked`/`onToggle` in
-this controlled mode instead of reading `navidromeStore`. No Play/Shuffle
-actions and no release-type filters — by design. Below the header, when present: the description (clamped to four
+this controlled mode instead of reading `navidromeStore`. No Play button and
+no release-type filters — by design. Below the header, when present: the description (clamped to four
 lines with "Show more"/"Show less", `[a=Name]` mentions rendered as links to
 artists that exist in the library, plain text otherwise, plus a
 "Source: …" caption) and the label's external links (new tab,

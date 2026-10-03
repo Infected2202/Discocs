@@ -4,6 +4,7 @@
   "releaseCount_one": "{{count}} release",
   "releaseCount_other": "{{count}} releases",
   "like": "Add to favourites",
+  "shuffle": "Shuffle",
   "groups": {
     "albums": "Albums",
     "eps": "EPs",

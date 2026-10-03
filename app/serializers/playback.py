@@ -13,6 +13,9 @@ from app.schemas.requests import PlaybackQueuePatchRequest, PlaybackSessionCreat
 from app.serializers.entities import _json_object, track_summary_dict
 from app.store import Store, playback_event_is_completion
 
+# Сколько треков лейбла кладём в очередь сразу; дальше её продолжает автоплей.
+LABEL_QUEUE_LIMIT = 200
+
 logger = logging.getLogger(__name__)
 navidrome_logger = logging.getLogger("discocs.navidrome")
 
@@ -320,6 +323,14 @@ def build_initial_playback_queue(store: Store, request: PlaybackSessionCreateReq
             raise ValueError("source_id is required for release playback sessions")
         tracks = store.list_release_tracks(request.source_id)
         return [item.track.id for item in tracks]
+    if request.source_type == "label":
+        if request.source_id is None:
+            raise ValueError("source_id is required for label playback sessions")
+        return store.label_track_ids(
+            request.source_id,
+            limit=LABEL_QUEUE_LIMIT,
+            shuffle=request.shuffle_enabled or request.mode == "shuffle",
+        )
     if request.source_type == "artist":
         if request.source_id is None:
             raise ValueError("source_id is required for artist playback sessions")

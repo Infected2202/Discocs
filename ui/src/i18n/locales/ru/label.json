@@ -6,6 +6,7 @@
   "releaseCount_many": "{{count}} релизов",
   "releaseCount_other": "{{count}} релиза",
   "like": "В избранное",
+  "shuffle": "Перемешать",
   "groups": {
     "albums": "Альбомы",
     "eps": "EP",

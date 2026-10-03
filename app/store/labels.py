@@ -6,6 +6,7 @@ Do not import this module directly; use app.store instead.
 from __future__ import annotations
 
 import json
+import random
 import sqlite3
 
 from app.library import clean_display_text, normalize_text
@@ -222,6 +223,38 @@ class LabelsStoreMixin:
             for row in rows
         ]
         return sort_label_releases(releases, newest_first=newest_first)
+
+    def label_track_ids(self, label_id: int, *, limit: int, shuffle: bool = False) -> list[int]:
+        """Доступные треки релизов лейбла для очереди воспроизведения.
+
+        Подряд — релизы от новых к старым, внутри релиза по трек-листу. С
+        shuffle — случайная выборка по всему каталогу: у крупного лейбла
+        (Suara — тысячи треков) первые ``limit`` подряд были бы одними свежими релизами.
+        """
+        order = {
+            row.release.id: position
+            for position, row in enumerate(self.label_releases(label_id, newest_first=True))
+        }
+        if not order:
+            return []
+        placeholders = ",".join("?" for _id in order)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT rt.release_id, t.id AS track_id
+                FROM release_tracks rt
+                JOIN tracks t ON t.id = rt.track_id
+                WHERE rt.release_id IN ({placeholders}) AND t.missing_at IS NULL
+                ORDER BY rt.disc_number IS NULL, rt.disc_number,
+                         rt.track_number IS NULL, rt.track_number, rt.position, t.id
+                """,
+                list(order),
+            ).fetchall()
+        ordered = sorted(rows, key=lambda row: order[int(row["release_id"])])
+        track_ids = list(dict.fromkeys(int(row["track_id"]) for row in ordered))
+        if shuffle and len(track_ids) > limit:
+            return random.sample(track_ids, limit)
+        return track_ids[:limit]
 
     def label_id_by_name(self, name: str) -> int | None:
         with self.connect() as conn:

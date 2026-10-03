@@ -494,3 +494,102 @@ def test_release_detail_lists_its_labels_in_tag_order(tmp_path, monkeypatch):
         {"id": store.label_id_by_name("Bleep"), "name": "Bleep"},
     ]
     assert client.get(f"/api/v1/releases/{plain_id}").json()["release"]["labels"] == []
+
+
+# ---------------------------------------------------------------------------
+# воспроизведение лейбла (кнопка «Перемешать»)
+# ---------------------------------------------------------------------------
+
+def add_label_track(
+    store: Store,
+    tmp_path: Path,
+    album: str,
+    number: int,
+    *,
+    labels: tuple[str, ...] = ("L",),
+    release_date: str = "2020-01-01",
+) -> int:
+    """Трек номер ``number`` релиза ``album`` (одна папка — один релиз)."""
+    path = tmp_path / "music" / album / f"{number:02d}.flac"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"fake")
+    scanned = ScannedTrack(
+        path=path, artist="Artist", title=f"{album} {number}", album=album,
+        year=int(release_date[:4]), duration=180.0, file_size=4, mtime=1,
+    )
+    track_id, _changed = store.upsert_track(scanned)
+    store.upsert_normalized_track_sidecars(
+        track_id,
+        TrackMetadataEnvelope(
+            title=scanned.title, artist="Artist", album=album, year=scanned.year,
+            duration=180.0, path=str(path), track_number=number,
+            release_date=release_date, record_labels=labels,
+        ),
+    )
+    return track_id
+
+
+def test_label_track_ids_go_newest_release_first_in_track_order(tmp_path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    old_2 = add_label_track(store, tmp_path, "Old", 2, release_date="2001-01-01")
+    old_1 = add_label_track(store, tmp_path, "Old", 1, release_date="2001-01-01")
+    new_1 = add_label_track(store, tmp_path, "New", 1, release_date="2020-01-01")
+    gone = add_label_track(store, tmp_path, "New", 2, release_date="2020-01-01")
+    add_label_track(store, tmp_path, "Elsewhere", 1, labels=("Other",))
+    with store.connect() as conn:
+        conn.execute("UPDATE tracks SET missing_at = '2026-01-01' WHERE id = ?", (gone,))
+    label_id = store.label_id_by_name("L")
+
+    assert store.label_track_ids(label_id, limit=10) == [new_1, old_1, old_2]
+    assert store.label_track_ids(label_id, limit=2) == [new_1, old_1]
+
+
+def test_label_shuffle_samples_across_the_whole_catalog(tmp_path, monkeypatch):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    track_ids = [add_label_track(store, tmp_path, f"R{n}", 1, release_date=f"20{n:02d}-01-01") for n in range(10)]
+    label_id = store.label_id_by_name("L")
+    seen_population: list[list[int]] = []
+
+    def fake_sample(population, k):
+        seen_population.append(list(population))
+        return list(population)[-k:]
+
+    monkeypatch.setattr("app.store.labels.random.sample", fake_sample)
+
+    sample = store.label_track_ids(label_id, limit=3, shuffle=True)
+
+    # Выборка — из всех треков лейбла, а не из первых трёх подряд (самых свежих).
+    assert sorted(seen_population[0]) == sorted(track_ids)
+    assert sample == seen_population[0][-3:]
+    assert not set(sample) & set(store.label_track_ids(label_id, limit=3))
+
+
+def test_playback_session_from_label_queues_its_tracks(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    first = add_label_track(store, tmp_path, "One", 1)
+    second = add_label_track(store, tmp_path, "One", 2)
+    label_id = store.label_id_by_name("L")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/playback/sessions",
+        json={"source_type": "label", "source_id": label_id, "source_label": "L",
+              "mode": "shuffle", "shuffle_enabled": True},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["session"]["source_type"] == "label"
+    assert body["session"]["shuffle_enabled"] is True
+    assert sorted(item["track_id"] for item in body["queue"]["items"]) == sorted([first, second])
+
+
+def test_playback_session_from_label_without_tracks_is_not_found(tmp_path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.post("/api/v1/playback/sessions", json={"source_type": "label", "source_id": 999999})
+
+    assert response.status_code == 404

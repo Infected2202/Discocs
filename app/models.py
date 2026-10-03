@@ -666,6 +666,7 @@ def utc_now() -> str:
 PLAYBACK_SOURCE_TYPES = {
     "release",
     "artist",
+    "label",
     "track",
     "playlist",
     "search",

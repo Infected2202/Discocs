@@ -108,7 +108,7 @@ def api_v1_create_playback_session(request: PlaybackSessionCreateRequest) -> dic
     store, _settings = context()
     try:
         track_ids = build_initial_playback_queue(store, request)
-        if request.source_type in {"track", "release", "artist"} and not track_ids:
+        if request.source_type in {"track", "release", "artist", "label"} and not track_ids:
             return api_error(404, "not_found", "Playback source has no local tracks")
         session, _queue = store.create_playback_session(
             source_type=request.source_type,

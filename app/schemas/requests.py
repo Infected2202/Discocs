@@ -295,7 +295,7 @@ class FeedbackRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class PlaybackSessionCreateRequest(BaseModel):
-    source_type: str = Field(pattern="^(release|artist|track|playlist|search|flow|autoplay|manual|generated_mix)$")
+    source_type: str = Field(pattern="^(release|artist|label|track|playlist|search|flow|autoplay|manual|generated_mix)$")
     source_id: int | None = None
     source_label: str | None = None
     mode: str = Field(default="linear", pattern="^(linear|shuffle|radio|flow|autoplay)$")
@@ -322,7 +322,7 @@ class PlaybackSessionPatchRequest(BaseModel):
 class PlaybackQueueItemRequest(BaseModel):
     track_id: int
     origin: str = Field(default="manual", pattern="^(source|manual|autoplay|flow|generated_mix)$")
-    source_type: str | None = Field(default=None, pattern="^(release|artist|track|playlist|search|flow|autoplay|manual|generated_mix)$")
+    source_type: str | None = Field(default=None, pattern="^(release|artist|label|track|playlist|search|flow|autoplay|manual|generated_mix)$")
     source_id: int | None = None
     locked: bool = False
     reason: str | None = None
