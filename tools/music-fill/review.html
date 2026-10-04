@@ -759,11 +759,15 @@ async function loadDisco(id, highlight = null) {
   const box = $("#disco");
   if (!box) return;
   box.innerHTML = `<p class="muted">Загружаю дискографию с Deezer…</p>`;
-  if (!discoCache[id]) discoCache[id] = await fetch(`/api/deezer/discography?id=${id}`).then(x => x.json()).catch(e => ({error: String(e)}));
-  const d = discoCache[id];
+  const d = discoCache[id] || await fetch(`/api/deezer/discography?id=${id}`).then(x => x.json()).catch(e => ({error: String(e)}));
+  if (!d.error) discoCache[id] = d;  // ошибку (deemix не запущен / не залогинен) не кэшируем — следующее открытие спросит заново
   if ($("#disco") !== box) return;
   if (tab === "artists" && chosen[$("#dz").dataset.key] !== id) return;
-  if (d.error) { box.innerHTML = `<p class="muted">Дискография: ${esc(d.error)}</p>`; return; }
+  if (d.error) {
+    box.innerHTML = `<p class="muted">Дискография: ${esc(d.error)} <a href="#" class="disco-retry">повторить</a></p>`;
+    box.querySelector(".disco-retry").onclick = e => { e.preventDefault(); loadDisco(id, highlight); };
+    return;
+  }
   const groups = {};
   d.releases.forEach(r => (groups[r.type] = groups[r.type] || []).push(r));
   const have = d.releases.filter(r => r.have).length;
@@ -777,9 +781,10 @@ async function loadDisco(id, highlight = null) {
         <small class="muted rdur" data-rid="${r.id}"></small>
         ${r.have ? `<span class="pill-ok">есть в библиотеке</span>` : ""}${r.dup ? ` <span class="muted">(ещё одно издание)</span>` : ""}</span></div>`).join("")}
     </details>`).join("");
-  if (!discoSizes[id]) discoSizes[id] = await fetch(`/api/deezer/discography_sizes?id=${id}`).then(x => x.json()).catch(() => null);
-  const sz = discoSizes[id];
-  if (!sz || $("#disco") !== box) return;
+  const sz = discoSizes[id] || await fetch(`/api/deezer/discography_sizes?id=${id}`).then(x => x.json()).catch(() => null);
+  if (!sz?.releases) return;  // ошибка — не кэшируем, посчитаем при следующем открытии
+  discoSizes[id] = sz;
+  if ($("#disco") !== box) return;
   rates = sz.rates || rates;
   const dur = r => sz.releases[String(r.id)]?.duration || 0, trk = r => sz.releases[String(r.id)]?.nb_tracks || 0;
   const line = rs => { const sec = rs.reduce((s, r) => s + dur(r), 0); return `${rs.length} рел. · ${rs.reduce((s, r) => s + trk(r), 0)} тр. · ${fmtDur(sec)} · ${sizeOf(sec)}`; };
