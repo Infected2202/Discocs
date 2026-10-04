@@ -106,7 +106,7 @@ def test_artist_popularity_is_an_explicit_global_sum(tmp_path: Path):
     bob.import_external_track_play_state(track_id, play_count=3)
     artist_id = alice.artist_ids_for_track(track_id)[0]
 
-    [(track, play_count)] = alice.top_tracks_for_artist(artist_id)
+    [(track, play_count, _deezer_rank)] = alice.top_tracks_for_artist(artist_id)
 
     assert track.id == track_id
     assert play_count == 5

@@ -1415,8 +1415,8 @@ def test_top_tracks_for_artist_orders_by_play_count_desc(tmp_path: Path):
 
     top = store.top_tracks_for_artist(artist_id, limit=5)
 
-    assert [track.id for track, _count in top] == [loud_id, medium_id, quiet_id]
-    assert [count for _track, count in top] == [3, 1, 0]
+    assert [track.id for track, _count, _rank in top] == [loud_id, medium_id, quiet_id]
+    assert [count for _track, count, _rank in top] == [3, 1, 0]
 
 
 def test_top_tracks_for_artist_excludes_other_artists(tmp_path: Path):
@@ -1449,7 +1449,7 @@ def test_top_tracks_for_artist_excludes_other_artists(tmp_path: Path):
 
     top = store.top_tracks_for_artist(artist_id, limit=5)
 
-    assert [track.id for track, _count in top] == [own_id]
+    assert [track.id for track, _count, _rank in top] == [own_id]
 
 
 def test_playback_queue_rejects_missing_tracks_and_low_completion_does_not_finish_item(tmp_path: Path):
