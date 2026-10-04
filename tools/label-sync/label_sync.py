@@ -25,7 +25,9 @@ import json
 import os
 import re
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import requests
@@ -52,8 +54,19 @@ MAX_BARCODES = 40
 CONFIRM_PAGES = 3        # страниц релизов кандидата при подтверждении поиска по названию
 WEB_TTL = 30 * 86400
 
-_session = requests.Session()
-_session.headers["User-Agent"] = "discocs-label-sync/0.1 (personal library tool)"
+WORKERS = 3              # лейблов параллельно: пока один ждёт Beatport/Википедию, Discogs не простаивает
+
+# requests.Session не гарантирует потокобезопасность — у каждого потока своя.
+_local = threading.local()
+
+
+def http() -> requests.Session:
+    session = getattr(_local, "session", None)
+    if session is None:
+        session = requests.Session()
+        session.headers["User-Agent"] = "discocs-label-sync/0.1 (personal library tool)"
+        _local.session = session
+    return session
 
 
 # ---------- общее ----------
@@ -78,18 +91,21 @@ def norm(text: str | None) -> str:
 
 
 _web_cache: dict = read_json(WEB_CACHE, {})
+_web_lock = threading.Lock()
 
 
 def web_json(url: str, **params) -> dict:
     """GET JSON с кэшем на диске (Wikidata, Wikipedia)."""
     key = url + "?" + "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-    hit = _web_cache.get(key)
+    with _web_lock:
+        hit = _web_cache.get(key)
     if hit and time.time() - hit["ts"] < WEB_TTL:
         return hit["data"]
-    r = _session.get(url, params=params, timeout=30)
+    r = http().get(url, params=params, timeout=30)
     data = r.json() if r.status_code == 200 else {}
-    _web_cache[key] = {"ts": time.time(), "data": data}
-    write_json(WEB_CACHE, _web_cache)
+    with _web_lock:
+        _web_cache[key] = {"ts": time.time(), "data": data}
+        write_json(WEB_CACHE, _web_cache)
     time.sleep(0.2)
     return data
 
@@ -99,10 +115,13 @@ def download(url: str) -> bytes | None:
     path = IMAGES / (hashlib.sha1(url.encode()).hexdigest() + ".img")
     if path.exists():
         return path.read_bytes()
-    r = _session.get(url, timeout=60)
+    r = http().get(url, timeout=60)
     if r.status_code != 200 or not r.content:
         return None
-    path.write_bytes(r.content)
+    # Через временный файл: два потока могут качать одну картинку (общий лейбл у разных названий).
+    tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
+    tmp.write_bytes(r.content)
+    os.replace(tmp, path)
     return r.content
 
 
@@ -116,7 +135,7 @@ class Discocs:
     def labels(self) -> list[dict]:
         out, offset = [], 0
         while offset is not None:
-            r = _session.get(f"{self.url}/api/v1/labels", params={"limit": 100, "offset": offset},
+            r = http().get(f"{self.url}/api/v1/labels", params={"limit": 100, "offset": offset},
                              headers=self.headers, timeout=60)
             r.raise_for_status()
             page = r.json()
@@ -125,12 +144,12 @@ class Discocs:
         return out
 
     def release_titles(self, label_id: int) -> list[str]:
-        r = _session.get(f"{self.url}/api/v1/labels/{label_id}/releases", headers=self.headers, timeout=60)
+        r = http().get(f"{self.url}/api/v1/labels/{label_id}/releases", headers=self.headers, timeout=60)
         r.raise_for_status()
         return [item["title"] for item in r.json()["items"]]
 
     def put(self, payload: dict) -> None:
-        r = _session.put(f"{self.url}/api/v1/labels/metadata", json=payload, headers=self.headers, timeout=120)
+        r = http().put(f"{self.url}/api/v1/labels/metadata", json=payload, headers=self.headers, timeout=120)
         if r.status_code != 200:
             raise RuntimeError(f"discocs {r.status_code}: {r.text[:300]}")
 
@@ -399,6 +418,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int, help="первые N лейблов")
     parser.add_argument("--force", action="store_true", help="отправить и уже отправленные")
     parser.add_argument("--dry-run", action="store_true", help="не отправлять в discocs")
+    parser.add_argument("--workers", type=int, default=WORKERS, help=f"лейблов параллельно (по умолчанию {WORKERS})")
     args = parser.parse_args()
 
     cfg = read_json(CONFIG, {})
@@ -415,23 +435,32 @@ def main() -> None:
     print(f"лейблов в discocs: {len(labels)}, к обработке: {len(todo)}")
 
     started = time.time()
-    try:
-        for index, label in enumerate(todo, 1):
-            key = norm(label["name"])
-            try:
-                result = resolve(label, codes_by_label.get(key, []), discocs)
-                if not args.dry_run:
-                    discocs.put(payload_for(result))
+    state_lock = threading.Lock()
+
+    def process(label: dict) -> str:
+        key = norm(label["name"])
+        try:
+            result = resolve(label, codes_by_label.get(key, []), discocs)
+            if not args.dry_run:
+                discocs.put(payload_for(result))
+                with state_lock:
                     state[key] = {k: v for k, v in result.items() if k != "description"} | {"synced_at": time.time()}
                     write_json(STATE, state)
-                print(f"[{index}/{len(todo)}] {label['name']}: картинка={result['image_source'] or '—'} "
-                      f"описание={result['description_source'] or '—'} {result['how']}")
-            except Exception as exc:  # один упавший лейбл не должен останавливать весь прогон
-                print(f"[{index}/{len(todo)}] {label['name']}: ОШИБКА {exc}")
-            if index % 20 == 0:
-                beatport.flush()
-                discogs.flush()
-                print(f"  … {index} за {int(time.time() - started)} с")
+            return (f"{label['name']}: картинка={result['image_source'] or '—'} "
+                    f"описание={result['description_source'] or '—'} {result['how']}")
+        except Exception as exc:  # один упавший лейбл не должен останавливать весь прогон
+            return f"{label['name']}: ОШИБКА {exc}"
+
+    try:
+        # Порядок завершения не совпадает с порядком в списке — номер в логе это счётчик готовых.
+        with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+            futures = [pool.submit(process, label) for label in todo]
+            for index, future in enumerate(as_completed(futures), 1):
+                print(f"[{index}/{len(todo)}] {future.result()}", flush=True)
+                if index % 20 == 0:
+                    beatport.flush()
+                    discogs.flush()
+                    print(f"  … {index} за {int(time.time() - started)} с", flush=True)
     finally:
         beatport.flush()
         discogs.flush()

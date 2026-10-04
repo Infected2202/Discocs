@@ -37,7 +37,11 @@ python label_sync.py --dry-run --limit 20
 python label_sync.py
 ```
 
-`--only "Ninja Tune"` — один лейбл, `--force` — отправить заново уже отправленные.
+`--only "Ninja Tune"` — один лейбл, `--force` — отправить заново уже отправленные,
+`--workers N` — сколько лейблов обрабатывать параллельно (по умолчанию 3). В один поток Discogs
+загружен на треть своего лимита (~21 из 60 запросов в минуту): пока скрипт ждёт Beatport или
+Википедию, Discogs простаивает. Больше потоков лимит не превысят — модуль Discogs из music-fill
+шлёт запросы по одному и притормаживает по заголовку `X-Discogs-Ratelimit-Remaining`, на 429 ждёт.
 
 Нужны Python 3.11+ с `requests` и рабочий [../music-fill](../music-fill/README.md): вход в Beatport
 (`python beatport_login.py`) и ключ Discogs берутся из его `config.json`, ответы Beatport/Discogs
