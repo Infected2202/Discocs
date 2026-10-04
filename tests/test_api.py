@@ -1064,6 +1064,18 @@ def test_api_v1_dashboard_history_items_carry_played_at(tmp_path: Path, monkeypa
     ]
 
 
+def test_api_v1_dashboard_puts_labels_above_mixes_for_you(tmp_path: Path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.get("/api/v1/dashboard")
+
+    assert response.status_code == 200
+    keys = [shelf["key"] for shelf in response.json()["shelves"]]
+    assert keys.index("labels") < keys.index("mixes_for_you")
+    assert keys[0] == "labels"
+
+
 def test_api_v1_dashboard_auto_generates_mixes_for_you(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     settings_path = tmp_path / "settings.json"

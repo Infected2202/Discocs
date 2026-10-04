@@ -340,6 +340,19 @@ def test_top_lists_respect_the_period(tmp_path: Path):
     assert [item["id"] for item in quarter["top_tracks"]] == [old_favourite, new_one]
 
 
+def test_top_tracks_are_capped_at_five(tmp_path: Path):
+    root, alice, _bob = _stores(tmp_path)
+    tracks = [_track(root, tmp_path, f"t{n}", artist=f"Artist {n}") for n in range(7)]
+    # t0 is played 7 times, t1 six times, … t6 once: a strict ranking.
+    for rank, track_id in enumerate(tracks):
+        for hours in range(len(tracks) - rank):
+            _listen(root, alice, track_id, _at(hours=hours + 1, minutes=rank))
+
+    stats = _stats(alice, period="7d", tz_name="UTC")
+
+    assert [item["id"] for item in stats["top_tracks"]] == tracks[:5]
+
+
 def test_sound_profile_is_weighted_by_listens(tmp_path: Path):
     root, alice, _bob = _stores(tmp_path)
     techno = _track(root, tmp_path, "techno")

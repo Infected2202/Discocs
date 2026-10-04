@@ -214,6 +214,41 @@ describe("Shelf", () => {
     expect(screen.queryByRole("button", { name: "Previous" })).not.toBeInTheDocument()
   })
 
+  it("fits twice as many half-size cards per page when compact", () => {
+    columns = 4
+    const items = Array.from({ length: 8 }, (_, i) => ({
+      id: i + 1,
+      type: "release" as const,
+      title: `Card ${i + 1}`,
+    }))
+
+    render(
+      <MemoryRouter>
+        <Shelf title="People" compact items={items} />
+      </MemoryRouter>
+    )
+
+    // 8 columns instead of 4: all eight cards on one page, no pagination.
+    const page = screen.getByText("Card 1").parentElement
+    expect(page).toHaveAttribute("style", expect.stringContaining("repeat(8, 1fr)"))
+    expect(screen.queryByRole("button", { name: "Next" })).not.toBeInTheDocument()
+  })
+
+  it("shows four cards across on mobile when compact", () => {
+    columns = 2
+    isMobile = true
+    render(
+      <MemoryRouter>
+        <Shelf compact items={[{ id: 1, type: "release", title: "One" }]} />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText("One").parentElement).toHaveAttribute(
+      "style",
+      expect.stringContaining("0.25*(100% - 24px)")
+    )
+  })
+
   it("navigates to shelf page from title and more button", () => {
     render(
       <MemoryRouter>

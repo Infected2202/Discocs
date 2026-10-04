@@ -106,7 +106,9 @@ else), `ForYouShelf` (a shelf of static
 icon-illustrated entry cards — Flow, Liked Tracks, Recently Played, Mixes For
 You, New Releases, Recently Added, Discover, Listen Again, Long Time No
 Listen — each linking into its own `/shelf/:key` or playback action), then
-the live data shelves returned from the backend, rendered via `Shelf`. The
+the live data shelves returned from the backend, rendered via `Shelf`
+(order set by `shelf_keys` in `app/api/dashboard.py`; `labels` comes first,
+above Mixes For You). The People shelf uses `Shelf compact` (half-size cards). The
 loading placeholder for both the People shelf and the data shelves is
 `ShelfSkeleton`.
 
