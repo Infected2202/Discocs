@@ -32,6 +32,16 @@ describe("i18n", () => {
     expect(i18n.t("itemCount", { ns: "media", count: 5 })).toBe("5 элементов")
   })
 
+  it("registers the profile page namespace with Russian plurals", async () => {
+    await i18n.changeLanguage("ru")
+    expect(i18n.t("sections.recent", { ns: "user" })).toBe("Последние прослушивания")
+    expect(i18n.t("listenCount", { ns: "user", count: 1, formatted: "1" })).toBe("1 прослушивание")
+    expect(i18n.t("listenCount", { ns: "user", count: 5, formatted: "5" })).toBe("5 прослушиваний")
+
+    await i18n.changeLanguage("en")
+    expect(i18n.t("sections.recent", { ns: "user" })).toBe("Recent listens")
+  })
+
   it("translates dashboard shelf titles by their backend key in both languages", async () => {
     await i18n.changeLanguage("en")
     expect(i18n.t("shelves.recently_added", { ns: "dashboard" })).toBe("Recently Added")

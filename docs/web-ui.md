@@ -64,6 +64,9 @@ Defined in `ui/src/router.tsx`:
 /settings               -> SettingsPage
 /shelf/:key             -> ShelfPage
 /playlists/:id           -> PlaylistPage
+/shared-links            -> SharedLinksPage
+/u/:username             -> ProfilePage
+/u/:username/history     -> ListeningHistoryPage
 ```
 
 All routes except `/login` are wrapped in `RequireAuth`, which gates on the
@@ -298,6 +301,29 @@ The "View all" destination for any dashboard shelf. Backed by `useShelf`
 (paginated `GET /api/v1/dashboard/shelves/{key}`) with infinite-scroll via an
 `IntersectionObserver` sentinel, rendering results in a virtualized grid
 (`VirtualCardGrid`) of `MediaCard`s rather than a horizontal row.
+
+### Profile page (`/u/:username`, `ProfilePage.tsx`)
+
+A user's own listening profile, open to every logged-in user (social features,
+details in [`docs/social.md`](social.md#ui-профиля-ф5)). Backend calls:
+`useUserProfile` (`GET /api/v1/users/{username}/profile?period=&tz=`, tz from
+`Intl`), `useUserLikes`, `useUserPlaylists`, plus `usePeople` for the live
+"Now playing" line. One scrolling page, no tab navigation: `CollectionHeader`
+with the round built-in avatar (clickable on one's own profile → avatar picker
+dialog), member-since date and all-time totals; a `tabs` period switch
+(7d/30d/90d/180d/year/all, default 30d) driving the stats and tops; recent
+listens (`VirtualTrackRow` with relative time, "All" → history); period stats
+with div bar charts (by day/month, by hour) and the sound profile; top
+artists/releases shelves; top tracks (`VirtualTrackList`); likes shelves;
+playlists shelf. Another user's profile is the same minus private playlists
+and the avatar picker.
+
+### Listening history (`/u/:username/history`, `ListeningHistoryPage.tsx`)
+
+Every listen, newest first, from `useUserListens` (paged `GET
+/api/v1/users/{username}/listens`), grouped under local-day headings
+(Today / Yesterday / weekday + date). The next page loads via an
+`IntersectionObserver` sentinel or the "Load more" button.
 
 ### Settings (`/settings`, `SettingsPage.tsx`)
 

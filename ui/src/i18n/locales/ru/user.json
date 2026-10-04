@@ -1,0 +1,66 @@
+{
+  "notFound": "Пользователь не найден.",
+  "memberSince": "в discocs с {{date}}",
+  "listenCount_one": "{{formatted}} прослушивание",
+  "listenCount_few": "{{formatted}} прослушивания",
+  "listenCount_many": "{{formatted}} прослушиваний",
+  "listenCount_other": "{{formatted}} прослушивания",
+  "artistCount_one": "{{formatted}} артист",
+  "artistCount_few": "{{formatted}} артиста",
+  "artistCount_many": "{{formatted}} артистов",
+  "artistCount_other": "{{formatted}} артиста",
+  "likeCount_one": "{{formatted}} лайк",
+  "likeCount_few": "{{formatted}} лайка",
+  "likeCount_many": "{{formatted}} лайков",
+  "likeCount_other": "{{formatted}} лайка",
+  "nowPlaying": "Сейчас слушает",
+  "chooseAvatar": "Выбрать аватар",
+  "avatarOption": "Аватар {{index}}",
+  "avatarSaveError": "Не удалось сохранить аватар. Попробуйте ещё раз.",
+  "periodLabel": "Период",
+  "periods": {
+    "7d": "7д",
+    "30d": "30д",
+    "90d": "90д",
+    "180d": "180д",
+    "365d": "Год",
+    "all": "Всё время"
+  },
+  "sections": {
+    "recent": "Последние прослушивания",
+    "stats": "Статистика",
+    "topArtists": "Топ артистов",
+    "topReleases": "Топ релизов",
+    "topTracks": "Топ треков",
+    "likes": "Лайки",
+    "likedTracks": "Треки",
+    "likedReleases": "Релизы",
+    "likedArtists": "Артисты",
+    "playlists": "Плейлисты"
+  },
+  "seeAll": "Все",
+  "summary": {
+    "listens": "Прослушивания",
+    "hours": "Часы",
+    "artists": "Артисты"
+  },
+  "charts": {
+    "byDay": "По дням",
+    "byMonth": "По месяцам",
+    "byHour": "По часам суток",
+    "hour": "{{hour}}:00"
+  },
+  "sound": {
+    "title": "Звуковой профиль",
+    "genres": "Жанры",
+    "moods": "Настроения"
+  },
+  "empty": {
+    "noListens": "Пока нет прослушиваний.",
+    "noListensInPeriod": "За этот период прослушиваний нет."
+  },
+  "history": {
+    "title": "История прослушиваний",
+    "loadMore": "Показать ещё"
+  }
+}

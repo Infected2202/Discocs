@@ -55,6 +55,11 @@ interface VirtualTrackRowProps {
   readonly onPlayTrack?: (trackId: number) => void
   /** Adds a "Remove from playlist" item to the row menu (editable playlists). */
   readonly onRemoveTrack?: (trackId: number) => void
+  /**
+   * Replaces the trailing metric (duration / play count) — e.g. the relative
+   * "4 min ago" of a listen in the profile's listening history.
+   */
+  readonly metric?: React.ReactNode
 }
 
 export function trackGridTemplates({
@@ -98,6 +103,7 @@ export default function VirtualTrackRow({
   onToggleSelect,
   onPlayTrack,
   onRemoveTrack,
+  metric,
 }: VirtualTrackRowProps) {
   const { t, i18n } = useTranslation("media")
   const [hovered, setHovered] = useState(false)
@@ -226,7 +232,7 @@ export default function VirtualTrackRow({
 
       {/* Metric: play count (artist top tracks) or duration */}
       <div className="py-2 pr-2 text-right text-xs text-muted-foreground tabular-nums whitespace-nowrap">
-        {renderMetric(track, i18n.language, t("plays"))}
+        {metric === undefined ? renderMetric(track, i18n.language, t("plays")) : metric}
       </div>
 
       {/* Like */}

@@ -13,6 +13,8 @@ import ShelfPage from "@/pages/ShelfPage"
 import PlaylistPage from "@/pages/PlaylistPage"
 import SharedPlayerPage from "@/pages/SharedPlayerPage"
 import SharedLinksPage from "@/pages/SharedLinksPage"
+import ProfilePage from "@/pages/ProfilePage"
+import ListeningHistoryPage from "@/pages/ListeningHistoryPage"
 
 export const router = createBrowserRouter([
   { path: "/login", Component: LoginPage },
@@ -33,6 +35,8 @@ export const router = createBrowserRouter([
           { path: "shelf/:key", Component: ShelfPage },
           { path: "playlists/:id", Component: PlaylistPage },
           { path: "shared-links", Component: SharedLinksPage },
+          { path: "u/:username", Component: ProfilePage },
+          { path: "u/:username/history", Component: ListeningHistoryPage },
         ],
       },
     ],

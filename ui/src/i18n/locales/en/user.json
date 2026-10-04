@@ -1,0 +1,60 @@
+{
+  "notFound": "User not found.",
+  "memberSince": "in discocs since {{date}}",
+  "listenCount_one": "{{formatted}} listen",
+  "listenCount_other": "{{formatted}} listens",
+  "artistCount_one": "{{formatted}} artist",
+  "artistCount_other": "{{formatted}} artists",
+  "likeCount_one": "{{formatted}} like",
+  "likeCount_other": "{{formatted}} likes",
+  "nowPlaying": "Now playing",
+  "chooseAvatar": "Choose avatar",
+  "avatarOption": "Avatar {{index}}",
+  "avatarSaveError": "Couldn't save the avatar. Try again.",
+  "periodLabel": "Period",
+  "periods": {
+    "7d": "7d",
+    "30d": "30d",
+    "90d": "90d",
+    "180d": "180d",
+    "365d": "Year",
+    "all": "All time"
+  },
+  "sections": {
+    "recent": "Recent listens",
+    "stats": "Statistics",
+    "topArtists": "Top artists",
+    "topReleases": "Top releases",
+    "topTracks": "Top tracks",
+    "likes": "Likes",
+    "likedTracks": "Tracks",
+    "likedReleases": "Releases",
+    "likedArtists": "Artists",
+    "playlists": "Playlists"
+  },
+  "seeAll": "All",
+  "summary": {
+    "listens": "Listens",
+    "hours": "Hours",
+    "artists": "Artists"
+  },
+  "charts": {
+    "byDay": "By day",
+    "byMonth": "By month",
+    "byHour": "By hour of day",
+    "hour": "{{hour}}:00"
+  },
+  "sound": {
+    "title": "Sound profile",
+    "genres": "Genres",
+    "moods": "Moods"
+  },
+  "empty": {
+    "noListens": "No listens yet.",
+    "noListensInPeriod": "No listens in this period."
+  },
+  "history": {
+    "title": "Listening history",
+    "loadMore": "Load more"
+  }
+}

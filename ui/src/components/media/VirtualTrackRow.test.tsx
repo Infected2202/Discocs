@@ -121,6 +121,13 @@ describe("VirtualTrackRow", () => {
     expect(screen.getByText("plays")).toBeInTheDocument()
   })
 
+  it("shows a caller-supplied metric instead of the duration (listen times)", () => {
+    renderRow({ metric: <time>4 min ago</time> })
+
+    expect(screen.getByText("4 min ago")).toBeInTheDocument()
+    expect(screen.queryByText("4:05")).not.toBeInTheDocument()
+  })
+
   it("hides the metric for artist top tracks with zero plays", () => {
     renderRow({ track: makeTopTrack({ play_count: 0, release: null }) })
 
