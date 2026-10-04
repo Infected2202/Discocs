@@ -262,24 +262,14 @@ pipeline {
       }
     }
 
-    // Sonar и Trivy друг от друга не зависят: сканеру кода нужны coverage-отчёты
-    // из Checks, Trivy — образы из Build & Push. Раньше Sonar шёл параллельно
-    // сборке, но после ускорения сборки (131 -> 22.8с на билде #248) прятать
-    // под ней 52-секундный Sonar стало нечем — он держал стадию один. Теперь
-    // он перекрывается сканом образов, который длится дольше него.
+    // Sonar и Trivy друг от друга не зависят (сканеру кода нужны coverage-отчёты
+    // из Checks, Trivy — образы из Build & Push), но идут ПОДРЯД: агент живёт в
+    // LXC с лимитом 4 ГБ, и Sonar (-Xmx2g + Node для TS) рядом с тремя сканами
+    // Trivy упирался в него — на билде #422 OOM-killer убил java агента, билд упал.
+    // Trivy первым: это блокирующий гейт, Sonar — только отчёт.
     stage('Analyze & Scan') {
       when { expression { env.ONLY_TOOLS != 'true' } }
-      parallel {
-        stage('Sonar') {
-          steps {
-            // Только отчёт, без waitForQualityGate — билд не блокируется внешним сервисом.
-            // sonar_token — тот же credential, что уже рабочий в другой джобе.
-            withCredentials([string(credentialsId: 'sonar_token', variable: 'SONAR_TOKEN')]) {
-              sh 'sonar-scanner -Dsonar.host.url=http://192.168.1.41:9077 -Dsonar.login=$SONAR_TOKEN'
-            }
-          }
-        }
-
+      stages {
         stage('Security Scan') {
           steps {
             script {
@@ -302,8 +292,8 @@ pipeline {
               // ветках даёт "Failed to acquire cache or database lock", билд #238)
               // каждый из них начинал с нуля — только backend стоил 30.6+24.0+22.7с
               // на билде #239. Гейт остаётся отдельным сканом, см. комментарий ниже.
-              // --timeout 15m: по умолчанию 5 мин, а сканы идут параллельно с Sonar —
-              // на билде #420 гейт backend обычно за ~1 мин упёрся в лимит
+              // --timeout 15m: по умолчанию 5 мин, а три скана делят агент между собой —
+              // на билде #420 (ещё рядом с Sonar) гейт backend упёрся в лимит
               // («semaphore acquire: context deadline exceeded» на слое образа).
               def mounts = '-v /var/run/docker.sock:/var/run/docker.sock -v trivy-db-cache:/root/.cache/trivy'
               parallel(['backend', 'frontend', 'bot'].collectEntries { svc ->
@@ -363,6 +353,16 @@ pipeline {
                   """
                 }]
               })
+            }
+          }
+        }
+
+        stage('Sonar') {
+          steps {
+            // Только отчёт, без waitForQualityGate — билд не блокируется внешним сервисом.
+            // sonar_token — тот же credential, что уже рабочий в другой джобе.
+            withCredentials([string(credentialsId: 'sonar_token', variable: 'SONAR_TOKEN')]) {
+              sh 'sonar-scanner -Dsonar.host.url=http://192.168.1.41:9077 -Dsonar.login=$SONAR_TOKEN'
             }
           }
         }

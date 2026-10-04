@@ -305,7 +305,7 @@ def test_independent_checks_run_in_one_parallel_stage():
         assert f"junit '{report}'" in pipeline
 
 
-def test_sonar_runs_alongside_the_image_scan():
+def test_sonar_runs_after_the_image_scan():
     pipeline = JENKINSFILE.read_text(encoding="utf-8")
 
     build = pipeline.index("stage('Build & Push')")
@@ -316,11 +316,12 @@ def test_sonar_runs_alongside_the_image_scan():
     assert pipeline.index("stage('Checks')") < build < analyze
     assert build < pipeline.index("stage('Docker Login')") < analyze
 
-    # Sonar'у нужен только coverage из Checks, Trivy — образы из Build & Push,
-    # друг от друга они не зависят. Раньше Sonar шёл параллельно сборке, но
-    # после её ускорения (131 -> 22.8с, билд #248) прятать его стало не под чем.
-    assert pipeline.index("parallel {", analyze) < pipeline.index("stage('Sonar')")
-    assert analyze < pipeline.index("stage('Security Scan')")
+    # По данным Sonar и Trivy независимы, но вместе не влезают в 4 ГБ LXC агента:
+    # на билде #422 OOM-killer убил java агента. Поэтому подряд, Trivy (гейт) первым.
+    sonar = pipeline.index("stage('Sonar')")
+    scan = pipeline.index("stage('Security Scan')")
+    assert pipeline.index("stages {", analyze) < scan < sonar
+    assert "parallel {" not in pipeline[analyze:scan]
 
 
 def test_image_scans_share_one_vulnerability_db_refresh():

@@ -23,13 +23,13 @@ push в Gitea ──webhook──> Jenkins
    └─ Build&Push    Docker Login, затем сборка backend/frontend/bot — 3 ветки
    │                 parallel → Nexus (docker-dev @ :5000),
    │                 теги: :<git-sha> (всегда) + :latest (только с main)
-   └─ Analyze&Scan  2 ветки parallel (Sonar'у нужен coverage из Checks,
-   │                 Trivy — образы из Build&Push; друг от друга не зависят):
-   │                 Sonar         — отчёт в SonarQube, без Quality Gate (билд не блокируется)
+   └─ Analyze&Scan  2 стадии подряд (друг от друга не зависят, но вместе не
+   │                 влезают в 4 ГБ агента — см. «SonarQube»):
    │                 Security Scan — одно обновление БД Trivy, затем 3 ветки
    │                                 parallel по образам с отдельным in-memory
    │                                 scan cache: отчёт → HTML-вкладка
    │                                 (publishHTML) → блокирующий гейт
+   │                 Sonar         — отчёт в SonarQube, без Quality Gate (билд не блокируется)
    └─ Deploy        [post/success, только main] по SSH на TARGET_SERVER:
                        scp compose в TARGET_DIR → docker compose pull && up -d --force-recreate
                        backend и frontend должны пройти healthcheck;
@@ -192,11 +192,13 @@ frontend поднимаются без него. Образ бота при эт
 
 ## SonarQube
 
-Стадия `Sonar` в `Jenkinsfile` — ветка параллельной стадии `Analyze & Scan`
-(вторая ветка — `Security Scan`). Coverage она берёт из `Checks`, а с Trivy
-не пересекается ничем, поэтому идёт с ним бок о бок. Раньше Sonar был
-параллелен сборке образов, но после её ускорения (131 → 22.8с на билде #248)
-он стал держать стадию один — 52с из 52с. Гоняет
+Стадия `Sonar` в `Jenkinsfile` — вторая из последовательных стадий `Analyze & Scan`,
+после `Security Scan`. Coverage она берёт из `Checks`, с Trivy по данным не
+пересекается, но по памяти — да: агент `jenkins-agent-01` живёт в LXC с лимитом
+4 ГБ, и Sonar (`-Xmx2g` плюс Node для TS-анализа) рядом с тремя сканами Trivy
+в него упирался. На билде #422 OOM-killer убил java агента, и билд упал после
+зелёных тестов, поэтому стадии идут подряд: Trivy первым как блокирующий гейт.
+Раньше Sonar был параллелен сборке образов, потом — скану образов. Гоняет
 `sonar-scanner` (см. `sonar-project.properties`) против сервера
 `http://192.168.1.41:9077` под токеном `sonar_token`. Это только отчёт —
 `waitForQualityGate` не используется, результат анализа не может завалить
@@ -368,7 +370,7 @@ Trivy разнесён по двум стадиям — по тому, что и
 отдельный gate повторяет скан с `--ignore-unfixed --severity HIGH,CRITICAL
 --exit-code 1`: сборка и деплой останавливаются только на HIGH/CRITICAL, для
 которых upstream уже выпустил исправленную версию. Оба скана идут с `--timeout 15m`
-(по умолчанию 5 мин): ветки идут параллельно с Sonar, и на билде #420 гейт backend
+(по умолчанию 5 мин): на билде #420, когда сканы ещё шли рядом с Sonar, гейт backend
 упал не на уязвимостях, а на «semaphore acquire: context deadline exceeded»
 (обычно скан занимает около минуты). Один инструмент закрывает то,
 что Sonar Community не умеет бесплатно (SCA — уязвимости в зависимостях).
