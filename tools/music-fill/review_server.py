@@ -1254,16 +1254,20 @@ class Deemix:
             self.logged = True
             return
         cfg = read_json(ROOT / "config.json", {})
-        arl = cfg.get("deemix_arl") or (info.get("singleUser") or {}).get("arl")
-        if not arl:
-            raise RuntimeError('нет ARL для deemix — добавь "deemix_arl" в config.json')
-        r = self.s.post(f"{DEEMIX}/api/loginArl", json={"arl": arl}, timeout=30).json()
-        if r.get("status") == 0:  # LoginStatus.FAILED: Deezer не принял ARL — протух или от вышедшего аккаунта
-            raise RuntimeError('Deezer не принял ARL (истёк?) — возьми свежий cookie "arl" с deezer.com '
-                               'и замени "deemix_arl" в config.json, перезапуск не нужен')
-        if r.get("status") not in (1, 2, 3):
-            raise RuntimeError(f"deemix login status {r.get('status')}")
-        self.logged = True
+        arls = [cfg.get("deemix_arl"), (info.get("singleUser") or {}).get("arl"), *gui_arls()]
+        arls = [a for a in dict.fromkeys(arls) if a]
+        if not arls:
+            raise RuntimeError('нет ARL для deemix — добавь "deemix_arl" в config.json или войди в deemix-gui')
+        status = None
+        for arl in arls:  # протухший ARL в конфиге не должен ломать вход, пока в deemix-gui есть рабочий
+            status = self.s.post(f"{DEEMIX}/api/loginArl", json={"arl": arl}, timeout=30).json().get("status")
+            if status in (1, 2, 3):
+                self.logged = True
+                return
+        if status == 0:  # LoginStatus.FAILED: Deezer не принял ни один ARL
+            raise RuntimeError('Deezer не принял ARL ни из config.json, ни из deemix-gui — войди в deemix-gui '
+                               'со свежим ARL, перезапуск не нужен')
+        raise RuntimeError(f"deemix login status {status}")
 
     def add(self, urls: list[str], bitrate: int | None) -> dict:
         self.login()
@@ -1286,6 +1290,28 @@ class Deemix:
 
 
 deemix = Deemix()
+
+DEEMIX_GUI_STORAGE = Path(os.environ.get("APPDATA", "")) / "deemix-gui" / "Local Storage" / "leveldb"
+
+
+def gui_arls() -> list[str]:
+    """ARL, которые вставляли в окно deemix-gui, — свежие первыми. GUI хранит вход у себя
+    (localStorage Electron = LevelDB), а не в login.json, поэтому config.json от него отстаёт.
+    Формат внутренний: читаем сырые файлы и берём 192-символьные hex-строки. Старые значения
+    LevelDB держит, пока не уплотнит, поэтому порядок — по mtime файла и позиции в нём."""
+    found = []
+    try:
+        files = sorted(DEEMIX_GUI_STORAGE.glob("*"), key=lambda f: f.stat().st_mtime)
+    except OSError:
+        return []
+    for f in files:
+        if f.suffix not in (".log", ".ldb"):
+            continue
+        try:
+            found += re.findall(rb"(?<![0-9a-f])[0-9a-f]{192}(?![0-9a-f])", f.read_bytes())
+        except OSError:
+            continue
+    return [a.decode() for a in dict.fromkeys(reversed(found))]
 
 
 def deemix_url(url: str) -> str:
