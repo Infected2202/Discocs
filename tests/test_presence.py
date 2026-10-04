@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 import app.services.presence as presence_module
 from app import auth
-from app.avatars import AVATAR_KEYS
+from app.avatars import AVATAR_KEYS, ensure_user_avatar
 from app.config import NavidromeSettings
 from app.main import app
 from app.navidrome import NavidromeClient, NowPlayingEntry
@@ -403,7 +403,7 @@ def test_people_maps_now_playing_and_sorts(tmp_path: Path, monkeypatch):
     store.upsert_external_track("navidrome", "nav-mapped", mapped_id)
     fake = _NowPlayingFake(
         [
-            # Caller's own player — must not appear at all.
+            # The caller is listed too, with their own player.
             NowPlayingEntry(id="nav-mapped", username="alice", state="playing", minutes_ago=0),
             # Bob: two players; the most recent (smallest minutesAgo) wins.
             NowPlayingEntry(id="nav-unmapped", username="bob", title="Old", artist="Stale",
@@ -424,7 +424,8 @@ def test_people_maps_now_playing_and_sorts(tmp_path: Path, monkeypatch):
 
     assert response.status_code == 200
     items = response.json()["items"]
-    assert [item["username"] for item in items] == ["dave", "Bob", "erin", "carol"]
+    # Playing first (alice logged in last), then idle by last login.
+    assert [item["username"] for item in items] == ["alice", "dave", "Bob", "erin", "carol"]
     by_name = {item["username"]: item for item in items}
     assert by_name["Bob"]["now_playing"] == {
         "track_id": mapped_id,
@@ -438,6 +439,7 @@ def test_people_maps_now_playing_and_sorts(tmp_path: Path, monkeypatch):
         "artists": "Remote Artist",
         "state": "playing",
     }
+    assert by_name["alice"]["now_playing"]["track_id"] == mapped_id
     assert by_name["carol"]["now_playing"] is None
     assert by_name["erin"]["now_playing"] is None
     for item in items:
@@ -445,6 +447,34 @@ def test_people_maps_now_playing_and_sorts(tmp_path: Path, monkeypatch):
         assert item["avatar"] in AVATAR_KEYS
     # Live data is read with the service account, not the caller's session.
     assert fake.calls == ["svc"]
+
+
+def test_people_lists_case_variant_duplicate_users_once(tmp_path: Path, monkeypatch):
+    store = _init(tmp_path, monkeypatch)
+    _seed_people(store)
+    carol_id = int(store.get_user_by_username("carol")["id"])
+    with store.connect() as conn:
+        # A legacy row from before usernames were matched case-insensitively.
+        conn.execute(
+            "INSERT INTO users (navidrome_username, created_at, last_login_at) VALUES (?, ?, ?)",
+            ("Carol", "2026-02-01T00:00:00+00:00", "2026-09-01T00:00:00+00:00"),
+        )
+    _install_people_fakes(monkeypatch, _NowPlayingFake([]))
+    alice = _login("alice")
+    users = alice.get("/api/v1/users").json()["items"]
+
+    response = alice.get("/api/v1/social/people")
+
+    assert response.status_code == 200
+    names = [item["username"] for item in response.json()["items"]]
+    assert names.count("carol") == 1
+    assert "Carol" not in names
+    # The listed avatar is the canonical row's — the one login/profile use.
+    carol = next(item for item in response.json()["items"] if item["username"] == "carol")
+    assert carol["avatar"] == ensure_user_avatar(store, carol_id)
+    # GET /users lists the same canonical rows.
+    assert [item["username"] for item in users].count("carol") == 1
+    assert "Carol" not in [item["username"] for item in users]
 
 
 def test_people_survives_navidrome_outage(tmp_path: Path, monkeypatch):
@@ -457,7 +487,7 @@ def test_people_survives_navidrome_outage(tmp_path: Path, monkeypatch):
 
     assert response.status_code == 200
     items = response.json()["items"]
-    assert [item["username"] for item in items] == ["erin", "carol", "dave", "Bob"]
+    assert [item["username"] for item in items] == ["alice", "erin", "carol", "dave", "Bob"]
     assert all(item["now_playing"] is None for item in items)
 
 
@@ -487,9 +517,9 @@ def test_people_caches_now_playing_within_ttl(tmp_path: Path, monkeypatch):
     clock.now += 4.0
     cached = bob.get("/api/v1/social/people")
     assert len(fake.calls) == 1
-    # Bob is the caller here, so his own entry is gone — the cache is shared,
-    # the viewer filter is not.
-    assert "bob" not in {item["username"].lower() for item in cached.json()["items"]}
+    # The cache is shared between viewers; Bob sees himself playing.
+    by_name = {item["username"].lower(): item for item in cached.json()["items"]}
+    assert by_name["bob"]["now_playing"]["title"] == "T"
 
     clock.now += 2.0
     alice.get("/api/v1/social/people")

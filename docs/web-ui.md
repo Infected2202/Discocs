@@ -101,8 +101,7 @@ room and keeps the metric visually close to the Like and context-menu actions.
 
 The music home screen. Renders, top to bottom: `PeopleShelf` («Люди» /
 "People" — other discocs users and what they play right now, see
-[`docs/social.md`](social.md#ui-главной-ф4); hidden when there is nobody
-else), `ForYouShelf` (a shelf of static
+[`docs/social.md`](social.md#ui-главной-ф4); hidden when the list is empty; the viewer is listed too), `ForYouShelf` (a shelf of static
 icon-illustrated entry cards — Flow, Liked Tracks, Recently Played, Mixes For
 You, New Releases, Recently Added, Discover, Listen Again, Long Time No
 Listen — each linking into its own `/shelf/:key` or playback action), then
@@ -156,7 +155,9 @@ Layout: square cover (`ArtworkImage`, `176px`) on the left, title/metadata on
 the right — release type label, all participating artists as links, year,
 record labels as links to `/labels/:id` (`release.labels` of the detail
 response, tag order),
-track count, duration — then Play / Shuffle / like-heart actions. Below the
+track count, duration; under that line up to five styles (`GenreTags`,
+`release.genres`, strongest first — see "Genres" below) — then Play / Shuffle /
+like-heart actions. Below the
 header: `TrackTable` for the release's tracks, a "More from these artists"
 `Shelf` built from the related-discography response (filtering out the
 current release), and a "Recommended Albums" `Shelf` shown only when the
@@ -169,7 +170,9 @@ Backend calls: `useArtist`, `useArtistDiscography`, `useArtistSimilar` (`GET
 /api/v1/artists/{id}`, `/discography`, `/similar?limit=16`).
 
 Layout: circular avatar (`144px`) on the left, artist name and local stats
-(`tracks · releases · plays`, each field only shown if > 0) on the right,
+(`tracks · releases · plays`, each field only shown if > 0) with the artist's
+styles and release counts under them (`GenreTags`, `genres` of the artist
+response) on the right,
 with Play and like-heart actions. Below: a `PopularTracks` block built from
 `artist.top_tracks` by `pickPopularTracks` (`lib/popularTracks.ts`): every
 played track, then tracks with a Deezer rank up to 20 in total (the API
@@ -193,7 +196,8 @@ Deezer album fans).
 
 Layout: square label image (`144px`, from `/api/v1/labels/{id}/image` — the
 stored logo or the bundled Beatport placeholder), name and release count
-(no "Label" kicker — the page is obviously a label), a Shuffle button and a like heart. Shuffle starts a playback
+(no "Label" kicker — the page is obviously a label), the label's styles with
+release counts (`GenreTags`, `label.genres`, up to 10), a Shuffle button and a like heart. Shuffle starts a playback
 session with `source_type: "label"`: the backend queues a random sample of up
 to 200 available tracks across all the label's releases (a plain, unshuffled
 label session would take them newest release first, in track order), then
@@ -215,6 +219,19 @@ with release cards (subtitle `artists · year`). Sorting is by release date; yea
 year and are ordered by title inside it; undated releases go last in both
 directions. Images, descriptions and links come from `tools/label-sync`
 (see `plans/labels-shelf.md`).
+
+### Genres (release, artist, label)
+
+Styles come from the `genre_discogs400` predictions (`app/genres.py`, method and
+the experiment behind it in `plans/genres.md`). A release shows up to five
+styles: the mean score over its analyzed tracks, at least 25% of the strongest
+style and at least 0.05; styles the model systematically gets wrong (Tech
+Trance, Bassline, Electro House…) are never shown, and sub-styles Discogs folds
+into a parent (Halftime, Jungle, Schranz, Hard Techno…) only next to that
+parent. An artist (its own releases) and a label show how many releases carry
+each style — styles on at least 5% of them, up to ten. Label cards add the two
+main styles after the release count: "588 releases · Techno, Tech House"
+(`top_genres` of the list/shelf items, read from the cache only).
 
 ### Mix page (`/mixes/:id`, `MixPage.tsx`)
 

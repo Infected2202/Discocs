@@ -22,7 +22,7 @@ export function personToCard(person: Person): MediaCardProps {
 
 /**
  * «Люди» — the first dashboard shelf (docs/social.md). Order is the API's
- * (playing first). Hidden when there is nobody else or the first request
+ * (playing first). Hidden when the list is empty or the first request
  * failed; a later failed poll keeps the last list on screen.
  */
 export default function PeopleShelf() {

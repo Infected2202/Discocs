@@ -52,4 +52,14 @@ describe("CollectionHeader", () => {
     rerender(<CollectionHeader artwork={<div />} title="Long" truncateTitle />)
     expect(screen.getByRole("heading", { level: 1 }).className).toContain("truncate")
   })
+
+  it("sits the text on the artwork's baseline by default and centres it on request", () => {
+    const { container, rerender } = render(<CollectionHeader artwork={<div />} title="Release" />)
+    const row = () => container.querySelector("h1")?.parentElement?.parentElement
+    expect(row()).toHaveClass("sm:items-end")
+
+    rerender(<CollectionHeader artwork={<div />} title="infected2202" align="center" />)
+    expect(row()).toHaveClass("sm:items-center")
+    expect(row()).not.toHaveClass("sm:items-end")
+  })
 })

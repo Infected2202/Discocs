@@ -18,6 +18,12 @@ interface CollectionHeaderProps {
   readonly meta?: ReactNode
   /** Primary action cluster — Play / Shuffle / Like / Save / … */
   readonly actions?: ReactNode
+  /**
+   * Vertical placement of the text next to the artwork on wide screens:
+   * `end` (default) sits it on the artwork's baseline, `center` mid-height
+   * (the profile header, whose meta block is short).
+   */
+  readonly align?: "end" | "center"
 }
 
 /**
@@ -34,13 +40,19 @@ export default function CollectionHeader({
   truncateTitle = false,
   meta,
   actions,
+  align = "end",
 }: CollectionHeaderProps) {
   return (
     <div className="px-4 sm:px-6 pt-8 pb-4 space-y-6">
       {above}
-      <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 items-start sm:items-end">
+      <div
+        className={cn(
+          "flex flex-col sm:flex-row gap-4 sm:gap-6 items-start",
+          align === "center" ? "sm:items-center" : "sm:items-end",
+        )}
+      >
         {artwork}
-        <div className="w-full min-w-0 flex-1 pb-0 sm:pb-2">
+        <div className={cn("w-full min-w-0 flex-1 pb-0", align === "end" && "sm:pb-2")}>
           {kicker && (
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">{kicker}</p>
           )}

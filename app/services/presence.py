@@ -8,7 +8,7 @@ not a playback event and never touches ``playback_events``/``listens``/
 preferences. Any Navidrome failure is swallowed (``status: failed``) —
 presence must never break playback.
 
-Read side — ``people``: every discocs user except the viewer, with their
+Read side — ``people``: every discocs user (the viewer too), with their
 avatar and what they play now. Live data is one ``getNowPlaying`` call with
 the *service* Navidrome account, cached in-process for a few seconds
 (``NowPlayingCache``) so polling clients don't fan out to Navidrome.
@@ -200,11 +200,11 @@ def _now_playing_dict(store: Store, entry: NowPlayingEntry) -> dict[str, object]
     }
 
 
-def people(store: Store, settings, *, viewer_id: int) -> list[dict[str, object]]:
-    """Every user but the viewer: playing-now first, then by last login (newest)."""
+def people(store: Store, settings) -> list[dict[str, object]]:
+    """Every user, the viewer included: playing-now first, then by last login (newest)."""
     entries = now_playing_entries(settings) or []
     playing = _freshest_by_username(entries)
-    rows = [row for row in store.list_users() if int(row["id"]) != viewer_id]
+    rows = list(store.list_users())
     rows.sort(key=lambda row: str(row["last_login_at"] or ""), reverse=True)
     items: list[dict[str, object]] = []
     for row in rows:

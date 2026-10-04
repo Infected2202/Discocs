@@ -283,6 +283,16 @@ describe("ProfilePage", () => {
     expect(screen.queryByTestId("now-playing")).not.toBeInTheDocument()
   })
 
+  it("shows the live line on one's own profile too", () => {
+    mockProfile(makeProfile({}, { viewer_is_owner: true }))
+    usePeople.mockReturnValue({
+      data: { items: [person("alice", { track_id: 3, title: "Signals", artists: "Alpha", state: "playing" })] },
+    })
+    renderPage()
+
+    expect(screen.getByTestId("now-playing")).toHaveTextContent("Now playing: Signals — Alpha")
+  })
+
   it("does not let another user's avatar be changed", () => {
     renderPage()
 

@@ -141,9 +141,9 @@ export default function ProfilePage() {
 
   const { header } = profile
   const isOwner = header.viewer_is_owner
-  const nowPlaying = isOwner
-    ? null
-    : people?.items.find((p) => p.username.toLowerCase() === header.username.toLowerCase())?.now_playing ?? null
+  // The people list includes the viewer, so this covers one's own profile too.
+  const nowPlaying =
+    people?.items.find((p) => p.username.toLowerCase() === header.username.toLowerCase())?.now_playing ?? null
   const createdAt = new Date(header.created_at)
   const memberSince = Number.isNaN(createdAt.getTime())
     ? null
@@ -194,6 +194,7 @@ export default function ProfilePage() {
           )
         }
         title={header.username}
+        align="center"
         meta={
           <>
             <p>
