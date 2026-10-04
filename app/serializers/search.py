@@ -132,6 +132,21 @@ def dashboard_shelf_item(
     }
 
 
+def artist_shelf_item(artist_id: int, name: str, reason: str | None = None) -> dict[str, object]:
+    """Artist card for a shelf (liked artists, profile top artists)."""
+    return dashboard_shelf_item(
+        "artist",
+        artist_id,
+        name,
+        "",
+        f"/artists/{artist_id}",
+        artwork_url=f"/api/v1/artists/{artist_id}/cover",
+        play_source_type="artist",
+        play_source_id=artist_id,
+        reason=reason,
+    )
+
+
 def _release_shelf_item(row: ReleaseSummaryRow, reason: str | None = None) -> dict[str, object]:
     release = release_summary_dict(row)
     artists = list(release.get("artists") or [])

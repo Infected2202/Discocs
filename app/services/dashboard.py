@@ -305,7 +305,7 @@ def _dashboard_liked_artists(
     offset: int,
     _include_debug: bool = False,
 ) -> tuple[list[dict[str, object]], int]:
-    from app.serializers.search import dashboard_shelf_item  # noqa: PLC0415
+    from app.serializers.search import artist_shelf_item  # noqa: PLC0415
     with store.connect() as conn:
         rows = conn.execute(
             """
@@ -321,19 +321,7 @@ def _dashboard_liked_artists(
         total_row = conn.execute(
             "SELECT COUNT(*) FROM user_artist_preferences WHERE user_id = discocs_user_id() AND liked = 1"
         ).fetchone()
-    items: list[dict[str, object]] = []
-    for row in rows:
-        artwork_url = f"/api/v1/artists/{row['id']}/cover"
-        items.append(dashboard_shelf_item(
-            "artist",
-            int(row["id"]),
-            str(row["name"]),
-            "",
-            f"/artists/{row['id']}",
-            artwork_url=artwork_url,
-            play_source_type="artist",
-            play_source_id=int(row["id"]),
-        ))
+    items = [artist_shelf_item(int(row["id"]), str(row["name"])) for row in rows]
     return items, int(total_row[0] if total_row else 0)
 
 

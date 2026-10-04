@@ -43,6 +43,7 @@ from app.store._helpers import (
     row_to_playback_event,
     row_to_playback_session,
     row_to_queue_item,
+    row_to_track,
     row_to_user_artist_preference,
     row_to_user_release_preference,
     row_to_user_track_preference,
@@ -1475,6 +1476,31 @@ class PlaybackStoreMixin:
         )
         for entity_id in dict.fromkeys(entity_ids):
             self._set_entity_liked(conn, target, entity_id, True, now)
+
+    _LIKED_TRACKS_FROM = """
+        FROM user_track_preferences p
+        JOIN tracks t ON t.id = p.track_id
+        WHERE p.user_id = discocs_user_id() AND p.liked = 1 AND t.missing_at IS NULL
+    """
+
+    def list_liked_tracks(self, *, limit: int = 50, offset: int = 0) -> list[Track]:
+        """The bound user's liked tracks in the library, most recently liked first."""
+        self.require_user_id()
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT t.* {self._LIKED_TRACKS_FROM}
+                ORDER BY COALESCE(p.liked_at, p.updated_at) DESC, t.id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (int(limit), int(offset)),
+            ).fetchall()
+        return [row_to_track(row) for row in rows]
+
+    def count_liked_tracks(self) -> int:
+        self.require_user_id()
+        with self.connect() as conn:
+            return int(conn.execute(f"SELECT COUNT(*) {self._LIKED_TRACKS_FROM}").fetchone()[0])
 
     def list_playback_events(self, session_id: str | None = None) -> list[PlaybackEvent]:
         self.require_user_id()

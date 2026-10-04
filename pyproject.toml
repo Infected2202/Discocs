@@ -18,6 +18,9 @@ dependencies = [
   "Pillow>=10",
   "pydantic>=2.7",
   "typer>=0.12",
+  # IANA zones for profile stats in the viewer's timezone (zoneinfo): slim
+  # images ship no system tz database.
+  "tzdata>=2024.1",
   "uvicorn[standard]>=0.29",
 ]
 

@@ -584,6 +584,24 @@ class Listen:
     event_id: str
 
 
+@dataclass(frozen=True)
+class ListenSummary:
+    """Aggregate over one user's listens in a time window (profile stats)."""
+
+    listens: int
+    seconds: float
+    artists: int
+
+
+@dataclass(frozen=True)
+class ListenCount:
+    """An entity (artist/release/track/label) and how often it was listened to."""
+
+    key: int | str
+    listens: int
+    name: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Generated mixes / playlists
 # ---------------------------------------------------------------------------
