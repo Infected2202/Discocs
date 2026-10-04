@@ -28,6 +28,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY scripts ./scripts
 COPY tests ./tests
+# tests/test_avatars.py сверяет whitelist app/avatars.py с файлами аватаров UI
+COPY ui/src/assets/avatars ./ui/src/assets/avatars
 COPY deploy/nginx/default.conf.template ./deploy/nginx/default.conf.template
 COPY deploy/backend/Dockerfile ./deploy/backend/Dockerfile
 COPY deploy/bot/Dockerfile ./deploy/bot/Dockerfile

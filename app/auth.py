@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, replace
 from datetime import timedelta
 
+from app.avatars import ensure_user_avatar
 from app.config import Settings
 from app.navidrome import NavidromeClient
 from app.navidrome_starred import sync_likes_from_starred_payload
@@ -105,6 +106,8 @@ def create_session(
     created = utc_now()
     expires = _iso_plus_hours(created, settings.auth.session_ttl_hours)
     user_id = store.upsert_user(username, now=created)
+    # Every user has an avatar from their first login on (never re-rolled).
+    ensure_user_avatar(store, user_id)
     store.create_session(
         token_hash=hash_token(token),
         username=username,

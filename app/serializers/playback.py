@@ -11,7 +11,7 @@ from app.models import Artist, Track
 from app.navidrome import NavidromeClient
 from app.schemas.requests import PlaybackQueuePatchRequest, PlaybackSessionCreateRequest
 from app.serializers.entities import _json_object, track_summary_dict
-from app.store import Store, playback_event_is_completion
+from app.store import Store
 
 # Сколько треков лейбла кладём в очередь сразу; дальше её продолжает автоплей.
 LABEL_QUEUE_LIMIT = 200
@@ -217,33 +217,18 @@ def playback_event_time_ms(created_at: str) -> int | None:
 # Scrobble helpers
 # ---------------------------------------------------------------------------
 
-def should_scrobble_navidrome_play(store: Store, result) -> bool:
-    event = result.event
-    if result.duplicate or event.track_id is None:
-        return False
-    if event.event_type == "play_threshold_reached":
-        return True
-    if event.event_type != "completed" or not playback_event_is_completion(
-        event.position_seconds,
-        event.duration_seconds,
-        event.play_fraction,
-    ):
-        return False
-    if not event.session_id:
-        return True
-    for prior in store.list_playback_events(event.session_id):
-        if prior.id == event.id:
-            continue
-        if prior.event_type not in {"play_threshold_reached", "completed"}:
-            continue
-        same_queue_item = event.queue_item_id and prior.queue_item_id == event.queue_item_id
-        same_track_without_queue = not event.queue_item_id and prior.track_id == event.track_id
-        if same_queue_item or same_track_without_queue:
-            return False
-    return True
+def should_scrobble_navidrome_play(result) -> bool:
+    """Whether a recorded playback event is submitted to Navidrome as a play.
+
+    Not re-derived here: ``record_playback_event`` already judged the event
+    with ``playback_event_is_listen`` (the one rule shared with the
+    ``listens`` table) and carries the verdict on ``result.listen``.
+    Duplicates (client retries) never count.
+    """
+    return not result.duplicate and bool(result.listen)
 
 
-def navidrome_scrobble_submission(store: Store, result) -> tuple[bool, str] | None:
+def navidrome_scrobble_submission(result) -> tuple[bool, str] | None:
     event = result.event
     if result.duplicate:
         return None
@@ -251,13 +236,13 @@ def navidrome_scrobble_submission(store: Store, result) -> tuple[bool, str] | No
         return None
     if event.event_type == "track_started":
         return (False, "now_playing")
-    if should_scrobble_navidrome_play(store, result):
+    if should_scrobble_navidrome_play(result):
         return (True, "submission")
     return None
 
 
 def maybe_scrobble_navidrome_play(store: Store, settings, result) -> dict[str, object]:
-    decision = navidrome_scrobble_submission(store, result)
+    decision = navidrome_scrobble_submission(result)
     if decision is None:
         return {"status": "skipped", "reason": "event_not_scrobbleable"}
     submission, mode = decision

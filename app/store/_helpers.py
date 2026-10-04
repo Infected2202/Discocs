@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import json
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import replace
 from datetime import datetime, timedelta
 try:
@@ -527,6 +528,49 @@ def playback_event_is_completion(
         duration_seconds=float(duration_seconds) if duration_seconds is not None else None,
     )
     return fraction is None or fraction >= COMPLETION_FRACTION
+
+
+# Event types that can count as a listen. Any prior event of these types for the
+# same queue item (or track, without a queue item) blocks a later ``completed``.
+LISTEN_EVENT_TYPES: frozenset[str] = frozenset({"play_threshold_reached", "completed"})
+
+
+def playback_event_is_listen(
+    event: PlaybackEvent,
+    prior_events: Iterable[PlaybackEvent],
+) -> bool:
+    """Decide whether one accepted (non-duplicate) playback event is a listen.
+
+    The single rule behind both the Navidrome scrobble submission and the
+    ``listens`` table (live recording and the backfill migration): a
+    ``play_threshold_reached``, or a real ``completed`` (passing
+    ``playback_event_is_completion``) that has no earlier threshold/completed
+    for the same queue item — or, when the event carries no queue item, for the
+    same track — in the same session. ``prior_events`` are the events of that
+    session recorded before this one; events of other types, and ``event``
+    itself, are ignored, so callers may pass a superset. Duplicates (client
+    retries) are never passed here: they are not stored as new events.
+    """
+    if event.track_id is None:
+        return False
+    if event.event_type == "play_threshold_reached":
+        return True
+    if event.event_type != "completed" or not playback_event_is_completion(
+        event.position_seconds,
+        event.duration_seconds,
+        event.play_fraction,
+    ):
+        return False
+    if not event.session_id:
+        return True
+    for prior in prior_events:
+        if prior.id == event.id or prior.event_type not in LISTEN_EVENT_TYPES:
+            continue
+        same_queue_item = event.queue_item_id and prior.queue_item_id == event.queue_item_id
+        same_track_without_queue = not event.queue_item_id and prior.track_id == event.track_id
+        if same_queue_item or same_track_without_queue:
+            return False
+    return True
 
 
 def playback_skip_score_delta(

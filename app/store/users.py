@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import sqlite3
 
+from app.avatars import AVATAR_SETTING_KEY
+from app.models import utc_now
+
 
 class UsersStoreMixin:
     def list_user_ids(self) -> list[int]:
@@ -65,3 +68,67 @@ class UsersStoreMixin:
                 "SELECT * FROM users WHERE id = ?",
                 (user_id,),
             ).fetchone()
+
+    def list_users(self) -> list[sqlite3.Row]:
+        """Every discocs user (identity columns only), by username."""
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT id, navidrome_username, created_at, last_login_at FROM users "
+                "ORDER BY navidrome_username COLLATE NOCASE, id"
+            ).fetchall()
+
+    # Avatars are the one public entry of user_settings (app/avatars.py): they
+    # are read for any user by id, unlike the default-deny personal settings.
+
+    def get_user_avatar(self, user_id: int) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM user_settings WHERE user_id = ? AND key = ?",
+                (int(user_id), AVATAR_SETTING_KEY),
+            ).fetchone()
+        return str(row["value"]) if row is not None else None
+
+    def assign_default_avatar(
+        self,
+        user_id: int,
+        key: str,
+        *,
+        replace_value: str | None = None,
+    ) -> str:
+        """Store ``key`` unless the user already has an avatar; return the stored one.
+
+        An existing value is overwritten only while it still equals
+        ``replace_value`` (a key that left the whitelist), so a concurrent
+        first assignment or the user's own choice always wins.
+        """
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_settings (user_id, key, value, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id, key) DO UPDATE
+                SET value = excluded.value, updated_at = excluded.updated_at
+                WHERE user_settings.value IS ?
+                """,
+                (int(user_id), AVATAR_SETTING_KEY, key, utc_now(), replace_value),
+            )
+            row = conn.execute(
+                "SELECT value FROM user_settings WHERE user_id = ? AND key = ?",
+                (int(user_id), AVATAR_SETTING_KEY),
+            ).fetchone()
+        return str(row["value"])
+
+    def set_own_avatar(self, key: str) -> str:
+        """Set the current user's avatar; only ever writes discocs_user_id()'s row."""
+        self.require_user_id()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_settings (user_id, key, value, updated_at)
+                VALUES (discocs_user_id(), ?, ?, ?)
+                ON CONFLICT(user_id, key)
+                DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """,
+                (AVATAR_SETTING_KEY, key, utc_now()),
+            )
+        return key

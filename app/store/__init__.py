@@ -25,8 +25,11 @@ from app.store.users import UsersStoreMixin
 from app.store.settings import SettingsStoreMixin
 from app.store.shares import SharesStoreMixin
 from app.store.timeline import TimelineStoreMixin
+from app.store.listens import ListensStoreMixin, backfill_listens_from_events  # noqa: F401
 from app.store._helpers import (
+    LISTEN_EVENT_TYPES,
     playback_event_is_completion,
+    playback_event_is_listen,
     playback_event_is_early_skip,
     playback_skip_score_delta,
     reconcile_rewritten_track_file,
@@ -72,6 +75,7 @@ from app.models import (  # noqa: F401
     InstantMixRequest,
     InstantMixRequestParams,
     InstantMixRequestRecord,
+    Listen,
     NormalizationStatus,
     Playlist,
     PlaylistItem,
@@ -122,5 +126,6 @@ class Store(
     SettingsStoreMixin,
     SharesStoreMixin,
     TimelineStoreMixin,
+    ListensStoreMixin,
 ):
     """Assembled Store — all domain mixins composed into one class."""

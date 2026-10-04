@@ -7,6 +7,7 @@ settings keys never require a schema migration — API-layer validation
 """
 from __future__ import annotations
 
+from app.avatars import AVATAR_SETTING_KEY
 from app.models import utc_now
 
 DEFAULT_USER_SETTINGS: dict[str, object] = {
@@ -36,8 +37,12 @@ def _encode_setting(value: object) -> str:
 class SettingsStoreMixin:
     def get_user_settings(self) -> dict[str, object]:
         with self.connect() as conn:
+            # The avatar lives in this table too but is public profile data
+            # with its own API (app/avatars.py), not a preference.
             rows = conn.execute(
-                "SELECT key, value FROM user_settings WHERE user_id = discocs_user_id()"
+                "SELECT key, value FROM user_settings "
+                "WHERE user_id = discocs_user_id() AND key != ?",
+                (AVATAR_SETTING_KEY,),
             ).fetchall()
         merged = dict(DEFAULT_USER_SETTINGS)
         merged.update(

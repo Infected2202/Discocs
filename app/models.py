@@ -569,6 +569,19 @@ class PlaybackEventResult:
     event: PlaybackEvent
     duplicate: bool
     preference_delta: dict[str, object]
+    # Whether this event was judged a listen (``playback_event_is_listen``) and
+    # written to ``listens``. Decided once, inside the recording transaction;
+    # the Navidrome scrobble reuses this decision instead of re-deriving it.
+    listen: bool = False
+
+
+@dataclass(frozen=True)
+class Listen:
+    id: int
+    user_id: int
+    track_id: int
+    listened_at: str
+    event_id: str
 
 
 # ---------------------------------------------------------------------------

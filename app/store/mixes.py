@@ -520,6 +520,25 @@ class MixesStoreMixin:
             ).fetchall()
         return [row_to_playlist(row) for row in rows]
 
+    def list_owned_playlists(self, *, include_private: bool) -> list[Playlist]:
+        """Only the bound user's own playlists; private ones on request.
+
+        For profile pages (app/services/profile.py), where the store is bound
+        to the profile owner and ``include_private`` encodes whether the
+        viewer is that owner. Other users' public playlists are not included.
+        """
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM playlists
+                WHERE user_id = discocs_user_id()
+                  AND (? OR LOWER(COALESCE(json_extract(source_json, '$.visibility'), 'private')) = 'public')
+                ORDER BY updated_at DESC, id DESC
+                """,
+                (1 if include_private else 0,),
+            ).fetchall()
+        return [row_to_playlist(row) for row in rows]
+
     def count_playlists(self) -> int:
         with self.connect() as conn:
             return int(conn.execute(

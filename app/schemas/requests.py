@@ -6,9 +6,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR
+from app.avatars import AVATAR_KEYS, is_avatar_key
 from app.state import (
     DEFAULT_ANALYZE_TF_THREADS,
     DEFAULT_ANALYZE_WORKERS,
@@ -235,6 +236,21 @@ class UserSettingsPatchRequest(BaseModel):
     transcoding_bitrate_kbps: Literal[96, 128, 192, 256, 320] | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+
+class AvatarUpdateRequest(BaseModel):
+    """Pick one of the built-in avatars (app/avatars.py); no uploads exist."""
+
+    key: str
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("key")
+    @classmethod
+    def _whitelisted_key(cls, value: str) -> str:
+        if not is_avatar_key(value):
+            raise ValueError(f"must be one of {', '.join(AVATAR_KEYS)}")
+        return value
 
 
 class GeneratedMixSettingsRequest(BaseModel):

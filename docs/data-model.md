@@ -296,6 +296,21 @@ playing | played | skipped | removed`), `locked`, `reason`, `score`,
 `payload_json`. This table is the source of truth; preference tables below
 are derived from it and can be rebuilt via `recompute_user_preferences`.
 
+### Listens
+
+`listens`: materialized listening history for social stats — `id`,
+`user_id` (FK `users`, cascade delete), `track_id` (no FK, like
+`playback_events`: history survives a purged track), `listened_at` (the
+event's `created_at`), `event_id` (UNIQUE, the `playback_events.id` that was
+judged a listen). Indexes `(user_id, listened_at)` and `(user_id, track_id)`.
+A row is written in the same transaction as its playback event when
+`playback_event_is_listen` says so — the same rule as the Navidrome scrobble
+(threshold, or a real `completed` without an earlier threshold/completed for
+that queue item in the session; duplicates never). Derived from
+`playback_events`: on startup an empty table is backfilled with the same
+predicate (`backfill_listens_from_events`, idempotent via `event_id`). See
+`docs/social.md`.
+
 ## User Preferences
 
 Each row holds two kinds of state that must not be confused:
@@ -437,7 +452,10 @@ schema:
   first successful login; the `id` is the FK used to scope personal tables.
 - `user_settings` — generic per-user key/value preferences: `(user_id, key)`
   PK, `value` (opaque string), `updated_at`. Currently holds `language`
-  (`en`/`ru`, see `docs/web-ui.md` §Internationalization); new settings are
+  (`en`/`ru`, see `docs/web-ui.md` §Internationalization), transcoding
+  preferences and `avatar` (a built-in avatar key from `app/avatars.py`;
+  public, readable for any user, excluded from `/me/settings` — see
+  `docs/social.md`); new settings are
   new keys, not new columns or migrations. Validation of which keys/values are
   accepted lives at the API layer (`UserSettingsPatchRequest`,
   `app/schemas/requests.py`), not in the schema.

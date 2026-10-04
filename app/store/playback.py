@@ -47,6 +47,7 @@ from app.store._helpers import (
     row_to_user_release_preference,
     row_to_user_track_preference,
 )
+from app.store.listens import record_listen_for_event
 from app.library import (
     ArtistCredit,
     TrackMetadataEnvelope,
@@ -784,9 +785,13 @@ class PlaybackStoreMixin:
                 "SELECT * FROM playback_events WHERE id = ? AND user_id = ?",
                 (event_id, user_id),
             ).fetchone()
+            recorded = row_to_playback_event(event_row)
+            # The one listen/scrobble decision, committed atomically with the
+            # event itself (app/store/listens.py).
+            listen = record_listen_for_event(conn, user_id, recorded)
             delta = self._apply_playback_event_preferences(conn, event_row)
             self._apply_playback_event_session_state(conn, event_row)
-        return PlaybackEventResult(row_to_playback_event(event_row), False, delta)
+        return PlaybackEventResult(recorded, False, delta, listen)
 
     def _apply_playback_event_session_state(
         self,

@@ -78,6 +78,7 @@ from app.models import (
     utc_now,
 )
 from app.scanner import ScannedTrack
+from app.store.listens import backfill_listens_from_events
 
 
 logger = logging.getLogger(__name__)
@@ -918,6 +919,27 @@ class StoreBase:
                     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 );
 
+                -- Materialized listening history (social features): one row per
+                -- playback event judged a listen by playback_event_is_listen —
+                -- the same rule as the Navidrome scrobble. Derived from
+                -- playback_events (see app/store/listens.py); event_id UNIQUE
+                -- keeps live recording and the backfill idempotent. track_id
+                -- has no FK, like playback_events/preferences: history
+                -- survives a track being purged from the library.
+                CREATE TABLE IF NOT EXISTS listens (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    track_id INTEGER NOT NULL,
+                    listened_at TEXT NOT NULL,
+                    event_id TEXT NOT NULL UNIQUE,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_listens_user_listened
+                    ON listens(user_id, listened_at);
+                CREATE INDEX IF NOT EXISTS idx_listens_user_track
+                    ON listens(user_id, track_id);
+
                 -- Public capability links. Only a SHA-256 token hash is
                 -- persisted; share_items freezes membership/order at creation.
                 CREATE TABLE IF NOT EXISTS shares (
@@ -1080,6 +1102,22 @@ class StoreBase:
             self._validate_current_multiuser_schema(conn)
             self._backfill_added_timestamps(conn)
             self._backfill_liked_at(conn)
+            self._backfill_listens(conn)
+
+    def _backfill_listens(self, conn: sqlite3.Connection) -> None:
+        """Derive ``listens`` from existing playback history on first startup.
+
+        Only runs while ``listens`` is empty: from then on every new listen is
+        written in the same transaction as its playback event, so there is
+        nothing left to derive. The derivation itself is idempotent
+        (``INSERT OR IGNORE`` on ``event_id``) and can be rerun manually via
+        ``Store.backfill_listens``.
+        """
+        if conn.execute("SELECT 1 FROM listens LIMIT 1").fetchone() is not None:
+            return
+        inserted = backfill_listens_from_events(conn)
+        if inserted:
+            logger.info("Backfilled %s listens from playback_events", inserted)
 
     def _ensure_column(
         self,
