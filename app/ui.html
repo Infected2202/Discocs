@@ -360,6 +360,9 @@
     .build-marker { color: var(--accent-2); font-size: 12px; font-weight: 700; }
     audio { width: 100%; }
     .error { color: var(--bad); min-height: 20px; }
+    .access-state { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; }
+    .access-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
+    .access-dot.on { background: #4cc38a; }
     .active-track { border-color: var(--blue); }
     .icon-button { width: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
     .track-menu-button {
@@ -1196,23 +1199,22 @@
         <div class="settings-pane" data-settings-pane="labels">
           <h3>Label sync access</h3>
           <div class="meta">Credentials are encrypted in the discocs database with a key derived from <code>DISCOCS_SERVICE_TOKEN</code>. The Beatport password is used once to sign in and is not stored; the token renews itself.</div>
-          <div class="meta" id="labelSyncAccess">Not loaded yet.</div>
           <h3>Beatport</h3>
-          <div class="meta" id="beatportAccess">Not loaded yet.</div>
-          <div id="beatportLoginForm">
-            <label><span class="label-title">Login</span><input id="beatportUsername" autocomplete="off"></label>
-            <label><span class="label-title">Password</span><input id="beatportPassword" type="password" autocomplete="new-password"></label>
-            <div class="actions"><button class="primary" onclick="connectBeatport()">Sign in to Beatport</button></div>
+          <div class="access-state"><span class="access-dot" id="beatportDot"></span><span class="meta" id="beatportAccess">Not loaded yet.</span></div>
+          <label><span class="label-title">Login</span><input id="beatportUsername" autocomplete="off"></label>
+          <label><span class="label-title">Password</span><input id="beatportPassword" type="password" autocomplete="new-password"></label>
+          <div class="actions">
+            <button class="primary" id="beatportSignInBtn" onclick="connectBeatport()">Sign in to Beatport</button>
+            <button id="beatportSignOutBtn" onclick="forgetLabelSyncAccess('beatport')">Sign out</button>
           </div>
-          <div class="actions" id="beatportConnected"><button onclick="forgetLabelSyncAccess('beatport')">Sign out</button></div>
           <h3>Discogs</h3>
-          <div class="meta" id="discogsAccess">Not loaded yet.</div>
-          <div id="discogsForm">
-            <label><span class="label-title">Consumer key <span class="info" data-tooltip="discogs.com: Settings, Developers, your application. The same pair as discogs_key / discogs_secret in music-fill.">(i)</span></span><input id="discogsKey" autocomplete="off"></label>
-            <label><span class="label-title">Consumer secret</span><input id="discogsSecret" type="password" autocomplete="new-password"></label>
-            <div class="actions"><button class="primary" onclick="saveDiscogsApp()">Connect Discogs</button></div>
+          <div class="access-state"><span class="access-dot" id="discogsDot"></span><span class="meta" id="discogsAccess">Not loaded yet.</span></div>
+          <label><span class="label-title">Consumer key <span class="info" data-tooltip="discogs.com: Settings, Developers, your application. The same pair as discogs_key / discogs_secret in music-fill.">(i)</span></span><input id="discogsKey" autocomplete="off"></label>
+          <label><span class="label-title">Consumer secret</span><input id="discogsSecret" type="password" autocomplete="new-password"></label>
+          <div class="actions">
+            <button class="primary" id="discogsConnectBtn" onclick="saveDiscogsApp()">Connect Discogs</button>
+            <button id="discogsForgetBtn" onclick="forgetLabelSyncAccess('discogs')">Forget</button>
           </div>
-          <div class="actions" id="discogsConnected"><button onclick="forgetLabelSyncAccess('discogs')">Forget</button></div>
           <div class="meta" id="labelSyncAccessStatus"></div>
         </div>
         <div class="settings-pane" data-settings-pane="storage">
@@ -3256,31 +3258,44 @@
       const minutes = Math.round((Number(seconds) || 0) / 60);
       return minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;
     }
+    // Состояние доступа: кружок (зелёный — подключено), строка статуса, в полях — сохранённое
+    // (логин, конец ключа) и точки вместо пароля/секрета; главная кнопка горит, только пока не подключено.
+    function showServiceAccess(prefix, connected, message, primaryId, secondaryId, placeholders) {
+      const dot = document.getElementById(`${prefix}Dot`);
+      if (dot) dot.classList.toggle("on", connected);
+      const line = document.getElementById(`${prefix}Access`);
+      if (line) line.textContent = message;
+      const primary = document.getElementById(primaryId);
+      if (primary) primary.classList.toggle("primary", !connected);
+      const secondary = document.getElementById(secondaryId);
+      if (secondary) secondary.style.display = connected ? "" : "none";
+      Object.entries(placeholders).forEach(([id, value]) => {
+        const input = document.getElementById(id);
+        if (input) input.placeholder = connected ? value : "";
+      });
+    }
     function showLabelAccess(data) {
       const beatport = data.beatport || {};
       const discogs = data.discogs || {};
-      const show = (id, visible) => {
-        const element = document.getElementById(id);
-        if (element) element.style.display = visible ? "" : "none";
-      };
-      const beatportAccess = document.getElementById("beatportAccess");
-      if (beatportAccess) {
-        beatportAccess.textContent = beatport.connected
+      const hidden = "\u2022".repeat(10);
+      showServiceAccess(
+        "beatport", Boolean(beatport.connected),
+        beatport.connected
           ? `Signed in as ${text(beatport.username || "?")}. The token renews itself (current one: ${durationText(beatport.token_expires_in)} left).`
-          : `Not signed in.${beatport.error ? ` ${text(beatport.error)}` : ""}`;
-        beatportAccess.classList.toggle("error", !beatport.connected);
-      }
-      const discogsAccess = document.getElementById("discogsAccess");
-      if (discogsAccess) {
-        discogsAccess.textContent = discogs.connected
+          : `Not signed in.${beatport.error ? ` ${text(beatport.error)}` : ""}`,
+        "beatportSignInBtn", "beatportSignOutBtn",
+        {beatportUsername: text(beatport.username), beatportPassword: hidden},
+      );
+      document.getElementById("beatportSignInBtn").textContent = beatport.connected ? "Sign in again" : "Sign in to Beatport";
+      showServiceAccess(
+        "discogs", Boolean(discogs.connected),
+        discogs.connected
           ? `Connected with the application key ...${text(discogs.key_hint)}.`
-          : `Not connected.${discogs.error ? ` ${text(discogs.error)}` : ""}`;
-        discogsAccess.classList.toggle("error", !discogs.connected);
-      }
-      show("beatportLoginForm", !beatport.connected);
-      show("beatportConnected", Boolean(beatport.connected));
-      show("discogsForm", !discogs.connected);
-      show("discogsConnected", Boolean(discogs.connected));
+          : `Not connected.${discogs.error ? ` ${text(discogs.error)}` : ""}`,
+        "discogsConnectBtn", "discogsForgetBtn",
+        {discogsKey: `${hidden}${text(discogs.key_hint)}`, discogsSecret: hidden},
+      );
+      document.getElementById("discogsConnectBtn").textContent = discogs.connected ? "Replace key" : "Connect Discogs";
     }
     async function loadLabelSync() {
       try {
