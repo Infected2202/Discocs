@@ -467,6 +467,26 @@ class LabelMetadataRequest(BaseModel):
     external_ids: dict[str, str] = Field(default_factory=dict)
 
 
+class BeatportLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=1, max_length=500)
+
+
+class DiscogsTokenRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=10, max_length=200, pattern=r"^[A-Za-z0-9]+$")
+
+
+class LabelSyncRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    retry_not_found: bool = False
+    label_id: int | None = Field(default=None, ge=1)
+
+
 class LabelDescriptionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

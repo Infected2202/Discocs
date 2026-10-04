@@ -370,6 +370,38 @@ class StoreBase:
                     FOREIGN KEY (label_id) REFERENCES labels(id) ON DELETE CASCADE
                 );
 
+                -- Доступы к внешним сервисам (Beatport, Discogs), зашифрованы
+                -- (app/integration_secrets.py).
+                CREATE TABLE IF NOT EXISTS integration_secrets (
+                    name TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                -- Синхронизация лейблов (app/services/label_sync): что уже искали.
+                -- keys_hash — штрихкоды и ISRC, с которыми искали; ненайденный лейбл
+                -- ищется снова, только когда этот набор изменился.
+                CREATE TABLE IF NOT EXISTS label_sync_state (
+                    label_id INTEGER PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    keys_hash TEXT,
+                    beatport_id TEXT,
+                    discogs_id TEXT,
+                    error TEXT,
+                    attempted_at TEXT NOT NULL,
+                    FOREIGN KEY (label_id) REFERENCES labels(id) ON DELETE CASCADE
+                );
+
+                -- Штрихкод из тегов файла; перечитывается, когда меняются размер/время файла.
+                CREATE TABLE IF NOT EXISTS track_barcodes (
+                    track_id INTEGER PRIMARY KEY,
+                    barcode TEXT,
+                    file_size INTEGER,
+                    file_mtime INTEGER,
+                    read_at TEXT NOT NULL,
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                );
+
                 -- Жанры релиза (app/genres.py) — кэш; signature = число проанализированных
                 -- доступных треков и время последнего предсказания: изменилось — пересчитать.
                 CREATE TABLE IF NOT EXISTS release_genres (

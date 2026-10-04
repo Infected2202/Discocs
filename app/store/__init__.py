@@ -11,6 +11,7 @@ from app.store.base import INITIALIZED_DB_PATHS, StoreBase
 from app.store.library import LibraryStoreMixin
 from app.store.labels import LabelsStoreMixin, group_label_releases  # noqa: F401
 from app.store.genres import GenresStoreMixin
+from app.store.label_sync import LabelSyncStoreMixin
 from app.store.popularity import PopularityStoreMixin
 from app.store.playback import PlaybackStoreMixin
 from app.store.mixes import MixesStoreMixin
@@ -114,6 +115,7 @@ class Store(
     LibraryStoreMixin,
     LabelsStoreMixin,
     GenresStoreMixin,
+    LabelSyncStoreMixin,
     PopularityStoreMixin,
     PlaybackStoreMixin,
     MixesStoreMixin,

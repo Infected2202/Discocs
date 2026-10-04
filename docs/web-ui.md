@@ -217,7 +217,7 @@ non-empty release-type group — Albums, EPs, Singles, Compilations, Other relea
 mixes, unknown type), in that order, from `groups` of the releases response —
 with release cards (subtitle `artists · year`). Sorting is by release date; year-only releases sit by
 year and are ordered by title inside it; undated releases go last in both
-directions. Images, descriptions and links come from `tools/label-sync`
+directions. Images, descriptions and links come from the label sync job in the admin
 (see `plans/labels-shelf.md`).
 
 ### Genres (release, artist, label)

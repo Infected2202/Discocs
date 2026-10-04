@@ -285,7 +285,7 @@ class LabelsStoreMixin:
         return [row_to_label(row) for row in rows]
 
     def save_label_metadata(self, metadata: LabelMetadata) -> int:
-        """Записать данные из tools/label-sync; лейбл заводится, если его ещё нет.
+        """Записать найденные данные лейбла (синхронизация лейблов); лейбл заводится, если его ещё нет.
 
         Описание, ссылки и внешние id заменяются целиком: скрипт присылает
         запись полностью. Картинка — отдельно (``set_label_image``).

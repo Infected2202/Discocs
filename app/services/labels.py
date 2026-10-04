@@ -1,4 +1,4 @@
-"""Labels service: метаданные лейблов из tools/label-sync и разбор описаний."""
+"""Labels service: картинки и метаданные лейблов (app/services/label_sync) и разбор описаний."""
 from __future__ import annotations
 
 import base64
@@ -37,6 +37,11 @@ def decode_label_image(image_base64: str) -> DecodedImage:
         payload = base64.b64decode(image_base64, validate=True)
     except ValueError as exc:  # binascii.Error и не-ASCII строка — оба ValueError
         raise LabelImageError("Image is not valid base64") from exc
+    return decode_label_image_bytes(payload)
+
+
+def decode_label_image_bytes(payload: bytes) -> DecodedImage:
+    """Скачанная картинка → проверенная (JPEG/PNG/WebP), иначе LabelImageError."""
     if not payload:
         raise LabelImageError("Image is empty")
     if len(payload) > MAX_IMAGE_BYTES:

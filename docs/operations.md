@@ -176,6 +176,38 @@ Dashboard -> Check missing files
 Missing tracks are not immediately deleted. Review them under `Lost files` and
 remove selected records when you are sure they should leave the catalog.
 
+## Label Sync
+
+Label images, descriptions and links come from Beatport, Discogs and
+Wikipedia. Run it from the admin after new releases are synced from Navidrome:
+
+```text
+Operations -> Labels -> Sync labels
+```
+
+- **Access** — Settings -> Labels: sign in to Beatport (the password is used
+  once; the server keeps only the tokens and renews them) and paste a Discogs
+  personal access token. Both are encrypted with a key derived from
+  `DISCOCS_SERVICE_TOKEN`; rotating that token means signing in again.
+- **What a run looks up** — new labels, labels that failed, and not-found
+  labels whose barcodes/ISRCs changed (new releases). Found labels are
+  skipped. "Retry not found" looks up every not-found label again.
+- **How** — a label is found through its releases, not its name: the
+  BARCODE/UPC tag of the files (backend reads them from `/music`, the same
+  path Navidrome reports) → release on Beatport/Discogs → its label; the ISRC
+  from Navidrome → track on Beatport → release → label. Only without either
+  does it search by name, accepting a candidate only if one of its releases is
+  in the library. Description: ru Wikipedia → en Wikipedia (Wikidata by the
+  Discogs label id) → Discogs profile → Beatport bio. Hand-written
+  (`editorial`) descriptions are never overwritten.
+- **Concurrency** — the job (`label-sync`) does not take the shared job queue
+  (`NON_BLOCKING_JOB_KINDS` in `app/services/jobs.py`): it only writes label
+  data, so Navidrome sync, analysis and indexing run alongside. Only one label
+  sync runs at a time; Cancel stops it after the labels in progress.
+- **Limits** — Discogs allows 60 requests/minute per external IP, shared with
+  music-fill on the work machine; the job waits on 429. API responses are
+  cached for 30 days in `data/label_sync_cache.db`.
+
 ## Бот: туннель, наблюдаемость, самовосстановление
 
 Бот ходит в Telegram только через awg-туннель: он сидит в сетевом неймспейсе

@@ -144,13 +144,27 @@ stars there — so it is written only by `PUT`/`DELETE
 /api/v1/labels/{id}/like`. Liked labels sort first in label lists; a
 principal without a user (the service token) simply sees no likes.
 
-Image, description and links are written by `tools/label-sync` through
-`PUT /api/v1/labels/metadata` (label matched by normalized name, created if
-missing; description/links/ids replaced, image only replaced when sent).
+Image, description and links are written by the label sync job
+(`app/services/label_sync`, started from the admin; see
+`docs/operations.md`). `PUT /api/v1/labels/metadata` accepts the same data
+from outside (label matched by normalized name, created if missing;
+description/links/ids replaced, image only replaced when sent).
 A hand-written description goes through `PUT /api/v1/labels/{id}/description`
-(`{"description": "..."}`, source `editorial`); label-sync then keeps
+(`{"description": "..."}`, source `editorial`); the sync then keeps
 updating the image and links but leaves that description alone. An empty
-description clears it and hands the field back to label-sync.
+description clears it and hands the field back to the sync.
+
+`label_sync_state` (`label_id` PK, `status` found/not_found/error,
+`keys_hash` — the barcodes and ISRCs the label was looked up with,
+`beatport_id`, `discogs_id`, `error`, `attempted_at`) remembers what the sync
+already did: found labels are skipped, not-found ones are retried only when
+`keys_hash` changes (new releases). `keys_hash` NULL marks labels filled by the
+old `tools/label-sync` script: the first run records their keys without a
+lookup. `track_barcodes` (`track_id` PK, `barcode`, `file_size`,
+`file_mtime`) caches the BARCODE/UPC tag of each file; it is re-read when the
+file size or mtime changes. `integration_secrets` (`name` PK, `value`) holds
+the Beatport tokens and the Discogs token, AES-GCM encrypted with a key
+derived from `DISCOCS_SERVICE_TOKEN` (`app/integration_secrets.py`).
 Label lists and counts only consider releases with at least one available
 track.
 

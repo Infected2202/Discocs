@@ -658,6 +658,17 @@
           <div class="meta" id="headPackReadiness"></div>
           <div id="headPackModelTable"></div>
         </details>
+        <div class="panel" id="labelSyncPanel">
+          <h2>Labels</h2>
+          <div class="meta">Images, descriptions and links from Beatport, Discogs and Wikipedia. Runs alongside other jobs: new labels and labels with newly added releases are looked up, found ones are skipped. Access is set up in Settings &rarr; Labels.</div>
+          <div class="meta" id="labelSyncSummary">Label sync status not loaded yet.</div>
+          <div class="actions" style="margin-top:8px">
+            <button class="primary" id="labelSyncBtn" onclick="startLabelSync(false)">Sync labels</button>
+            <button id="labelSyncRetryBtn" onclick="startLabelSync(true)" title="Look up every label that was not found before, not only those with new releases">Retry not found</button>
+          </div>
+          <div class="meta" id="labelSyncStatus"></div>
+          <details style="margin-top:8px"><summary class="meta" id="labelSyncNotFoundSummary">Not found</summary><div class="meta" id="labelSyncNotFound"></div></details>
+        </div>
         <div class="panel">
           <h2>Recent jobs</h2>
           <div id="dashboardJobs" class="jobs"></div>
@@ -943,6 +954,7 @@
           <button data-settings-tab="albums" onclick="setSettingsTab('albums')">Albums</button>
           <button data-settings-tab="dashboard" onclick="setSettingsTab('dashboard')">Dashboard</button>
           <button data-settings-tab="player" onclick="setSettingsTab('player')">Player</button>
+          <button data-settings-tab="labels" onclick="setSettingsTab('labels')">Labels</button>
           <button data-settings-tab="storage" onclick="setSettingsTab('storage')">Storage</button>
           <button data-settings-tab="advanced" onclick="setSettingsTab('advanced')">Advanced / Debug</button>
         </div>
@@ -1180,6 +1192,25 @@
         <div class="settings-pane" data-settings-pane="player">
           <h3>Player</h3>
           <div class="meta">Player event thresholds are exposed by <code>/api/v1/playback/settings</code>.</div>
+        </div>
+        <div class="settings-pane" data-settings-pane="labels">
+          <h3>Label sync access</h3>
+          <div class="meta">Credentials are encrypted in the discocs database with a key derived from <code>DISCOCS_SERVICE_TOKEN</code>. The Beatport password is used once to sign in and is not stored; the token renews itself.</div>
+          <div class="meta" id="labelSyncAccess">Not loaded yet.</div>
+          <h3>Beatport</h3>
+          <label><span class="label-title">Login</span><input id="beatportUsername" autocomplete="off"></label>
+          <label><span class="label-title">Password</span><input id="beatportPassword" type="password" autocomplete="new-password"></label>
+          <div class="actions">
+            <button class="primary" onclick="connectBeatport()">Sign in to Beatport</button>
+            <button onclick="forgetLabelSyncAccess('beatport')">Sign out</button>
+          </div>
+          <h3>Discogs</h3>
+          <label><span class="label-title">Personal access token <span class="info" data-tooltip="discogs.com: Settings, Developers, Generate new token.">(i)</span></span><input id="discogsToken" type="password" autocomplete="off"></label>
+          <div class="actions">
+            <button class="primary" onclick="saveDiscogsToken()">Save Discogs token</button>
+            <button onclick="forgetLabelSyncAccess('discogs')">Forget</button>
+          </div>
+          <div class="meta" id="labelSyncAccessStatus"></div>
         </div>
         <div class="settings-pane" data-settings-pane="storage">
           <h3>Storage</h3>
@@ -1576,6 +1607,7 @@
         pane.classList.toggle("active", pane.dataset.settingsPane === tab);
       });
       if (tab === "albums") loadAlbumsForYouStatus();
+      if (tab === "labels") loadLabelSync();
     }
     const VIEW_TO_SECTION = {
       operations: "operations",
@@ -3016,6 +3048,7 @@
       if (statsInFlight) return;
       statsInFlight = true;
       const listenerDashboardPromise = loadListenerDashboard();
+      loadLabelSync();
       try {
         const data = await json(`/api/v1/stats?model=${encodeURIComponent(model())}`, {timeoutMs: 30000});
         renderDashboardCards(data);
@@ -3204,6 +3237,104 @@
         setNavidromeStatus(`Navidrome ping OK${version ? `: ${version}` : ""}.`);
       } catch (err) {
         setNavidromeStatus(`Navidrome ping failed: ${err.message}`, true);
+      }
+    }
+    function labelAccessText(data) {
+      const beatport = data.beatport || {};
+      const discogs = data.discogs || {};
+      const parts = [
+        beatport.connected ? `Beatport: signed in as ${text(beatport.username || "?")}` : `Beatport: not connected${beatport.error ? ` (${text(beatport.error)})` : ""}`,
+        discogs.connected ? "Discogs: token set" : `Discogs: no token${discogs.error ? ` (${text(discogs.error)})` : ""}`
+      ];
+      if (!data.server_key) parts.push("DISCOCS_SERVICE_TOKEN is not set: credentials cannot be saved");
+      return parts.join(" · ");
+    }
+    async function loadLabelSync() {
+      try {
+        const data = await json("/api/v1/label-sync", {timeoutMs: 30000});
+        const labels = data.labels || {};
+        const ready = (data.beatport || {}).connected && (data.discogs || {}).connected;
+        const summary = document.getElementById("labelSyncSummary");
+        if (summary) {
+          summary.textContent = `${countText(labels.found)} found · ${countText(labels.not_found)} not found · ` +
+            `${countText(labels.error)} errors · ${countText(labels.pending)} never looked up · ${labelAccessText(data)}`;
+        }
+        const access = document.getElementById("labelSyncAccess");
+        if (access) access.textContent = labelAccessText(data);
+        const running = Boolean(data.running_job_id);
+        ["labelSyncBtn", "labelSyncRetryBtn"].forEach(id => {
+          const button = document.getElementById(id);
+          if (button) button.disabled = running || !ready;
+        });
+        const notFoundSummary = document.getElementById("labelSyncNotFoundSummary");
+        if (notFoundSummary) notFoundSummary.textContent = `Not found (${countText(labels.not_found)})`;
+        const notFoundList = document.getElementById("labelSyncNotFound");
+        if (notFoundList) notFoundList.textContent = (data.not_found || []).join(" · ") || "-";
+      } catch (err) {
+        const summary = document.getElementById("labelSyncSummary");
+        if (summary) summary.textContent = `Label sync status unavailable: ${err.message}`;
+      }
+    }
+    function setLabelSyncStatus(targetId, message, isError = false) {
+      const target = document.getElementById(targetId);
+      if (!target) return;
+      target.textContent = message;
+      target.classList.toggle("error", isError);
+    }
+    async function startLabelSync(retryNotFound) {
+      try {
+        await json("/api/v1/jobs/label-sync", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({retry_not_found: Boolean(retryNotFound)})
+        });
+        setLabelSyncStatus("labelSyncStatus", retryNotFound ? "Label sync started, retrying labels that were not found." : "Label sync started.");
+        await Promise.all([refreshJobs(), loadLabelSync()]);
+      } catch (err) {
+        setLabelSyncStatus("labelSyncStatus", `Label sync failed to start: ${err.message}`, true);
+      }
+    }
+    async function connectBeatport() {
+      const username = document.getElementById("beatportUsername").value.trim();
+      const passwordInput = document.getElementById("beatportPassword");
+      try {
+        await json("/api/v1/label-sync/beatport", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({username, password: passwordInput.value})
+        });
+        setLabelSyncStatus("labelSyncAccessStatus", "Signed in to Beatport.");
+      } catch (err) {
+        setLabelSyncStatus("labelSyncAccessStatus", `Beatport sign-in failed: ${err.message}`, true);
+      } finally {
+        passwordInput.value = "";
+        await loadLabelSync();
+      }
+    }
+    async function saveDiscogsToken() {
+      const input = document.getElementById("discogsToken");
+      try {
+        await json("/api/v1/label-sync/discogs", {
+          method: "PUT",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({token: input.value.trim()})
+        });
+        setLabelSyncStatus("labelSyncAccessStatus", "Discogs token saved.");
+      } catch (err) {
+        setLabelSyncStatus("labelSyncAccessStatus", `Discogs token not saved: ${err.message}`, true);
+      } finally {
+        input.value = "";
+        await loadLabelSync();
+      }
+    }
+    async function forgetLabelSyncAccess(service) {
+      try {
+        await json(`/api/v1/label-sync/${service}`, {method: "DELETE"});
+        setLabelSyncStatus("labelSyncAccessStatus", service === "beatport" ? "Signed out of Beatport." : "Discogs token removed.");
+      } catch (err) {
+        setLabelSyncStatus("labelSyncAccessStatus", `Failed: ${err.message}`, true);
+      } finally {
+        await loadLabelSync();
       }
     }
     async function startNavidromeSync() {

@@ -1,0 +1,294 @@
+"""Поиск одного лейбла на Beatport и Discogs и сбор его картинки, описания и ссылок.
+
+Лейбл ищется через релизы, а не по названию (по названию Discogs на «Trip» отдаёт чужой TRIP):
+штрихкод → релиз → его лейбл, ISRC → трек → релиз → лейбл (только Beatport). Несколько
+релизов голосуют. Нет ни штрихкодов, ни ISRC — поиск по названию, но кандидат принимается,
+только если у него нашёлся релиз из библиотеки.
+"""
+from __future__ import annotations
+
+import re
+from collections import Counter
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+
+from app.services.label_sync.clients import BeatportClient, DiscogsClient, WebClient
+
+# Серый квадрат со значком Beatport вместо логотипа — «картинки нет».
+BEATPORT_PLACEHOLDER = "cda9862c-cf92-4d13-ac65-7e9277181f51"
+# Штрихкод из тегов совпадает с Beatport/Discogs не всегда (другой дистрибьютор), поэтому
+# перебираем до MAX_CODES, но останавливаемся, как только лейбл подтверждён.
+MAX_CODES = 40
+CONFIRM_PAGES = 3
+
+
+def norm(text: object) -> str:
+    """Как normalize_text в discocs: пробелы схлопнуты, без учёта регистра."""
+    return " ".join(str(text or "").split()).casefold()
+
+
+def clean_name(name: object) -> str:
+    """Discogs: 'Hermeth (2)' → 'Hermeth', 'Nina Kraviz*' → 'Nina Kraviz'."""
+    return re.sub(r"\s*\(\d+\)$", "", str(name or "").strip()).rstrip("*").strip()
+
+
+def title_key(title: object) -> str:
+    """Ключ сравнения названий релизов: без скобок, пунктуации и хвоста EP/LP/Single."""
+    text = re.sub(r"[\(\[].*?[\)\]]", " ", str(title or "").casefold())
+    text = " ".join(re.sub(r"[^\w]+", " ", text).split())
+    return re.sub(r"\s+(?:ep|lp|single|album|mini album)$", "", text)
+
+
+def titles_overlap(ours: Sequence[str], theirs: Sequence[str]) -> bool:
+    keys = {title_key(t) for t in ours} - {""}
+    return any(title_key(t) in keys for t in theirs)
+
+
+def upc_variants(code: str) -> list[str]:
+    bare = code.lstrip("0")
+    return list(dict.fromkeys([code, bare, bare.zfill(12), bare.zfill(13)]))
+
+
+class Votes:
+    """Голоса релизов за лейбл; подтверждён — совпало название или два голоса."""
+
+    def __init__(self, name: str):
+        self.name = norm(name)
+        self.counter: Counter[int] = Counter()
+        self.confirmed: int | None = None
+
+    def add(self, label_id: int, label_name: object) -> None:
+        self.counter[label_id] += 1
+        if norm(clean_name(label_name)) == self.name or self.counter[label_id] >= 2:
+            self.confirmed = label_id
+
+    def best(self) -> int | None:
+        if self.confirmed is not None:
+            return self.confirmed
+        return self.counter.most_common(1)[0][0] if self.counter else None
+
+
+@dataclass
+class LabelResult:
+    image_url: str | None = None
+    image_source: str | None = None
+    description: str | None = None
+    description_source: str | None = None
+    links: list[dict[str, str]] = field(default_factory=list)
+    external_ids: dict[str, str] = field(default_factory=dict)
+    how: dict[str, str | None] = field(default_factory=dict)
+
+    @property
+    def found(self) -> bool:
+        return bool(self.external_ids.get("beatport") or self.external_ids.get("discogs"))
+
+
+class LabelResolver:
+    def __init__(self, beatport: BeatportClient, discogs: DiscogsClient, web: WebClient):
+        self.beatport = beatport
+        self.discogs = discogs
+        self.web = web
+
+    # ---------- Beatport ----------
+
+    def beatport_by_barcodes(self, name: str, codes: Sequence[str]) -> int | None:
+        votes = Votes(name)
+        for code in codes[:MAX_CODES]:
+            for variant in upc_variants(code):
+                results = self.beatport.get("/catalog/releases/", upc=variant).get("results", [])
+                if results:
+                    label = results[0].get("label") or {}
+                    if label.get("id"):
+                        votes.add(int(label["id"]), label.get("name"))
+                    break
+            if votes.confirmed is not None:
+                break
+        return votes.best()
+
+    def beatport_by_isrcs(self, name: str, isrcs: Sequence[str]) -> int | None:
+        votes = Votes(name)
+        for isrc in isrcs[:MAX_CODES]:
+            results = self.beatport.get("/catalog/tracks/", isrc=isrc).get("results", [])
+            if results:
+                label = (results[0].get("release") or {}).get("label") or {}
+                if label.get("id"):
+                    votes.add(int(label["id"]), label.get("name"))
+            if votes.confirmed is not None:
+                break
+        return votes.best()
+
+    def beatport_by_name(self, name: str, titles: Sequence[str]) -> int | None:
+        for candidate in self.beatport.search(name, "labels", 10):
+            if norm(candidate.get("name")) != norm(name):
+                continue
+            theirs: list[str] = []
+            for page in range(1, CONFIRM_PAGES + 1):
+                data = self.beatport.get(f"/catalog/labels/{candidate['id']}/releases/", per_page=100, page=page)
+                theirs += [r.get("name", "") for r in data.get("results", [])]
+                if not data.get("next"):
+                    break
+            if titles_overlap(titles, theirs):
+                return int(candidate["id"])
+        return None
+
+    # ---------- Discogs ----------
+
+    def discogs_by_barcodes(self, name: str, codes: Sequence[str]) -> int | None:
+        votes = Votes(name)
+        for code in codes[:MAX_CODES]:
+            results = self.discogs.get("/database/search", barcode=code, type="release", per_page=5).get("results", [])
+            if not results:
+                continue
+            release = self.discogs.get(f"/releases/{results[0]['id']}")
+            labels = [entry for entry in release.get("labels", []) if entry.get("id")]
+            # У релиза бывает несколько лейблов (и дистрибьютор) — берём совпавший, иначе первый.
+            same = [entry for entry in labels if norm(clean_name(entry.get("name"))) == norm(name)]
+            for entry in (same or labels)[:1]:
+                votes.add(int(entry["id"]), entry.get("name"))
+            if votes.confirmed is not None:
+                break
+        return votes.best()
+
+    def discogs_by_name(self, name: str, titles: Sequence[str]) -> int | None:
+        results = self.discogs.get("/database/search", q=name, type="label", per_page=10).get("results", [])
+        for candidate in results:
+            if norm(clean_name(candidate.get("title"))) != norm(name):
+                continue
+            theirs: list[str] = []
+            for page in range(1, CONFIRM_PAGES + 1):
+                data = self.discogs.get(f"/labels/{candidate['id']}/releases", per_page=100, page=page)
+                theirs += [r.get("title", "") for r in data.get("releases", [])]
+                if page >= (data.get("pagination") or {}).get("pages", 1):
+                    break
+            if titles_overlap(titles, theirs):
+                return int(candidate["id"])
+        return None
+
+    # ---------- описание ----------
+
+    def wikipedia_intro(self, discogs_label_id: int) -> tuple[str, str, str] | None:
+        """(текст, источник, Q-id) по id лейбла Discogs: русская статья, иначе английская."""
+        search = self.web.get_json("https://www.wikidata.org/w/api.php", action="query", list="search",
+                                   srsearch=f"haswbstatement:P1955={discogs_label_id}", format="json")
+        hits = [hit["title"] for hit in (search.get("query") or {}).get("search", [])]
+        if len(hits) != 1:
+            return None
+        qid = hits[0]
+        entity = self.web.get_json("https://www.wikidata.org/w/api.php", action="wbgetentities", ids=qid,
+                                   props="sitelinks", sitefilter="ruwiki|enwiki", format="json")
+        sitelinks = ((entity.get("entities") or {}).get(qid) or {}).get("sitelinks") or {}
+        for wiki, lang in (("ruwiki", "ru"), ("enwiki", "en")):
+            title = (sitelinks.get(wiki) or {}).get("title")
+            if not title:
+                continue
+            data = self.web.get_json(f"https://{lang}.wikipedia.org/w/api.php", action="query", prop="extracts",
+                                     exintro=1, explaintext=1, redirects=1, titles=title, format="json")
+            pages = ((data.get("query") or {}).get("pages") or {}).values()
+            extract = next((p.get("extract") for p in pages if p.get("extract")), "")
+            if extract.strip():
+                return extract.strip(), f"wikipedia_{lang}", qid
+        return None
+
+    def discogs_profile_text(self, profile: str) -> str:
+        """Разметка Discogs → текст; артисты остаются «[a=Имя]» (discocs делает из них ссылки)."""
+        text = _DISCOGS_REF.sub(lambda m: self._ref_name(m.group(1), m.group(2)), profile or "")
+        text = _DISCOGS_NAMED.sub(
+            lambda m: f"[a={clean_name(m.group(2))}]" if m.group(1).lower() == "a" else clean_name(m.group(2)),
+            text,
+        )
+        text = _DISCOGS_URL.sub(lambda m: m.group(2), text)
+        text = _DISCOGS_BARE_URL.sub(lambda m: m.group(1), text)
+        return _DISCOGS_TAGS.sub("", text).strip()
+
+    def _ref_name(self, kind: str, ref_id: str) -> str:
+        kind = kind.lower()
+        if kind == "a":
+            name = clean_name(self.discogs.get(f"/artists/{ref_id}").get("name", ""))
+            return f"[a={name}]" if name else ""
+        if kind == "l":
+            return clean_name(self.discogs.get(f"/labels/{ref_id}").get("name", ""))
+        path = "releases" if kind == "r" else "masters"
+        return str(self.discogs.get(f"/{path}/{ref_id}").get("title", ""))
+
+    # ---------- один лейбл ----------
+
+    def resolve(
+        self,
+        name: str,
+        barcodes: Sequence[str],
+        isrcs: Sequence[str],
+        release_titles: Callable[[], list[str]],
+    ) -> LabelResult:
+        bp_id, bp_how = self._first((
+            ("barcode", lambda: self.beatport_by_barcodes(name, barcodes) if barcodes else None),
+            ("isrc", lambda: self.beatport_by_isrcs(name, isrcs) if isrcs else None),
+            ("name", lambda: self.beatport_by_name(name, release_titles())),
+        ))
+        dc_id, dc_how = self._first((
+            ("barcode", lambda: self.discogs_by_barcodes(name, barcodes) if barcodes else None),
+            ("name", lambda: self.discogs_by_name(name, release_titles())),
+        ))
+        bp = self.beatport.label(bp_id) if bp_id else {}
+        dc = self.discogs.get(f"/labels/{dc_id}") if dc_id else {}
+
+        result = LabelResult(how={"beatport": bp_how, "discogs": dc_how})
+        result.image_url, result.image_source = _beatport_image_url(bp), "beatport"
+        if not result.image_url:
+            images = sorted(dc.get("images") or [], key=lambda i: i.get("type") != "primary")
+            result.image_url, result.image_source = (images[0].get("uri") if images else None), "discogs"
+        if not result.image_url:
+            result.image_source = None
+
+        wiki = self.wikipedia_intro(dc_id) if dc_id else None
+        profile = self.discogs_profile_text(dc["profile"]) if dc.get("profile") else ""
+        qid = None
+        if wiki:
+            result.description, result.description_source, qid = wiki
+        elif profile:
+            result.description, result.description_source = profile, "discogs"
+        elif str(bp.get("bio") or "").strip():
+            result.description, result.description_source = str(bp["bio"]).strip(), "beatport"
+
+        result.links = _links(dc, dc_id, bp, bp_id)
+        result.external_ids = {k: str(v) for k, v in (("beatport", bp_id), ("discogs", dc_id), ("wikidata", qid)) if v}
+        return result
+
+    @staticmethod
+    def _first(steps) -> tuple[int | None, str | None]:
+        for how, step in steps:
+            found = step()
+            if found:
+                return found, how
+        return None, None
+
+
+_DISCOGS_REF = re.compile(r"\[(a|l|r|m)=?(\d+)\]", re.I)
+_DISCOGS_NAMED = re.compile(r"\[(a|l)=([^\]]+)\]", re.I)
+_DISCOGS_URL = re.compile(r"\[url=([^\]]+)\](.*?)\[/url\]", re.I | re.S)
+_DISCOGS_BARE_URL = re.compile(r"\[url\](.*?)\[/url\]", re.I | re.S)
+_DISCOGS_TAGS = re.compile(r"\[/?(?:b|i|u|s)\]|\[g[^\]]*\]", re.I)
+
+
+def _beatport_image_url(label: dict) -> str | None:
+    image = label.get("image") or {}
+    uri = image.get("dynamic_uri") or ""
+    url = uri.replace("{w}x{h}", "500x500") if "{w}x{h}" in uri else image.get("uri")
+    if not url or BEATPORT_PLACEHOLDER in url:
+        return None
+    return str(url)
+
+
+def _links(dc: dict, dc_id: int | None, bp: dict, bp_id: int | None) -> list[dict[str, str]]:
+    links = [{"url": str(url)} for url in dc.get("urls") or [] if str(url).startswith(("http://", "https://"))]
+    if dc_id:
+        links.append({"url": f"https://www.discogs.com/label/{dc_id}", "title": "Discogs"})
+    if bp_id:
+        links.append({"url": f"https://www.beatport.com/label/{bp.get('slug') or 'x'}/{bp_id}", "title": "Beatport"})
+    seen: set[str] = set()
+    unique: list[dict[str, str]] = []
+    for link in links:
+        key = link["url"].rstrip("/").lower().replace("://www.", "://")
+        if key not in seen:
+            seen.add(key)
+            unique.append(link)
+    return unique[:50]

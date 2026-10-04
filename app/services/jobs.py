@@ -89,9 +89,17 @@ def finish_job(job_id: str, status: str, message: str, error_detail: str | None 
     maybe_start_next_deferred_job()
 
 
+# Задачи, которые не пересекаются с остальными по данным и поэтому не держат общую очередь:
+# синхронизация лейблов пишет только данные лейблов (app/services/label_sync).
+NON_BLOCKING_JOB_KINDS = frozenset({"label-sync"})
+
+
 def has_active_job(store: Store | None = None) -> bool:
     with JOBS_LOCK:
-        if any(job.status in {"queued", "running"} for job in JOBS.values()):
+        if any(
+            job.status in {"queued", "running"} and job.kind not in NON_BLOCKING_JOB_KINDS
+            for job in JOBS.values()
+        ):
             return True
     if store is None:
         try:

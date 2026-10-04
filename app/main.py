@@ -335,6 +335,7 @@ from app.api import (  # noqa: E402
     dashboard as _api_dashboard,
     downloads as _api_downloads,
     external as _api_external,
+    label_sync as _api_label_sync,
     labels as _api_labels,
     metrics as _api_metrics,
     releases as _api_releases,
@@ -363,6 +364,7 @@ app.include_router(_api_search.router)
 app.include_router(_api_artists.router)
 app.include_router(_api_releases.router)
 app.include_router(_api_labels.router)
+app.include_router(_api_label_sync.router)
 app.include_router(_api_settings.router)
 app.include_router(_api_metrics.router)
 app.include_router(_api_playback.router)

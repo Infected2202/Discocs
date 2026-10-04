@@ -1,7 +1,0 @@
-# В git — только код. Кэши (ответы Wikidata/Wikipedia, картинки), состояние и отчёт — локальные данные,
-# config.json — адрес discocs и сервисный токен.
-*
-!.gitignore
-!README.md
-!config.example.json
-!*.py

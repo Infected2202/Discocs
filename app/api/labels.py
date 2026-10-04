@@ -1,4 +1,4 @@
-"""Labels API routes: список и страница лейбла, картинка, приём данных из tools/label-sync."""
+"""Labels API routes: список и страница лейбла, картинка, приём метаданных извне."""
 from __future__ import annotations
 
 from typing import Annotated
@@ -77,7 +77,7 @@ def api_v1_label_releases(
     return {
         "label": {"id": label.id, "name": label.name},
         "sort": sort,
-        # Группы по типу релиза — для страницы лейбла; плоский items — для tools/label-sync.
+        # Группы по типу релиза — для страницы лейбла; плоский items — для внешних клиентов.
         "groups": [
             {"key": key, "items": [item(row) for row in rows]}
             for key, rows in group_label_releases(releases)
@@ -119,7 +119,7 @@ def api_v1_label_image(label_id: int) -> FileResponse | JSONResponse:
 
 @router.put("/labels/metadata", response_model=None)
 def api_v1_put_label_metadata(request: LabelMetadataRequest) -> dict[str, object] | JSONResponse:
-    """Картинка, описание и ссылки лейбла от tools/label-sync; лейбл — по названию."""
+    """Картинка, описание и ссылки лейбла извне (обычно их пишет синхронизация в админке); лейбл — по названию."""
     store, settings = context()
     image = None
     if request.image_base64:
@@ -149,7 +149,7 @@ def api_v1_put_label_metadata(request: LabelMetadataRequest) -> dict[str, object
 def api_v1_put_label_description(
     label_id: int, request: LabelDescriptionRequest
 ) -> dict[str, object] | JSONResponse:
-    """Описание, написанное вручную: label-sync его потом не перезаписывает; пустое — снимает защиту."""
+    """Описание, написанное вручную: синхронизация лейблов его не перезаписывает; пустое — снимает защиту."""
     store, _settings = context()
     if store.get_label(label_id) is None:
         return api_error(404, "not_found", _LABEL_NOT_FOUND)
