@@ -77,6 +77,8 @@ export interface ArtistSimilarResponse {
 
 export interface ArtistTopTrack extends TrackSummary {
   play_count: number
+  /** rank трека в Deezer (снимок), если трек связан с Deezer */
+  deezer_rank?: number | null
 }
 
 export interface ArtistTopTracksResponse {
@@ -101,6 +103,8 @@ export interface ReleaseSummary {
   track_count: number
   duration: number | null
   artwork: ImageRef
+  /** fans альбома в Deezer — дискография артиста и релизы лейбла */
+  deezer_fans?: number | null
 }
 
 export interface LabelLink {
@@ -180,7 +184,7 @@ export interface LabelResponse {
   links: Record<string, string>
 }
 
-export type LabelReleaseSort = "release_date_desc" | "release_date_asc"
+export type LabelReleaseSort = "release_date_desc" | "release_date_asc" | "popularity"
 
 export type LabelReleaseGroupKey = "albums" | "eps" | "singles" | "compilations" | "releases"
 

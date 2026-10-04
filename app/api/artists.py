@@ -27,6 +27,7 @@ from app.serializers.entities import (
     image_ref,
     release_summary_dict,
     release_track_dict,
+    sort_by_popularity,
     track_summary_dict,
 )
 from app.services.cover import (
@@ -53,13 +54,7 @@ def api_v1_artist(artist_id: int) -> dict[str, object] | JSONResponse:
     artist = store.get_artist(artist_id)
     if artist is None:
         return api_error(404, "not_found", _ARTIST_NOT_FOUND)
-    top = store.top_tracks_for_artist(artist_id, limit=100)
-    artists_by_track = store.artists_for_tracks([track.id for track, _ in top])
-    top_tracks = []
-    for track, play_count in top:
-        item = track_summary_dict(store, track, artists_by_track.get(track.id, []))
-        item["play_count"] = play_count
-        top_tracks.append(item)
+    top_tracks = _top_track_items(store, artist_id)
     return {
         "artist": {**artist_summary_with_external_image(store, settings, artist), "sort_name": artist.artist.sort_name},
         "actions": [entity_action("mix", True, None)],
@@ -76,7 +71,9 @@ def api_v1_artist(artist_id: int) -> dict[str, object] | JSONResponse:
 @router.get("/artists/{artist_id}/discography", response_model=ArtistDiscographyResponse)
 def api_v1_artist_discography(
     artist_id: int,
-    sort: Annotated[str, Query(pattern="^(release_date_desc|release_date_asc|title)$")] = "release_date_desc",
+    sort: Annotated[
+        str, Query(pattern="^(release_date_desc|release_date_asc|title|popularity)$")
+    ] = "release_date_desc",
     limit: Annotated[int | None, Query(ge=1, le=100)] = None,
     include_tracks: bool = False,
 ) -> dict[str, object] | JSONResponse:
@@ -96,10 +93,15 @@ def api_v1_artist_discography(
         "featured_in": "Featured In",
     }
     discography = store.artist_discography(artist_id)
+    fans = store.release_popularity(
+        [item.release.id for items in discography.values() for item in items]
+    )
     groups = []
     for key, title in titles.items():
         items = discography[key]
-        if sort == "title":
+        if sort == "popularity":
+            items = sort_by_popularity(items, fans)
+        elif sort == "title":
             items = sorted(items, key=lambda item: item.release.title.casefold())
         elif sort == "release_date_asc":
             items = sorted(
@@ -115,6 +117,7 @@ def api_v1_artist_discography(
         release_items = []
         for item in items:
             release_item = release_summary_dict(item)
+            release_item["deezer_fans"] = fans.get(item.release.id)
             if include_tracks:
                 release_item["tracks"] = [
                     release_track_dict(store, track)
@@ -177,19 +180,28 @@ def api_v1_artist_top_tracks(artist_id: int) -> dict[str, object] | JSONResponse
     artist = store.get_artist(artist_id)
     if artist is None:
         return api_error(404, "not_found", _ARTIST_NOT_FOUND)
-    top = store.top_tracks_for_artist(artist_id, limit=100)
-    artists_by_track = store.artists_for_tracks([track.id for track, _ in top])
-    items = []
-    for track, play_count in top:
-        item = track_summary_dict(store, track, artists_by_track.get(track.id, []))
-        item["play_count"] = play_count
-        items.append(item)
+    items = _top_track_items(store, artist_id)
     return {
         "artist": artist_link_dict(artist.artist),
         "items": items,
-        "basis": "local_playback",
+        # Порядок: свои прослушивания, затем rank Deezer (если трек связан с Deezer).
+        "basis": "local_playback_deezer_rank"
+        if any(item["deezer_rank"] is not None for item in items)
+        else "local_playback",
         "available": len(items) > 0,
     }
+
+
+def _top_track_items(store, artist_id: int) -> list[dict[str, object]]:
+    top = store.top_tracks_for_artist(artist_id, limit=100)
+    artists_by_track = store.artists_for_tracks([track.id for track, _plays, _rank in top])
+    items = []
+    for track, play_count, deezer_rank in top:
+        item = track_summary_dict(store, track, artists_by_track.get(track.id, []))
+        item["play_count"] = play_count
+        item["deezer_rank"] = deezer_rank
+        items.append(item)
+    return items
 
 
 @router.get("/artists/{artist_id}/similar", response_model=ArtistAvailabilityStubResponse)

@@ -983,11 +983,12 @@ class LibraryStoreMixin:
             ).fetchall()
         return {str(row["normalized_name"]): int(row["id"]) for row in rows}
 
-    def top_tracks_for_artist(self, artist_id: int, limit: int = 100) -> list[tuple[Track, int]]:
+    def top_tracks_for_artist(self, artist_id: int, limit: int = 100) -> list[tuple[Track, int, int | None]]:
+        """(трек, прослушивания, rank Deezer): сначала по прослушиваниям, затем по rank Deezer."""
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT t.*, COALESCE(utp.play_count, 0) AS play_count
+                SELECT t.*, COALESCE(utp.play_count, 0) AS play_count, td.rank AS deezer_rank
                 FROM tracks t
                 JOIN track_artists ta ON ta.track_id = t.id
                 LEFT JOIN (
@@ -995,14 +996,22 @@ class LibraryStoreMixin:
                     FROM user_track_preferences
                     GROUP BY track_id
                 ) utp ON utp.track_id = t.id
+                LEFT JOIN track_deezer td ON td.track_id = t.id
                 WHERE ta.artist_id = ?
                 GROUP BY t.id
-                ORDER BY play_count DESC, t.id ASC
+                ORDER BY play_count DESC, deezer_rank IS NULL, deezer_rank DESC, t.id ASC
                 LIMIT ?
                 """,
                 (artist_id, limit),
             ).fetchall()
-        return [(row_to_track(row), int(row["play_count"])) for row in rows]
+        return [
+            (
+                row_to_track(row),
+                int(row["play_count"]),
+                int(row["deezer_rank"]) if row["deezer_rank"] is not None else None,
+            )
+            for row in rows
+        ]
 
     def get_release(self, release_id: int) -> ReleaseSummaryRow | None:
         with self.connect() as conn:

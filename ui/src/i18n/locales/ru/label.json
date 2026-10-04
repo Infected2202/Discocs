@@ -17,7 +17,8 @@
   "sort": {
     "label": "Сортировка",
     "release_date_desc": "Сначала новые",
-    "release_date_asc": "Сначала старые"
+    "release_date_asc": "Сначала старые",
+    "popularity": "Сначала популярные"
   },
   "description": {
     "showMore": "Показать полностью",

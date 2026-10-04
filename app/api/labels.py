@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from app.api.deps import api_error, context
 from app.models import LabelMetadata
 from app.schemas.requests import LabelMetadataRequest
-from app.serializers.entities import release_summary_dict
+from app.serializers.entities import release_summary_dict, sort_by_popularity
 from app.serializers.labels import label_detail_dict, label_summary_dict
 from app.store import group_label_releases
 from app.services.labels import (
@@ -58,22 +58,31 @@ def api_v1_label(label_id: int) -> dict[str, object] | JSONResponse:
 @router.get("/labels/{label_id}/releases", response_model=None)
 def api_v1_label_releases(
     label_id: int,
-    sort: Annotated[str, Query(pattern="^(release_date_desc|release_date_asc)$")] = "release_date_desc",
+    sort: Annotated[
+        str, Query(pattern="^(release_date_desc|release_date_asc|popularity)$")
+    ] = "release_date_desc",
 ) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     label = store.get_label(label_id)
     if label is None:
         return api_error(404, "not_found", _LABEL_NOT_FOUND)
-    releases = store.label_releases(label_id, newest_first=sort == "release_date_desc")
+    releases = store.label_releases(label_id, newest_first=sort != "release_date_asc")
+    fans = store.release_popularity([row.release.id for row in releases])
+    if sort == "popularity":
+        releases = sort_by_popularity(releases, fans)
+
+    def item(row) -> dict[str, object]:
+        return {**release_summary_dict(row), "deezer_fans": fans.get(row.release.id)}
+
     return {
         "label": {"id": label.id, "name": label.name},
         "sort": sort,
         # Группы по типу релиза — для страницы лейбла; плоский items — для tools/label-sync.
         "groups": [
-            {"key": key, "items": [release_summary_dict(row) for row in rows]}
+            {"key": key, "items": [item(row) for row in rows]}
             for key, rows in group_label_releases(releases)
         ],
-        "items": [release_summary_dict(row) for row in releases],
+        "items": [item(row) for row in releases],
     }
 
 

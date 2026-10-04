@@ -19,11 +19,35 @@ logger = logging.getLogger(__name__)
 _ALBUMS_FOR_YOU_REFRESH_HOURS = 6.0
 _FLOW_REFRESH_HOURS = 6.0
 _SESSION_PURGE_INTERVAL_SECONDS = 3600.0
+# Обновление популярности Deezer: порция альбомов раз в минуту — полный круг по
+# ~9 тыс. альбомов за несколько часов, не занимая тик надолго.
+_DEEZER_REFRESH_INTERVAL_SECONDS = 60.0
+_DEEZER_REFRESH_BATCH = 25
 
 # Monotonic timestamp of the last Navidrome play-state refresh (throttling).
 _last_play_state_refresh: float | None = None
 # Monotonic timestamp of the last expired-session purge (throttling).
 _last_session_purge: float | None = None
+# Monotonic timestamp of the last Deezer popularity batch (throttling).
+_last_deezer_refresh: float | None = None
+
+
+def _maybe_refresh_deezer_popularity(store) -> None:
+    global _last_deezer_refresh
+    now = monotonic()
+    if (
+        _last_deezer_refresh is not None
+        and now - _last_deezer_refresh < _DEEZER_REFRESH_INTERVAL_SECONDS
+    ):
+        return
+    _last_deezer_refresh = now
+    try:
+        from app.popularity import refresh_deezer_popularity  # noqa: PLC0415
+        result = refresh_deezer_popularity(store, limit=_DEEZER_REFRESH_BATCH)
+        if result.refreshed or result.failed:
+            logger.info("Deezer popularity refresh %s", result.summary())
+    except Exception:
+        logger.exception("Deezer popularity refresh failed")
 
 
 def _maybe_purge_expired_sessions(store) -> None:
@@ -127,6 +151,7 @@ def run_maintenance_tick(store=None) -> None:
         _maybe_refresh_generated_mixes(user_store, settings)
         _maybe_refresh_flow_profile(user_store, settings)
     _maybe_refresh_navidrome_play_state(store, settings)
+    _maybe_refresh_deezer_popularity(store)
     _maybe_purge_expired_sessions(store)
 
 

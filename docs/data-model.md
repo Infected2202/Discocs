@@ -174,6 +174,30 @@ Two mapping tables exist, at different points in the schema's history:
 Both tables are present in the current schema; `external_tracks` has not
 been migrated away.
 
+### Deezer popularity
+
+Popularity snapshots from Deezer, used to order "popular tracks" on the artist
+page and the `popularity` sort of artist discographies and label releases.
+
+- `track_deezer` — `track_id` (PK, cascades with the track),
+  `deezer_track_id` (nullable: a release matched by album only),
+  `deezer_album_id`, `rank` (Deezer track rank snapshot), `updated_at`.
+- `deezer_albums` — `deezer_album_id` (PK), `fans`, `fetched_at`, `error`
+  (Deezer no longer serves the album; old numbers are kept).
+
+Keyed by track, not release: release IDs change when albums are regrouped,
+track IDs do not. A release's popularity is the largest `fans` among the
+Deezer albums of its tracks (`release_popularity`).
+
+The links come from `tools/library-tags/popularity.py`: Deezer IDs live in
+file tags (`DEEZER_ALBUM_ID`/`DEEZER_TRACK_ID`), which Navidrome does not
+expose, so the tool matches real file paths to Navidrome song IDs and pipes
+JSON into `recs deezer-import -`. Re-imports never overwrite a newer snapshot
+or an existing rank with an empty one. The numbers drift, so the maintenance
+loop refreshes 25 albums a minute whose snapshot is older than 7 days
+(`app/popularity.py`; manual run: `recs deezer-refresh`). A network failure or
+a Deezer quota error stops the batch without touching snapshots.
+
 ## Embeddings
 
 `embeddings` stores one recommendation vector per `(track_id, model_name)`:

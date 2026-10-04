@@ -432,6 +432,29 @@ class StoreBase:
                 CREATE INDEX IF NOT EXISTS idx_external_ids_entity
                     ON external_ids(entity_type, entity_id);
 
+                -- Популярность по Deezer (см. docs/data-model.md): связь трека с
+                -- треком/альбомом Deezer и снимки rank/fans, которые фоновая задача
+                -- освежает. Релиз — по трекам: его ID меняется при перегруппировке
+                -- альбомов, ID трека — нет.
+                CREATE TABLE IF NOT EXISTS track_deezer (
+                    track_id INTEGER PRIMARY KEY,
+                    deezer_track_id INTEGER,
+                    deezer_album_id INTEGER NOT NULL,
+                    rank INTEGER,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_track_deezer_album
+                    ON track_deezer(deezer_album_id);
+
+                CREATE TABLE IF NOT EXISTS deezer_albums (
+                    deezer_album_id INTEGER PRIMARY KEY,
+                    fans INTEGER,
+                    fetched_at TEXT,
+                    error TEXT
+                );
+
                 CREATE TABLE IF NOT EXISTS playback_sessions (
                     id TEXT PRIMARY KEY,
                     source_type TEXT NOT NULL,

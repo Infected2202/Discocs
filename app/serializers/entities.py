@@ -134,6 +134,11 @@ def release_summary_dict(row: ReleaseSummaryRow) -> dict[str, object]:
     }
 
 
+def sort_by_popularity(rows: list[ReleaseSummaryRow], fans: dict[int, int]) -> list[ReleaseSummaryRow]:
+    """По fans альбома Deezer, от популярных; релизы без данных — в конце в прежнем порядке."""
+    return sorted(rows, key=lambda row: (row.release.id not in fans, -fans.get(row.release.id, 0)))
+
+
 # ---------------------------------------------------------------------------
 # Track
 # ---------------------------------------------------------------------------

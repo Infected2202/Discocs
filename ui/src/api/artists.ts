@@ -5,7 +5,7 @@ export function fetchArtist(id: number): Promise<ArtistResponse> {
   return apiFetch(`/api/v1/artists/${id}`)
 }
 
-export type DiscographySort = "release_date_desc" | "release_date_asc" | "title"
+export type DiscographySort = "release_date_desc" | "release_date_asc" | "title" | "popularity"
 
 export function fetchArtistDiscography(
   id: number,

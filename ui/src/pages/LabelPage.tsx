@@ -14,7 +14,7 @@ import Shelf from "@/components/media/Shelf"
 import { usePlayerStore } from "@/store/playerStore"
 import type { LabelDescriptionSegment, LabelDetail, LabelReleaseSort, ReleaseSummary } from "@/api/types"
 
-const SORTS: LabelReleaseSort[] = ["release_date_desc", "release_date_asc"]
+const SORTS: LabelReleaseSort[] = ["release_date_desc", "release_date_asc", "popularity"]
 
 function releaseSubtitle(release: ReleaseSummary): string | null {
   const artists = release.artists.map((artist) => artist.name).join(", ")

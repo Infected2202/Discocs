@@ -551,6 +551,33 @@ def navidrome_sync(
         raise typer.Exit(1)
 
 
+@cli.command("deezer-import")
+def deezer_import(
+    source: Annotated[str, typer.Argument(help="JSON from tools/library-tags/popularity.py; '-' reads stdin.")] = "-",
+) -> None:
+    """Import track → Deezer track/album links and rank/fans snapshots."""
+    store, _settings = get_store_and_settings()
+    raw = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+    payload = json.loads(raw)
+    stats = store.import_deezer_links(payload.get("tracks") or [], payload.get("albums") or [])
+    typer.echo(" ".join(f"{key}={value}" for key, value in stats.items()))
+    typer.echo(" ".join(f"{key}={value}" for key, value in store.deezer_popularity_stats().items()))
+
+
+@cli.command("deezer-refresh")
+def deezer_refresh(
+    limit: Annotated[int, typer.Option("--limit", min=1)] = 500,
+    max_age_days: Annotated[float, typer.Option("--max-age-days", min=0)] = 7.0,
+) -> None:
+    """Refresh Deezer rank/fans for albums whose snapshot is older than --max-age-days."""
+    from app.popularity import refresh_deezer_popularity
+
+    store, _settings = get_store_and_settings()
+    result = refresh_deezer_popularity(store, limit=limit, max_age_days=max_age_days)
+    typer.echo(result.summary())
+    typer.echo(" ".join(f"{key}={value}" for key, value in store.deezer_popularity_stats().items()))
+
+
 @cli.command("navidrome-merge-duplicates")
 def navidrome_merge_duplicates(
     apply: Annotated[

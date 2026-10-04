@@ -15,7 +15,8 @@
   "sort": {
     "label": "Sort",
     "release_date_desc": "Newest first",
-    "release_date_asc": "Oldest first"
+    "release_date_asc": "Oldest first",
+    "popularity": "Most popular"
   },
   "description": {
     "showMore": "Show more",

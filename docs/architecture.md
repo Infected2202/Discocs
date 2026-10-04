@@ -116,8 +116,14 @@ Implementation notes vs. the original spec:
   `find_similar_releases`) and excludes the source release plus every other
   release by the same artist(s).
 - `/api/v1/artists/{id}` and `/api/v1/artists/{id}/top-tracks` both return
-  populated `top_tracks`/`items` from `store.top_tracks_for_artist`, driven
-  by local playback data (`basis: "local_playback"`), not an empty stub.
+  populated `top_tracks`/`items` from `store.top_tracks_for_artist`, ordered
+  by local play count and then by Deezer track rank (`deezer_rank` per item;
+  `basis: "local_playback_deezer_rank"` when any item has a rank, otherwise
+  `"local_playback"`), not an empty stub.
+- `/api/v1/artists/{id}/discography` and `/api/v1/labels/{id}/releases`
+  accept `sort=popularity` (Deezer album fans, releases without data last)
+  and return `deezer_fans` per release (see `docs/data-model.md`, Deezer
+  popularity).
 - `/api/v1/artists/{id}/similar` uses a release-derived artist centroid to
   select candidates, then reranks them by symmetric release-catalog coverage.
   Artist aggregates give every owned release (including singles) equal weight;

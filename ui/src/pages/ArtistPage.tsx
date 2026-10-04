@@ -10,6 +10,7 @@ import CollectionHeader from "@/components/media/CollectionHeader"
 import LikeButton from "@/components/media/LikeButton"
 import Shelf from "@/components/media/Shelf"
 import PopularTracks from "@/components/media/PopularTracks"
+import { pickPopularTracks } from "@/lib/popularTracks"
 import { usePlayerStore } from "@/store/playerStore"
 import type { ArtistSummary, ReleaseSummary } from "@/api/types"
 
@@ -50,11 +51,7 @@ export default function ArtistPage() {
   const { data: artistData, isLoading: artistLoading, error } = useArtist(artistId)
   const { data: discoData, isLoading: discoLoading } = useArtistDiscography(artistId)
   const { data: similarData } = useArtistSimilar(artistId)
-  const popularTracks = (() => {
-    const items = artistData?.top_tracks ?? []
-    const hasPlays = items.some((t) => t.play_count > 0)
-    return hasPlays ? items.filter((t) => t.play_count > 0) : items.slice(0, 5)
-  })()
+  const popularTracks = pickPopularTracks(artistData?.top_tracks ?? [])
   const playSource = usePlayerStore((s) => s.playSource)
   const isLoading = artistLoading || discoLoading
 

@@ -161,9 +161,11 @@ Backend calls: `useArtist`, `useArtistDiscography`, `useArtistSimilar` (`GET
 Layout: circular avatar (`144px`) on the left, artist name and local stats
 (`tracks · releases · plays`, each field only shown if > 0) on the right,
 with Play and like-heart actions. Below: a `PopularTracks` block built from
-`artist.top_tracks` (falls back to the first 5 tracks if none of them have a
-positive play count — i.e. it does not hide the section when local play data
-is genuinely absent, unlike the original "omit if unavailable" spec), then
+`artist.top_tracks` by `pickPopularTracks` (`lib/popularTracks.ts`): every
+played track, then tracks with a Deezer rank up to 20 in total (the API
+already orders by plays, then rank); falls back to the first 5 tracks when
+none has either signal — i.e. it does not hide the section when popularity
+data is genuinely absent, unlike the original "omit if unavailable" spec), then
 one grid `Shelf` per non-empty discography group returned by the API (e.g.
 Albums, EPs, Singles, Featured In — grouping logic lives server-side). A
 regular 16-item "Similar artists" shelf is rendered last when artist
@@ -176,7 +178,8 @@ scrolling page with sequential sections.
 ### Label page (`/labels/:id`, `LabelPage.tsx`)
 
 Backend calls: `useLabel`, `useLabelReleases` (`GET /api/v1/labels/{id}`,
-`/releases?sort=release_date_desc|release_date_asc`).
+`/releases?sort=release_date_desc|release_date_asc|popularity`; popularity =
+Deezer album fans).
 
 Layout: square label image (`144px`, from `/api/v1/labels/{id}/image` — the
 stored logo or the bundled Beatport placeholder), "Label" kicker, name and

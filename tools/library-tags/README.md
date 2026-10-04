@@ -27,7 +27,14 @@ python navidrome.py scan | check          # сканирование Navidrome /
 python fragments.py --dry                 # собрать сборники, раздробленные Navidrome (нет исполнителя альбома)
 python resolve.py                         # тип для альбомов без штрихкода: Deezer/Discogs + строгая сверка; --write
 python autotag.py album <id> <папка>      # один релиз — так его вызывает music-fill после загрузки
+python popularity.py [--push]             # связи трек ↔ Deezer и rank/fans → база discocs (recs deezer-import)
 ```
+
+**Популярность — в базе discocs, не в тегах.** rank/fans меняются, а Navidrome свои теги наружу не отдаёт.
+В файлах остаются только ID Deezer. `popularity.py` сопоставляет файлы из журнала записи с песнями
+Navidrome по пути (родной `/api/song` — путь от корня библиотеки; одним запросом: постранично Navidrome
+0.64 отдаёт страницы внахлёст). Затем отдаёт discocs связи и снимки из кэша. Дальше discocs сам освежает
+числа раз в неделю. Новые загрузки попадают туда при следующем запуске, после `navidrome-sync`.
 
 **Автоматически после загрузки.** Сервер music-fill, увидев в очереди deemix «completed», отдаёт задание в
 `autotag.tag_release` (папка — `extrasPath` задания, файлы — с BARCODE этого альбома): тип, ID Deezer, «Various
@@ -37,7 +44,8 @@ Artists». В журнале music-fill — «теги проставлены» 
 Нужны Python 3.11+ с `requests` и `mutagen`. Учётка Navidrome — из `../music-fill/config.json`.
 
 - **Что пишется.** `RELEASETYPE` (album / ep / single / compilation, как у Deezer) — только если у релиза
-  типа ещё нет (существующий — из MusicBrainz, точнее); `DEEZER_ALBUM_ID`, `DEEZER_TRACK_ID`. FLAC —
+  типа ещё нет (существующий — из MusicBrainz, точнее). EP, которые Deezer записал в album/single
+  («Bangarang EP»), — ep по названию (`dry_run.release_type`); `DEEZER_ALBUM_ID`, `DEEZER_TRACK_ID`. FLAC —
   Vorbis comment, MP3 — TXXX. Пути не меняются — ID треков в Navidrome прежние.
 - **Скорость.** Библиотека на SMB-шаре: упор в сетевые задержки, не в диск, — файлы обрабатываются в 8
   потоков (~80 файлов/с вместо ~5).
@@ -53,3 +61,4 @@ Artists». В журнале music-fill — «теги проставлены» 
 | `out/dry_run.json`, `out/dry_run.txt` | отчёт пробного прогона: по релизам и сводка с проблемами |
 | `out/apply_log.jsonl`, `out/various_log.jsonl` | что записано и что было до (для `--undo`) |
 | `out/ignored.json` | какие `.ndignore` положены и какая копия оставлена |
+| `out/popularity.json` | что `popularity.py` отдаёт в discocs |

@@ -33,6 +33,15 @@ OUT = ROOT / "out"
 AUDIO = (".flac", ".mp3")
 DUR_TOL = 3
 TYPES = {"album": "album", "ep": "ep", "single": "single", "compile": "compilation"}
+EP_TITLE = re.compile(r"(?:^|[\s(\[\-–])E\.?P\.?[)\]]?$", re.I)  # «ADHD EP», «Rise (EP)», «X - E.P.»
+
+
+def release_type(a: dict) -> str | None:
+    """Тип релиза Deezer; EP, которые Deezer записал в album/single («Bangarang EP» — album), — по названию."""
+    t = TYPES.get(a.get("record_type"), a.get("record_type"))
+    if t in ("album", "single") and EP_TITLE.search((a.get("title") or "").strip()):
+        return "ep"
+    return t
 
 
 def read_json(p: Path, default):
@@ -273,7 +282,7 @@ def main() -> None:
             row.update(status="not_found", error="по ISRC — другой релиз", isrc_candidate=a.get("title"))
             rows.append(row)
             continue
-        rtype = TYPES.get(a.get("record_type"), a.get("record_type"))
+        rtype = release_type(a)
         row.update(
             deezer_album_id=a.get("id"), title=a.get("title"), record_type=rtype, label=a.get("label"),
             nb_tracks=a.get("nb_tracks"), fans=a.get("fans"), release_date=a.get("release_date"),

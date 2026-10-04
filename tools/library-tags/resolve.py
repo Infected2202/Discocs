@@ -28,7 +28,7 @@ from pathlib import Path
 import mutagen
 import requests
 
-from dry_run import OUT, ROOT, norm, read_json, write_json
+from dry_run import OUT, ROOT, norm, read_json, release_type, write_json
 
 sys.path.insert(0, str(ROOT.parent / "music-fill"))
 import discogs  # noqa: E402  — клиент Discogs из music-fill (ключ, кэш, лимиты)
@@ -39,7 +39,6 @@ PATHS = ROOT / "cache" / "paths.json"
 SEARCH = ROOT / "cache" / "deezer_search.json"
 DUR_TOL = 3
 VA = {"various artists", "various", "va"}
-DZ_TYPES = {"album": "album", "ep": "ep", "single": "single", "compile": "compilation"}
 
 # ---------- Deezer с общим лимитом на все потоки ----------
 _rl = threading.Lock()
@@ -183,7 +182,7 @@ def via_deezer(alb: dict, songs: list[dict]) -> list[dict]:
                  "dur": d.get("duration"), "id": d.get("id")} for d in (a.get("tracks") or {}).get("data", [])]
         if tracks_match(songs, cand, need_dur=True):
             out.append({"source": "deezer", "id": a["id"], "title": a.get("title"),
-                        "type": DZ_TYPES.get(a.get("record_type"), a.get("record_type")),
+                        "type": release_type(a),
                         "nb_tracks": a.get("nb_tracks"), "label": a.get("label")})
     return out
 

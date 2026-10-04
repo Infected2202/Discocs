@@ -19,7 +19,7 @@ from pathlib import Path
 
 import apply as ap
 import various
-from dry_run import TYPES, deezer, file_tags, full_tracklist, match_files, read_json, write_json
+from dry_run import deezer, release_type, file_tags, full_tracklist, match_files, read_json, write_json
 
 AUDIO = (".flac", ".mp3")
 _lock = threading.Lock()  # вызывается из потока music-fill; журнал и кэш тегов — общие
@@ -40,7 +40,7 @@ def tag_release(kind: str, deezer_id: int | str, folder: str | None) -> dict:
     if "error" in a:
         return {"status": "not_found", "error": (a["error"] or {}).get("message")}
     full_tracklist(a)
-    rtype = TYPES.get(a.get("record_type"), a.get("record_type"))
+    rtype = release_type(a)
     out = {"album": a.get("title"), "deezer_album_id": a["id"], "type": rtype}
     d = Path(folder) if folder else None
     if not d or not d.is_dir():
