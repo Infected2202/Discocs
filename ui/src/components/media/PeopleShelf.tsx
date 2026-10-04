@@ -29,10 +29,10 @@ export default function PeopleShelf() {
   const { t } = useTranslation("dashboard")
   const { data, isPending } = usePeople()
 
-  if (isPending) return <ShelfSkeleton round compact />
+  if (isPending) return <ShelfSkeleton round />
 
   const people = data?.items ?? []
   if (people.length === 0) return null
 
-  return <Shelf title={t("shelves.people")} items={people.map(personToCard)} compact />
+  return <Shelf title={t("shelves.people")} items={people.map(personToCard)} />
 }

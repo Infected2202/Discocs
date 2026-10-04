@@ -13,6 +13,12 @@ vi.mock("@/api/hooks/useProfile", () => ({
   useUserListens: (...args: unknown[]) => useUserListens(...args),
 }))
 
+const usePeople = vi.fn()
+
+vi.mock("@/api/hooks/usePeople", () => ({
+  usePeople: () => usePeople(),
+}))
+
 vi.mock("@/components/media/VirtualTrackRow", () => ({
   default: ({ track, metric }: { track: { title: string }; metric?: ReactNode }) => (
     <div data-testid="listen-row">
@@ -72,6 +78,32 @@ describe("ListeningHistoryPage", () => {
   beforeEach(() => {
     useUserListens.mockReset()
     fetchNextPage.mockReset()
+    usePeople.mockReturnValue({ data: undefined })
+  })
+
+  it("shows the playing track first as now, without its in-progress listen", () => {
+    const justNow = new Date(Date.now() - 60_000).toISOString()
+    const playing = makeListen(0, 7, justNow)
+    mockListens([page([makeListen(9, 7, justNow), makeListen(8, 2, localIso(1, 21))], 0, null)])
+    usePeople.mockReturnValue({
+      data: {
+        items: [
+          {
+            username: "Alice",
+            avatar: "a01",
+            now_playing: { track_id: 7, title: "Track 7", artists: "", state: "playing", track: playing },
+          },
+        ],
+      },
+    })
+
+    renderPage()
+
+    const rows = screen.getAllByTestId("listen-row")
+    expect(rows[0]).toHaveTextContent("Track 7")
+    expect(within(rows[0]).getByTestId("listen-now")).toHaveTextContent("now")
+    // The listen recorded mid-play is not listed again under "today".
+    expect(rows.map((row) => row.textContent?.split(" | ")[0])).toEqual(["Track 7", "Track 2"])
   })
 
   it("groups the listens of all loaded pages under local day headings", () => {

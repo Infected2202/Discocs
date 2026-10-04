@@ -16,7 +16,7 @@ const people = {
     {
       username: "bob",
       avatar: "a02",
-      now_playing: { track_id: 3, title: "Signals", artists: "Alpha", state: "playing" },
+      now_playing: { track_id: 3, title: "Signals", artists: "Alpha", state: "playing", track: null },
     },
   ],
 }

@@ -1,5 +1,6 @@
 import { apiFetch } from "./client"
 import type { PresenceState } from "./playback"
+import type { TrackSummary } from "./types"
 
 /** What another user plays right now (GET /api/v1/social/people, docs/social.md). */
 export interface PersonNowPlaying {
@@ -9,6 +10,8 @@ export interface PersonNowPlaying {
   /** Display string, comma-joined. */
   artists: string
   state: Extract<PresenceState, "starting" | "playing">
+  /** Full track payload when mapped (the profile's "now" history row), else null. */
+  track: TrackSummary | null
 }
 
 export interface Person {

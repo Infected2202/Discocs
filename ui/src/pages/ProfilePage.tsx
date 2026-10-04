@@ -19,6 +19,7 @@ import {
 import type { PlaybackEnvelope, PlaylistSummary, ShelfItem } from "@/api/types"
 import { isNetworkError } from "@/lib/apiErrorKind"
 import { avatarUrl } from "@/lib/avatars"
+import { withoutCurrentPlay } from "@/lib/listenHistory"
 import { cn } from "@/lib/utils"
 import { usePlayerStore } from "@/store/playerStore"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -149,6 +150,9 @@ export default function ProfilePage() {
     ? null
     : new Intl.DateTimeFormat(locale, { day: "numeric", month: "long", year: "numeric" }).format(createdAt)
   const hasListens = header.totals.listens > 0
+  const recent = withoutCurrentPlay(profile.recent, nowPlaying?.track)
+  // Period-driven sections say which period they show: «Статистика (30 дн.)».
+  const forPeriod = (title: string) => `${title} (${t(`periodSuffix.${period}`)})`
   const historyHref = `/u/${encodeURIComponent(header.username)}/history`
 
   const avatar = (
@@ -207,8 +211,8 @@ export default function ProfilePage() {
               <p className="mt-2 flex items-center gap-2 text-foreground" data-testid="now-playing">
                 <LiveDot />
                 <span className="min-w-0 truncate">
-                  {t("nowPlaying")}: {nowPlaying.title}
-                  {nowPlaying.artists ? ` — ${nowPlaying.artists}` : ""}
+                  {t("nowPlaying")}: {nowPlaying.artists ? `${nowPlaying.artists} - ` : ""}
+                  {nowPlaying.title}
                 </span>
               </p>
             )}
@@ -235,15 +239,15 @@ export default function ProfilePage() {
             </Tabs>
           </div>
 
-          {profile.recent.length > 0 && (
+          {(recent.length > 0 || nowPlaying?.track) && (
             <ProfileSection title={t("sections.recent")} moreHref={historyHref} moreLabel={t("seeAll")}>
               <div className="px-4 sm:px-6">
-                <ListenRows listens={profile.recent} sourceLabel={t("sections.recent")} />
+                <ListenRows listens={recent} nowPlaying={nowPlaying?.track} sourceLabel={t("sections.recent")} />
               </div>
             </ProfileSection>
           )}
 
-          <ProfileSection title={t("sections.stats")}>
+          <ProfileSection title={forPeriod(t("sections.stats"))}>
             {profile.summary.listens > 0 ? (
               <ProfileStats profile={profile} />
             ) : (
@@ -251,9 +255,9 @@ export default function ProfilePage() {
             )}
           </ProfileSection>
 
-          <Shelf title={t("sections.topArtists")} items={profile.top_artists.map(topCard)} />
-          <Shelf title={t("sections.topReleases")} items={profile.top_releases.map(topCard)} />
-          <TopTracks profile={profile} title={t("sections.topTracks")} />
+          <Shelf title={forPeriod(t("sections.topArtists"))} items={profile.top_artists.map(topCard)} />
+          <Shelf title={forPeriod(t("sections.topReleases"))} items={profile.top_releases.map(topCard)} />
+          <TopTracks profile={profile} title={forPeriod(t("sections.topTracks"))} />
         </div>
       ) : (
         <p className="px-4 sm:px-6 text-sm text-muted-foreground">{t("empty.noListens")}</p>

@@ -183,6 +183,43 @@ describe("ProfilePage", () => {
     expect(within(recent).getByRole("link", { name: "All" })).toHaveAttribute("href", "/u/alice/history")
   })
 
+  it("puts the playing track first in the recent listens, marked now", () => {
+    usePeople.mockReturnValue({
+      data: {
+        items: [
+          person("alice", {
+            track_id: 99,
+            title: "Live One",
+            artists: "Alpha",
+            state: "playing",
+            track: { ...makeListen(0, 99, THREE_HOURS_AGO), title: "Live One" },
+          }),
+        ],
+      },
+    })
+    renderPage()
+
+    const recent = screen.getByRole("region", { name: "Recent listens" })
+    const rows = within(recent).getAllByTestId("listen-row")
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toHaveTextContent("Live One")
+    expect(within(rows[0]).getByTestId("listen-now")).toHaveTextContent("now")
+  })
+
+  it("names the period in the titles of the period-driven sections", () => {
+    renderPage()
+
+    expect(screen.getByRole("region", { name: "Statistics (30 days)" })).toBeInTheDocument()
+    expect(screen.getByTestId("shelf-Top artists (30 days)")).toBeInTheDocument()
+    // Recent listens are not period-driven.
+    expect(screen.getByRole("region", { name: "Recent listens" })).toBeInTheDocument()
+
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Year" }), { button: 0 })
+
+    expect(screen.getByRole("region", { name: "Statistics (year)" })).toBeInTheDocument()
+    expect(screen.getByTestId("shelf-Top artists (year)")).toBeInTheDocument()
+  })
+
   it("draws by-day bars proportional to the listens, labelled with their value", () => {
     renderPage()
 
@@ -228,7 +265,7 @@ describe("ProfilePage", () => {
   it("puts the listens count into the top-artist cards and the top-track rows", () => {
     renderPage()
 
-    expect(screen.getByTestId("shelf-Top artists")).toHaveTextContent("Alpha / 12 listens")
+    expect(screen.getByTestId("shelf-Top artists (30 days)")).toHaveTextContent("Alpha / 12 listens")
     expect(screen.getByTestId("top-tracks")).toHaveTextContent("Track 9: 7")
   })
 
@@ -270,15 +307,15 @@ describe("ProfilePage", () => {
 
   it("shows the live line only while the user is playing", () => {
     usePeople.mockReturnValue({
-      data: { items: [person("Alice", { track_id: 3, title: "Signals", artists: "Alpha", state: "playing" })] },
+      data: { items: [person("Alice", { track_id: 3, title: "Signals", artists: "Alpha", state: "playing", track: null })] },
     })
     const { unmount } = renderPage()
 
-    expect(screen.getByTestId("now-playing")).toHaveTextContent("Now playing: Signals — Alpha")
+    expect(screen.getByTestId("now-playing")).toHaveTextContent("Now playing: Alpha - Signals")
     expect(screen.getByTestId("live-dot")).toHaveClass("motion-safe:animate-pulse")
     unmount()
 
-    usePeople.mockReturnValue({ data: { items: [person("alice", null), person("bob", { track_id: 1, title: "X", artists: "Y", state: "playing" })] } })
+    usePeople.mockReturnValue({ data: { items: [person("alice", null), person("bob", { track_id: 1, title: "X", artists: "Y", state: "playing", track: null })] } })
     renderPage()
     expect(screen.queryByTestId("now-playing")).not.toBeInTheDocument()
   })
@@ -286,11 +323,11 @@ describe("ProfilePage", () => {
   it("shows the live line on one's own profile too", () => {
     mockProfile(makeProfile({}, { viewer_is_owner: true }))
     usePeople.mockReturnValue({
-      data: { items: [person("alice", { track_id: 3, title: "Signals", artists: "Alpha", state: "playing" })] },
+      data: { items: [person("alice", { track_id: 3, title: "Signals", artists: "Alpha", state: "playing", track: null })] },
     })
     renderPage()
 
-    expect(screen.getByTestId("now-playing")).toHaveTextContent("Now playing: Signals — Alpha")
+    expect(screen.getByTestId("now-playing")).toHaveTextContent("Now playing: Alpha - Signals")
   })
 
   it("does not let another user's avatar be changed", () => {

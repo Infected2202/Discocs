@@ -27,7 +27,7 @@ vi.mock("@/hooks/useColumns", () => ({
 const carol: Person = {
   username: "carol",
   avatar: "a03",
-  now_playing: { track_id: 7, title: "Signals", artists: "Alpha, Beta", state: "playing" },
+  now_playing: { track_id: 7, title: "Signals", artists: "Alpha, Beta", state: "playing", track: null },
 }
 const bob: Person = { username: "bob", avatar: "a02", now_playing: null }
 
@@ -57,16 +57,6 @@ describe("PeopleShelf", () => {
     expect(avatars.map((img) => img.getAttribute("alt"))).toEqual(["carol", "bob"])
     expect(avatars[0]).toHaveAttribute("src", avatarUrl("a03"))
     expect(avatars[1]).toHaveAttribute("src", avatarUrl("a02"))
-  })
-
-  it("uses half-size cards (twice the usual columns)", () => {
-    peopleState.data = { items: [carol, bob] }
-
-    renderShelf()
-
-    // useColumns is mocked to 6 → the compact shelf lays out 12 per page.
-    const page = screen.getAllByRole("img")[0].closest("[style*='grid-template-columns']")
-    expect(page).toHaveAttribute("style", expect.stringContaining("repeat(12, 1fr)"))
   })
 
   it("shows what a playing user listens to, with a live dot, and only the login otherwise", () => {
@@ -132,7 +122,7 @@ describe("personToCard", () => {
   it("falls back to the title alone when Navidrome gives no artist", () => {
     const card = personToCard({
       ...carol,
-      now_playing: { track_id: null, title: "Untitled", artists: "", state: "starting" },
+      now_playing: { track_id: null, title: "Untitled", artists: "", state: "starting", track: null },
     })
     expect(card.subtitle).toBe("Untitled")
   })

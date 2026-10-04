@@ -7,6 +7,7 @@ import {
   groupListensByDay,
   localDayKey,
   parseLocalDate,
+  withoutCurrentPlay,
 } from "./listenHistory"
 
 // Timestamps are built from local wall-clock times, so the local-day
@@ -108,5 +109,27 @@ describe("formatBucketLabels", () => {
     expect(labels.full).toContain("7")
     expect(labels.full).toContain("March")
     expect(labels.short).toBe("Mar 7")
+  })
+})
+
+describe("withoutCurrentPlay", () => {
+  const now = new Date("2026-10-04T12:00:00Z")
+  const listen = (id: number, listenedAt: string) => ({ id, listened_at: listenedAt })
+  const recent = [listen(7, "2026-10-04T11:58:00Z"), listen(2, "2026-10-04T10:00:00Z")]
+
+  it("drops the newest listen when it is the still-playing track", () => {
+    expect(withoutCurrentPlay(recent, { id: 7, duration: 300 }, now)).toEqual([recent[1]])
+  })
+
+  it("keeps it once the play is longer ago than the track lasts", () => {
+    const earlier = [listen(7, "2026-10-04T11:50:00Z"), recent[1]]
+    // 10 min ago, but the track is 5 min (+1 min slack): an earlier play of it.
+    expect(withoutCurrentPlay(earlier, { id: 7, duration: 300 }, now)).toEqual(earlier)
+  })
+
+  it("keeps everything for another track or when nothing plays", () => {
+    expect(withoutCurrentPlay(recent, { id: 3, duration: 300 }, now)).toEqual(recent)
+    expect(withoutCurrentPlay(recent, null, now)).toEqual(recent)
+    expect(withoutCurrentPlay([], { id: 7, duration: 300 }, now)).toEqual([])
   })
 })

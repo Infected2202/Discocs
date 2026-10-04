@@ -3,8 +3,9 @@ import { useNavigate, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { ChevronLeft } from "lucide-react"
 import { useUserListens } from "@/api/hooks/useProfile"
+import { usePeople } from "@/api/hooks/usePeople"
 import { isNetworkError } from "@/lib/apiErrorKind"
-import { formatDayHeading, groupListensByDay } from "@/lib/listenHistory"
+import { formatDayHeading, groupListensByDay, withoutCurrentPlay } from "@/lib/listenHistory"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ListenRows from "@/components/profile/ListenRows"
@@ -26,6 +27,7 @@ export default function ListeningHistoryPage() {
   const navigate = useNavigate()
   const sentinelRef = useRef<HTMLDivElement>(null)
   const { data, isLoading, error, hasNextPage, isFetchingNextPage, fetchNextPage } = useUserListens(username)
+  const { data: people } = usePeople()
 
   // Load the next page when the bottom comes into view (the button stays as a fallback).
   useEffect(() => {
@@ -41,10 +43,12 @@ export default function ListeningHistoryPage() {
     return () => observer.disconnect()
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
 
-  const listens = data?.pages.flatMap((page) => page.items) ?? []
+  const now = new Date()
+  const playing =
+    people?.items.find((p) => p.username.toLowerCase() === username.toLowerCase())?.now_playing?.track ?? null
+  const listens = withoutCurrentPlay(data?.pages.flatMap((page) => page.items) ?? [], playing, now)
   const total = data?.pages[0]?.total
   const groups = groupListensByDay(listens)
-  const now = new Date()
 
   return (
     <div className="py-6 space-y-6">
@@ -74,7 +78,13 @@ export default function ListeningHistoryPage() {
         </p>
       )}
 
-      {!isLoading && !error && listens.length === 0 && (
+      {playing && !error && (
+        <div className="px-4 sm:px-6">
+          <ListenRows listens={[]} nowPlaying={playing} sourceLabel={t("history.title")} now={now} />
+        </div>
+      )}
+
+      {!isLoading && !error && listens.length === 0 && !playing && (
         <p className="px-4 sm:px-6 text-sm text-muted-foreground">{t("empty.noListens")}</p>
       )}
 

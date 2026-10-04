@@ -21,19 +21,15 @@ interface ShelfProps {
    * используется на странице артиста, где нужна вся дискография сразу.
    */
   readonly grid?: boolean
-  /** Half-size cards: twice as many per row (the «Люди» shelf). */
-  readonly compact?: boolean
 }
 
 const MOBILE_COLS = 2
 const MOBILE_GAP_PX = 8
 
-export default function Shelf({ title = "", subtitle, items, shelfKey, grid = false, compact = false }: ShelfProps) {
+export default function Shelf({ title = "", subtitle, items, shelfKey, grid = false }: ShelfProps) {
   const { t } = useTranslation("media")
   const navigate = useNavigate()
-  const { cols: baseCols, isMobile } = useColumns()
-  const cols = compact ? baseCols * 2 : baseCols
-  const mobileCols = compact ? MOBILE_COLS * 2 : MOBILE_COLS
+  const { cols, isMobile } = useColumns()
   const [page, setPage] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const touchMomentumHandlers = useTouchMomentum(containerRef)
@@ -158,7 +154,7 @@ export default function Shelf({ title = "", subtitle, items, shelfKey, grid = fa
             <div
               key={`${item.type}-${item.id}`}
               style={{
-                flex: `0 0 calc((100% - ${(mobileCols - 1) * MOBILE_GAP_PX}px) / ${mobileCols})`,
+                flex: `0 0 calc((100% - ${(MOBILE_COLS - 1) * MOBILE_GAP_PX}px) / ${MOBILE_COLS})`,
                 minWidth: 0,
                 scrollSnapAlign: "start",
               }}

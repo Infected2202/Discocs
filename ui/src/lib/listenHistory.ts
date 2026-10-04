@@ -101,3 +101,21 @@ export function formatBucketLabels(
     short: new Intl.DateTimeFormat(locale, { day: "numeric", month: "short" }).format(value),
   }
 }
+
+/**
+ * Drop the listen of the play that is still going on. A listen is recorded
+ * mid-track (play threshold), so while the track keeps playing it would show
+ * twice: as the "now" row and as "2 min ago". Only the newest listen can be
+ * that play — same track, listened no longer ago than the track lasts.
+ */
+export function withoutCurrentPlay<T extends { id: number; listened_at: string }>(
+  listens: readonly T[],
+  playing: { id: number; duration: number | null } | null | undefined,
+  now: Date = new Date(),
+): T[] {
+  const [first, ...rest] = listens
+  if (!playing || !first || first.id !== playing.id) return [...listens]
+  const elapsed = now.getTime() - new Date(first.listened_at).getTime()
+  const window = ((playing.duration ?? 0) + 60) * 1000
+  return elapsed >= 0 && elapsed <= window ? rest : [...listens]
+}

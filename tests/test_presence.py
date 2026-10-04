@@ -427,17 +427,24 @@ def test_people_maps_now_playing_and_sorts(tmp_path: Path, monkeypatch):
     # Playing first (alice logged in last), then idle by last login.
     assert [item["username"] for item in items] == ["alice", "dave", "Bob", "erin", "carol"]
     by_name = {item["username"]: item for item in items}
-    assert by_name["Bob"]["now_playing"] == {
+    bob_playing = by_name["Bob"]["now_playing"]
+    bob_track = bob_playing.pop("track")
+    assert bob_playing == {
         "track_id": mapped_id,
         "title": "Our Title",
         "artists": "Our Artist",
         "state": "starting",
     }
+    # A mapped track carries the full track payload (the profile's "now" row).
+    assert bob_track["id"] == mapped_id
+    assert bob_track["title"] == "Our Title"
+    assert [artist["name"] for artist in bob_track["artists"]] == ["Our Artist"]
     assert by_name["dave"]["now_playing"] == {
         "track_id": None,
         "title": "Remote Song",
         "artists": "Remote Artist",
         "state": "playing",
+        "track": None,
     }
     assert by_name["alice"]["now_playing"]["track_id"] == mapped_id
     assert by_name["carol"]["now_playing"] is None

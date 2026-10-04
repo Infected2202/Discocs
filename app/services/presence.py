@@ -25,6 +25,7 @@ from typing import Callable
 from app.avatars import ensure_user_avatar
 from app.config import NavidromeSettings
 from app.navidrome import NavidromeClient, NowPlayingEntry
+from app.serializers.entities import track_summary_dict
 from app.store import Store
 from app.user_context import current_navidrome_credentials
 
@@ -190,13 +191,18 @@ def _now_playing_dict(store: Store, entry: NowPlayingEntry) -> dict[str, object]
             "title": entry.title or "",
             "artists": entry.artist or "",
             "state": entry.state or "playing",
+            "track": None,
         }
-    names = [artist.name for artist in store.artists_for_tracks([track.id]).get(track.id, [])]
+    artists = store.artists_for_tracks([track.id]).get(track.id, [])
+    names = [artist.name for artist in artists]
     return {
         "track_id": track.id,
         "title": track.title or entry.title or "",
         "artists": ", ".join(names) or track.artist or entry.artist or "",
         "state": entry.state or "playing",
+        # Full track payload (as in listens) so the profile can show the
+        # playing track as the "now" row of its listening history.
+        "track": track_summary_dict(store, track, artists),
     }
 
 
