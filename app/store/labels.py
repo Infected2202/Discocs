@@ -16,6 +16,8 @@ from app.store._helpers import _discography_group_key, row_to_release
 # Порядок групп на странице лейбла — как в дискографии артиста; «releases» —
 # всё, чей тип не альбом/EP/сингл/сборник (саундтреки, миксы, неизвестный тип).
 LABEL_RELEASE_GROUPS = ("albums", "eps", "singles", "compilations", "releases")
+# Описание, написанное вручную (PUT /labels/{id}/description), — tools/label-sync его не перезаписывает.
+EDITORIAL_SOURCE = "editorial"
 
 # Релиз «живой», если у него есть хоть один доступный трек — как в полках дашборда.
 _AVAILABLE_RELEASE = """
@@ -283,6 +285,7 @@ class LabelsStoreMixin:
 
         Описание, ссылки и внешние id заменяются целиком: скрипт присылает
         запись полностью. Картинка — отдельно (``set_label_image``).
+        Описание, написанное вручную (``EDITORIAL_SOURCE``), скрипт не трогает.
         """
         now = utc_now()
         description = clean_description(metadata.description)
@@ -291,13 +294,16 @@ class LabelsStoreMixin:
             conn.execute(
                 """
                 UPDATE labels
-                SET description = ?, description_source = ?,
+                SET description = CASE WHEN description_source = ? THEN description ELSE ? END,
+                    description_source = CASE WHEN description_source = ? THEN description_source ELSE ? END,
                     links_json = ?, external_ids_json = ?,
                     metadata_synced_at = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
+                    EDITORIAL_SOURCE,
                     description,
+                    EDITORIAL_SOURCE,
                     metadata.description_source if description else None,
                     json.dumps(metadata.links or [], ensure_ascii=False),
                     json.dumps(metadata.external_ids or {}, ensure_ascii=False, sort_keys=True),
@@ -307,6 +313,18 @@ class LabelsStoreMixin:
                 ),
             )
         return label_id
+
+    def set_label_description(self, label_id: int, description: str | None) -> None:
+        """Описание, написанное вручную; пустое — снова отдаёт описание скрипту."""
+        text = clean_description(description)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE labels SET description = ?, description_source = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (text, EDITORIAL_SOURCE if text else None, utc_now(), label_id),
+            )
 
     def set_label_image(self, label_id: int, image_path: str, image_source: str | None) -> None:
         with self.connect() as conn:

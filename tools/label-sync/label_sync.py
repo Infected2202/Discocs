@@ -5,6 +5,7 @@
     python label_sync.py --limit 20          # первые N лейблов (по числу релизов)
     python label_sync.py --force             # отправить заново и уже отправленные
     python label_sync.py --dry-run           # ничего не отправлять, только отчёт
+    python label_sync.py --push-descriptions # отправить описания, написанные вручную (descriptions/*.md)
 
 Лейбл ищется через релиз, а не по названию (по названию Discogs на «Trip» отдаёт чужой TRIP):
 штрихкоды файлов этого лейбла (tools/library-tags/cache/scan.json) → релиз на Beatport / Discogs →
@@ -14,6 +15,9 @@
 Картинка: Beatport → Discogs (заглушку Beatport не берём). Описание: ru Wikipedia → en Wikipedia
 (через Wikidata по id лейбла Discogs) → Discogs profile → Beatport bio. Ссылки — из Discogs.
 Доступ к Beatport/Discogs и кэш их ответов — из ../music-fill (config.json там же).
+
+Описание, написанное вручную, лежит в descriptions/<id лейбла>.md и уходит отдельно
+(--push-descriptions); такое описание discocs потом не даёт перезаписать обычной синхронизацией.
 """
 from __future__ import annotations
 
@@ -45,6 +49,7 @@ WEB_CACHE = CACHE / "web.json"
 IMAGES = CACHE / "images"
 STATE = ROOT / "out" / "state.json"
 REPORT = ROOT / "out" / "report.txt"
+DESCRIPTIONS = ROOT / "descriptions"
 
 # Серый квадрат со значком Beatport вместо логотипа — «картинки нет».
 BEATPORT_PLACEHOLDER = "cda9862c-cf92-4d13-ac65-7e9277181f51"
@@ -147,6 +152,12 @@ class Discocs:
         r = http().get(f"{self.url}/api/v1/labels/{label_id}/releases", headers=self.headers, timeout=60)
         r.raise_for_status()
         return [item["title"] for item in r.json()["items"]]
+
+    def put_description(self, label_id: int, text: str) -> None:
+        r = http().put(f"{self.url}/api/v1/labels/{label_id}/description", json={"description": text},
+                       headers=self.headers, timeout=60)
+        if r.status_code != 200:
+            raise RuntimeError(f"discocs {r.status_code}: {r.text[:300]}")
 
     def put(self, payload: dict) -> None:
         r = http().put(f"{self.url}/api/v1/labels/metadata", json=payload, headers=self.headers, timeout=120)
@@ -410,6 +421,51 @@ def payload_for(result: dict) -> dict:
     return payload
 
 
+# ---------- описания, написанные вручную ----------
+
+def read_description(path: Path) -> tuple[dict[str, str], str]:
+    """descriptions/<id>.md: front matter (id, name, ...) между строками ``---`` и текст после него.
+
+    HTML-комментарии (``<!-- примечание -->``) в описание не попадают.
+    """
+    text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    meta: dict[str, str] = {}
+    if text.startswith("---\n"):
+        head, _, text = text[4:].partition("\n---\n")
+        for line in head.splitlines():
+            key, sep, value = line.partition(":")
+            if sep and not line.startswith(" "):
+                meta[key.strip()] = value.strip()
+    body = re.sub(r"<!--.*?-->", "", text, flags=re.S).strip()
+    return meta, body
+
+
+def push_descriptions(discocs: Discocs, only: str | None) -> None:
+    by_id = {label["id"]: label["name"] for label in discocs.labels()}
+    files = sorted(DESCRIPTIONS.glob("*.md"), key=lambda p: p.name)
+    sent = 0
+    for path in files:
+        meta, body = read_description(path)
+        raw_id = meta.get("id") or path.stem
+        label_id = int(raw_id) if raw_id.isdigit() else -1
+        name = by_id.get(label_id)
+        if name is None:
+            print(f"{path.name}: лейбла с таким id нет в discocs — пропуск")
+            continue
+        if only and norm(name) != norm(only):
+            continue
+        if meta.get("name") and norm(meta["name"]) != norm(name):
+            print(f"{path.name}: в файле «{meta['name']}», а в discocs id {label_id} — «{name}» — пропуск")
+            continue
+        if not body:
+            print(f"{path.name}: пустой текст — пропуск (снять описание: PUT с пустым description)")
+            continue
+        discocs.put_description(label_id, body)
+        sent += 1
+        print(f"{name}: описание отправлено ({len(body)} симв.)")
+    print(f"отправлено описаний: {sent} из {len(files)}")
+
+
 # ---------- запуск ----------
 
 def main() -> None:
@@ -418,11 +474,16 @@ def main() -> None:
     parser.add_argument("--limit", type=int, help="первые N лейблов")
     parser.add_argument("--force", action="store_true", help="отправить и уже отправленные")
     parser.add_argument("--dry-run", action="store_true", help="не отправлять в discocs")
+    parser.add_argument("--push-descriptions", action="store_true",
+                        help="только отправить описания из descriptions/*.md")
     parser.add_argument("--workers", type=int, default=WORKERS, help=f"лейблов параллельно (по умолчанию {WORKERS})")
     args = parser.parse_args()
 
     cfg = read_json(CONFIG, {})
     discocs = Discocs(cfg.get("discocs_url") or "http://192.168.1.41:8711", cfg.get("service_token") or None)
+    if args.push_descriptions:
+        push_descriptions(discocs, args.only)
+        return
     state = read_json(STATE, {})
     codes_by_label = barcodes_by_label()
 

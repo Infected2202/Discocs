@@ -152,6 +152,27 @@ describe("LabelPage", () => {
     expect(screen.getByRole("link", { name: "SoundCloud" })).toBeInTheDocument()
   })
 
+  it("shows a hand-written description without any source caption", () => {
+    useLabel.mockReturnValue({
+      data: makeLabel({
+        description: { source: "editorial", segments: [{ type: "text", text: "Лейбл из Москвы." }] },
+      }),
+      isLoading: false,
+      error: null,
+    })
+
+    renderPage()
+
+    expect(screen.getByTestId("label-description")).toHaveTextContent("Лейбл из Москвы.")
+    expect(screen.queryByText(/Source:/)).not.toBeInTheDocument()
+  })
+
+  it("does not repeat the word Label above the label name", () => {
+    renderPage()
+
+    expect(screen.queryByText("Label")).not.toBeInTheDocument()
+  })
+
   it("omits the description block when the label has no text and no links", () => {
     useLabel.mockReturnValue({
       data: makeLabel({ description: null, links: [] }),

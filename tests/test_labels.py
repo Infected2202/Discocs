@@ -371,6 +371,52 @@ def test_metadata_for_unknown_label_creates_it_without_releases(tmp_path, monkey
     assert client.get("/api/v1/labels").json()["total"] == 0
 
 
+def test_editorial_description_survives_label_sync_until_cleared(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_release(store, tmp_path, "R", ("Trip",), artist="Nina Kraviz")
+    label_id = store.label_id_by_name("Trip")
+    client = TestClient(app)
+    sync_payload = {
+        "name": "Trip",
+        "description": "From Wikipedia.",
+        "description_source": "wikipedia_en",
+        "links": [{"url": "https://trip.bandcamp.com"}],
+    }
+    client.put("/api/v1/labels/metadata", json=sync_payload)
+
+    response = client.put(
+        f"/api/v1/labels/{label_id}/description",
+        json={"description": "Лейбл [a=Nina Kraviz].\r\n\r\n\r\nМосква."},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["label"]["description"]["source"] == "editorial"
+
+    # Повторный label-sync обновляет ссылки, но ручной текст не трогает.
+    client.put("/api/v1/labels/metadata", json={**sync_payload, "links": [{"url": "https://ra.co/labels/trip"}]})
+    label = client.get(f"/api/v1/labels/{label_id}").json()["label"]
+    assert label["description"]["source"] == "editorial"
+    assert "".join(segment["text"] for segment in label["description"]["segments"]) == "Лейбл Nina Kraviz.\n\nМосква."
+    assert label["links"] == [{"url": "https://ra.co/labels/trip", "title": None}]
+
+    # Пустое описание снимает защиту — следующий label-sync снова пишет своё.
+    cleared = client.put(f"/api/v1/labels/{label_id}/description", json={"description": "  "})
+    assert cleared.json()["label"]["description"] is None
+    client.put("/api/v1/labels/metadata", json=sync_payload)
+    label = client.get(f"/api/v1/labels/{label_id}").json()["label"]
+    assert label["description"]["source"] == "wikipedia_en"
+
+
+def test_editorial_description_for_unknown_label_is_not_found(tmp_path, monkeypatch):
+    init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.put("/api/v1/labels/999/description", json={"description": "Text"})
+
+    assert response.status_code == 404
+    assert client.put("/api/v1/labels/999/description", json={"text": "x"}).status_code == 422
+
+
 def test_dashboard_labels_shelf_has_label_cards_without_play(tmp_path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     add_release(store, tmp_path, "R1", ("Warp",))

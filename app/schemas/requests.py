@@ -449,3 +449,9 @@ class LabelMetadataRequest(BaseModel):
     description_source: Literal["wikipedia_ru", "wikipedia_en", "discogs", "beatport"] | None = None
     links: list[LabelLinkItem] = Field(default_factory=list, max_length=50)
     external_ids: dict[str, str] = Field(default_factory=dict)
+
+
+class LabelDescriptionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    description: str | None = Field(default=None, max_length=20000)

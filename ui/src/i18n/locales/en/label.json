@@ -1,6 +1,6 @@
 {
   "notFound": "Label not found.",
-  "kicker": "Label",
+  "about": "About the label",
   "releaseCount_one": "{{count}} release",
   "releaseCount_other": "{{count}} releases",
   "like": "Add to favourites",

@@ -172,7 +172,7 @@ export type LabelDescriptionSegment =
   | { type: "text"; text: string }
   | { type: "artist"; text: string; artist_id: number | null }
 
-export type LabelDescriptionSource = "wikipedia_ru" | "wikipedia_en" | "discogs" | "beatport"
+export type LabelDescriptionSource = "wikipedia_ru" | "wikipedia_en" | "discogs" | "beatport" | "editorial"
 
 export interface LabelDetail extends LabelSummary {
   description: { segments: LabelDescriptionSegment[]; source: LabelDescriptionSource | null } | null

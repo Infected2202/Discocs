@@ -112,7 +112,8 @@ syncs do not rename it), `normalized_name` (unique; `normalize_text`, so
 `app/assets/label-placeholder.jpg` is served), `image_source`
 (`beatport`/`discogs`), `description` (plain text; `[a=Name]` marks an
 artist mention), `description_source`
-(`wikipedia_ru`/`wikipedia_en`/`discogs`/`beatport`), `links_json`,
+(`wikipedia_ru`/`wikipedia_en`/`discogs`/`beatport`, or `editorial` for a
+hand-written text), `links_json`,
 `external_ids_json` (`beatport`, `discogs`, `wikidata` ids),
 `metadata_synced_at`.
 
@@ -136,6 +137,10 @@ principal without a user (the service token) simply sees no likes.
 Image, description and links are written by `tools/label-sync` through
 `PUT /api/v1/labels/metadata` (label matched by normalized name, created if
 missing; description/links/ids replaced, image only replaced when sent).
+A hand-written description goes through `PUT /api/v1/labels/{id}/description`
+(`{"description": "..."}`, source `editorial`); label-sync then keeps
+updating the image and links but leaves that description alone. An empty
+description clears it and hands the field back to label-sync.
 Label lists and counts only consider releases with at least one available
 track.
 

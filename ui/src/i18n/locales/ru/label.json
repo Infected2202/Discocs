@@ -1,6 +1,6 @@
 {
   "notFound": "Лейбл не найден.",
-  "kicker": "Лейбл",
+  "about": "О лейбле",
   "releaseCount_one": "{{count}} релиз",
   "releaseCount_few": "{{count}} релиза",
   "releaseCount_many": "{{count}} релизов",

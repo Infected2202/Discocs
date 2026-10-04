@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from app.api.deps import api_error, context
 from app.models import LabelMetadata
-from app.schemas.requests import LabelMetadataRequest
+from app.schemas.requests import LabelDescriptionRequest, LabelMetadataRequest
 from app.serializers.entities import release_summary_dict, sort_by_popularity
 from app.serializers.labels import label_detail_dict, label_summary_dict
 from app.store import group_label_releases
@@ -139,6 +139,21 @@ def api_v1_put_label_metadata(request: LabelMetadataRequest) -> dict[str, object
         label_id = save_label_metadata(store, settings.data_dir, metadata, image)
     except ValueError as exc:
         return api_error(400, "invalid_label", str(exc))
+    label = store.get_label(label_id)
+    if label is None:
+        return api_error(404, "not_found", _LABEL_NOT_FOUND)
+    return {"label": label_detail_dict(store, label)}
+
+
+@router.put("/labels/{label_id}/description", response_model=None)
+def api_v1_put_label_description(
+    label_id: int, request: LabelDescriptionRequest
+) -> dict[str, object] | JSONResponse:
+    """Описание, написанное вручную: label-sync его потом не перезаписывает; пустое — снимает защиту."""
+    store, _settings = context()
+    if store.get_label(label_id) is None:
+        return api_error(404, "not_found", _LABEL_NOT_FOUND)
+    store.set_label_description(label_id, request.description)
     label = store.get_label(label_id)
     if label is None:
         return api_error(404, "not_found", _LABEL_NOT_FOUND)

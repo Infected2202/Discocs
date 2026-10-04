@@ -182,8 +182,8 @@ Backend calls: `useLabel`, `useLabelReleases` (`GET /api/v1/labels/{id}`,
 Deezer album fans).
 
 Layout: square label image (`144px`, from `/api/v1/labels/{id}/image` — the
-stored logo or the bundled Beatport placeholder), "Label" kicker, name and
-release count, a Shuffle button and a like heart. Shuffle starts a playback
+stored logo or the bundled Beatport placeholder), name and release count
+(no "Label" kicker — the page is obviously a label), a Shuffle button and a like heart. Shuffle starts a playback
 session with `source_type: "label"`: the backend queues a random sample of up
 to 200 available tracks across all the label's releases (a plain, unshuffled
 label session would take them newest release first, in track order), then
@@ -195,7 +195,7 @@ this controlled mode instead of reading `navidromeStore`. No Play button and
 no release-type filters — by design. Below the header, when present: the description (clamped to four
 lines with "Show more"/"Show less", `[a=Name]` mentions rendered as links to
 artists that exist in the library, plain text otherwise, plus a
-"Source: …" caption) and the label's external links (new tab,
+"Source: …" caption — omitted for a hand-written `editorial` description) and the label's external links (new tab,
 `rel="noopener noreferrer"`). The newest/oldest-first sort select sits in
 the header actions next to the heart (no separate "Releases" heading row —
 it read as an empty group above the real ones). Then one grid `Shelf` per

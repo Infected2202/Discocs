@@ -58,7 +58,7 @@ function LabelDescription({ label }: { readonly label: LabelDetail }) {
   if (!description && label.links.length === 0) return null
 
   return (
-    <section className="px-4 sm:px-6 pb-6 max-w-3xl space-y-3" aria-label={t("kicker")}>
+    <section className="px-4 sm:px-6 pb-6 max-w-3xl space-y-3" aria-label={t("about")}>
       {description && (
         <div className="space-y-1">
           <p
@@ -93,7 +93,9 @@ function LabelDescription({ label }: { readonly label: LabelDetail }) {
                 {expanded ? t("description.showLess") : t("description.showMore")}
               </button>
             )}
-            {description.source && (
+            {/* Источник показываем только у текста из Википедии/Discogs/Beatport;
+                описание, написанное вручную, идёт без подписи. */}
+            {description.source && description.source !== "editorial" && (
               <span>
                 {t("description.source", { source: t(`description.sources.${description.source}`) })}
               </span>
@@ -184,7 +186,6 @@ export default function LabelPage() {
             expandable
           />
         }
-        kicker={t("kicker")}
         title={label.name}
         meta={t("releaseCount", { count: label.release_count })}
         actions={
