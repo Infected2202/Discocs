@@ -134,11 +134,13 @@ export class PresenceReporter {
   private readonly tracker = new PresenceTracker()
   /** 403 = no user behind this session (auth disabled / service): stop trying. */
   private disabled = false
+  private readonly livePositionSeconds: () => number
+  private readonly transport: PresenceTransport
 
-  constructor(
-    private readonly livePositionSeconds: () => number,
-    private readonly transport: PresenceTransport = defaultTransport,
-  ) {}
+  constructor(livePositionSeconds: () => number, transport: PresenceTransport = defaultTransport) {
+    this.livePositionSeconds = livePositionSeconds
+    this.transport = transport
+  }
 
   observe(snapshot: PresenceSnapshot): void {
     if (this.disabled) return
