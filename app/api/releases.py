@@ -44,6 +44,7 @@ def api_v1_release(release_id: int) -> dict[str, object] | JSONResponse:
         "release": {
             **release_summary_dict(release),
             "labels": [{"id": label.id, "name": label.name} for label in store.labels_for_release(release_id)],
+            "genres": [name for name, _score in store.release_genres([release_id]).get(release_id, [])],
         },
         "actions": [entity_action("play", True, None), entity_action("shuffle", True, None)],
         "links": {

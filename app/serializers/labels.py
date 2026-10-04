@@ -31,6 +31,7 @@ def label_summary_dict(label: Label) -> dict[str, object]:
         "release_count": label.release_count,
         "liked": label.liked,
         "artwork": label_artwork(label),
+        "top_genres": list(label.top_genres),
     }
 
 
@@ -43,6 +44,7 @@ def label_detail_dict(store: Store, label: Label) -> dict[str, object]:
         }
     return {
         **label_summary_dict(label),
+        "genres": [{"name": name, "release_count": count} for name, count in store.label_genres(label.id)],
         "description": description,
         "links": [
             {"url": str(link["url"]), "title": link.get("title")}
@@ -63,6 +65,7 @@ def label_shelf_item(label: Label) -> dict[str, object]:
     )
     item["artwork"] = label_artwork(label)
     item["release_count"] = label.release_count
+    item["top_genres"] = list(label.top_genres)
     # Лейбл не источник воспроизведения — на карточке нет кнопки Play.
     item["play_action"] = None
     return item

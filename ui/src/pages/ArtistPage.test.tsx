@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import ArtistPage from "./ArtistPage"
@@ -115,6 +115,19 @@ describe("ArtistPage — кнопка Shuffle", () => {
     const shuffle = screen.getByRole("button", { name: "Shuffle" })
     expect(shuffle).toHaveAttribute("data-size", "icon-sm")
     expect(shuffle).not.toHaveTextContent("Shuffle")
+  })
+
+  it("показывает жанры артиста с числом его релизов", () => {
+    useArtist.mockReturnValue({
+      data: { ...makeArtistData(), genres: [{ name: "Techno", release_count: 4 }, { name: "IDM", release_count: 2 }] },
+      isLoading: false,
+      error: null,
+    })
+
+    renderPage()
+
+    const genres = screen.getByRole("list", { name: "Genres" })
+    expect(within(genres).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Techno4", "IDM2"])
   })
 
   it("рендерит полку похожих артистов внизу страницы", () => {

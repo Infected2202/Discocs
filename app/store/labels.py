@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import random
 import sqlite3
+from dataclasses import replace
 
 from app.library import clean_display_text, normalize_text
 from app.models import Label, LabelMetadata, ReleaseSummaryRow, utc_now
@@ -171,7 +172,10 @@ class LabelsStoreMixin:
                 WHERE {_AVAILABLE_RELEASE}
                 """
             ).fetchone()[0]
-        return [row_to_label(row) for row in rows], int(total or 0)
+        labels = [row_to_label(row) for row in rows]
+        top = self.top_label_genres([label.id for label in labels])  # type: ignore[attr-defined]
+        labels = [replace(label, top_genres=tuple(top.get(label.id, ()))) for label in labels]
+        return labels, int(total or 0)
 
     def get_label(self, label_id: int) -> Label | None:
         with self.connect() as conn:

@@ -366,6 +366,16 @@ class StoreBase:
                     FOREIGN KEY (label_id) REFERENCES labels(id) ON DELETE CASCADE
                 );
 
+                -- Жанры релиза (app/genres.py) — кэш; signature = число проанализированных
+                -- доступных треков и время последнего предсказания: изменилось — пересчитать.
+                CREATE TABLE IF NOT EXISTS release_genres (
+                    release_id INTEGER PRIMARY KEY,
+                    genres_json TEXT NOT NULL,
+                    signature TEXT NOT NULL,
+                    computed_at TEXT NOT NULL,
+                    FOREIGN KEY (release_id) REFERENCES releases(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS release_tracks (
                     release_id INTEGER NOT NULL,
                     track_id INTEGER NOT NULL,

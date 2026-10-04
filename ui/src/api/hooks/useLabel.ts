@@ -41,10 +41,12 @@ export function useToggleLabelLike(id: number) {
     onError: (_error, _liked, context) => {
       if (context?.previous) queryClient.setQueryData(key, context.previous)
     },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: key, exact: true })
-      void queryClient.invalidateQueries({ queryKey: ["dashboard"] })
-      void queryClient.invalidateQueries({ queryKey: ["shelf", "labels"] })
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: key, exact: true }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+        queryClient.invalidateQueries({ queryKey: ["shelf", "labels"] }),
+      ])
     },
   })
 }

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import CollectionHeader from "@/components/media/CollectionHeader"
+import GenreTags from "@/components/media/GenreTags"
 import LikeButton from "@/components/media/LikeButton"
 import Shelf from "@/components/media/Shelf"
 import { usePlayerStore } from "@/store/playerStore"
@@ -187,7 +188,12 @@ export default function LabelPage() {
           />
         }
         title={label.name}
-        meta={t("releaseCount", { count: label.release_count })}
+        meta={
+          <>
+            {t("releaseCount", { count: label.release_count })}
+            <GenreTags genres={label.genres} />
+          </>
+        }
         actions={
           <>
             <Button

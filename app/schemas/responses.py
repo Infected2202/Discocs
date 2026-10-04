@@ -103,11 +103,17 @@ class SearchResponse(BaseModel):
     groups: list[SearchGroupResponse]
 
 
+class GenreCountResponse(BaseModel):
+    name: str
+    release_count: int
+
+
 class ArtistResponse(BaseModel):
     artist: ArtistSummaryResponse
     actions: list[EntityActionResponse]
     links: dict[str, str]
     top_tracks: list[dict[str, object]] = []
+    genres: list[GenreCountResponse] = []
 
 
 class DiscographyGroupResponse(BaseModel):
@@ -150,6 +156,7 @@ class LabelLinkResponse(BaseModel):
 
 class ReleaseDetailResponse(ReleaseSummaryResponse):
     labels: list[LabelLinkResponse] = []
+    genres: list[str] = []
 
 
 class ReleaseResponse(BaseModel):

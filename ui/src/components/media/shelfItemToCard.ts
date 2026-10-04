@@ -16,7 +16,9 @@ export function shelfItemToCard<Ns extends Namespace>(
 ): MediaCardProps {
   const subtitle =
     item.entity_type === "label" && item.release_count !== undefined
-      ? t("releaseCount", { ns: "label", count: item.release_count })
+      ? [t("releaseCount", { ns: "label", count: item.release_count }), item.top_genres?.join(", ")]
+          .filter(Boolean)
+          .join(" · ")
       : item.subtitle
   return {
     id: item.entity_id,

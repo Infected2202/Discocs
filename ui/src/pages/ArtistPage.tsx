@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import CollectionHeader from "@/components/media/CollectionHeader"
+import GenreTags from "@/components/media/GenreTags"
 import LikeButton from "@/components/media/LikeButton"
 import Shelf from "@/components/media/Shelf"
 import PopularTracks from "@/components/media/PopularTracks"
@@ -95,6 +96,7 @@ export default function ArtistPage() {
             {t("trackCount", { count: stats.tracks, formatted: stats.tracks.toLocaleString(i18n.language) })}
             {stats.releases > 0 && ` · ${t("releaseCount", { count: stats.releases, formatted: stats.releases.toLocaleString(i18n.language) })}`}
             {stats.plays > 0 && ` · ${t("playCount", { count: stats.plays, formatted: stats.plays.toLocaleString(i18n.language) })}`}
+            <GenreTags genres={artistData.genres} />
           </>
         }
         actions={

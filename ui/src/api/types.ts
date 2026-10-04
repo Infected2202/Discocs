@@ -43,11 +43,18 @@ export interface ArtistSummary {
   library_stats: LibraryStats
 }
 
+/** A style with how many of the artist's/label's releases carry it (genre_discogs400). */
+export interface GenreCount {
+  name: string
+  release_count: number
+}
+
 export interface ArtistResponse {
   artist: ArtistSummary
   actions: EntityAction[]
   links: Record<string, string>
   top_tracks: ArtistTopTrack[]
+  genres?: GenreCount[]
 }
 
 export interface DiscographyGroup {
@@ -115,6 +122,8 @@ export interface LabelLink {
 export interface ReleaseDetail extends ReleaseSummary {
   /** Record labels in tag order; absent in older fixtures/responses. */
   labels?: LabelLink[]
+  /** Up to 5 styles, strongest first (genre_discogs400). */
+  genres?: string[]
 }
 
 export interface ReleaseResponse {
@@ -166,6 +175,8 @@ export interface LabelSummary {
   release_count: number
   liked: boolean
   artwork: ImageRef
+  /** Two main styles for the card. */
+  top_genres?: string[]
 }
 
 export type LabelDescriptionSegment =
@@ -175,6 +186,7 @@ export type LabelDescriptionSegment =
 export type LabelDescriptionSource = "wikipedia_ru" | "wikipedia_en" | "discogs" | "beatport" | "editorial"
 
 export interface LabelDetail extends LabelSummary {
+  genres?: GenreCount[]
   description: { segments: LabelDescriptionSegment[]; source: LabelDescriptionSource | null } | null
   links: { url: string; title?: string | null }[]
 }
@@ -256,6 +268,8 @@ export interface ShelfItem {
   reason: string | null
   /** Only on label cards: the subtitle is built from it on the client (i18n plurals). */
   release_count?: number
+  /** Only on label cards: two main styles, shown after the release count. */
+  top_genres?: string[]
   /** Only on History shelf cards: when the track was last played (ISO-8601), shown as relative time. */
   played_at?: string | null
   action?: { type: string; target: string }

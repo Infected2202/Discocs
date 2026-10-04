@@ -125,6 +125,20 @@ def _check_missing_files_job(job_id: str) -> None:
         finish_job(job_id, "failed", str(exc))
 
 
+def refresh_release_genres_quietly(store) -> None:
+    """Обновить кэш жанров релизов после синхронизации/анализа: от него зависят карточки лейблов.
+
+    Страницы релиза, лейбла и артиста пересчитывают устаревшее сами, поэтому сбой здесь
+    только логируется и задачу не роняет.
+    """
+    try:
+        started = time.monotonic()
+        stale = store.refresh_release_genres()
+        logger.info("Release genres refreshed: %s releases in %.1fs", stale, time.monotonic() - started)
+    except Exception:
+        logger.exception("Release genres refresh failed")
+
+
 def _navidrome_sync_job(job_id: str, page_size: int, limit: int | None, mark_stale: bool) -> None:
     from app.api.deps import context
     store = None
@@ -165,6 +179,7 @@ def _navidrome_sync_job(job_id: str, page_size: int, limit: int | None, mark_sta
             finished=True,
         )
         logger.info("Finished Navidrome sync job job_id=%s %s", job_id, result.summary())
+        refresh_release_genres_quietly(store)
         maybe_start_next_deferred_job()
     except Exception as exc:
         logger.exception("Navidrome sync job failed job_id=%s", job_id)
@@ -301,6 +316,7 @@ def _analyze_job(
         )
         finish_job(job_id, "completed", f"Analyzed {done} tracks, failed {failed}")
         schedule_auto_index_for_analysis(store, job_id)
+        refresh_release_genres_quietly(store)
     except Exception as exc:
         analysis_logger.exception("Analyze job failed job_id=%s model=%s", job_id, model)
         finish_job(job_id, "failed", str(exc))
@@ -431,6 +447,7 @@ def _analyze_heads_job(
             job_id, done, failed, total,
         )
         finish_job(job_id, "completed", f"Analyzed heads for {done} tracks, failed {failed}")
+        refresh_release_genres_quietly(store)
     except Exception as exc:
         analysis_logger.exception("Analyze-heads job failed job_id=%s", job_id)
         finish_job(job_id, "failed", str(exc))

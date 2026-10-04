@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import LabelPage from "./LabelPage"
@@ -120,6 +120,21 @@ describe("LabelPage", () => {
     expect(useLabelReleases).toHaveBeenCalledWith(5, "release_date_desc")
     expect(screen.getByTestId("releases")).toHaveTextContent("New One — Nina Kraviz · 2020")
     expect(screen.getByTestId("releases")).toHaveTextContent("Old One — Nina Kraviz · 2001")
+  })
+
+  it("shows the label's styles with how many releases carry each", () => {
+    useLabel.mockReturnValue({
+      data: makeLabel({ genres: [{ name: "Drum n Bass", release_count: 475 }, { name: "Halftime", release_count: 448 }] }),
+      isLoading: false,
+      error: null,
+    })
+
+    renderPage()
+
+    const genres = screen.getByRole("list", { name: "Genres" })
+    expect(within(genres).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "Drum n Bass475", "Halftime448",
+    ])
   })
 
   it("switches release sorting to oldest first", () => {

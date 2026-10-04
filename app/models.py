@@ -86,6 +86,8 @@ class Label:
     metadata_synced_at: str | None
     release_count: int = 0
     liked: bool = False
+    # Два главных стиля для карточки (app/genres.py); заполняет только list_labels.
+    top_genres: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

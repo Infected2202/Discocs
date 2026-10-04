@@ -65,6 +65,7 @@ def api_v1_artist(artist_id: int) -> dict[str, object] | JSONResponse:
             "similar": f"/api/v1/artists/{artist_id}/similar",
         },
         "top_tracks": top_tracks,
+        "genres": [{"name": name, "release_count": count} for name, count in store.artist_genres(artist_id)],
     }
 
 

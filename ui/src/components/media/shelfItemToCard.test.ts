@@ -41,6 +41,26 @@ describe("shelfItemToCard", () => {
     expect(card.onPlay).toBeUndefined()
   })
 
+  it("adds the label's two main styles after the release count", () => {
+    const card = shelfItemToCard(
+      item({
+        id: "label:5",
+        entity_type: "label",
+        entity_id: 5,
+        title: "Suara",
+        subtitle: "",
+        release_count: 588,
+        top_genres: ["Techno", "Tech House"],
+        action: { type: "open", target: "/labels/5" },
+        play_action: null,
+      }),
+      vi.fn(),
+      i18n.t,
+    )
+
+    expect(card.subtitle).toBe("588 releases · Techno, Tech House")
+  })
+
   it("keeps the backend subtitle and play action for other entities", () => {
     const onPlay = vi.fn()
     const shelfItem = item({})

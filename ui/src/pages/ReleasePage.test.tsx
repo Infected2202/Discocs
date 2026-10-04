@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import ReleasePage from "./ReleasePage"
@@ -214,6 +214,19 @@ describe("ReleasePage — лейбл релиза", () => {
     expect(screen.getByLabelText("Labels")).toHaveTextContent("· Warp, Bleep")
   })
 
+  it("показывает жанры релиза под строкой артистов", async () => {
+    const data = makeReleaseData()
+    data.release.genres = ["Techno", "Schranz", "Hard Techno"]
+    useRelease.mockReturnValue({ data, isLoading: false, error: null })
+
+    renderPage()
+
+    const genres = await screen.findByRole("list", { name: "Genres" })
+    expect(within(genres).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "Techno", "Schranz", "Hard Techno",
+    ])
+  })
+
   it("ничего не показывает, если у релиза нет лейбла", async () => {
     useRelease.mockReturnValue({ data: makeReleaseData(), isLoading: false, error: null })
 
@@ -221,5 +234,6 @@ describe("ReleasePage — лейбл релиза", () => {
 
     await screen.findByRole("heading", { name: "Neon Lights" })
     expect(screen.queryByLabelText("Labels")).toBeNull()
+    expect(screen.queryByRole("list", { name: "Genres" })).toBeNull()
   })
 })

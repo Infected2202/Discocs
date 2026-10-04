@@ -103,6 +103,16 @@ each song's raw JSON (`_inject_album_metadata` in `app/navidrome_sync.py`).
 `label` is a denormalized display copy (`"A / B"`) of the release's labels;
 the source of truth is `release_labels`.
 
+### Release genres
+
+`release_genres` (`release_id` PK, `genres_json` — `[[style, mean score], …]`
+up to five, `signature`, `computed_at`) caches the release's styles
+(`app/genres.py`). `signature` is the number of available analyzed tracks and
+the newest `genre_discogs400` prediction time: reads of a release, label or
+artist recompute releases whose signature changed; the Navidrome sync and the
+analysis jobs refresh the whole table afterwards so label cards (which read
+the cache only) stay current.
+
 ### Labels
 
 `labels`: `id`, `name` (display name of the first spelling seen — later

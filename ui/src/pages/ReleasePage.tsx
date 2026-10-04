@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import CollectionHeader from "@/components/media/CollectionHeader"
+import GenreTags from "@/components/media/GenreTags"
 import LikeButton from "@/components/media/LikeButton"
 import VirtualTrackList from "@/components/media/VirtualTrackList"
 import Shelf from "@/components/media/Shelf"
@@ -99,32 +100,35 @@ export default function ReleasePage() {
         }
         title={release.title}
         meta={
-          <div className="flex flex-wrap gap-1">
-            {release.artists.map((a, i) => (
-              <span key={a.id}>
-                <Link to={`/artists/${a.id}`} className="hover:text-foreground hover:underline">
-                  {a.name}
-                </Link>
-                {i < release.artists.length - 1 && <span>,</span>}
-              </span>
-            ))}
-            {release.release_year && <span>· {release.release_year}</span>}
-            {(release.labels?.length ?? 0) > 0 && (
-              <span aria-label={t("labels")}>
-                ·{" "}
-                {release.labels?.map((label, i) => (
-                  <span key={label.id}>
-                    <Link to={`/labels/${label.id}`} className="hover:text-foreground hover:underline">
-                      {label.name}
-                    </Link>
-                    {i < (release.labels?.length ?? 0) - 1 && ", "}
-                  </span>
-                ))}
-              </span>
-            )}
-            {release.track_count > 0 && <span>· {t("trackCount", { count: release.track_count })}</span>}
-            {release.duration && <span>· {formatDuration(release.duration, t)}</span>}
-          </div>
+          <>
+            <div className="flex flex-wrap gap-1">
+              {release.artists.map((a, i) => (
+                <span key={a.id}>
+                  <Link to={`/artists/${a.id}`} className="hover:text-foreground hover:underline">
+                    {a.name}
+                  </Link>
+                  {i < release.artists.length - 1 && <span>,</span>}
+                </span>
+              ))}
+              {release.release_year && <span>· {release.release_year}</span>}
+              {(release.labels?.length ?? 0) > 0 && (
+                <span aria-label={t("labels")}>
+                  ·{" "}
+                  {release.labels?.map((label, i) => (
+                    <span key={label.id}>
+                      <Link to={`/labels/${label.id}`} className="hover:text-foreground hover:underline">
+                        {label.name}
+                      </Link>
+                      {i < (release.labels?.length ?? 0) - 1 && ", "}
+                    </span>
+                  ))}
+                </span>
+              )}
+              {release.track_count > 0 && <span>· {t("trackCount", { count: release.track_count })}</span>}
+              {release.duration && <span>· {formatDuration(release.duration, t)}</span>}
+            </div>
+            <GenreTags genres={release.genres} />
+          </>
         }
         actions={
           <>

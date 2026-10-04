@@ -1,4 +1,5 @@
 {
+  "genres": "Genres",
   "actions": {
     "cancel": "Cancel",
     "save": "Save",
