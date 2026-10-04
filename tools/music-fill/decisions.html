@@ -520,8 +520,9 @@ const EV = {
   slsk_send: "Soulseek: отправлено", slsk_research: "Soulseek: ищу заново (не скачалось)",
   slsk_download: "Soulseek: качаю", slsk_placed: "Soulseek: в библиотеке", slsk_switch: "Soulseek: другой пир",
   slsk_dl_failed: "SOULSEEK: НЕ СКАЧАЛОСЬ", slsk_place_failed: "SOULSEEK: НЕ РАЗЛОЖИЛОСЬ",
+  tags_written: "теги проставлены", tags_failed: "ТЕГИ: НЕ ПРОСТАВЛЕНЫ",
 };
-const PROBLEM = new Set(["error", "send_failed", "deemix_failed", "deemix_down", "deemix_stuck", "deemix_stalled", "retry_failed", "slsk_dl_failed", "slsk_place_failed"]);
+const PROBLEM = new Set(["error", "send_failed", "deemix_failed", "deemix_down", "deemix_stuck", "deemix_stalled", "retry_failed", "slsk_dl_failed", "slsk_place_failed", "tags_failed"]);
 function evDetails(e) {
   const skip = new Set(["ts", "event", "urls", "uuid"]);
   return Object.entries(e).filter(([k]) => !skip.has(k)).map(([k, v]) => {

@@ -12,6 +12,8 @@ Beatport — в cache/beatport.json (вход: python beatport_login.py).
 import csv
 import os
 import json
+import queue
+import sys
 import re
 import threading
 import time
@@ -1516,6 +1518,26 @@ def retry_downloads() -> dict:
 QUEUE_STATE = journal.LOG_DIR / "queue_state.json"
 WATCH_EVERY = 60
 
+# ---------- теги сразу после загрузки (tools/library-tags/autotag.py) ----------
+# Релиз докачался в deemix → тип релиза, ID Deezer, «Various Artists» — тем же кодом, что массовый прогон.
+sys.path.insert(0, str(ROOT.parent / "library-tags"))
+tag_queue: "queue.Queue[tuple[str, str, str | None]]" = queue.Queue()
+
+
+def autotag_worker() -> None:
+    import autotag  # лениво: library-tags нужен только этому потоку
+    while True:
+        uuid, release, folder = tag_queue.get()
+        kind, did = uuid.split("_")[:2]
+        try:
+            r = autotag.tag_release(kind, did, folder)
+        except Exception as e:  # битый файл, Deezer не ответил — в журнал, не роняем поток
+            r = {"status": "error", "error": f"{type(e).__name__}: {e}"}
+        keep = ("status", "type", "files", "written", "type_already", "various_artists", "missed", "error")
+        event("tags_written" if r.get("status") == "ok" else "tags_failed", uuid=uuid, release=release,
+              **{k: r[k] for k in keep if k in r})
+
+
 
 def uuid_tasks() -> dict[str, str]:
     """uuid очереди deemix → наша задача (по журналу отправок)."""
@@ -1557,6 +1579,7 @@ def watch_queue() -> None:
                         event("deemix_failed", **rec, failed=it.get("failed"), size=it.get("size"), errors=msgs[:3])
                     elif st == "completed":
                         event("deemix_completed", **rec, size=it.get("size"))
+                        tag_queue.put((u, rec["release"], it.get("extrasPath")))
                 state = new
                 write_json(QUEUE_STATE, state)
                 # лежит inQueue, но нет в order — deemix его сам не продолжит (так было после ребута)
@@ -2194,6 +2217,7 @@ if __name__ == "__main__":
     event("server_start")
     atexit.register(lambda: event("server_stop"))
     threading.Thread(target=watch_queue, daemon=True).start()
+    threading.Thread(target=autotag_worker, daemon=True).start()
     threading.Thread(target=slsk_syncer, daemon=True).start()
     for _ in range(slsk.PARALLEL):  # по поиску на поток: slskd больше двух сразу не берёт
         threading.Thread(target=slsk_worker, daemon=True).start()

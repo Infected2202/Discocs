@@ -30,7 +30,7 @@ from mutagen.id3 import ID3, TXXX
 from dry_run import OUT, SCAN, read_json
 
 LOG = OUT / "apply_log.jsonl"
-FIELDS = ("RELEASETYPE", "DEEZER_ALBUM_ID", "DEEZER_TRACK_ID")
+FIELDS = ("RELEASETYPE", "DEEZER_ALBUM_ID", "DEEZER_TRACK_ID", "DISCOGS_RELEASE_ID")
 WRITABLE = ("ok", "ok_loose")
 
 
@@ -113,7 +113,8 @@ def apply(items: list[tuple[str, dict]], workers: int = 8) -> collections.Counte
             res = "нет файла"
         else:
             before = read_fields(p)
-            todo = {k: v for k, v in vals.items() if before.get(k) != v}
+            # тип, который уже стоит в файле, не перезаписываем (он из MusicBrainz или от прошлой записи)
+            todo = {k: v for k, v in vals.items() if before.get(k) != v and not (k == "RELEASETYPE" and before.get(k))}
             if not todo:
                 res = "уже записано"
             elif stat.st_size != s0.get("_size") or int(stat.st_mtime) != s0.get("_mtime"):

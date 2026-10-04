@@ -75,6 +75,8 @@ def write_tags(path: Path, t: dict, cover: bytes | None) -> None:
     """t: title, artist, artists[], album, albumartist, tracknumber, discnumber, date, genre[],
     isrc, length (с), barcode, label, catno, bpm."""
     ext = path.suffix.lower()
+    if (t.get("albumartist") or "").strip().lower() in VARIOUS:  # единое имя сборников, как в library-tags
+        t = {**t, "albumartist": "Various Artists"}
     if ext == ".flac":
         f = FLAC(path)
         f.delete()
@@ -84,6 +86,7 @@ def write_tags(path: Path, t: dict, cover: bytes | None) -> None:
                 "discnumber": t.get("discnumber") or 1, "date": t.get("date"), "isrc": t.get("isrc"),
                 "length": int(t["length"] * 1000) if t.get("length") else None, "barcode": t.get("barcode"),
                 "publisher": t.get("label"), "catalognumber": t.get("catno"), "bpm": t.get("bpm"),
+                "releasetype": t.get("releasetype"),
                 }
         tags |= t.get("custom") or {}  # свои поля (откуда файл, как сопоставлен, ID каталога)
         for k, v in tags.items():
@@ -119,7 +122,7 @@ def write_tags(path: Path, t: dict, cover: bytes | None) -> None:
             f.add(TLEN(encoding=3, text=str(int(t["length"] * 1000))))
         if t.get("genre"):
             f.add(TCON(encoding=3, text=t["genre"]))
-        for desc, key in (("BARCODE", "barcode"), ("CATALOGNUMBER", "catno")):
+        for desc, key in (("BARCODE", "barcode"), ("CATALOGNUMBER", "catno"), ("RELEASETYPE", "releasetype")):
             if t.get(key):
                 f.add(TXXX(encoding=3, desc=desc, text=str(t[key])))
         for desc, v in (t.get("custom") or {}).items():
@@ -133,12 +136,13 @@ def write_tags(path: Path, t: dict, cover: bytes | None) -> None:
 
 
 ALBUM_KEYS = {"album": "album", "albumartist": "albumartist", "genre": "genre", "date": "date",
-              "publisher": "label", "barcode": "barcode"}
+              "publisher": "label", "barcode": "barcode", "releasetype": "releasetype"}
+VARIOUS = {"różni wykonawcy", "различные исполнители", "разные исполнители", "va", "various", "various artist"}
 
 
 def sibling_album_tags(dest_dir: Path) -> dict:
     """Альбомные теги соседей по папке (её завёл deemix): докладываемый трек должен совпадать с ними —
-    альбомный артист 'Различные исполнители', жанры по-русски и т.п., иначе плеер разобьёт альбом."""
+    альбомный артист, жанры по-русски, тип релиза и т.п., иначе плеер разобьёт альбом."""
     if not dest_dir.is_dir():
         return {}
     for f in sorted(dest_dir.iterdir()):
@@ -151,9 +155,19 @@ def sibling_album_tags(dest_dir: Path) -> dict:
                 continue
             out = {}
             for k, ours in ALBUM_KEYS.items():
-                v = m.tags.get(k)
+                try:
+                    v = m.tags.get(k)
+                except (KeyError, ValueError):  # releasetype в EasyID3 не зарегистрирован
+                    v = None
                 if v:
                     out[ours] = list(v) if ours == "genre" else v[0]
+            if "releasetype" not in out and f.suffix.lower() == ".mp3":
+                try:
+                    fr = ID3(f).get("TXXX:RELEASETYPE")
+                    if fr:
+                        out["releasetype"] = str(fr.text[0])
+                except mutagen.MutagenError:
+                    pass
             return out
     return {}
 

@@ -23,7 +23,7 @@ BACKUP_FILES = ("decisions.json", "downloads.json", "plan_state.json")
 BACKUP_DAYS = 14
 # события-проблемы: их видно фильтром «только проблемы» и они дублируются в server.log как warning
 PROBLEMS = {"error", "send_failed", "deemix_failed", "deemix_down", "deemix_stuck", "deemix_stalled", "retry_failed",
-            "slsk_dl_failed", "slsk_place_failed"}
+            "slsk_dl_failed", "slsk_place_failed", "tags_failed"}
 
 LOG_DIR.mkdir(exist_ok=True)
 log = logging.getLogger("music-fill")

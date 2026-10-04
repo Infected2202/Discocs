@@ -24,7 +24,15 @@ python apply.py --sample 20               # пробно; --all — все по�
 python various.py --dry                   # «Różni wykonawcy», «Различные исполнители», «VA»… → «Various Artists»
 python ignore_dupes.py                    # скрыть дубли от Navidrome (.ndignore); --undo — убрать
 python navidrome.py scan | check          # сканирование Navidrome / видит ли он записанные типы
+python fragments.py --dry                 # собрать сборники, раздробленные Navidrome (нет исполнителя альбома)
+python resolve.py                         # тип для альбомов без штрихкода: Deezer/Discogs + строгая сверка; --write
+python autotag.py album <id> <папка>      # один релиз — так его вызывает music-fill после загрузки
 ```
+
+**Автоматически после загрузки.** Сервер music-fill, увидев в очереди deemix «completed», отдаёт задание в
+`autotag.tag_release` (папка — `extrasPath` задания, файлы — с BARCODE этого альбома): тип, ID Deezer, «Various
+Artists». В журнале music-fill — «теги проставлены» / «ТЕГИ: НЕ ПРОСТАВЛЕНЫ». Треки из Soulseek, разложенные в
+альбом deemix, наследуют от соседей и тип релиза (`tagger.ALBUM_KEYS`).
 
 Нужны Python 3.11+ с `requests` и `mutagen`. Учётка Navidrome — из `../music-fill/config.json`.
 
