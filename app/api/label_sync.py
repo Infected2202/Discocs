@@ -33,6 +33,8 @@ def _running_label_sync() -> str | None:
 @router.get("/label-sync")
 def api_v1_label_sync_status() -> dict[str, object]:
     store, settings = context()
+    # Лейблы, заполненные старым скриптом, считаются обработанными и до первого запуска.
+    store.seed_label_sync_state()
     return {
         **credentials_status(store, settings),
         "labels": store.label_sync_counts(),

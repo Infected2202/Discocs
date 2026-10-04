@@ -469,3 +469,17 @@ def test_admin_runs_the_sync_as_a_background_job(tmp_path, monkeypatch):
     assert (job.status, job.message) == ("completed", "Checked 1 labels: found 1 (images 0, descriptions 0), not found 0, errors 0")
     assert label_state(store, "Found") == ("found", "7")
     assert client.get("/api/v1/label-sync").json()["labels"]["found"] == 1
+
+
+def test_status_counts_labels_filled_by_the_old_script_before_the_first_run(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path, "A", 1, label="Known")
+    add_track(store, tmp_path, "B", 1, label="Unknown")
+    add_track(store, tmp_path, "C", 1, label="Fresh")
+    from app.models import LabelMetadata
+    store.save_label_metadata(LabelMetadata(name="Known", external_ids={"discogs": "1"}))
+    store.save_label_metadata(LabelMetadata(name="Unknown"))
+
+    labels = TestClient(app).get("/api/v1/label-sync").json()["labels"]
+
+    assert labels == {"found": 1, "not_found": 1, "error": 0, "pending": 1}
