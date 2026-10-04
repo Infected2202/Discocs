@@ -1,4 +1,4 @@
-"""Доступы синхронизации лейблов: вход в Beatport и токен Discogs, зашифрованные в базе."""
+"""Доступы синхронизации лейблов: вход в Beatport и ключ приложения Discogs, зашифрованные в базе."""
 from __future__ import annotations
 
 import time
@@ -11,7 +11,7 @@ from app.integration_secrets import (
     decrypt_integration_secret,
     encrypt_integration_secret,
 )
-from app.services.label_sync.clients import beatport_login
+from app.services.label_sync.clients import beatport_login, discogs_check
 from app.store import Store
 
 BEATPORT_SECRET = "beatport"
@@ -38,8 +38,15 @@ def connect_beatport(store: Store, settings: Settings, http: httpx.Client, usern
     save_secret(store, settings, BEATPORT_SECRET, {**token, "username": username})
 
 
-def set_discogs_token(store: Store, settings: Settings, token: str) -> None:
-    save_secret(store, settings, DISCOGS_SECRET, {"token": token})
+def connect_discogs(store: Store, settings: Settings, http: httpx.Client, key: str, secret: str) -> None:
+    discogs_check(http, key, secret)
+    save_secret(store, settings, DISCOGS_SECRET, {"key": key, "secret": secret})
+
+
+def discogs_app(value: dict[str, object] | None) -> tuple[str, str] | None:
+    if not value or not value.get("key") or not value.get("secret"):
+        return None
+    return str(value["key"]), str(value["secret"])
 
 
 def credentials_status(store: Store, settings: Settings) -> dict[str, object]:
@@ -56,7 +63,9 @@ def credentials_status(store: Store, settings: Settings) -> dict[str, object]:
         status["beatport"] = {"connected": False, "error": str(exc)}
     try:
         discogs = load_secret(store, settings, DISCOGS_SECRET)
-        status["discogs"] = {"connected": bool(discogs and discogs.get("token"))}
+        app_key = discogs_app(discogs)
+        # Конец ключа — чтобы узнать, какое приложение подключено; секрет не показываем.
+        status["discogs"] = {"connected": True, "key_hint": app_key[0][-4:]} if app_key else {"connected": False}
     except IntegrationSecretError as exc:
         status["discogs"] = {"connected": False, "error": str(exc)}
     return status

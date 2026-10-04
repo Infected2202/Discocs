@@ -135,15 +135,29 @@ class BeatportClient:
 
 # ---------- Discogs ----------
 
+def discogs_auth_header(key: str, secret: str) -> dict[str, str]:
+    """Ключ и секрет приложения Discogs (Settings → Developers → Applications), как в music-fill."""
+    return {"Authorization": f"Discogs key={key}, secret={secret}"}
+
+
+def discogs_check(http: httpx.Client, key: str, secret: str) -> None:
+    """Один поиск, чтобы сразу сказать в админке, принял ли Discogs ключ и секрет."""
+    r = http.get(f"{DISCOGS_API}/database/search", params={"q": "discogs", "per_page": 1},
+                 headers=discogs_auth_header(key, secret))
+    if r.status_code != 200:
+        raise ServiceAuthError(f"Discogs rejected the key and secret ({r.status_code})")
+
+
 class DiscogsClient:
     def __init__(
         self,
-        token: str,
+        key: str,
+        secret: str,
         cache: HttpCache,
         http: httpx.Client,
         sleep: Callable[[float], None] = time.sleep,
     ):
-        self._token = token
+        self._auth = discogs_auth_header(key, secret)
         self._cache = cache
         self._http = http
         self._sleep = sleep
@@ -157,8 +171,7 @@ class DiscogsClient:
         with self._lock:  # 60 запросов в минуту на внешний IP — по одному
             r = None
             for attempt in range(_RETRIES):
-                r = self._http.get(f"{DISCOGS_API}{path}", params=params,
-                                   headers={"Authorization": f"Discogs token={self._token}"})
+                r = self._http.get(f"{DISCOGS_API}{path}", params=params, headers=self._auth)
                 if r.status_code == 429:
                     self._sleep(5 + 5 * attempt)
                     continue
@@ -166,7 +179,7 @@ class DiscogsClient:
             if r is None:  # pragma: no cover — цикл выше всегда делает хотя бы один запрос
                 raise RuntimeError("Discogs request was not sent")
             if r.status_code == 401:
-                raise ServiceAuthError("Discogs rejected the token — check it in the admin")
+                raise ServiceAuthError("Discogs rejected the key and secret — check them in the admin")
             if int(r.headers.get("X-Discogs-Ratelimit-Remaining", 60)) <= 3:
                 self._sleep(3)
         if r.status_code == 404:

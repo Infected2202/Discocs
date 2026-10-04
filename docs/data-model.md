@@ -163,7 +163,7 @@ old `tools/label-sync` script: the first run records their keys without a
 lookup. `track_barcodes` (`track_id` PK, `barcode`, `file_size`,
 `file_mtime`) caches the BARCODE/UPC tag of each file; it is re-read when the
 file size or mtime changes. `integration_secrets` (`name` PK, `value`) holds
-the Beatport tokens and the Discogs token, AES-GCM encrypted with a key
+the Beatport tokens and the Discogs application key and secret, AES-GCM encrypted with a key
 derived from `DISCOCS_SERVICE_TOKEN` (`app/integration_secrets.py`).
 Label lists and counts only consider releases with at least one available
 track.

@@ -6,15 +6,15 @@ from fastapi.responses import JSONResponse
 
 from app.api.deps import api_error, context
 from app.integration_secrets import IntegrationSecretError
-from app.schemas.requests import BeatportLoginRequest, DiscogsTokenRequest, LabelSyncRequest
+from app.schemas.requests import BeatportLoginRequest, DiscogsAppRequest, LabelSyncRequest
 from app.services.jobs import create_job, update_job
 from app.services.label_sync.clients import ServiceAuthError, new_http_client
 from app.services.label_sync.credentials import (
     BEATPORT_SECRET,
     DISCOGS_SECRET,
     connect_beatport,
+    connect_discogs,
     credentials_status,
-    set_discogs_token,
 )
 from app.services.label_sync.job import LABEL_SYNC_JOB_KIND, label_sync_job
 from app.state import JOBS, JOBS_LOCK
@@ -65,12 +65,16 @@ def api_v1_label_sync_beatport_logout() -> dict[str, object]:
 
 
 @router.put("/label-sync/discogs", response_model=None)
-def api_v1_label_sync_discogs_token(request: DiscogsTokenRequest) -> dict[str, object] | JSONResponse:
+def api_v1_label_sync_discogs_app(request: DiscogsAppRequest) -> dict[str, object] | JSONResponse:
+    """Ключ и секрет приложения Discogs; перед сохранением проверяются одним поиском."""
     store, settings = context()
-    try:
-        set_discogs_token(store, settings, request.token)
-    except IntegrationSecretError as exc:
-        return api_error(409, "no_server_key", str(exc))
+    with new_http_client() as http:
+        try:
+            connect_discogs(store, settings, http, request.key, request.secret)
+        except ServiceAuthError as exc:
+            return api_error(400, "discogs_rejected", str(exc))
+        except IntegrationSecretError as exc:
+            return api_error(409, "no_server_key", str(exc))
     return credentials_status(store, settings)
 
 
@@ -92,7 +96,7 @@ def api_v1_start_label_sync(
     store, settings = context()
     status = credentials_status(store, settings)
     if not (status["beatport"] or {}).get("connected") or not (status["discogs"] or {}).get("connected"):
-        return api_error(409, "not_configured", "Connect Beatport and set the Discogs token first")
+        return api_error(409, "not_configured", "Connect Beatport and set the Discogs key and secret first")
     job_id = create_job(LABEL_SYNC_JOB_KIND, "Waiting to sync labels")
     update_job(job_id, status="running")
     background_tasks.add_task(label_sync_job, job_id, request.retry_not_found, request.label_id)

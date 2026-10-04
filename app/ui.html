@@ -1198,18 +1198,21 @@
           <div class="meta">Credentials are encrypted in the discocs database with a key derived from <code>DISCOCS_SERVICE_TOKEN</code>. The Beatport password is used once to sign in and is not stored; the token renews itself.</div>
           <div class="meta" id="labelSyncAccess">Not loaded yet.</div>
           <h3>Beatport</h3>
-          <label><span class="label-title">Login</span><input id="beatportUsername" autocomplete="off"></label>
-          <label><span class="label-title">Password</span><input id="beatportPassword" type="password" autocomplete="new-password"></label>
-          <div class="actions">
-            <button class="primary" onclick="connectBeatport()">Sign in to Beatport</button>
-            <button onclick="forgetLabelSyncAccess('beatport')">Sign out</button>
+          <div class="meta" id="beatportAccess">Not loaded yet.</div>
+          <div id="beatportLoginForm">
+            <label><span class="label-title">Login</span><input id="beatportUsername" autocomplete="off"></label>
+            <label><span class="label-title">Password</span><input id="beatportPassword" type="password" autocomplete="new-password"></label>
+            <div class="actions"><button class="primary" onclick="connectBeatport()">Sign in to Beatport</button></div>
           </div>
+          <div class="actions" id="beatportConnected"><button onclick="forgetLabelSyncAccess('beatport')">Sign out</button></div>
           <h3>Discogs</h3>
-          <label><span class="label-title">Personal access token <span class="info" data-tooltip="discogs.com: Settings, Developers, Generate new token.">(i)</span></span><input id="discogsToken" type="password" autocomplete="off"></label>
-          <div class="actions">
-            <button class="primary" onclick="saveDiscogsToken()">Save Discogs token</button>
-            <button onclick="forgetLabelSyncAccess('discogs')">Forget</button>
+          <div class="meta" id="discogsAccess">Not loaded yet.</div>
+          <div id="discogsForm">
+            <label><span class="label-title">Consumer key <span class="info" data-tooltip="discogs.com: Settings, Developers, your application. The same pair as discogs_key / discogs_secret in music-fill.">(i)</span></span><input id="discogsKey" autocomplete="off"></label>
+            <label><span class="label-title">Consumer secret</span><input id="discogsSecret" type="password" autocomplete="new-password"></label>
+            <div class="actions"><button class="primary" onclick="saveDiscogsApp()">Connect Discogs</button></div>
           </div>
+          <div class="actions" id="discogsConnected"><button onclick="forgetLabelSyncAccess('discogs')">Forget</button></div>
           <div class="meta" id="labelSyncAccessStatus"></div>
         </div>
         <div class="settings-pane" data-settings-pane="storage">
@@ -3244,10 +3247,40 @@
       const discogs = data.discogs || {};
       const parts = [
         beatport.connected ? `Beatport: signed in as ${text(beatport.username || "?")}` : `Beatport: not connected${beatport.error ? ` (${text(beatport.error)})` : ""}`,
-        discogs.connected ? "Discogs: token set" : `Discogs: no token${discogs.error ? ` (${text(discogs.error)})` : ""}`
+        discogs.connected ? "Discogs: connected" : `Discogs: not connected${discogs.error ? ` (${text(discogs.error)})` : ""}`
       ];
       if (!data.server_key) parts.push("DISCOCS_SERVICE_TOKEN is not set: credentials cannot be saved");
       return parts.join(" · ");
+    }
+    function durationText(seconds) {
+      const minutes = Math.round((Number(seconds) || 0) / 60);
+      return minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;
+    }
+    function showLabelAccess(data) {
+      const beatport = data.beatport || {};
+      const discogs = data.discogs || {};
+      const show = (id, visible) => {
+        const element = document.getElementById(id);
+        if (element) element.style.display = visible ? "" : "none";
+      };
+      const beatportAccess = document.getElementById("beatportAccess");
+      if (beatportAccess) {
+        beatportAccess.textContent = beatport.connected
+          ? `Signed in as ${text(beatport.username || "?")}. The token renews itself (current one: ${durationText(beatport.token_expires_in)} left).`
+          : `Not signed in.${beatport.error ? ` ${text(beatport.error)}` : ""}`;
+        beatportAccess.classList.toggle("error", !beatport.connected);
+      }
+      const discogsAccess = document.getElementById("discogsAccess");
+      if (discogsAccess) {
+        discogsAccess.textContent = discogs.connected
+          ? `Connected with the application key ...${text(discogs.key_hint)}.`
+          : `Not connected.${discogs.error ? ` ${text(discogs.error)}` : ""}`;
+        discogsAccess.classList.toggle("error", !discogs.connected);
+      }
+      show("beatportLoginForm", !beatport.connected);
+      show("beatportConnected", Boolean(beatport.connected));
+      show("discogsForm", !discogs.connected);
+      show("discogsConnected", Boolean(discogs.connected));
     }
     async function loadLabelSync() {
       try {
@@ -3261,6 +3294,7 @@
         }
         const access = document.getElementById("labelSyncAccess");
         if (access) access.textContent = labelAccessText(data);
+        showLabelAccess(data);
         const running = Boolean(data.running_job_id);
         ["labelSyncBtn", "labelSyncRetryBtn"].forEach(id => {
           const button = document.getElementById(id);
@@ -3311,26 +3345,28 @@
         await loadLabelSync();
       }
     }
-    async function saveDiscogsToken() {
-      const input = document.getElementById("discogsToken");
+    async function saveDiscogsApp() {
+      const keyInput = document.getElementById("discogsKey");
+      const secretInput = document.getElementById("discogsSecret");
       try {
         await json("/api/v1/label-sync/discogs", {
           method: "PUT",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({token: input.value.trim()})
+          body: JSON.stringify({key: keyInput.value.trim(), secret: secretInput.value.trim()})
         });
-        setLabelSyncStatus("labelSyncAccessStatus", "Discogs token saved.");
+        setLabelSyncStatus("labelSyncAccessStatus", "Discogs connected.");
+        keyInput.value = "";
       } catch (err) {
-        setLabelSyncStatus("labelSyncAccessStatus", `Discogs token not saved: ${err.message}`, true);
+        setLabelSyncStatus("labelSyncAccessStatus", `Discogs not connected: ${err.message}`, true);
       } finally {
-        input.value = "";
+        secretInput.value = "";
         await loadLabelSync();
       }
     }
     async function forgetLabelSyncAccess(service) {
       try {
         await json(`/api/v1/label-sync/${service}`, {method: "DELETE"});
-        setLabelSyncStatus("labelSyncAccessStatus", service === "beatport" ? "Signed out of Beatport." : "Discogs token removed.");
+        setLabelSyncStatus("labelSyncAccessStatus", service === "beatport" ? "Signed out of Beatport." : "Discogs key and secret removed.");
       } catch (err) {
         setLabelSyncStatus("labelSyncAccessStatus", `Failed: ${err.message}`, true);
       } finally {

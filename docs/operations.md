@@ -186,8 +186,11 @@ Operations -> Labels -> Sync labels
 ```
 
 - **Access** — Settings -> Labels: sign in to Beatport (the password is used
-  once; the server keeps only the tokens and renews them) and paste a Discogs
-  personal access token. Both are encrypted with a key derived from
+  once; the server keeps only the tokens and renews them) and paste the
+  consumer key and secret of a Discogs application (discogs.com → Settings →
+  Developers; the same pair music-fill uses). Each is checked against the
+  service before it is saved, and the page shows who is signed in and how long
+  the current Beatport token lasts. Both are encrypted with a key derived from
   `DISCOCS_SERVICE_TOKEN`; rotating that token means signing in again.
 - **What a run looks up** — new labels, labels that failed, and not-found
   labels whose barcodes/ISRCs changed (new releases). Found labels are

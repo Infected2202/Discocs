@@ -28,7 +28,7 @@ from app.services.label_sync.clients import (
     WebClient,
     new_http_client,
 )
-from app.services.label_sync.credentials import BEATPORT_SECRET, DISCOGS_SECRET, load_secret, save_secret
+from app.services.label_sync.credentials import BEATPORT_SECRET, DISCOGS_SECRET, discogs_app, load_secret, save_secret
 from app.services.label_sync.http_cache import HttpCache
 from app.services.label_sync.resolver import LabelResolver, LabelResult
 from app.services.label_sync.tags import read_barcode
@@ -225,11 +225,11 @@ def _image(resolver: LabelResolver, result: LabelResult):
 
 def build_resolver(store: Store, settings: Settings, http: httpx.Client, cache: HttpCache) -> LabelResolver:
     beatport = load_secret(store, settings, BEATPORT_SECRET)
-    discogs = load_secret(store, settings, DISCOGS_SECRET)
+    discogs = discogs_app(load_secret(store, settings, DISCOGS_SECRET))
     if not beatport:
         raise LabelSyncUnavailable("Sign in to Beatport first")
-    if not discogs or not discogs.get("token"):
-        raise LabelSyncUnavailable("Set the Discogs token first")
+    if discogs is None:
+        raise LabelSyncUnavailable("Set the Discogs key and secret first")
     username = beatport.get("username")
 
     def keep_token(token: dict[str, object]) -> None:
@@ -237,7 +237,7 @@ def build_resolver(store: Store, settings: Settings, http: httpx.Client, cache: 
 
     return LabelResolver(
         BeatportClient(beatport, keep_token, cache, http),
-        DiscogsClient(str(discogs["token"]), cache, http),
+        DiscogsClient(*discogs, cache, http),
         WebClient(cache, http),
     )
 

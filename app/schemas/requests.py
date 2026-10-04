@@ -474,10 +474,11 @@ class BeatportLoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=500)
 
 
-class DiscogsTokenRequest(BaseModel):
+class DiscogsAppRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    token: str = Field(min_length=10, max_length=200, pattern=r"^[A-Za-z0-9]+$")
+    key: str = Field(min_length=10, max_length=200, pattern=r"^[A-Za-z0-9]+$")
+    secret: str = Field(min_length=10, max_length=200, pattern=r"^[A-Za-z0-9]+$")
 
 
 class LabelSyncRequest(BaseModel):

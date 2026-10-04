@@ -394,8 +394,16 @@ def beatport_login_transport(password_ok: bool = True) -> httpx.MockTransport:
             return httpx.Response(302, headers={"Location": "https://api.beatport.com/v4/auth/o/post-message/?code=abc"})
         if path.endswith("/auth/o/token/"):
             return httpx.Response(200, json={"access_token": "acc", "refresh_token": "ref", "expires_in": 36000})
+        if path == "/database/search":
+            ok = request.headers.get("Authorization") == f"Discogs key={DISCOGS_KEY}, secret={DISCOGS_SECRET_VALUE}"
+            return httpx.Response(200 if ok else 401, json={"results": []})
         return httpx.Response(404)
     return httpx.MockTransport(handler)
+
+
+DISCOGS_KEY = "abcdefghijKLMN"
+DISCOGS_SECRET_VALUE = "secretSECRET1234"
+DISCOGS_APP = {"key": DISCOGS_KEY, "secret": DISCOGS_SECRET_VALUE}
 
 
 def test_admin_connects_services_without_storing_the_password(tmp_path, monkeypatch):
@@ -411,9 +419,10 @@ def test_admin_connects_services_without_storing_the_password(tmp_path, monkeypa
     connected = client.post("/api/v1/label-sync/beatport", json={"username": "me", "password": "hunter2"})
     assert connected.status_code == 200
     assert connected.json()["beatport"]["username"] == "me"
-    assert client.put("/api/v1/label-sync/discogs", json={"token": "abcdefghijKLMNOP1234"}).json()["discogs"] == {
-        "connected": True,
+    assert client.put("/api/v1/label-sync/discogs", json=DISCOGS_APP).json()["discogs"] == {
+        "connected": True, "key_hint": "KLMN",
     }
+    assert decrypt_integration_secret("svc-secret", store.get_integration_secret("discogs")) == DISCOGS_APP
 
     blob = store.get_integration_secret("beatport")
     assert "hunter2" not in blob
@@ -430,6 +439,35 @@ def test_wrong_beatport_password_is_reported(tmp_path, monkeypatch):
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "beatport_login_failed"
+
+
+def test_rejected_discogs_key_is_reported_and_not_saved(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    monkeypatch.setattr("app.api.label_sync.new_http_client",
+                        lambda: httpx.Client(transport=beatport_login_transport()))
+
+    response = TestClient(app).put("/api/v1/label-sync/discogs",
+                                   json={"key": DISCOGS_KEY, "secret": "wrongSECRET12345"})
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "discogs_rejected"
+    assert store.get_integration_secret("discogs") is None
+
+
+def test_discogs_requests_sign_with_the_application_key_and_secret(tmp_path):
+    from app.services.label_sync.clients import DiscogsClient
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["Authorization"])
+        return httpx.Response(200, json={"id": 7})
+
+    client = DiscogsClient("app-key", "app-secret", HttpCache(tmp_path / "cache.db"),
+                           httpx.Client(transport=httpx.MockTransport(handler)), sleep=lambda s: None)
+
+    assert client.get("/labels/7") == {"id": 7}
+    assert seen == ["Discogs key=app-key, secret=app-secret"]
 
 
 def test_summary_message_lists_the_outcome():
@@ -457,7 +495,7 @@ def test_admin_runs_the_sync_as_a_background_job(tmp_path, monkeypatch):
                         lambda *args: ScriptedResolver({"Found": LabelResult(external_ids={"discogs": "7"})}))
     client = TestClient(app)
     client.post("/api/v1/label-sync/beatport", json={"username": "me", "password": "pw"})
-    client.put("/api/v1/label-sync/discogs", json={"token": "abcdefghijKLMNOP1234"})
+    client.put("/api/v1/label-sync/discogs", json=DISCOGS_APP)
 
     started = client.post("/api/v1/jobs/label-sync", json={})
 
