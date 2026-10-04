@@ -460,6 +460,14 @@ schema:
 - `users` — application user identity (Phase 2 multiuser): internal `id`,
   unique `navidrome_username`, `created_at`, `last_login_at`. Auto-created on
   first successful login; the `id` is the FK used to scope personal tables.
+  Usernames are also unique case-insensitively (`idx_users_username_nocase`).
+  Legacy case-variant duplicates (e.g. `Infected2202` next to `infected2202`,
+  created before logins were matched case-insensitively) are folded into the
+  lowest-id row at startup by `app/store/user_merge.py`. It writes a
+  `VACUUM INTO` backup `app.db.pre-user-merge-<UTC>.bak` first, then works
+  per table. History and owned rows are moved, and generated mixes are moved
+  as `stale`. For keyed per-user state the canonical row wins. If any other
+  table still references the duplicate, the whole merge aborts.
 - `user_settings` — generic per-user key/value preferences: `(user_id, key)`
   PK, `value` (opaque string), `updated_at`. Currently holds `language`
   (`en`/`ru`, see `docs/web-ui.md` §Internationalization), transcoding

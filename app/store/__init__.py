@@ -27,6 +27,7 @@ from app.store.settings import SettingsStoreMixin
 from app.store.shares import SharesStoreMixin
 from app.store.timeline import TimelineStoreMixin
 from app.store.listens import ListensStoreMixin, backfill_listens_from_events  # noqa: F401
+from app.store.user_merge import USERNAME_NOCASE_INDEX, merge_case_variant_users  # noqa: F401
 from app.store._helpers import (
     LISTEN_EVENT_TYPES,
     playback_event_is_completion,

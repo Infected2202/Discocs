@@ -79,6 +79,7 @@ from app.models import (
 )
 from app.scanner import ScannedTrack
 from app.store.listens import backfill_listens_from_events
+from app.store.user_merge import merge_case_variant_users
 
 
 logger = logging.getLogger(__name__)
@@ -137,6 +138,9 @@ class StoreBase:
         with INIT_LOCK:
             if resolved_path not in INITIALIZED_DB_PATHS:
                 self._init_schema()
+                # Own connections: the backup (VACUUM INTO) can't run inside
+                # the schema transaction.
+                merge_case_variant_users(self.db_path)
                 INITIALIZED_DB_PATHS.add(resolved_path)
         if self._bind_default_user and self.user_id is None:
             owner_username = os.getenv(OWNER_USER_ENV, "").strip() or DEFAULT_OWNER_USERNAME

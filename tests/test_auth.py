@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from app import auth
 from app.config import NavidromeSettings, Settings
 from app.main import app
-from app.store import INITIALIZED_DB_PATHS, Store
+from app.store import INITIALIZED_DB_PATHS, USERNAME_NOCASE_INDEX, Store
 from app.models import utc_now
 
 
@@ -213,6 +213,9 @@ def test_resolve_session_canonicalizes_existing_case_duplicate(tmp_path, monkeyp
     now = datetime.fromisoformat(utc_now())
     canonical_id = store.upsert_user("infected2202", now=now.isoformat())
     with store.connect() as conn:
+        # Emulate a legacy database: startup merges such duplicates and then
+        # forbids them with a NOCASE unique index.
+        conn.execute(f"DROP INDEX {USERNAME_NOCASE_INDEX}")
         duplicate_id = int(
             conn.execute(
                 "INSERT INTO users (navidrome_username, created_at, last_login_at) "

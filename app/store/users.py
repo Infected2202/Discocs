@@ -72,22 +72,14 @@ class UsersStoreMixin:
     def list_users(self) -> list[sqlite3.Row]:
         """Every discocs user (identity columns only), by username.
 
-        One row per case-insensitive username: the canonical one (lowest id),
-        which login, profiles and avatars resolve to (``get_user_by_username``).
-        Legacy databases can hold case-variant duplicates created before
-        usernames were matched case-insensitively.
+        Usernames are unique case-insensitively (``idx_users_username_nocase``;
+        legacy duplicates are merged at startup — app/store/user_merge.py).
         """
         with self.connect() as conn:
-            rows = conn.execute(
+            return conn.execute(
                 "SELECT id, navidrome_username, created_at, last_login_at FROM users "
                 "ORDER BY navidrome_username COLLATE NOCASE, id"
             ).fetchall()
-        canonical: dict[str, sqlite3.Row] = {}
-        for row in rows:
-            key = str(row["navidrome_username"]).casefold()
-            if key not in canonical or int(row["id"]) < int(canonical[key]["id"]):
-                canonical[key] = row
-        return [row for row in rows if canonical[str(row["navidrome_username"]).casefold()] is row]
 
     # Avatars are the one public entry of user_settings (app/avatars.py): they
     # are read for any user by id, unlike the default-deny personal settings.

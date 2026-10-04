@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 import app.services.presence as presence_module
 from app import auth
-from app.avatars import AVATAR_KEYS, ensure_user_avatar
+from app.avatars import AVATAR_KEYS
 from app.config import NavidromeSettings
 from app.main import app
 from app.navidrome import NavidromeClient, NowPlayingEntry
@@ -447,34 +447,6 @@ def test_people_maps_now_playing_and_sorts(tmp_path: Path, monkeypatch):
         assert item["avatar"] in AVATAR_KEYS
     # Live data is read with the service account, not the caller's session.
     assert fake.calls == ["svc"]
-
-
-def test_people_lists_case_variant_duplicate_users_once(tmp_path: Path, monkeypatch):
-    store = _init(tmp_path, monkeypatch)
-    _seed_people(store)
-    carol_id = int(store.get_user_by_username("carol")["id"])
-    with store.connect() as conn:
-        # A legacy row from before usernames were matched case-insensitively.
-        conn.execute(
-            "INSERT INTO users (navidrome_username, created_at, last_login_at) VALUES (?, ?, ?)",
-            ("Carol", "2026-02-01T00:00:00+00:00", "2026-09-01T00:00:00+00:00"),
-        )
-    _install_people_fakes(monkeypatch, _NowPlayingFake([]))
-    alice = _login("alice")
-    users = alice.get("/api/v1/users").json()["items"]
-
-    response = alice.get("/api/v1/social/people")
-
-    assert response.status_code == 200
-    names = [item["username"] for item in response.json()["items"]]
-    assert names.count("carol") == 1
-    assert "Carol" not in names
-    # The listed avatar is the canonical row's — the one login/profile use.
-    carol = next(item for item in response.json()["items"] if item["username"] == "carol")
-    assert carol["avatar"] == ensure_user_avatar(store, carol_id)
-    # GET /users lists the same canonical rows.
-    assert [item["username"] for item in users].count("carol") == 1
-    assert "Carol" not in [item["username"] for item in users]
 
 
 def test_people_survives_navidrome_outage(tmp_path: Path, monkeypatch):
