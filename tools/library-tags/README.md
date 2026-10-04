@@ -27,6 +27,7 @@ python navidrome.py scan | check          # сканирование Navidrome /
 python fragments.py --dry                 # собрать сборники, раздробленные Navidrome (нет исполнителя альбома)
 python resolve.py                         # тип для альбомов без штрихкода: Deezer/Discogs + строгая сверка; --write
 python autotag.py album <id> <папка>      # один релиз — так его вызывает music-fill после загрузки
+python retype_ep.py [--dry]               # EP, которым раньше записали album/single, — в ep (откат — apply.py --undo)
 python popularity.py [--push]             # связи трек ↔ Deezer и rank/fans → база discocs (recs deezer-import)
 ```
 
