@@ -44,9 +44,9 @@ pipeline {
     TARGET_PORT   = '2252'
     TARGET_DIR    = '/home/infected2202/docker/discocs'
     // Потолок RAM для трёх параллельных тестовых контейнеров. Все они живут в
-    // cgroup LXC-агента (limits.memory 4GB) вместе с dockerd и самим агентом:
-    // без потолков пик тестов упирался в 4 ГБ, и OOM-killer убивал dockerd/java
-    // агента, а не тесты (билды #400–#402). Сумма 3 ГБ оставляет ~1 ГБ агенту;
+    // cgroup LXC-агента (limits.memory 6GB, до 2026-10 было 4GB) вместе с dockerd
+    // и самим агентом: без потолков пик тестов упирался в лимит, и OOM-killer убивал
+    // dockerd/java агента, а не тесты (билды #400–#402). Сумма 3 ГБ оставляет запас агенту;
     // --memory-swap вдвое — под пик тест уходит в своп, а не в OOM.
     TEST_MEM_BACKEND = '--memory=1200m --memory-swap=2400m'
     TEST_MEM_UI      = '--memory=1200m --memory-swap=2400m'
@@ -264,8 +264,9 @@ pipeline {
 
     // Sonar и Trivy друг от друга не зависят (сканеру кода нужны coverage-отчёты
     // из Checks, Trivy — образы из Build & Push), но идут ПОДРЯД: агент живёт в
-    // LXC с лимитом 4 ГБ, и Sonar (-Xmx2g + Node для TS) рядом с тремя сканами
-    // Trivy упирался в него — на билде #422 OOM-killer убил java агента, билд упал.
+    // LXC (тогда с лимитом 4 ГБ, теперь 6 ГБ), и Sonar (-Xmx2g + Node для TS) рядом
+    // с тремя сканами Trivy упирался в него — на билде #422 OOM-killer убил java
+    // агента, билд упал.
     // Trivy первым: это блокирующий гейт, Sonar — только отчёт.
     stage('Analyze & Scan') {
       when { expression { env.ONLY_TOOLS != 'true' } }
