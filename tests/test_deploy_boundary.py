@@ -205,8 +205,10 @@ def test_trivy_blocks_only_fixable_high_or_critical_findings():
     # convert` такого флага нет (билд #247: "unknown flag: --ignore-unfixed"),
     # а отфильтровать unfixed через Rego-политику — риск молча пропускающего
     # гейта.
+    # --timeout 15m: при штатных 5 мин гейт backend падал не на уязвимостях, а
+    # на «context deadline exceeded» рядом с параллельным Sonar (билд #420).
     gate = (
-        "aquasec/trivy image --skip-db-update --cache-backend memory "
+        "aquasec/trivy image --skip-db-update --cache-backend memory --timeout 15m "
         "--ignore-unfixed --severity HIGH,CRITICAL --exit-code 1"
     )
     assert gate in pipeline
