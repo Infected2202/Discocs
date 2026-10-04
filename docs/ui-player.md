@@ -256,6 +256,35 @@ more likely discard candidate.
 Autoplay is intentionally not resumed — browsers block `play()` without a
 user gesture after a reload.
 
+## Presence reporting ("now playing" for other users)
+
+The logged-in player tells Navidrome what it is doing so other discocs users
+can see it (social features, [`docs/social.md`](social.md#присутствие-сейчас-слушает)).
+The player itself never calls the API: `startPresenceReporting`
+(`ui/src/store/presenceReporter.ts`, started once from `AppShell`, i.e. only
+behind `RequireAuth`) subscribes to `playerStore` and feeds snapshots to
+`PresenceTracker` (`ui/src/lib/presence.ts`), which turns them into
+`POST /api/v1/playback/presence` reports:
+
+| Player change | Report |
+|---|---|
+| a track starts playing (new queue item, handover, first play after restore) | `starting` (position 0 when the queue pointer moved while the engine still played the old track) |
+| pause | `paused` |
+| resume | `playing` |
+| `seek()` (bumps `playerStore.seekGeneration`) | `playing` (or `paused`) with the seek target, even if the state did not change |
+| queue end (`idle`), error, logout | `stopped` |
+| `pagehide` | `stopped` via `navigator.sendBeacon` (JSON Blob, same-origin cookie; keepalive `fetch` if the beacon is refused or on native builds) |
+
+`loading` (track load, mid-track buffering) and the engine pause during a
+slow-path seek (`seekBuffering`) are transients and send nothing. Identical
+consecutive states are deduplicated (`starting`→`playing` of the same track is
+not a change). Reports are fire-and-forget: failures are swallowed, a 403 (no
+user behind the session) turns reporting off for the page, nothing is ever
+awaited by the player. Logout awaits one `stopped` report *before* revoking the
+session. The guest `SharedPlayerPage` has its own `<audio>`, never mounts
+`AppShell` and reports nothing. Repeat-one restarts the same track silently
+(no new `starting`).
+
 ## Browser audio prefetch
 
 `AudioEngine` uses `preload="auto"` for immediate playback, then explicitly

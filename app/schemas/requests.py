@@ -471,3 +471,16 @@ class LabelDescriptionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     description: str | None = Field(default=None, max_length=20000)
+
+
+class PlaybackPresenceRequest(BaseModel):
+    """What the player is doing right now (social presence, docs/social.md).
+
+    Forwarded to Navidrome ``reportPlayback``; never recorded as a playback event.
+    """
+
+    track_id: int
+    state: Literal["starting", "playing", "paused", "stopped"]
+    position_ms: int = Field(ge=0)
+
+    model_config = ConfigDict(extra="forbid")

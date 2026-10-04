@@ -1,4 +1,5 @@
 import { apiFetch, apiUrl } from "./client"
+import { isNative } from "@/lib/runtimeConfig"
 import type { AutoplayRefillResponse, PlaybackEnvelope, PlaybackEventResponse } from "./types"
 
 export interface CreateSessionParams {
@@ -105,6 +106,48 @@ export function refillAutoplay(params: RefillParams): Promise<AutoplayRefillResp
     method: "POST",
     body: JSON.stringify(params),
   })
+}
+
+// --- Presence (social Ф2, docs/social.md) ---------------------------------
+
+export type PresenceState = "starting" | "playing" | "paused" | "stopped"
+
+export interface PresenceReport {
+  track_id: number
+  state: PresenceState
+  position_ms: number
+}
+
+export interface PresenceResponse {
+  status: "ok" | "skipped" | "failed"
+  reason?: string
+}
+
+const PRESENCE_PATH = "/api/v1/playback/presence"
+
+/** Tell Navidrome (via the backend) what this player is doing right now. */
+export function reportPresence(report: PresenceReport, init?: RequestInit): Promise<PresenceResponse> {
+  return apiFetch(PRESENCE_PATH, {
+    method: "POST",
+    body: JSON.stringify(report),
+    ...init,
+  })
+}
+
+/**
+ * Last-gasp presence report for `pagehide`: a beacon survives the page being
+ * torn down, a fetch may not. Same-origin, so the session cookie and the
+ * Origin header the CSRF gate checks are sent like for any other POST.
+ * Returns false when the beacon could not be queued (caller falls back to a
+ * keepalive fetch). Native builds skip it: CapacitorHttp patches fetch, not
+ * sendBeacon, so a beacon would never reach the server there.
+ */
+export function beaconPresence(report: PresenceReport): boolean {
+  if (isNative()) return false
+  if (typeof navigator === "undefined" || typeof navigator.sendBeacon !== "function") return false
+  const url = new URL(PRESENCE_PATH, globalThis.location.origin).toString()
+  const body = new Blob([JSON.stringify(report)], { type: "application/json" })
+  return navigator.sendBeacon(url, body)
 }
 
 export function trackAudioUrl(trackId: number, profileKey = "raw"): string {

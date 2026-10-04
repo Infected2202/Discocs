@@ -12,6 +12,7 @@ import { useTrackTitle } from "@/hooks/useTrackTitle"
 import { useArtworkTheme } from "@/hooks/useArtworkTheme"
 import { useNavidromeStore } from "@/store/navidromeStore"
 import { usePlayerStore } from "@/store/playerStore"
+import { startPresenceReporting } from "@/store/presenceReporter"
 import { useUIStore } from "@/store/uiStore"
 import { useUserSettings } from "@/api/hooks/useUserSettings"
 import { playbackProfile } from "@/api/settings"
@@ -41,6 +42,10 @@ export default function AppShell() {
     document.addEventListener("visibilitychange", onVisible)
     return () => document.removeEventListener("visibilitychange", onVisible)
   }, [fetchLikedIds])
+
+  // "Now playing" for other users (docs/social.md). Only the logged-in shell
+  // reports — the guest shared player never mounts AppShell.
+  useEffect(() => startPresenceReporting(), [])
 
   const restoreSession = usePlayerStore((s) => s.restoreSession)
   const setPlaybackProfile = usePlayerStore((s) => s.setPlaybackProfile)

@@ -229,13 +229,17 @@ def should_scrobble_navidrome_play(result) -> bool:
 
 
 def navidrome_scrobble_submission(result) -> tuple[bool, str] | None:
+    """Which Navidrome scrobble a recorded event triggers, if any.
+
+    Only real plays are submitted. "Now playing" is not derived from playback
+    events any more: the player reports it explicitly through
+    ``POST /playback/presence`` → ``reportPlayback`` (docs/social.md).
+    """
     event = result.event
     if result.duplicate:
         return None
     if event.track_id is None:
         return None
-    if event.event_type == "track_started":
-        return (False, "now_playing")
     if should_scrobble_navidrome_play(result):
         return (True, "submission")
     return None

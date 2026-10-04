@@ -1,5 +1,6 @@
 import { apiFetch } from "./client"
 import { resetUserSessionState } from "@/store/userSessionState"
+import { stopActivePresence } from "@/lib/presence"
 
 export interface SessionState {
   authenticated: boolean
@@ -19,6 +20,9 @@ export async function login(username: string, password: string): Promise<{ authe
 }
 
 export async function logout(): Promise<void> {
+  // Tell Navidrome we stopped while the session cookie still authenticates
+  // the report; never rejects, so it cannot block the logout itself.
+  await stopActivePresence()
   try {
     await apiFetch("/api/v1/auth/logout", { method: "POST" })
   } finally {

@@ -7,8 +7,9 @@
 [`plans/social-spec.md`](../plans/social-spec.md).
 
 Статус: **Ф1 (фундамент, backend)** — таблица `listens`, встроенные аватары,
-слой доступа к профилю; **Ф3 (API профиля, backend)** — статистика, лента
-прослушиваний, лайки, плейлисты. Присутствие «сейчас слушает» и UI — Ф2, Ф4–Ф5.
+слой доступа к профилю; **Ф2 (присутствие)** — «сейчас слушает» через
+Navidrome: отчёты плеера и `GET /social/people`; **Ф3 (API профиля, backend)** —
+статистика, лента прослушиваний, лайки, плейлисты. UI — Ф4–Ф5.
 
 ## Что такое прослушивание
 
@@ -222,3 +223,80 @@ preference-score/дизлайки.
 Только собственные плейлисты цели (`list_owned_playlists`), приватные — лишь
 когда зритель и есть владелец. Форма — `playlist_summary_dict`; `editable`
 считается относительно зрителя (на чужом профиле всегда `false`).
+
+## Присутствие («сейчас слушает»)
+
+Источник правды — Navidrome (OpenSubsonic-расширение `playbackReport`): discocs
+ничего о присутствии у себя не хранит.
+
+### Запись: `POST /api/v1/playback/presence`
+
+Тело `{track_id, state, position_ms}`, `state` ∈ `starting | playing | paused |
+stopped`, `position_ms ≥ 0`, лишние поля → 422. Бэкенд
+(`app/services/presence.py:report_presence`) маппит трек в Navidrome-id
+(`external_id_for_track`) и вызывает `reportPlayback(mediaId, mediaType=song,
+positionMs, state, playbackRate=1, ignoreScrobble=true)` **кредами текущей
+сессии** — как star/scrobble. `ignoreScrobble=true`: play засчитывает только
+наш `scrobble(submission=true)` по правилу прослушивания, отчёт о присутствии
+не должен давать второй счёт.
+
+| Ответ (всегда 200) | Когда |
+|---|---|
+| `{"status": "ok"}` | Navidrome принял отчёт |
+| `{"status": "skipped", "reason": "no_navidrome_mapping"}` | у трека нет Navidrome-id |
+| `{"status": "skipped", "reason": "missing_user_credentials"}` | auth включён, но в сессии нет Navidrome-кредов |
+| `{"status": "failed"}` | Navidrome недоступен/ошибка (пишется warning в лог) |
+
+Присутствие не ломает воспроизведение: ошибки Navidrome не превращаются в
+HTTP-ошибки, таймаут вызова ≤ 5 с. В `playback_events`, `listens` и
+предпочтения **ничего не пишется**. Service-принципал → 403, без сессии → 401.
+CSRF-гейт (`auth_middleware`) пропускает same-origin POST с заголовком `Origin`
+— так приходит и `sendBeacon` на `pagehide`; кросс-ориджин → 403.
+
+Старый путь «now playing» удалён: `track_started` больше не шлёт
+`scrobble(submission=false)` (`navidrome_scrobble_submission` возвращает только
+`submission`). Что и когда шлёт плеер — [`docs/ui-player.md`](ui-player.md#presence-reporting-now-playing-for-other-users).
+
+### Чтение: `GET /api/v1/social/people`
+
+```json
+{"items": [{"username": "bob", "avatar": "a02",
+            "now_playing": {"track_id": 42, "title": "…", "artists": "A, B", "state": "playing"}}]}
+```
+
+- Все пользователи discocs (`users`), **кроме вызывающего**; аватар — через
+  `ensure_user_avatar` (как `/users`). Service-принципал → 403.
+- Живые данные — один `getNowPlaying` **сервисным** аккаунтом
+  (`DISCOCS_NAVIDROME_USER`), кэш в процессе на 5 с (`NowPlayingCache`:
+  `threading.Lock`, `time.monotonic`, ключ — URL + сервисный юзер). Ошибка
+  тоже кэшируется на TTL, чтобы опрос клиентов не долбил лежащий Navidrome.
+- Учитываются только записи со `state` ∈ `starting | playing`; запись без
+  `state` (старый клиент без `reportPlayback`) считается `playing`, `paused`/
+  `stopped` — «не играет».
+- `username` записи сопоставляется с `users.navidrome_username` без учёта
+  регистра; если у пользователя несколько плееров — берётся запись с
+  наименьшим `minutesAgo`.
+- `id` записи → трек через `get_track_by_external_id("navidrome", id)`: если
+  трек есть — наши `title` и имена артистов (через запятую), иначе
+  `track_id: null` и `title`/`artist` из ответа Navidrome.
+- Navidrome не настроен или недоступен → у всех `now_playing: null`, ответ 200.
+- Сортировка: сначала играющие, внутри групп — по `last_login_at` (новее выше).
+
+Фронт: `fetchPeople` (`ui/src/api/social.ts`) и хук `usePeople`
+(`ui/src/api/hooks/usePeople.ts`): `refetchInterval` 15 с,
+`refetchIntervalInBackground: false` (на скрытой вкладке не опрашивает), 4xx
+не ретраится. Шелф «Люди» — Ф4.
+
+### Ограничения
+
+- Клиенты без `reportPlayback` (другие Subsonic-плееры) видны «играющими» до
+  истечения записи в Navidrome (~конец трека), их пауза не видна.
+- Repeat-one перезапускает трек без нового `starting` — Navidrome продолжает
+  экстраполировать позицию.
+- Закрытие вкладки шлёт `stopped` через `sendBeacon`; если браузер был убит
+  (а не закрыт), запись живёт в Navidrome до своего таймаута.
+- В нативной сборке (Capacitor) `sendBeacon` не используется — на `pagehide`
+  уходит обычный keepalive-`fetch`.
+- *Проверить вживую:* что сервисный аккаунт видит в `getNowPlaying` сессии всех
+  пользователей, что Navidrome отдаёт `state`/`positionMs` в записях и что
+  `ignoreScrobble=true` не даёт двойного счёта.

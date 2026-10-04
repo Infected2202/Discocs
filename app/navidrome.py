@@ -38,6 +38,30 @@ class NavidromeSong:
     raw: dict[str, Any] | None = None
 
 
+# OpenSubsonic ``playbackReport`` states (reportPlayback / getNowPlaying).
+PLAYBACK_REPORT_STATES: tuple[str, ...] = ("starting", "playing", "paused", "stopped")
+
+
+@dataclass(frozen=True)
+class NowPlayingEntry:
+    """One ``getNowPlaying`` entry: a song some user's player is on right now.
+
+    Only ``id`` is guaranteed. ``state``/``position_ms`` come from the
+    OpenSubsonic playbackReport extension and are absent for players that
+    only send the classic ``scrobble(submission=false)``.
+    """
+
+    id: str
+    username: str | None = None
+    title: str | None = None
+    artist: str | None = None
+    state: str | None = None
+    position_ms: int | None = None
+    minutes_ago: int | None = None
+    player_name: str | None = None
+    raw: dict[str, Any] | None = None
+
+
 @dataclass(frozen=True)
 class DownloadedTrack:
     path: Path
@@ -154,6 +178,41 @@ class NavidromeClient:
         if played_at_ms is not None:
             params["time"] = played_at_ms
         return self.request("scrobble", params)
+
+    def report_playback(
+        self,
+        media_id: str,
+        *,
+        state: str,
+        position_ms: int,
+        playback_rate: float = 1.0,
+        ignore_scrobble: bool = True,
+    ) -> dict[str, Any]:
+        """OpenSubsonic ``reportPlayback``: tell Navidrome what this user plays now.
+
+        ``ignore_scrobble`` defaults to true: discocs submits plays itself
+        (``scrobble(submission=true)`` on the listen rule), so the presence
+        report must never count a play on its own.
+        """
+        if state not in PLAYBACK_REPORT_STATES:
+            raise ValueError(f"Unsupported playback state: {state!r}")
+        return self.request(
+            "reportPlayback",
+            {
+                "mediaId": media_id,
+                "mediaType": "song",
+                "positionMs": max(int(position_ms), 0),
+                "state": state,
+                "playbackRate": playback_rate,
+                "ignoreScrobble": "true" if ignore_scrobble else "false",
+            },
+        )
+
+    def get_now_playing(self) -> list[NowPlayingEntry]:
+        payload = self.request("getNowPlaying")
+        now_playing = payload.get("nowPlaying")
+        entries = _as_list(now_playing.get("entry")) if isinstance(now_playing, dict) else []
+        return [parse_now_playing_entry(entry) for entry in entries if entry.get("id")]
 
     def get_album(self, album_id: str) -> dict[str, Any]:
         payload = self.request("getAlbum", {"id": album_id})
@@ -384,6 +443,21 @@ def parse_song(raw: dict[str, Any]) -> NavidromeSong:
         play_count=_optional_int(raw.get("playCount")),
         last_played_at=_optional_str(raw.get("played") or raw.get("lastPlayed")),
         starred_at=_optional_str(raw.get("starred")),
+        raw=raw,
+    )
+
+
+def parse_now_playing_entry(raw: dict[str, Any]) -> NowPlayingEntry:
+    state = _optional_str(raw.get("state"))
+    return NowPlayingEntry(
+        id=str(raw.get("id", "")),
+        username=_optional_str(raw.get("username")),
+        title=_optional_str(raw.get("title")),
+        artist=_optional_str(raw.get("artist")),
+        state=state.lower() if state else None,
+        position_ms=_optional_int(raw.get("positionMs")),
+        minutes_ago=_optional_int(raw.get("minutesAgo")),
+        player_name=_optional_str(raw.get("playerName")),
         raw=raw,
     )
 

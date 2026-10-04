@@ -91,6 +91,8 @@ interface PlayerState {
   bufferedRanges: BufferedRange[]
   /** True while a seek waits for the not-yet-cached current track to finish buffering. */
   seekBuffering: boolean
+  /** Bumped on every user seek, so observers (presence) can tell a seek from playback progress. */
+  seekGeneration: number
   /** Buffering state of the next queue track being prefetched, null if none in flight/ready. */
   nextTrackBuffer: NextTrackBufferInfo | null
   volume: number
@@ -541,6 +543,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     duration: 0,
     bufferedRanges: [],
     seekBuffering: false,
+    seekGeneration: 0,
     nextTrackBuffer: null,
     volume: initVolume,
     muted: initMuted,
@@ -730,10 +733,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       audioEngine.seek(fraction)
       // Optimistic update — avoids a visible jump back to the stale currentTime
       // before the next native `timeupdate` tick (~250ms) catches up.
-      const { duration } = get()
-      if (Number.isFinite(duration) && duration > 0) {
-        set({ currentTime: fraction * duration })
-      }
+      const { duration, seekGeneration } = get()
+      // One set(): a subscriber sees the new generation together with the
+      // optimistic target position, never the stale pre-seek one.
+      set({
+        seekGeneration: seekGeneration + 1,
+        ...(Number.isFinite(duration) && duration > 0 ? { currentTime: fraction * duration } : {}),
+      })
     },
 
     async skipNext() {

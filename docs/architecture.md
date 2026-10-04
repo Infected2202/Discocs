@@ -199,7 +199,11 @@ server queue.
 When a Navidrome-mapped track crosses the meaningful-listen threshold, the
 event endpoint also fires a Subsonic `scrobble` call
 (`maybe_scrobble_navidrome_play` in `app/serializers/playback.py`); Navidrome
-failures never fail local event recording.
+failures never fail local event recording. Playback events no longer send a
+"now playing" `scrobble(submission=false)`: the player reports its live state
+separately through `POST /api/v1/playback/presence` → OpenSubsonic
+`reportPlayback` (`app/services/presence.py`, see `docs/social.md`), which
+writes nothing locally.
 
 Implementation files: `app/api/playback.py`, `app/store/playback.py`,
 `app/store/_helpers.py`, `app/serializers/playback.py`, `app/models.py`

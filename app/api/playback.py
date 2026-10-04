@@ -21,6 +21,7 @@ from app.autoplay import refill_autoplay_queue
 from app.schemas.requests import (
     AutoplayRefillRequest,
     PlaybackEventRequest,
+    PlaybackPresenceRequest,
     PlaybackQueuePatchRequest,
     PlaybackSessionCreateRequest,
     PlaybackSessionPatchRequest,
@@ -41,6 +42,8 @@ from app.serializers.playback import (
     queue_item_dict,
     queue_patch_items,
 )
+
+from app.services.presence import report_presence
 
 router = APIRouter(prefix="/api/v1")
 
@@ -272,3 +275,25 @@ def api_v1_record_playback_event(request: PlaybackEventRequest) -> dict[str, obj
         "preference_delta": result.preference_delta,
         "navidrome_scrobble": navidrome_scrobble,
     }
+
+
+@router.post("/playback/presence", response_model=None)
+def api_v1_report_playback_presence(
+    request: PlaybackPresenceRequest,
+) -> dict[str, object] | JSONResponse:
+    """Forward the player's now-playing state to Navidrome (docs/social.md).
+
+    Lightweight on purpose: no playback event, no listen, no preference
+    change. Navidrome being down or the track being unmapped is a 200 with a
+    ``skipped``/``failed`` status — the player fires and forgets.
+    """
+    store, settings = context()
+    if store.user_id is None:
+        return api_error(403, "forbidden", "A signed-in user is required")
+    return report_presence(
+        store,
+        settings,
+        track_id=request.track_id,
+        state=request.state,
+        position_ms=request.position_ms,
+    )

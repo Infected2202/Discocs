@@ -862,7 +862,10 @@ def test_api_v1_playback_event_scrobbles_mapped_navidrome_track(tmp_path: Path, 
     assert calls[0][2] is True
 
 
-def test_api_v1_track_started_sends_navidrome_now_playing(tmp_path: Path, monkeypatch):
+def test_api_v1_track_started_no_longer_calls_navidrome(tmp_path: Path, monkeypatch):
+    # Requirement changed (social Ф2): "now playing" is reported explicitly via
+    # POST /playback/presence → reportPlayback, so track_started must not send
+    # scrobble(submission=false) any more.
     store = init_api_store(tmp_path, monkeypatch)
     track_id = add_track(store, tmp_path / "signals.flac", title="Signals", artist="Alpha")
     store.upsert_external_track("navidrome", "nav-song-1", track_id)
@@ -892,10 +895,11 @@ def test_api_v1_track_started_sends_navidrome_now_playing(tmp_path: Path, monkey
     )
 
     assert response.status_code == 200
-    assert response.json()["navidrome_scrobble"]["status"] == "ok"
-    assert response.json()["navidrome_scrobble"]["mode"] == "now_playing"
-    assert calls == [("nav-song-1", calls[0][1], False)]
-    assert calls[0][1] is not None
+    assert response.json()["navidrome_scrobble"] == {
+        "status": "skipped",
+        "reason": "event_not_scrobbleable",
+    }
+    assert calls == []
     assert store.get_track_preference(track_id) is None
 
 
