@@ -1258,6 +1258,9 @@ class Deemix:
         if not arl:
             raise RuntimeError('нет ARL для deemix — добавь "deemix_arl" в config.json')
         r = self.s.post(f"{DEEMIX}/api/loginArl", json={"arl": arl}, timeout=30).json()
+        if r.get("status") == 0:  # LoginStatus.FAILED: Deezer не принял ARL — протух или от вышедшего аккаунта
+            raise RuntimeError('Deezer не принял ARL (истёк?) — возьми свежий cookie "arl" с deezer.com '
+                               'и замени "deemix_arl" в config.json, перезапуск не нужен')
         if r.get("status") not in (1, 2, 3):
             raise RuntimeError(f"deemix login status {r.get('status')}")
         self.logged = True
