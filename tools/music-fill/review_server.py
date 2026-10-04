@@ -1284,6 +1284,13 @@ class Deemix:
     def queue(self) -> dict:
         return self.s.get(f"{DEEMIX}/api/getQueue", timeout=15).json()
 
+    def remove(self, uuid: str) -> bool:
+        """Убрать из очереди (идущую загрузку — отменить). uuid — только в query: в JSON-теле deemix его
+        не видит и отвечает result: false."""
+        self.login()
+        r = self.s.post(f"{DEEMIX}/api/removeFromQueue", params={"uuid": uuid}, timeout=30).json()
+        return bool(r.get("result"))
+
     def post(self, endpoint: str, body: dict) -> dict:
         self.login()
         return self.s.post(f"{DEEMIX}/api/{endpoint}", json=body, timeout=30).json()
@@ -1546,17 +1553,21 @@ def retry_downloads() -> dict:
 
 QUEUE_STATE = journal.LOG_DIR / "queue_state.json"
 WATCH_EVERY = 60
+# Столько без движения — и релиз «качается» вечно: deemix ходит по кругу запасных ID недоступного трека
+# (04.10, Acid Pauli: 26/27 всю ночь, перезапуск не помогал). Такой релиз снимаем сами.
+HANG_AFTER = 15 * 60
 
 # ---------- теги сразу после загрузки (tools/library-tags/autotag.py) ----------
 # Релиз докачался в deemix → тип релиза, ID Deezer, «Various Artists» — тем же кодом, что массовый прогон.
 sys.path.insert(0, str(ROOT.parent / "library-tags"))
-tag_queue: "queue.Queue[tuple[str, str, str | None]]" = queue.Queue()
+# (uuid, релиз, папка, снят ли с зависания — тогда недостающие треки отправляем в Soulseek сами)
+tag_queue: "queue.Queue[tuple[str, str, str | None, bool]]" = queue.Queue()
 
 
 def autotag_worker() -> None:
     import autotag  # лениво: library-tags нужен только этому потоку
     while True:
-        uuid, release, folder = tag_queue.get()
+        uuid, release, folder, hung = tag_queue.get()
         kind, did = uuid.split("_")[:2]
         try:
             r = autotag.tag_release(kind, did, folder)
@@ -1565,6 +1576,24 @@ def autotag_worker() -> None:
         keep = ("status", "type", "files", "written", "type_already", "various_artists", "missed", "error")
         event("tags_written" if r.get("status") == "ok" else "tags_failed", uuid=uuid, release=release,
               **{k: r[k] for k in keep if k in r})
+        if hung:
+            queue_absent(uuid, release, r.get("absent") or [])
+
+
+def queue_absent(uuid: str, release: str, absent: list[dict]) -> None:
+    """Треки снятого с зависания релиза, которых нет на диске, — в Soulseek. Ошибки «not available» у
+    такого релиза deemix так и не записал, поэтому slsk_sources их не увидит."""
+    name = uuid_tasks().get(uuid) or "deemix"
+    album = release.split(" — ", 1)[-1]
+    added = 0
+    for t in absent:
+        added += slsk_add({"id": f"dz:{t['id']}", "mode": "track",
+                           "source": {"kind": "deemix", "key": f"deemix:{name}", "name": name},
+                           "artist": t.get("artist"), "title": t.get("title"), "album": album,
+                           "link": f"https://www.deezer.com/track/{t['id']}"})
+    if added:
+        slsk_save()
+        event("slsk_queued", added=added, total=len(slsk_items))
 
 
 
@@ -1577,9 +1606,25 @@ def uuid_tasks() -> dict[str, str]:
     return out
 
 
+def unhang(uuid: str, it: dict, task: str | None, minutes: int) -> None:
+    """Зависший релиз — из очереди deemix (иначе он держит всё за собой, и после перезапуска тоже);
+    скачанное — в теги, недостающее — в Soulseek (autotag_worker → queue_absent)."""
+    release = f"{it.get('artist')} — {it.get('title')}"
+    try:
+        removed = deemix.remove(uuid)
+    except requests.RequestException as e:
+        removed = False
+        journal.log.warning("deemix remove %s: %r", uuid, e)
+    event("deemix_hung", uuid=uuid, release=release, task=task, downloaded=it.get("downloaded"),
+          size=it.get("size"), minutes=minutes, removed=removed)
+    if removed and it.get("downloaded"):
+        tag_queue.put((uuid, release, it.get("extrasPath"), True))
+
+
 def watch_queue() -> None:
     state = read_json(QUEUE_STATE, {})
     reachable, idle, stalled_logged, stuck_logged = None, 0, False, 0
+    moving: dict[str, tuple[tuple, float]] = {}  # uuid → (счётчики загрузки, с какого времени не менялись)
     while True:
         try:
             journal.daily_backup()
@@ -1608,8 +1653,20 @@ def watch_queue() -> None:
                         event("deemix_failed", **rec, failed=it.get("failed"), size=it.get("size"), errors=msgs[:3])
                     elif st == "completed":
                         event("deemix_completed", **rec, size=it.get("size"))
-                        tag_queue.put((u, rec["release"], it.get("extrasPath")))
+                        tag_queue.put((u, rec["release"], it.get("extrasPath"), False))
                 state = new
+                # качается, но счётчики не двигаются HANG_AFTER — снять, протегировать скачанное
+                now = time.time()
+                for u, it in items.items():
+                    if (it or {}).get("status") != "downloading":
+                        continue
+                    sig = (it.get("downloaded"), it.get("failed"), it.get("progress"))
+                    if moving.get(u, (None,))[0] != sig:
+                        moving[u] = (sig, now)
+                    elif now - moving[u][1] >= HANG_AFTER:
+                        unhang(u, it, tasks.get(u), int(now - moving[u][1]) // 60)
+                        moving.pop(u)
+                moving = {u: v for u, v in moving.items() if u in items}
                 write_json(QUEUE_STATE, state)
                 # лежит inQueue, но нет в order — deemix его сам не продолжит (так было после ребута)
                 stuck = [u for u, st in new.items() if st == "inQueue" and u not in order]

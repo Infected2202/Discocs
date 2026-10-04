@@ -514,7 +514,7 @@ const EV = {
   send_done: "отправка: конец", retry: "повтор", retry_failed: "ПОВТОР: ошибки", audit: "сверка с диском",
   library_refresh: "снимок библиотеки", deemix_completed: "скачано", deemix_failed: "DEEMIX: ОШИБКА",
   deemix_down: "DEEMIX НЕДОСТУПЕН", deemix_up: "deemix снова доступен", deemix_stuck: "ОЧЕРЕДЬ: ЗАСТРЯЛО",
-  deemix_stalled: "ОЧЕРЕДЬ СТОИТ", deemix_clear_finished: "очищены завершённые", backup: "копия состояния",
+  deemix_stalled: "ОЧЕРЕДЬ СТОИТ", deemix_hung: "DEEMIX: ЗАВИС, СНЯТ", deemix_clear_finished: "очищены завершённые", backup: "копия состояния",
   manual: "ручная правка", error: "ОШИБКА СЕРВЕРА",
   slsk_queued: "Soulseek: в очередь", slsk_research: "Soulseek: искать снова", slsk_dismiss: "Soulseek: убрано", slsk_restore: "Soulseek: возвращено",
   slsk_send: "Soulseek: отправлено", slsk_research: "Soulseek: ищу заново (не скачалось)",
@@ -522,7 +522,7 @@ const EV = {
   slsk_dl_failed: "SOULSEEK: НЕ СКАЧАЛОСЬ", slsk_place_failed: "SOULSEEK: НЕ РАЗЛОЖИЛОСЬ",
   tags_written: "теги проставлены", tags_failed: "ТЕГИ: НЕ ПРОСТАВЛЕНЫ",
 };
-const PROBLEM = new Set(["error", "send_failed", "deemix_failed", "deemix_down", "deemix_stuck", "deemix_stalled", "retry_failed", "slsk_dl_failed", "slsk_place_failed", "tags_failed"]);
+const PROBLEM = new Set(["error", "send_failed", "deemix_failed", "deemix_down", "deemix_stuck", "deemix_stalled", "deemix_hung", "retry_failed", "slsk_dl_failed", "slsk_place_failed", "tags_failed"]);
 function evDetails(e) {
   const skip = new Set(["ts", "event", "urls", "uuid"]);
   return Object.entries(e).filter(([k]) => !skip.has(k)).map(([k, v]) => {

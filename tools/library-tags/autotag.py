@@ -30,7 +30,8 @@ def same_upc(a: str | None, b: str | None) -> bool:
 
 
 def tag_release(kind: str, deezer_id: int | str, folder: str | None) -> dict:
-    """Результат: {status: ok | partial | no_files | not_found, type, files, written, ...} — для журнала music-fill."""
+    """Результат: {status: ok | partial | no_files | not_found, type, files, written, absent, ...} — для журнала
+    music-fill; absent — треки релиза на Deezer, для которых в папке нет файла."""
     if kind == "track":
         t = deezer(f"track/{deezer_id}")
         if "error" in t:
@@ -54,7 +55,11 @@ def tag_release(kind: str, deezer_id: int | str, folder: str | None) -> dict:
     if not files:
         return {**out, "status": "no_files", "error": "нет файлов с этим штрихкодом"}
     matched, missed, how = match_files(files, a)
-    out.update(files=len(files), matched=len(matched))
+    have = {m["deezer_track_id"] for m in matched}
+    # треки релиза без файла — music-fill отправит их в Soulseek, если deemix их так и не скачал
+    absent = [{"id": t["id"], "title": t.get("title"), "artist": (t.get("artist") or {}).get("name")}
+              for t in (a.get("tracks") or {}).get("data") or [] if t.get("id") not in have]
+    out.update(files=len(files), matched=len(matched), absent=absent)
     if missed:
         return {**out, "status": "partial", "missed": [Path(p).name for p in missed][:5]}
     typed = any(t.get("releasetype") for _, t in files)
