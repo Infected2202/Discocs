@@ -126,6 +126,9 @@ def _init(tmp_path: Path, monkeypatch, *, service_account: bool = True) -> Store
     monkeypatch.setenv("DISCOCS_MODEL_DIR", str(tmp_path / "models"))
     monkeypatch.setenv("DISCOCS_AUTH_ENABLED", "true")
     monkeypatch.setenv("DISCOCS_SERVICE_TOKEN", "svc-secret")
+    # The caller is the owner: Store.init creates the owner user, and it must
+    # not show up as an extra person in the viewer's list.
+    monkeypatch.setenv("DISCOCS_OWNER_USER", "alice")
     monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")
     if service_account:
         monkeypatch.setenv("DISCOCS_NAVIDROME_USER", "svc")

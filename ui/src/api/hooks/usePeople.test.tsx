@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, focusManager } from "@tanstack/react-query"
-import { renderHook, waitFor } from "@testing-library/react"
+import { renderHook } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "../client"
@@ -32,7 +32,8 @@ describe("usePeople", () => {
     fetchPeople.mockReset()
     fetchPeople.mockResolvedValue(people)
     queryClient = new QueryClient()
-    // Only the polling interval is faked; waitFor keeps real timeouts.
+    // Only the polling interval is faked. vi.waitFor (not testing-library's
+    // waitFor, which itself polls via the faked setInterval) keeps working.
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
   })
 
@@ -53,17 +54,17 @@ describe("usePeople", () => {
     focusManager.setFocused(true)
     const { result } = renderHook(() => usePeople(), { wrapper })
 
-    await waitFor(() => expect(result.current.data).toEqual(people))
+    await vi.waitFor(() => expect(result.current.data).toEqual(people))
     expect(fetchPeople).toHaveBeenCalledTimes(1)
 
     vi.advanceTimersByTime(PEOPLE_REFETCH_INTERVAL_MS)
-    await waitFor(() => expect(fetchPeople).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(fetchPeople).toHaveBeenCalledTimes(2))
   })
 
   it("does not poll while the document is hidden", async () => {
     focusManager.setFocused(true)
     const { result } = renderHook(() => usePeople(), { wrapper })
-    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    await vi.waitFor(() => expect(result.current.isSuccess).toBe(true))
 
     focusManager.setFocused(false)
     vi.advanceTimersByTime(PEOPLE_REFETCH_INTERVAL_MS * 3)
