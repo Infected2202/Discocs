@@ -302,11 +302,14 @@ pipeline {
               // ветках даёт "Failed to acquire cache or database lock", билд #238)
               // каждый из них начинал с нуля — только backend стоил 30.6+24.0+22.7с
               // на билде #239. Гейт остаётся отдельным сканом, см. комментарий ниже.
+              // --timeout 15m: по умолчанию 5 мин, а сканы идут параллельно с Sonar —
+              // на билде #420 гейт backend обычно за ~1 мин упёрся в лимит
+              // («semaphore acquire: context deadline exceeded» на слое образа).
               def mounts = '-v /var/run/docker.sock:/var/run/docker.sock -v trivy-db-cache:/root/.cache/trivy'
               parallel(['backend', 'frontend', 'bot'].collectEntries { svc ->
                 [(svc): {
                   def img = "${REGISTRY}/${IMAGE_NS}/${svc}:${GIT_SHA}"
-                  def scan = "trivy image --skip-db-update --cache-backend memory --format json -o /report.json ${img}"
+                  def scan = "trivy image --skip-db-update --cache-backend memory --timeout 15m --format json -o /report.json ${img}"
                   def html = 'trivy convert --format template --template "@contrib/html.tpl" -o /report.html /report.json'
                   // create+cp вместо `docker run -v <файл>`: воркспейс агента
                   // недоступен хостовому демону как путь (docker-outside-of-docker,
@@ -351,7 +354,7 @@ pipeline {
                   // остаются видны все находки, включая заигноренные.
                   sh """
                     set -e
-                    CID=\$(docker create ${mounts} aquasec/trivy image --skip-db-update --cache-backend memory --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 --ignorefile /.trivyignore.yaml ${img})
+                    CID=\$(docker create ${mounts} aquasec/trivy image --skip-db-update --cache-backend memory --timeout 15m --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 --ignorefile /.trivyignore.yaml ${img})
                     docker cp .trivyignore.yaml "\$CID:/.trivyignore.yaml"
                     STATUS=0
                     docker start -a "\$CID" || STATUS=\$?
