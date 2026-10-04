@@ -18,6 +18,7 @@
     "longTimeNoListen": { "title": "Long Time No Listen", "subtitle": "Forgotten gems" }
   },
   "shelves": {
+    "people": "People",
     "recently_added": "Recently Added",
     "history": "Recently Played",
     "listen_again": "Listen Again",

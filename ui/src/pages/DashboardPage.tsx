@@ -2,7 +2,8 @@ import { useTranslation } from "react-i18next"
 import { useDashboard } from "@/api/hooks/useDashboard"
 import Shelf from "@/components/media/Shelf"
 import ForYouShelf from "@/components/media/ForYouShelf"
-import { Skeleton } from "@/components/ui/skeleton"
+import PeopleShelf from "@/components/media/PeopleShelf"
+import ShelfSkeleton from "@/components/media/ShelfSkeleton"
 import { apiFetch } from "@/api/client"
 import { usePlayerStore } from "@/store/playerStore"
 import { shelfItemToCard } from "@/components/media/shelfItemToCard"
@@ -11,29 +12,13 @@ import type { PlaybackEnvelope, ShelfItem } from "@/api/types"
 function DashboardSkeleton() {
   return (
     <div className="py-3 space-y-2">
-      {[1, 2, 3].map((i) => (
-        <div key={i} className="space-y-3">
-          <div className="px-4 sm:px-6 flex gap-3 items-baseline">
-            <Skeleton className="h-5 w-36" />
-            <Skeleton className="h-4 w-24" />
-          </div>
-          <div className="flex gap-1 px-3">
-            {[1, 2, 3, 4, 5].map((j) => (
-              <div key={j} className="w-44 shrink-0 p-3 space-y-3">
-                <Skeleton className="w-full aspect-square rounded-md" />
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-3 w-1/2" />
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
+      <ShelfSkeleton rows={3} />
     </div>
   )
 }
 
 export default function DashboardPage() {
-  const { t } = useTranslation("dashboard")
+  const { t, i18n } = useTranslation("dashboard")
   const { data, isLoading, error } = useDashboard(16)
   const playSource = usePlayerStore((s) => s.playSource)
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
@@ -55,6 +40,9 @@ export default function DashboardPage() {
   return (
     <div className="py-3 space-y-2">
 
+      {/* People: other discocs users and what they play right now */}
+      <PeopleShelf />
+
       {/* For You shelf */}
       <ForYouShelf />
 
@@ -72,7 +60,7 @@ export default function DashboardPage() {
           key={shelf.key}
           title={t(`shelves.${shelf.key}`, { defaultValue: shelf.title })}
           shelfKey={shelf.key}
-          items={shelf.items.map((item) => shelfItemToCard(item, handlePlayShelfItem, t))}
+          items={shelf.items.map((item) => shelfItemToCard(item, handlePlayShelfItem, t, i18n.language))}
         />
       ))}
     </div>

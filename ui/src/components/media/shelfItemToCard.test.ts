@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import i18n from "@/i18n"
 import { shelfItemToCard } from "./shelfItemToCard"
 import type { ShelfItem } from "@/api/types"
@@ -50,5 +50,32 @@ describe("shelfItemToCard", () => {
 
     expect(card.subtitle).toBe("Backend subtitle")
     expect(onPlay).toHaveBeenCalledWith(shelfItem)
+  })
+
+  describe("History relative time", () => {
+    const now = new Date(2026, 9, 4, 12, 0, 0)
+    const threeHoursAgo = new Date(now.getTime() - 3 * 60 * 60_000).toISOString()
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it("turns played_at into relative-time meta in the given locale", () => {
+      vi.useFakeTimers({ toFake: ["Date"] })
+      vi.setSystemTime(now)
+      const shelfItem = item({ entity_type: "track", played_at: threeHoursAgo })
+
+      const en = shelfItemToCard(shelfItem, vi.fn(), i18n.t, "en")
+      const ru = shelfItemToCard(shelfItem, vi.fn(), i18n.t, "ru")
+
+      const fmt = (locale: string) => new Intl.RelativeTimeFormat(locale, { numeric: "auto", style: "short" })
+      expect(en.meta).toBe(fmt("en").format(-3, "hour"))
+      expect(ru.meta).toBe(fmt("ru").format(-3, "hour"))
+    })
+
+    it("has no meta for items without played_at", () => {
+      expect(shelfItemToCard(item({}), vi.fn(), i18n.t, "en").meta).toBeNull()
+      expect(shelfItemToCard(item({ played_at: "garbage" }), vi.fn(), i18n.t, "en").meta).toBeNull()
+    })
   })
 })

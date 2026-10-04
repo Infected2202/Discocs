@@ -13,16 +13,22 @@ const ENTITY_HREFS = {
   playlist: (id: number | string) => `/playlists/${id}`,
   label: (id: number | string) => `/labels/${id}`,
   shelf: (id: number | string) => `/shelf/${id}`,
+  user: (id: number | string) => `/u/${encodeURIComponent(String(id))}`,
 } as const
 
 export interface MediaCardProps {
   readonly id: number | string
-  readonly type: "artist" | "release" | "generated_mix" | "track" | "playlist" | "label" | "shelf" | "static"
+  /** `user` — a discocs user (people shelf): round avatar, never a play button; `id` is the username. */
+  readonly type: "artist" | "release" | "generated_mix" | "track" | "playlist" | "label" | "shelf" | "static" | "user"
   readonly title: string
   readonly subtitle?: string | null
   readonly subtitleLinks?: SubtitleLink[]
   readonly href?: string
   readonly reason?: string | null
+  /** Appended to the subtitle line after " · " (e.g. relative play time on the History shelf). */
+  readonly meta?: string | null
+  /** Pulsing green dot before the subtitle — "playing right now" (user cards). */
+  readonly live?: boolean
   readonly artwork?: ImageRef | null
   readonly artworkNode?: React.ReactNode
   readonly onPlay?: () => void
@@ -32,20 +38,22 @@ export interface MediaCardProps {
 }
 
 export default function MediaCard({
-  id, type, title, subtitle, subtitleLinks, href, artwork, artworkNode, onPlay,
+  id, type, title, subtitle, subtitleLinks, href, meta, live = false, artwork, artworkNode, onPlay,
   className, variant = "default", disabled = false,
 }: MediaCardProps) {
   const { t } = useTranslation("media")
   const navigate = useNavigate()
   const isShelf = variant === "shelf"
   const hasSubtitleLinks = (subtitleLinks?.length ?? 0) > 0
+  const canPlay = Boolean(onPlay) && !disabled && type !== "user"
+  const metaSuffix = meta ? ` · ${meta}` : null
   const artworkContent = artworkNode ?? (
     <ArtworkImage
       src={artwork?.url}
       alt={title}
       className={cn(
         "w-full aspect-square",
-        type === "artist" ? "rounded-full" : "rounded-md",
+        type === "artist" || type === "user" ? "rounded-full" : "rounded-md",
       )}
       fallbackLetter={title[0]}
     />
@@ -102,7 +110,7 @@ export default function MediaCard({
       <div className="relative mb-[5px]">
         {renderedArtwork}
 
-        {onPlay && !disabled && (
+        {canPlay && (
           <button
             type="button"
             onClick={handlePlay}
@@ -136,11 +144,26 @@ export default function MediaCard({
                 </button>
               </span>
             ))}
+            {metaSuffix}
           </p>
-        ) : subtitle ? (
-          <p className="mt-[4px] truncate text-[12px] leading-none text-muted-foreground">{subtitle}</p>
+        ) : subtitle || meta ? (
+          <p className="mt-[4px] flex min-w-0 items-center gap-1 text-[12px] leading-none text-muted-foreground">
+            {live && <LiveDot label={t("card.nowPlaying")} />}
+            <span className="min-w-0 truncate">{subtitle ? `${subtitle}${metaSuffix ?? ""}` : meta}</span>
+          </p>
         ) : null}
       </div>
     </div>
+  )
+}
+
+/** Small pulsing green dot (the ping is skipped under prefers-reduced-motion). */
+function LiveDot({ label }: { readonly label: string }) {
+  return (
+    <span className="relative flex h-1.5 w-1.5 shrink-0" title={label} data-testid="live-dot">
+      <span aria-hidden="true" className="absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75 motion-safe:animate-ping" />
+      <span aria-hidden="true" className="relative inline-flex h-1.5 w-1.5 rounded-full bg-green-500" />
+      <span className="sr-only">{label}</span>
+    </span>
   )
 }

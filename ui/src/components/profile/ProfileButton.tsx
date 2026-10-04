@@ -65,6 +65,7 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
     }
   }
 
+  const username = session?.username ?? null
   const { dotColor, statusLabel } = navidromeStatusUi(status, isLoading, t)
   const logoutLabel = session?.username
     ? t("signOut.withUser", { username: session.username })
@@ -113,6 +114,17 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
               ))}
             </div>
           </div>
+          {username && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={() => navigate(`/u/${encodeURIComponent(username)}`)}
+            >
+              <User size={14} className="mr-2" />
+              {t("myProfile")}
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"

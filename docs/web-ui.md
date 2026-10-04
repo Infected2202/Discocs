@@ -96,11 +96,16 @@ room and keeps the metric visually close to the Like and context-menu actions.
 
 ### Dashboard (`/`, `DashboardPage.tsx`)
 
-The music home screen. Renders `ForYouShelf` (a shelf of static
+The music home screen. Renders, top to bottom: `PeopleShelf` («Люди» /
+"People" — other discocs users and what they play right now, see
+[`docs/social.md`](social.md#ui-главной-ф4); hidden when there is nobody
+else), `ForYouShelf` (a shelf of static
 icon-illustrated entry cards — Flow, Liked Tracks, Recently Played, Mixes For
 You, New Releases, Recently Added, Discover, Listen Again, Long Time No
-Listen — each linking into its own `/shelf/:key` or playback action) followed
-by the live data shelves returned from the backend, rendered via `Shelf`.
+Listen — each linking into its own `/shelf/:key` or playback action), then
+the live data shelves returned from the backend, rendered via `Shelf`. The
+loading placeholder for both the People shelf and the data shelves is
+`ShelfSkeleton`.
 
 Backend: `GET /api/v1/dashboard` (`app/api/dashboard.py`,
 `useDashboard` hook in `ui/src/api/hooks/useDashboard.ts`), fetched once with
@@ -437,6 +442,9 @@ Additional shelves beyond the original plan, all backed by
 - `history` ("Recently Played") — tracks ordered by `last_played_at` desc;
   the dashboard first performs a lightweight, session-bound Navidrome
   play-state refresh and repeats it before polling this shelf every 60s.
+  Each item also carries `played_at` (its `last_played_at`); `shelfItemToCard`
+  turns it into the card's `meta` via `formatRelativeTime`
+  (`ui/src/lib/relativeTime.ts`), so the subtitle reads «Artist · 3 ч назад».
 - `mixes_for_you` — active/saved generated mixes (`app/mixes.py`); the
   dashboard endpoint also triggers `ensure_dashboard_mixes_fast`, which
   either generates mixes inline (small libraries) or kicks off a background
@@ -504,9 +512,12 @@ for theming (`ui/src/index.css`):
   as needing a spot-check against `ui/src/index.css` and component classes
   rather than a frozen spec.
 - **Cards**: square artwork with small-radius rounded corners
-  (`rounded-md`, circular for artists), title + subtitle below, hover-reveal
+  (`rounded-md`, circular for artists and users), title + subtitle below, hover-reveal
   play button overlay bottom-right, no permanent Open/Play buttons — matching
   the "shelf cards are not management cards" rule from the original spec.
+  Optional `meta` is appended to the subtitle line after « · »; `live` puts a
+  pulsing green dot before it (`motion-safe:animate-ping`). Type `user`
+  (`id` = username) never shows a play button and opens `/u/:username`.
   Shelf-variant cards additionally get a subtle tilt-on-hover effect
   (`TiltedArtwork`).
 - **Shelves**: horizontal, paged (not free-scroll) on desktop — `Shelf`

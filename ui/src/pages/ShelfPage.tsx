@@ -26,7 +26,7 @@ function GridSkeleton() {
 }
 
 export default function ShelfPage() {
-  const { t } = useTranslation("media")
+  const { t, i18n } = useTranslation("media")
   const { key = "" } = useParams<{ key: string }>()
   const navigate = useNavigate()
   const playSource = usePlayerStore((s) => s.playSource)
@@ -97,7 +97,7 @@ export default function ShelfPage() {
             getKey={(item) => `${item.entity_type}-${item.entity_id}`}
             renderItem={(item) => (
               <MediaCard
-                {...shelfItemToCard(item, handlePlayShelfItem, t)}
+                {...shelfItemToCard(item, handlePlayShelfItem, t, i18n.language)}
                 variant="shelf"
                 className="w-full"
               />

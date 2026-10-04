@@ -23,7 +23,8 @@
   },
   "card": {
     "play": "Воспроизвести «{{title}}»",
-    "soon": "Скоро"
+    "soon": "Скоро",
+    "nowPlaying": "Сейчас играет"
   },
   "itemCount_one": "{{count}} элемент",
   "itemCount_few": "{{count}} элемента",

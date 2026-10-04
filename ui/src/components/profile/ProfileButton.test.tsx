@@ -91,6 +91,17 @@ describe("ProfileButton", () => {
     expect(screen.getByText("Signed in")).toBeInTheDocument()
   })
 
+  it("links «My profile» to the current user's profile page", async () => {
+    useNavidromeStatus.mockReturnValue({ status: "connected", isLoading: false })
+
+    renderProfileButton()
+    fireEvent.click(await screen.findByTitle("Profile: alice"))
+    fireEvent.click(await screen.findByRole("button", { name: /my profile/i }))
+
+    expect(navigate).toHaveBeenCalledTimes(1)
+    expect(navigate).toHaveBeenCalledWith("/u/alice")
+  })
+
   it("redirects after the server confirms logout", async () => {
     useNavidromeStatus.mockReturnValue({ status: "disconnected", isLoading: false })
     logout.mockResolvedValue(undefined)

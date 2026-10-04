@@ -134,10 +134,12 @@ def _dashboard_history(
         ).fetchone()
     tracks = [row_to_track(row) for row in rows]
     artists_by_track = store.artists_for_tracks([track.id for track in tracks])
-    items = [
-        _track_shelf_item(store, track, artists_by_track.get(track.id, []), "")
-        for track in tracks
-    ]
+    items: list[dict[str, object]] = []
+    for row, track in zip(rows, tracks, strict=True):
+        item = _track_shelf_item(store, track, artists_by_track.get(track.id, []), "")
+        # The UI renders it as relative time on the card ("3 h ago").
+        item["played_at"] = row["last_played_at"]
+        items.append(item)
     return items, int(total_row["total"] if total_row else 0)
 
 

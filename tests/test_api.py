@@ -1045,6 +1045,25 @@ def test_api_v1_dashboard_shelves_use_imported_navidrome_history(tmp_path: Path,
     assert items[0]["artwork"]["url"].endswith("/cover?size=512")
 
 
+def test_api_v1_dashboard_history_items_carry_played_at(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    older = add_track(store, tmp_path / "history" / "older.flac", title="Older", artist="Alpha")
+    newer = add_track(store, tmp_path / "history" / "newer.flac", title="Newer", artist="Beta")
+    store.import_external_track_play_state(older, play_count=1, last_played_at="2026-01-01T08:00:00+00:00")
+    store.import_external_track_play_state(newer, play_count=1, last_played_at="2026-03-02T21:30:00+00:00")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/dashboard/shelves/history?limit=5")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    # Each card gets the timestamp of its own track, newest first.
+    assert [(item["title"], item["played_at"]) for item in items] == [
+        ("Newer", "2026-03-02T21:30:00+00:00"),
+        ("Older", "2026-01-01T08:00:00+00:00"),
+    ]
+
+
 def test_api_v1_dashboard_auto_generates_mixes_for_you(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     settings_path = tmp_path / "settings.json"

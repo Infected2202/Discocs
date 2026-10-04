@@ -18,6 +18,7 @@
     "longTimeNoListen": { "title": "Давно не слушали", "subtitle": "Забытые жемчужины" }
   },
   "shelves": {
+    "people": "Люди",
     "recently_added": "Недавно добавленное",
     "history": "Недавно прослушанное",
     "listen_again": "Слушать снова",

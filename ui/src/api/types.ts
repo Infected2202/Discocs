@@ -256,6 +256,8 @@ export interface ShelfItem {
   reason: string | null
   /** Only on label cards: the subtitle is built from it on the client (i18n plurals). */
   release_count?: number
+  /** Only on History shelf cards: when the track was last played (ISO-8601), shown as relative time. */
+  played_at?: string | null
   action?: { type: string; target: string }
   play_action:
     | { type: "play"; source_type: string; source_id: number | string; source_label?: string }

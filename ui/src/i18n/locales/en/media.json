@@ -23,7 +23,8 @@
   },
   "card": {
     "play": "Play {{title}}",
-    "soon": "Soon"
+    "soon": "Soon",
+    "nowPlaying": "Playing now"
   },
   "itemCount_one": "{{count}} item",
   "itemCount_other": "{{count}} items"
