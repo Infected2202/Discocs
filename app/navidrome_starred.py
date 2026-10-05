@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from app.navidrome import NavidromeClient, NavidromeSong, parse_song
@@ -82,11 +83,13 @@ def map_starred_entity_ids(
     store: Store,
     raw_items: list[dict[str, Any]],
     entity_kind: str,
+    starred_at: dict[int, str] | None = None,
 ) -> list[int]:
     """Map a starred album/artist payload to local entity ids, dropping unknowns.
 
     Navidrome may star things this library has not imported; those simply have
     no local counterpart and are skipped rather than treated as an error.
+    ``starred_at`` collects each mapped id's star time when given.
     """
     entity_ids: list[int] = []
     for raw in raw_items:
@@ -98,7 +101,33 @@ def map_starred_entity_ids(
         )
         if entity_id is not None:
             entity_ids.append(entity_id)
+            _remember_starred_at(starred_at, entity_id, raw.get("starred"))
     return entity_ids
+
+
+def normalize_starred_at(value: object) -> str | None:
+    """Navidrome's ``starred`` (ISO, often ``…Z``) as a UTC ``liked_at`` value.
+
+    Same shape as ``utc_now()`` so the dates sort as strings next to likes made
+    in discocs; anything unparsable is dropped.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat(timespec="microseconds")
+
+
+def _remember_starred_at(starred_at: dict[int, str] | None, entity_id: int, value: object) -> None:
+    if starred_at is None or entity_id in starred_at:
+        return
+    normalized = normalize_starred_at(value)
+    if normalized is not None:
+        starred_at[entity_id] = normalized
 
 
 def sync_likes_from_starred_payload(store: Store, starred_full: dict[str, Any], *, user: str) -> dict[str, Any]:
@@ -106,18 +135,23 @@ def sync_likes_from_starred_payload(store: Store, starred_full: dict[str, Any], 
 
     Single entry point for every caller that has a full `getStarred2` payload:
     tracks, albums and artists are replaced together so the three like stores
-    cannot drift apart. See plans/likes-unification-plan.md.
+    cannot drift apart. See plans/likes-unification-plan.md. The star times
+    become ``liked_at``, so every likes list is ordered by when it was liked.
     """
     songs = [parse_song(raw) for raw in starred_full["songs"]]
-    data = build_starred_track_ids_from_songs(store, songs, user=user)
-    release_ids = map_starred_entity_ids(store, starred_full["albums"], "release")
-    artist_ids = map_starred_entity_ids(store, starred_full["artists"], "artist")
+    track_starred_at: dict[int, str] = {}
+    data = build_starred_track_ids_from_songs(store, songs, user=user, starred_at=track_starred_at)
+    release_starred_at: dict[int, str] = {}
+    release_ids = map_starred_entity_ids(store, starred_full["albums"], "release", release_starred_at)
+    artist_starred_at: dict[int, str] = {}
+    artist_ids = map_starred_entity_ids(store, starred_full["artists"], "artist", artist_starred_at)
     data["album_ids"] = release_ids
     data["artist_ids"] = artist_ids
     store.sync_likes_from_navidrome(
         track_ids=data["track_ids"],
         release_ids=release_ids,
         artist_ids=artist_ids,
+        starred_at={"track": track_starred_at, "release": release_starred_at, "artist": artist_starred_at},
     )
     return data
 
@@ -127,6 +161,7 @@ def build_starred_track_ids_from_songs(
     songs: list[NavidromeSong],
     *,
     user: str,
+    starred_at: dict[int, str] | None = None,
 ) -> dict[str, Any]:
     track_ids: list[int] = []
     item_ids: list[str] = []
@@ -141,6 +176,7 @@ def build_starred_track_ids_from_songs(
             not_synced_item_ids.append(song.id)
             continue
         track_ids.append(track.id)
+        _remember_starred_at(starred_at, track.id, song.starred_at)
 
     return {
         "user": user,

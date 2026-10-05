@@ -272,7 +272,10 @@ def test_login_star_sync_is_bound_to_authenticated_user():
 
     root.for_user.assert_called_once_with(42)
     scoped.sync_likes_from_navidrome.assert_called_once_with(
-        track_ids=[7], release_ids=[], artist_ids=[9]
+        track_ids=[7],
+        release_ids=[],
+        artist_ids=[9],
+        starred_at={"track": {}, "release": {}, "artist": {}},
     )
 
 

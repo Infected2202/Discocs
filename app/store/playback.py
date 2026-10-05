@@ -11,6 +11,7 @@ import logging
 import json
 import random
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 try:
@@ -1506,6 +1507,7 @@ class PlaybackStoreMixin:
         track_ids: list[int],
         release_ids: list[int],
         artist_ids: list[int],
+        starred_at: Mapping[str, Mapping[int, str]] | None = None,
     ) -> None:
         """Replace this user's local likes with their Navidrome stars.
 
@@ -1513,12 +1515,18 @@ class PlaybackStoreMixin:
         clears before it sets, so a partial run would leave the user with fewer
         likes than they actually have. Callers must pass the ids from one
         complete, successful Navidrome response — never a partial one.
+
+        ``starred_at`` maps ``"track"``/``"release"``/``"artist"`` to the star
+        time of each id (Navidrome's ``starred``). ``liked_at`` is the like's
+        real date, the order every likes list sorts by: an id without one
+        keeps the date it already had, and only a new like falls back to now.
         """
         now = utc_now()
+        dates = starred_at or {}
         with self.connect() as conn:
-            self._sync_entity_likes(conn, _TRACK_LIKE_TARGET, track_ids, now)
-            self._sync_entity_likes(conn, _RELEASE_LIKE_TARGET, release_ids, now)
-            self._sync_entity_likes(conn, _ARTIST_LIKE_TARGET, artist_ids, now)
+            self._sync_entity_likes(conn, _TRACK_LIKE_TARGET, track_ids, now, dates.get("track", {}))
+            self._sync_entity_likes(conn, _RELEASE_LIKE_TARGET, release_ids, now, dates.get("release", {}))
+            self._sync_entity_likes(conn, _ARTIST_LIKE_TARGET, artist_ids, now, dates.get("artist", {}))
 
     def _set_entity_liked(
         self,
@@ -1527,6 +1535,7 @@ class PlaybackStoreMixin:
         entity_id: int,
         liked: bool,
         now: str | None = None,
+        liked_at: str | None = None,
     ) -> None:
         now = now or utc_now()
         conn.execute(
@@ -1542,7 +1551,7 @@ class PlaybackStoreMixin:
                 f"UPDATE {target.table} "
                 f"SET liked = 1, liked_at = ?, score = MAX(score, ?), updated_at = ?{extra} "
                 f"WHERE user_id = discocs_user_id() AND {target.column} = ?",
-                (now, _LIKE_SCORE_FLOOR, now, entity_id),
+                (liked_at or now, _LIKE_SCORE_FLOOR, now, entity_id),
             )
         else:
             # Unliking clears the flag but keeps the accumulated score: the user
@@ -1559,13 +1568,22 @@ class PlaybackStoreMixin:
         target: "_LikeTarget",
         entity_ids: list[int],
         now: str,
+        starred_at: Mapping[int, str],
     ) -> None:
+        previous = {
+            int(row[0]): row[1]
+            for row in conn.execute(
+                f"SELECT {target.column}, liked_at FROM {target.table} "
+                "WHERE user_id = discocs_user_id() AND liked = 1",
+            )
+        }
         conn.execute(
             f"UPDATE {target.table} SET liked = 0, liked_at = NULL "
             "WHERE user_id = discocs_user_id() AND liked = 1",
         )
         for entity_id in dict.fromkeys(entity_ids):
-            self._set_entity_liked(conn, target, entity_id, True, now)
+            liked_at = starred_at.get(entity_id) or previous.get(entity_id)
+            self._set_entity_liked(conn, target, entity_id, True, now, liked_at)
 
     _LIKED_TRACKS_FROM = """
         FROM user_track_preferences p

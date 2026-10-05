@@ -183,6 +183,63 @@ def test_sync_deduplicates_repeated_ids(tmp_path: Path):
     assert store.get_track_preference(track_id).liked is True
 
 
+def _liked_at(store: Store, track_id: int) -> str | None:
+    with store.connect() as conn:
+        return conn.execute(
+            "SELECT liked_at FROM user_track_preferences WHERE track_id = ?", (track_id,)
+        ).fetchone()["liked_at"]
+
+
+def test_sync_keeps_navidrome_star_dates(tmp_path: Path):
+    """Every sync used to stamp all likes with "now", scrambling the likes order."""
+    store, track_id, _release_id, _artist_id = _store_with_track(tmp_path)
+    starred = "2024-03-01T10:00:00.000000+00:00"
+
+    store.sync_likes_from_navidrome(
+        track_ids=[track_id], release_ids=[], artist_ids=[], starred_at={"track": {track_id: starred}}
+    )
+
+    assert _liked_at(store, track_id) == starred
+
+
+def test_sync_without_a_star_date_keeps_the_known_one(tmp_path: Path):
+    store, track_id, _release_id, _artist_id = _store_with_track(tmp_path)
+    store.set_track_liked(track_id, True)
+    liked_at = _liked_at(store, track_id)
+
+    store.sync_likes_from_navidrome(track_ids=[track_id], release_ids=[], artist_ids=[])
+
+    assert _liked_at(store, track_id) == liked_at
+
+
+def test_liked_tracks_follow_the_star_dates(tmp_path: Path):
+    store, first_id, _release_id, _artist_id = _store_with_track(tmp_path)
+    second_id, _ = store.upsert_track(
+        ScannedTrack(
+            path=(tmp_path / "second.flac").resolve(),
+            artist="Some Artist",
+            title="Second",
+            album="Some Album",
+            duration=120.0,
+            file_size=1,
+            mtime=1,
+        )
+    )
+
+    # The older track id was starred later, so it comes first.
+    store.sync_likes_from_navidrome(
+        track_ids=[second_id, first_id],
+        release_ids=[],
+        artist_ids=[],
+        starred_at={"track": {
+            first_id: "2025-05-01T00:00:00.000000+00:00",
+            second_id: "2024-01-01T00:00:00.000000+00:00",
+        }},
+    )
+
+    assert [track.id for track in store.list_liked_tracks()] == [first_id, second_id]
+
+
 def test_liked_playback_event_does_not_set_the_like_flag(tmp_path: Path):
     """The star endpoint owns `liked`; the event is only a behavioural signal."""
     store, track_id, _release_id, _artist_id = _store_with_track(tmp_path)

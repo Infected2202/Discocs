@@ -258,3 +258,34 @@ def test_likes_playlist_does_not_create_entity_likes(tmp_path: Path, monkeypatch
     assert store.get_track_preference(track_id).liked is True
     assert _release_liked(store, release_id) is False
     assert _artist_liked(store, artist_id) is False
+
+
+def test_likes_playlist_lists_newest_like_first(tmp_path: Path, monkeypatch):
+    """The playlist and the profile's likes shelf read one list in one order."""
+    store = init_api_store(tmp_path, monkeypatch)
+    older_id, _release_id, _artist_id = _add_track(store, tmp_path, "song-1")
+    newer_id, _release_id, _artist_id = _add_track(store, tmp_path, "song-2")
+
+    class FakeNavidromeClient:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def get_starred_full(self):
+            return {
+                "songs": [
+                    # Payload order is not the like order: the star dates are.
+                    {"id": "song-1", "title": "Some Track", "starred": "2024-06-01T00:00:00Z"},
+                    {"id": "song-2", "title": "Some Track", "starred": "2025-06-01T00:00:00Z"},
+                ],
+                "albums": [],
+                "artists": [],
+            }
+
+    monkeypatch.setattr(api_deps_module, "NavidromeClient", FakeNavidromeClient)
+    client = TestClient(app)
+
+    response = client.get("/api/v1/playlists/likes")
+
+    assert response.status_code == 200
+    assert [track["id"] for track in response.json()["tracks"]] == [newer_id, older_id]
+    assert [track.id for track in store.list_liked_tracks()] == [newer_id, older_id]

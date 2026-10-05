@@ -19,24 +19,30 @@ from app.schemas.responses import PlaybackSessionEnvelopeResponse
 from app.serializers.playback import playback_session_response
 from app.serializers.entities import track_summary_dict
 from app.serializers.playlists import playlist_detail_dict, playlist_summary_dict
+from app.store import Track
 
 router = APIRouter(prefix="/api/v1")
 
 _PLAYLIST_NOT_FOUND = "Playlist not found"
 
 
-def _liked_track_ids(store, settings) -> list[int]:
-    """Return local track IDs for Navidrome-starred tracks, preserving Navidrome order."""
+def _liked_tracks(store, settings) -> list[Track]:
+    """Sync likes from Navidrome, then return the local liked tracks.
+
+    Read back from the store (newest like first) rather than in Navidrome's
+    order, so this playlist lists exactly what the profile's likes shelf and
+    its full list do, in the same order.
+    """
     try:
         client, username = _navidrome_user_client(settings)
         # Full starred payload, not just songs: syncing tracks alone used to
         # leave album/artist likes stale on every visit to this playlist.
-        data = sync_likes_from_starred_payload(store, client.get_starred_full(), user=username)
-        return data["track_ids"]
+        sync_likes_from_starred_payload(store, client.get_starred_full(), user=username)
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Navidrome starred failed: {exc}") from exc
+    return store.list_liked_tracks(limit=store.count_liked_tracks())
 
 
 @router.get(
@@ -46,8 +52,7 @@ def _liked_track_ids(store, settings) -> list[int]:
 )
 def api_v1_likes_playlist() -> dict[str, object]:
     store, settings = context()
-    track_ids = _liked_track_ids(store, settings)
-    tracks = [t for tid in track_ids if (t := store.get_track(tid)) is not None and t.missing_at is None]
+    tracks = _liked_tracks(store, settings)
     artists_by_track = store.artists_for_tracks([t.id for t in tracks])
     return {
         "id": "likes",
@@ -65,8 +70,7 @@ def api_v1_likes_playlist() -> dict[str, object]:
 )
 def api_v1_play_likes(shuffle: bool = False) -> dict[str, object] | JSONResponse:
     store, settings = context()
-    track_ids = _liked_track_ids(store, settings)
-    track_ids = [tid for tid in track_ids if (t := store.get_track(tid)) is not None and t.missing_at is None]
+    track_ids = [track.id for track in _liked_tracks(store, settings)]
     if not track_ids:
         return api_error(409, "empty_playlist", "No liked tracks found")
     session, _queue = store.create_playback_session(

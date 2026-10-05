@@ -358,7 +358,13 @@ Each row holds two kinds of state that must not be confused:
   {id}/navidrome-star`) and by `Store.sync_likes_from_navidrome`. A like is
   never derived from another entity's like, and never from playback behaviour.
   `liked_at` exists because `updated_at` is bumped by every playback event, so
-  it cannot order "favourites" by when they were liked.
+  it cannot order "favourites" by when they were liked. The sync takes it from
+  Navidrome's `starred` date (normalized to UTC); an id without one keeps the
+  date it had, and only a new like falls back to now — stamping every like
+  with the sync time would scramble all likes lists. Every likes list (the
+  liked-tracks playlist `GET /api/v1/playlists/likes`, the profile's likes
+  shelves and their full lists, the favourites shelves) reads this mirror,
+  newest `liked_at` first, so they show the same items in the same order.
 - **Behavioural** — everything else, recomputed from `playback_events`.
 
 `liked` is deliberately not rebuildable from the event log: no event carries
