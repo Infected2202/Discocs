@@ -18,5 +18,6 @@
   "closeDjSurface": "Close DJ workspace",
   "activeMix": "Two decks are playing",
   "activateDjEngine": "Activate DJ",
-  "deactivateDjEngine": "Deactivate DJ"
+  "deactivateDjEngine": "Deactivate DJ",
+  "listenAlongSource": "With {{username}}"
 }

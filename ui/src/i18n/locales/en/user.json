@@ -8,6 +8,7 @@
   "likeCount_one": "{{formatted}} like",
   "likeCount_other": "{{formatted}} likes",
   "nowPlaying": "Now playing",
+  "listenAlong": "Listen",
   "chooseAvatar": "Choose avatar",
   "avatarOption": "Avatar {{index}}",
   "avatarSaveError": "Couldn't save the avatar. Try again.",

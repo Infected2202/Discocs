@@ -455,10 +455,21 @@ CSRF-гейт (`auth_middleware`) пропускает same-origin POST с за�
 ```
 
 Фронт: `listenAlong(username)` и тип `ListenAlongEnvelope` в
-`ui/src/api/profile.ts`; поле `session_id`/`queue_item_id` в `PresenceReport`
-(`ui/src/api/playback.ts`) — плеер начнёт его слать в Ф7. Пока плеер не шлёт
-`session_id`, сессия ведущего находится по `current_track_id`, а позиция
-берётся из Navidrome.
+`ui/src/api/profile.ts`. Плеер шлёт в каждом presence-отчёте `session_id` и
+`queue_item_id` своей сессии (`PresenceSnapshot.sessionId/queueItemId` в
+`ui/src/lib/presence.ts`, заполняет `ui/src/store/presenceReporter.ts`);
+`stopped` уходит с теми же id, что и остановленное воспроизведение. Старые
+клиенты без `session_id` — сессия ведущего ищется по `current_track_id`, а
+позиция берётся из Navidrome.
+
+**UI (Ф7).** На чужом профиле, пока человек слушает трек из библиотеки
+(`now_playing.track` не null), справа от строки «Сейчас слушает: …» — зелёная
+текстовая кнопка «Слушать» (`data-testid="listen-along"`). Нажатие: `listenAlong`
+→ `playFromEnvelope(envelope, start_track_id, { startPositionSeconds })` —
+сразу остаток очереди и позиция ведущего. Ошибка (ведущий успел остановиться)
+молча игнорируется, статус пропадёт со следующим опросом `usePeople`. На своём
+профиле кнопки нет. В плеере подпись такой сессии (имя плейлиста по умолчанию
+при «Сохранить очередь») — «Вместе с <логин>» (`player:listenAlongSource`).
 
 ## UI главной (Ф4)
 

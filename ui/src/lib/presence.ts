@@ -26,6 +26,18 @@ export interface PresenceSnapshot {
   seekGeneration: number
   /** Store position in seconds — right after a seek, the optimistic target. */
   positionSeconds: number
+  /** The player's session / queue item: stored server-side so others can "listen along". */
+  sessionId?: string | null
+  queueItemId?: string | null
+}
+
+type SessionContext = Pick<PresenceReport, "session_id" | "queue_item_id">
+
+function sessionContext(snapshot: PresenceSnapshot): SessionContext {
+  const context: SessionContext = {}
+  if (snapshot.sessionId) context.session_id = snapshot.sessionId
+  if (snapshot.queueItemId) context.queue_item_id = snapshot.queueItemId
+  return context
 }
 
 export function toPositionMs(seconds: number): number {
@@ -51,6 +63,7 @@ export class PresenceTracker {
     this.observedTrackId = snapshot.trackId
     this.observedSeek = snapshot.seekGeneration
     const { trackId, playbackState } = snapshot
+    const context = sessionContext(snapshot)
 
     if (trackId === null || playbackState === "idle" || playbackState === "error") {
       return this.stop(livePositionSeconds)
@@ -66,22 +79,22 @@ export class PresenceTracker {
 
     if (playbackState === "playing") {
       if (last === null || last.state === "stopped" || last.track_id !== trackId) {
-        return this.emit({ track_id: trackId, state: "starting", position_ms: position() })
+        return this.emit({ track_id: trackId, state: "starting", position_ms: position(), ...context })
       }
       if (seeked) {
         return this.emit(
-          { track_id: trackId, state: "playing", position_ms: toPositionMs(snapshot.positionSeconds) },
+          { track_id: trackId, state: "playing", position_ms: toPositionMs(snapshot.positionSeconds), ...context },
           true,
         )
       }
-      if (last.state === "paused") return this.emit({ track_id: trackId, state: "playing", position_ms: position() })
+      if (last.state === "paused") return this.emit({ track_id: trackId, state: "playing", position_ms: position(), ...context })
       return null
     }
 
     // paused: only meaningful once this page has reported playback at all.
     if (last === null || last.state === "stopped") return null
     const pausedAt = seeked ? toPositionMs(snapshot.positionSeconds) : position()
-    return this.emit({ track_id: trackId, state: "paused", position_ms: pausedAt }, seeked)
+    return this.emit({ track_id: trackId, state: "paused", position_ms: pausedAt, ...context }, seeked)
   }
 
   /** `stopped` for whatever was last reported as playing/paused, else null. */
@@ -89,7 +102,8 @@ export class PresenceTracker {
     const last = this.last
     if (last === null || last.state === "stopped") return null
     const live = toPositionMs(livePositionSeconds())
-    return this.emit({ track_id: last.track_id, state: "stopped", position_ms: live || last.position_ms })
+    // Same session/queue item as the playback being stopped.
+    return this.emit({ ...last, state: "stopped", position_ms: live || last.position_ms })
   }
 
   /** Forget everything (e.g. page restored from the back/forward cache). */

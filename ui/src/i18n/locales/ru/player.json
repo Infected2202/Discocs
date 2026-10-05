@@ -18,5 +18,6 @@
   "closeDjSurface": "Закрыть DJ-интерфейс",
   "activeMix": "Играют две деки",
   "activateDjEngine": "Активировать DJ",
-  "deactivateDjEngine": "Выключить DJ"
+  "deactivateDjEngine": "Выключить DJ",
+  "listenAlongSource": "Вместе с {{username}}"
 }

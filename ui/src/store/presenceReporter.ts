@@ -17,6 +17,8 @@ function presenceSnapshot(state: PlayerSnapshotSource): PresenceSnapshot {
     seekBuffering: state.seekBuffering,
     seekGeneration: state.seekGeneration,
     positionSeconds: state.currentTime,
+    sessionId: state.session?.id ?? null,
+    queueItemId: state.currentQueueItemId,
   }
 }
 

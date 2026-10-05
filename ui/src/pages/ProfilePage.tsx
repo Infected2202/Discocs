@@ -12,6 +12,7 @@ import { apiFetch } from "@/api/client"
 import {
   DEFAULT_PROFILE_PERIOD,
   PROFILE_PERIODS,
+  listenAlong,
   type ProfilePeriod,
   type ProfileShelfItem,
   type UserProfile,
@@ -75,6 +76,7 @@ export default function ProfilePage() {
   const { username = "" } = useParams<{ username: string }>()
   const [period, setPeriod] = useState<ProfilePeriod>(DEFAULT_PROFILE_PERIOD)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [joining, setJoining] = useState(false)
   const { data: profile, isLoading, isPlaceholderData, error } = useUserProfile(username, period)
   const { data: likes } = useUserLikes(username)
   const { data: playlists } = useUserPlaylists(username)
@@ -104,6 +106,22 @@ export default function ProfilePage() {
       await playFromEnvelope(envelope)
     } catch {
       // silently ignore, like the dashboard shelves
+    }
+  }
+
+  // One-shot "pick up" of this user's playback: the rest of their queue from
+  // their current position, in a session of our own (docs/social.md).
+  async function listenAlongWithUser() {
+    setJoining(true)
+    try {
+      const envelope = await listenAlong(header.username)
+      await playFromEnvelope(envelope, envelope.start_track_id, {
+        startPositionSeconds: envelope.start_position_seconds,
+      })
+    } catch {
+      // they stopped meanwhile — the people poll hides the status shortly
+    } finally {
+      setJoining(false)
     }
   }
 
@@ -214,6 +232,17 @@ export default function ProfilePage() {
                   {t("nowPlaying")}: {nowPlaying.artists ? `${nowPlaying.artists} - ` : ""}
                   {nowPlaying.title}
                 </span>
+                {!isOwner && nowPlaying.track && (
+                  <button
+                    type="button"
+                    onClick={() => void listenAlongWithUser()}
+                    disabled={joining}
+                    data-testid="listen-along"
+                    className="shrink-0 rounded-full border border-green-500/60 px-3 py-0.5 text-sm font-medium text-green-500 transition-colors hover:bg-green-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                  >
+                    {t("listenAlong")}
+                  </button>
+                )}
               </p>
             )}
           </>

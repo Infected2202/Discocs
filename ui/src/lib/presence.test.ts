@@ -24,6 +24,21 @@ function snap(overrides: Partial<PresenceSnapshot> = {}): PresenceSnapshot {
 const at = (seconds: number) => () => seconds
 
 describe("PresenceTracker", () => {
+  it("carries the session and queue item, and stops the same ones after the queue moves on", () => {
+    const tracker = new PresenceTracker()
+
+    expect(tracker.next(snap({ sessionId: "s1", queueItemId: "q1" }), at(0))).toEqual({
+      track_id: 7, state: "starting", position_ms: 0, session_id: "s1", queue_item_id: "q1",
+    })
+    expect(tracker.stop(at(12))).toEqual({
+      track_id: 7, state: "stopped", position_ms: 12_000, session_id: "s1", queue_item_id: "q1",
+    })
+    // Without a session (guest/legacy) the fields are simply absent.
+    const bare = new PresenceTracker().next(snap(), at(0))
+    expect(bare).not.toHaveProperty("session_id")
+    expect(bare).not.toHaveProperty("queue_item_id")
+  })
+
   it("reports starting, paused, resumed playing and stopped for one track", () => {
     const tracker = new PresenceTracker()
 

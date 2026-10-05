@@ -26,6 +26,12 @@ vi.mock("@/api/hooks/usePeople", () => ({
   usePeople: () => usePeople(),
 }))
 
+const listenAlong = vi.fn()
+vi.mock("@/api/profile", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/profile")>()),
+  listenAlong: (...args: unknown[]) => listenAlong(...args),
+}))
+
 const playerState = { playSource: vi.fn(), playFromEnvelope: vi.fn() }
 vi.mock("@/store/playerStore", () => ({
   usePlayerStore: (selector: (state: typeof playerState) => unknown) => selector(playerState),
@@ -386,5 +392,57 @@ describe("ProfilePage", () => {
     expect(screen.getByTestId("shelf-Releases")).toHaveTextContent("Liked LP")
     expect(screen.queryByTestId("shelf-Tracks")).not.toBeInTheDocument()
     expect(screen.getByTestId("shelf-Playlists")).toHaveTextContent("Night drive / 3 tracks")
+  })
+
+  describe("listen along", () => {
+    const playing = (track: ListenItem | null) =>
+      person("alice", { track_id: 9, title: "Signals", artists: "Alpha", state: "playing", track })
+
+    beforeEach(() => {
+      listenAlong.mockReset()
+      playerState.playFromEnvelope.mockReset()
+    })
+
+    it("picks up another user's playback at their track and position", async () => {
+      const envelope = { start_track_id: 9, start_position_seconds: 42.5 }
+      listenAlong.mockResolvedValue(envelope)
+      usePeople.mockReturnValue({ data: { items: [playing(makeListen(0, 9, THREE_HOURS_AGO))] } })
+      renderPage()
+
+      const button = within(screen.getByTestId("now-playing")).getByRole("button", { name: "Listen" })
+      fireEvent.click(button)
+
+      await vi.waitFor(() => expect(playerState.playFromEnvelope).toHaveBeenCalledTimes(1))
+      expect(listenAlong).toHaveBeenCalledWith("alice")
+      expect(playerState.playFromEnvelope).toHaveBeenCalledWith(envelope, 9, { startPositionSeconds: 42.5 })
+    })
+
+    it("has no button on one's own profile or for a track outside the library", () => {
+      mockProfile(makeProfile({}, { viewer_is_owner: true }))
+      usePeople.mockReturnValue({ data: { items: [playing(makeListen(0, 9, THREE_HOURS_AGO))] } })
+      const { unmount } = renderPage()
+      expect(screen.getByTestId("now-playing")).toBeInTheDocument()
+      expect(screen.queryByTestId("listen-along")).not.toBeInTheDocument()
+      unmount()
+
+      mockProfile(makeProfile())
+      usePeople.mockReturnValue({ data: { items: [playing(null)] } })
+      renderPage()
+      expect(screen.getByTestId("now-playing")).toBeInTheDocument()
+      expect(screen.queryByTestId("listen-along")).not.toBeInTheDocument()
+    })
+
+    it("does nothing to the player when the user stopped meanwhile", async () => {
+      listenAlong.mockRejectedValue(new ApiError(409, "not_playing", "not playing"))
+      usePeople.mockReturnValue({ data: { items: [playing(makeListen(0, 9, THREE_HOURS_AGO))] } })
+      renderPage()
+
+      const button = screen.getByTestId("listen-along")
+      fireEvent.click(button)
+
+      await vi.waitFor(() => expect(button).not.toBeDisabled())
+      expect(listenAlong).toHaveBeenCalledTimes(1)
+      expect(playerState.playFromEnvelope).not.toHaveBeenCalled()
+    })
   })
 })

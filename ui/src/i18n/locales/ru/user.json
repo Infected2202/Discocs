@@ -14,6 +14,7 @@
   "likeCount_many": "{{formatted}} лайков",
   "likeCount_other": "{{formatted}} лайка",
   "nowPlaying": "Сейчас слушает",
+  "listenAlong": "Слушать",
   "chooseAvatar": "Выбрать аватар",
   "avatarOption": "Аватар {{index}}",
   "avatarSaveError": "Не удалось сохранить аватар. Попробуйте ещё раз.",

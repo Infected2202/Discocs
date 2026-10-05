@@ -49,6 +49,12 @@ export default function ExpandedPlayer() {
 
   // Все треки очереди (played + current + upcoming + manual), без autoplay_pool.
   const queueTrackIds = [...new Set((queue?.items ?? []).map((item) => item.track_id))]
+  // A listen-along session's label is the host's bare username.
+  const queueSourceLabel = session?.source_label
+    ? session.source_type === "listen_along"
+      ? t("listenAlongSource", { username: session.source_label })
+      : session.source_label
+    : undefined
 
   useEffect(() => {
     if (!expanded) setMobileTab("player")
@@ -300,7 +306,7 @@ export default function ExpandedPlayer() {
             <div className="flex justify-end gap-1 mb-2">
               {queueTrackIds.length > 0 && (
                 <button
-                  onClick={() => openAddToPlaylist(queueTrackIds, session?.source_label ?? undefined)}
+                  onClick={() => openAddToPlaylist(queueTrackIds, queueSourceLabel)}
                   className={cn(iconBtn, "flex items-center gap-1.5 px-2.5 text-sm font-medium")}
                   title={t("saveQueueToPlaylist")}
                   aria-label={t("saveQueueToPlaylist")}
