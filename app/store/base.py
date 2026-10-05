@@ -392,6 +392,17 @@ class StoreBase:
                     FOREIGN KEY (label_id) REFERENCES labels(id) ON DELETE CASCADE
                 );
 
+                -- Прогоны синхронизации лейблов: итог последнего показывается в админке
+                -- и переживает перезапуск (задачи живут только в памяти).
+                CREATE TABLE IF NOT EXISTS label_sync_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mode TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    message TEXT,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT
+                );
+
                 -- Штрихкод из тегов файла; перечитывается, когда меняются размер/время файла.
                 CREATE TABLE IF NOT EXISTS track_barcodes (
                     track_id INTEGER PRIMARY KEY,

@@ -3,8 +3,9 @@
 Что уже искали, лежит в ``label_sync_state``: найденный лейбл больше не ищется, ненайденный —
 только когда изменился набор его штрихкодов и ISRC (докачали релизы). «Перепроверить найденные»
 (``recheck_found``) сверяет сохранённые привязки найденных лейблов и ищет заново только неверные
-(служебная запись Discogs для бутлегов, чужое название). Задача не входит в общую очередь
-(``NON_BLOCKING_JOB_KINDS``): она пишет только данные лейблов и никому не мешает.
+(служебная запись Discogs, чужое название); в админке кнопки нет — только API. Задача не входит
+в общую очередь (``NON_BLOCKING_JOB_KINDS``): она пишет только данные лейблов и никому не мешает.
+Итог каждого прогона пишется в ``label_sync_runs`` — задачи живут в памяти и пропадают при перезапуске.
 """
 from __future__ import annotations
 
@@ -348,6 +349,15 @@ def _guarded(store, candidate, work, summary, lock, cancelled) -> None:
             summary.errors += 1
 
 
+def run_mode(retry_not_found: bool, only_label_id: int | None, recheck_found: bool) -> str:
+    """Что за прогон — для строки итога в админке."""
+    if recheck_found:
+        return "recheck"
+    if only_label_id is not None:
+        return "label"
+    return "retry" if retry_not_found else "sync"
+
+
 def label_sync_job(
     job_id: str, retry_not_found: bool, only_label_id: int | None, recheck_found: bool = False,
 ) -> None:
@@ -366,22 +376,33 @@ def label_sync_job(
             update_job(job_id, status="running", done=done, total=total, current=current,
                        message=f"Syncing labels {done}/{total}")
 
+    store, settings = context()
+    run_id: int | None = None
+
+    def finish(status: str, message: str) -> None:
+        if run_id is not None:
+            store.finish_label_sync_run(run_id, status, message)
+        finish_job(job_id, status, message)
+
     http = new_http_client()
     cache = None
     try:
-        store, settings = context()
+        run_id = store.start_label_sync_run(run_mode(retry_not_found, only_label_id, recheck_found))
         cache = HttpCache(settings.data_dir / CACHE_FILE)
         resolver = build_resolver(store, settings, http, cache)
         summary = run_label_sync(store, settings, resolver, retry_not_found=retry_not_found,
                                  only_label_id=only_label_id, recheck_found=recheck_found,
                                  progress=progress, cancelled=cancelled)
-        if not cancelled():
-            finish_job(job_id, "completed", summary.message())
+        if cancelled():
+            # Статус задачи уже выставила отмена — записать только прогон.
+            store.finish_label_sync_run(run_id, "cancelled", f"Cancelled. {summary.message()}")
+        else:
+            finish("completed", summary.message())
     except (LabelSyncUnavailable, ServiceAuthError) as exc:
-        finish_job(job_id, "failed", str(exc))
+        finish("failed", str(exc))
     except Exception as exc:  # noqa: BLE001 — статус задачи должен закрыться в любом случае
         logger.exception("Label sync job failed job_id=%s", job_id)
-        finish_job(job_id, "failed", str(exc))
+        finish("failed", str(exc))
     finally:
         http.close()
         if cache is not None:

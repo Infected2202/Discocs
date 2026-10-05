@@ -5,8 +5,9 @@
 принимается, только если его название совпадает с нашим (``label_key``): у релиза бывает
 дистрибьютор или цифровой саб-лейбл, а ISRC трека встречается и на чужих сборниках. Нет ни
 штрихкодов, ни ISRC — поиск по названию, но кандидат принимается, только если у него нашёлся
-релиз из библиотеки. Служебные записи Discogs для бутлегов («This is NOT a real label») не
-принимаются никогда.
+релиз из библиотеки: в первых страницах его каталога или поиском релиза по названию внутри
+лейбла (у мейджоров тысячи релизов). Служебные записи Discogs (бутлеги, контрафакт, копирайтные
+строки) не принимаются никогда.
 """
 from __future__ import annotations
 
@@ -22,11 +23,21 @@ BEATPORT_PLACEHOLDER = "cda9862c-cf92-4d13-ac65-7e9277181f51"
 # перебираем до MAX_CODES, но останавливаемся, как только лейбл подтверждён.
 MAX_CODES = 40
 CONFIRM_PAGES = 3
+# Не нашёлся в первых страницах — ищем внутри лейбла по названиям стольких наших релизов.
+CONFIRM_TITLES = 5
 # Хвосты, которыми одно и то же название различается в тегах и в каталогах.
-_LABEL_SUFFIXES = frozenset({"records", "recordings", "recording", "music", "ltd", "limited", "inc", "label"})
-# Discogs заводит такие записи для бутлегов: «This is [b]NOT[/b] a real label. Use this for all
-# unofficial releases…» — название у них то же, что у настоящего лейбла (с «(2)»).
-_PLACEHOLDER_PROFILE = re.compile(r"\bnot\s+a\s+real\s+label\b", re.I)
+_LABEL_SUFFIXES = frozenset({
+    "records", "recordings", "recording", "music", "discs", "ltd", "limited", "inc", "llc", "label",
+})
+# Юридическая форма перед названием: Discogs пишет «ООО "Союз Мьюзик"», теги — «Союз Мьюзик».
+_LABEL_PREFIXES = frozenset({"ооо", "оао", "зао", "пао", "llc"})
+# Служебные записи Discogs с названием настоящего лейбла (часто с «(2)»): для бутлегов
+# («This is [b]NOT[/b] a real label»), для контрафакта («This page catalogues counterfeit
+# editions…») и для копирайтных строк («For the copyright or licensing entries of label…»).
+_PLACEHOLDER_PROFILE = re.compile(
+    r"\bnot\s+a\s+real\s+label\b|\bcatalogues\s+counterfeit\b|\bfor\s+the\s+copyright\s+or\s+licensing\s+entries\b",
+    re.I,
+)
 
 
 def norm(text: object) -> str:
@@ -40,8 +51,10 @@ def clean_name(name: object) -> str:
 
 
 def label_key(name: object) -> str:
-    """Ключ сравнения названий лейблов: без «(2)», пунктуации и хвоста Records/Recordings/Music/Ltd."""
+    """Ключ сравнения названий лейблов: без «(2)», пунктуации, «ООО» и хвоста Records/Discs/Ltd/LLC."""
     words = re.sub(r"[^\w]+", " ", norm(clean_name(name))).split()
+    while len(words) > 1 and words[0] in _LABEL_PREFIXES:
+        words.pop(0)
     while len(words) > 1 and words[-1] in _LABEL_SUFFIXES:
         words.pop()
     return " ".join(words)
@@ -63,6 +76,17 @@ def title_key(title: object) -> str:
 def titles_overlap(ours: Sequence[str], theirs: Sequence[str]) -> bool:
     keys = {title_key(t) for t in ours} - {""}
     return any(title_key(t) in keys for t in theirs)
+
+
+def search_titles(titles: Sequence[str]) -> list[str]:
+    """Названия для поиска релиза внутри лейбла: без скобок, без повторов, не больше CONFIRM_TITLES."""
+    out: dict[str, str] = {}
+    for title in titles:
+        query = " ".join(re.sub(r"[\(\[].*?[\)\]]", " ", str(title or "")).split())
+        key = title_key(query)
+        if key and key not in out:
+            out[key] = query
+    return list(out.values())[:CONFIRM_TITLES]
 
 
 def upc_variants(code: str) -> list[str]:
@@ -125,9 +149,17 @@ class LabelResolver:
                 theirs += [r.get("name", "") for r in data.get("results", [])]
                 if not data.get("next"):
                     break
-            if titles_overlap(titles, theirs):
+            if titles_overlap(titles, theirs) or self._beatport_has_release(candidate["id"], titles):
                 return int(candidate["id"])
         return None
+
+    def _beatport_has_release(self, label_id: object, titles: Sequence[str]) -> bool:
+        """Наш релиз в каталоге лейбла Beatport — поиском по названию, а не листанием страниц."""
+        for query in search_titles(titles):
+            found = self.beatport.get("/catalog/releases/", label_id=label_id, name=query, per_page=5)
+            if titles_overlap(titles, [r.get("name", "") for r in found.get("results", [])]):
+                return True
+        return False
 
     # ---------- Discogs ----------
 
@@ -155,9 +187,27 @@ class LabelResolver:
                 theirs += [r.get("title", "") for r in data.get("releases", [])]
                 if page >= (data.get("pagination") or {}).get("pages", 1):
                     break
-            if titles_overlap(titles, theirs):
+            if titles_overlap(titles, theirs) or self._discogs_has_release(candidate, titles):
                 return int(candidate["id"])
         return None
+
+    def _discogs_has_release(self, candidate: dict, titles: Sequence[str]) -> bool:
+        """Наш релиз у лейбла Discogs: поиск по названиям лейбла и релиза, затем лейбл релиза по id.
+
+        Поиск по названию лейбла отдаёт и релизы однофамильцев («Crammed Discs (2)»), поэтому
+        найденный релиз засчитывается, только если среди его лейблов есть именно этот.
+        """
+        for query in search_titles(titles):
+            results = self.discogs.get("/database/search", type="release", label=clean_name(candidate.get("title")),
+                                       release_title=query, per_page=5).get("results", [])
+            for found in results[:3]:
+                # В поиске Discogs заголовок релиза — «Артист - Название».
+                if not titles_overlap(titles, [str(found.get("title") or "").split(" - ", 1)[-1]]):
+                    continue
+                release = self.discogs.get(f"/releases/{found['id']}")
+                if any(str(entry.get("id")) == str(candidate["id"]) for entry in release.get("labels", [])):
+                    return True
+        return False
 
     def _discogs_real(self, label_id: object) -> bool:
         return not is_placeholder_label(self.discogs.get(f"/labels/{label_id}"))

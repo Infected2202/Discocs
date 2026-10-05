@@ -231,6 +231,31 @@ class LabelSyncStoreMixin:
             ).fetchall()
         return [str(r[0]) for r in rows]
 
+    # ---------- прогоны ----------
+
+    def start_label_sync_run(self, mode: str) -> int:
+        with self.connect() as conn:  # type: ignore[attr-defined]
+            cursor = conn.execute(
+                "INSERT INTO label_sync_runs (mode, status, started_at) VALUES (?, 'running', ?)", (mode, utc_now()),
+            )
+            return int(cursor.lastrowid)
+
+    def finish_label_sync_run(self, run_id: int, status: str, message: str) -> None:
+        with self.connect() as conn:  # type: ignore[attr-defined]
+            conn.execute(
+                "UPDATE label_sync_runs SET status = ?, message = ?, finished_at = ? WHERE id = ?",
+                (status, message, utc_now(), run_id),
+            )
+
+    def last_label_sync_run(self) -> dict[str, str | None] | None:
+        with self.connect() as conn:  # type: ignore[attr-defined]
+            row = conn.execute(
+                "SELECT mode, status, message, started_at, finished_at FROM label_sync_runs ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        if row is None:
+            return None
+        return {"mode": row[0], "status": row[1], "message": row[2], "started_at": row[3], "finished_at": row[4]}
+
     # ---------- штрихкоды ----------
 
     def cached_barcodes(self, track_ids: Iterable[int]) -> dict[int, tuple[str | None, int | None, int | None]]:

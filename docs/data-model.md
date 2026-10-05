@@ -160,7 +160,10 @@ description clears it and hands the field back to the sync.
 already did: found labels are skipped, not-found ones are retried only when
 `keys_hash` changes (new releases). `keys_hash` NULL marks labels filled by the
 old `tools/label-sync` script: the first run records their keys without a
-lookup. `track_barcodes` (`track_id` PK, `barcode`, `file_size`,
+lookup. `label_sync_runs` (`id`, `mode` sync/retry/recheck/label, `status`
+running/completed/failed/cancelled, `message`, `started_at`, `finished_at`)
+keeps the outcome of each run for the admin panel; jobs themselves live only in
+memory. `track_barcodes` (`track_id` PK, `barcode`, `file_size`,
 `file_mtime`) caches the BARCODE/UPC tag of each file; it is re-read when the
 file size or mtime changes. `integration_secrets` (`name` PK, `value`) holds
 the Beatport tokens and the Discogs application key and secret, AES-GCM encrypted with a key

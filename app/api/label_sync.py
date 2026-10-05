@@ -35,11 +35,17 @@ def api_v1_label_sync_status() -> dict[str, object]:
     store, settings = context()
     # Лейблы, заполненные старым скриптом, считаются обработанными и до первого запуска.
     store.seed_label_sync_state()
+    running = _running_label_sync()
+    last_run = store.last_label_sync_run()
+    if last_run is not None and last_run["status"] == "running" and running is None:
+        # Задача живёт в памяти: прогон без итога и без задачи оборвал перезапуск сервера.
+        last_run = {**last_run, "status": "interrupted", "message": "Interrupted by a server restart"}
     return {
         **credentials_status(store, settings),
         "labels": store.label_sync_counts(),
         "not_found": store.label_sync_not_found(),
-        "running_job_id": _running_label_sync(),
+        "running_job_id": running,
+        "last_run": last_run,
     }
 
 

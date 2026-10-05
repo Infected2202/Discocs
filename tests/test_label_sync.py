@@ -247,8 +247,15 @@ def test_label_names_compare_without_disambiguation_and_suffix_and_bootleg_place
     assert label_key("Mute Records Ltd.") == label_key("Mute")
     assert label_key("Harthouse Digital") != label_key("Harthouse")
     assert label_key("Records") == "records"  # от названия из одного хвоста что-то остаётся
+    assert label_key("Ultra Records, LLC") == label_key("Ultra") == "ultra"
+    assert label_key("Crammed Discs") == label_key("Crammed")
+    assert label_key('ООО "Союз Мьюзик"') == label_key("Союз Мьюзик") == "союз мьюзик"
+    assert label_key("Samurai Music") != label_key("Samurai Red Seal")
     assert is_placeholder_label({"profile": "This is [b][u]NOT[/u][/b] a real label. Use this for all unofficial releases"})
+    assert is_placeholder_label({"profile": "This page catalogues counterfeit editions of releases originally on [l=Elektra]"})
+    assert is_placeholder_label({"profile": "For the copyright or licensing entries of label [l1490].\nFor the label please use [l1490]."})
     assert not is_placeholder_label({"profile": "Texas Drum & Bass label originally established in 2000."})
+    assert not is_placeholder_label({"profile": "Industrial label. Beware of counterfeit copies of early releases."})
 
 
 def test_release_label_with_another_name_or_a_bootleg_placeholder_is_not_accepted():
@@ -272,6 +279,48 @@ def test_release_label_with_another_name_or_a_bootleg_placeholder_is_not_accepte
     assert resolver.discogs_by_barcodes("Warm Communications", ["111", "222"]) is None
     assert resolver.discogs_by_name("Warm Communications", ["Shades Of Me & You"]) == 9672
     assert "/labels/132296/releases?page=1&per_page=100" not in discogs.calls  # заглушку даже не проверяли по релизам
+
+
+def test_big_discogs_catalogue_is_confirmed_by_searching_our_release_inside_the_label():
+    pages = {"releases": [{"title": f"Other {n}"} for n in range(100)], "pagination": {"pages": 40}}
+    discogs = FakeApi({
+        "/database/search?per_page=10&q=Cooking Vinyl&type=label": {
+            "results": [{"id": 4184, "title": "Cooking Vinyl"}, {"id": 5000, "title": "Cooking Vinyl (2)"}],
+        },
+        "/labels/4184": {"name": "Cooking Vinyl", "profile": "London based independent label."},
+        "/labels/5000": {"name": "Cooking Vinyl (2)", "profile": "Home-made cassettes."},
+        "/labels/4184/releases?page=1&per_page=100": pages,
+        "/labels/4184/releases?page=2&per_page=100": pages,
+        "/labels/4184/releases?page=3&per_page=100": pages,
+        "/database/search?label=Cooking Vinyl&per_page=5&release_title=No Sounds Are Out of Bounds&type=release": {
+            "results": [{"id": 1, "title": "The Orb - No Sounds Are Out Of Bounds"}],
+        },
+        "/releases/1": {"labels": [{"id": 4184, "name": "Cooking Vinyl"}]},
+    })
+    resolver = LabelResolver(FakeApi({}), discogs, FakeWeb({}))
+
+    assert resolver.discogs_by_name("Cooking Vinyl", ["No Sounds Are Out of Bounds (Deluxe)"]) == 4184
+    assert "/labels/4184/releases?page=4&per_page=100" not in discogs.calls  # каталог дальше не листаем
+
+    # Поиск по названию лейбла отдаёт и релизы однофамильца: релиз у «Cooking Vinyl (2)» не
+    # подтверждает 4184, зато подтверждает 5000.
+    discogs.responses["/releases/1"] = {"labels": [{"id": 5000, "name": "Cooking Vinyl (2)"}]}
+    discogs.responses["/labels/5000/releases?page=1&per_page=100"] = {"releases": [], "pagination": {"pages": 1}}
+    assert resolver.discogs_by_name("Cooking Vinyl", ["No Sounds Are Out of Bounds"]) == 5000
+
+
+def test_big_beatport_catalogue_is_confirmed_by_searching_our_release_inside_the_label():
+    beatport = FakeApi({
+        "/catalog/search/?per_page=10&q=Ultra Records, LLC&type=labels": {"labels": [{"id": 907, "name": "Ultra"}]},
+        "/catalog/labels/907/releases/?page=1&per_page=100": {"results": [{"name": "Something Else"}], "next": None},
+        # Поиск Beatport неточный: релиз с другим названием не подтверждает лейбл.
+        "/catalog/releases/?label_id=907&name=Matrix&per_page=5": {"results": [{"name": "Need To Feel Loved - Matrix Remix"}]},
+        "/catalog/releases/?label_id=907&name=Vodka & Orange EP&per_page=5": {"results": [{"name": "Vodka & Orange EP"}]},
+    })
+    resolver = LabelResolver(beatport, FakeApi({}), FakeWeb({}))
+
+    assert resolver.beatport_by_name("Ultra Records, LLC", ["Matrix"]) is None
+    assert resolver.beatport_by_name("Ultra Records, LLC", ["Matrix", "Vodka & Orange EP"]) == 907
 
 
 def test_isrc_finds_the_own_label_among_compilations_of_other_labels():
@@ -637,7 +686,32 @@ def test_admin_runs_the_sync_as_a_background_job(tmp_path, monkeypatch):
     # BackgroundTasks у TestClient выполняются до возврата ответа.
     assert (job.status, job.message) == ("completed", "Checked 1 labels: found 1 (images 0, descriptions 0), not found 0, errors 0")
     assert label_state(store, "Found") == ("found", "7")
-    assert client.get("/api/v1/label-sync").json()["labels"]["found"] == 1
+    status = client.get("/api/v1/label-sync").json()
+    assert status["labels"]["found"] == 1
+    # Итог лежит в базе, а не только в задаче: его видно в панели и после перезапуска.
+    assert {k: status["last_run"][k] for k in ("mode", "status", "message")} == {
+        "mode": "sync", "status": "completed", "message": job.message,
+    }
+    assert status["last_run"]["finished_at"] is not None
+
+
+def test_run_cut_by_a_restart_is_shown_as_interrupted(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    store.start_label_sync_run("retry")  # задача была только в памяти — сервер перезапустился
+
+    last_run = TestClient(app).get("/api/v1/label-sync").json()["last_run"]
+
+    assert (last_run["mode"], last_run["status"]) == ("retry", "interrupted")
+    assert last_run["message"] == "Interrupted by a server restart"
+
+
+def test_run_mode_names_the_kind_of_run():
+    from app.services.label_sync.job import run_mode
+
+    assert run_mode(False, None, False) == "sync"
+    assert run_mode(True, None, False) == "retry"
+    assert run_mode(False, 5, False) == "label"
+    assert run_mode(True, None, True) == "recheck"
 
 
 def test_status_counts_labels_filled_by_the_old_script_before_the_first_run(tmp_path, monkeypatch):

@@ -668,9 +668,9 @@
           <div class="actions" style="margin-top:8px">
             <button class="primary" id="labelSyncBtn" onclick="startLabelSync()">Sync labels</button>
             <button id="labelSyncRetryBtn" onclick="startLabelSync('retry')" title="Look up every label that was not found before, not only those with new releases">Retry not found</button>
-            <button id="labelSyncRecheckBtn" onclick="startLabelSync('recheck')" title="Check that found labels point to the right Beatport/Discogs label (not a bootleg placeholder or a differently named label) and look up the wrong ones again">Recheck found</button>
           </div>
           <div class="meta" id="labelSyncStatus"></div>
+          <div class="meta" id="labelSyncLastRun"></div>
           <details style="margin-top:8px"><summary class="meta" id="labelSyncNotFoundSummary">Not found</summary><div class="meta" id="labelSyncNotFound"></div></details>
         </div>
         <div class="panel">
@@ -3312,10 +3312,12 @@
         if (access) access.textContent = labelAccessText(data);
         showLabelAccess(data);
         const running = Boolean(data.running_job_id);
-        ["labelSyncBtn", "labelSyncRetryBtn", "labelSyncRecheckBtn"].forEach(id => {
+        ["labelSyncBtn", "labelSyncRetryBtn"].forEach(id => {
           const button = document.getElementById(id);
           if (button) button.disabled = running || !ready;
         });
+        const lastRun = document.getElementById("labelSyncLastRun");
+        if (lastRun) lastRun.textContent = labelSyncRunText(data.last_run);
         const notFoundSummary = document.getElementById("labelSyncNotFoundSummary");
         if (notFoundSummary) notFoundSummary.textContent = `Not found (${countText(labels.not_found)})`;
         const notFoundList = document.getElementById("labelSyncNotFound");
@@ -3325,6 +3327,13 @@
         if (summary) summary.textContent = `Label sync status unavailable: ${err.message}`;
       }
     }
+    function labelSyncRunText(run) {
+      if (!run) return "";
+      const modes = {sync: "Sync", retry: "Retry not found", recheck: "Recheck found", label: "One label"};
+      const when = new Date(run.finished_at || run.started_at).toLocaleString();
+      const state = run.status === "running" ? "running since" : `${run.status},`;
+      return `Last run: ${modes[run.mode] || run.mode} — ${state} ${when}${run.message ? `. ${run.message}` : ""}`;
+    }
     function setLabelSyncStatus(targetId, message, isError = false) {
       const target = document.getElementById(targetId);
       if (!target) return;
@@ -3332,17 +3341,15 @@
       target.classList.toggle("error", isError);
     }
     async function startLabelSync(mode) {
-      const started = {
-        retry: "Label sync started, retrying labels that were not found.",
-        recheck: "Label sync started, rechecking found labels."
-      };
       try {
         await json("/api/v1/jobs/label-sync", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({retry_not_found: mode === "retry", recheck_found: mode === "recheck"})
+          body: JSON.stringify({retry_not_found: mode === "retry"})
         });
-        setLabelSyncStatus("labelSyncStatus", started[mode] || "Label sync started.");
+        setLabelSyncStatus("labelSyncStatus", mode === "retry"
+          ? "Label sync started, retrying labels that were not found."
+          : "Label sync started.");
         await Promise.all([refreshJobs(), loadLabelSync()]);
       } catch (err) {
         setLabelSyncStatus("labelSyncStatus", `Label sync failed to start: ${err.message}`, true);
