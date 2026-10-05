@@ -244,9 +244,11 @@ two-layered (`ui/src/store/sessionPersistence.ts`):
   (`discocs.playbackPosition.v1`), written throttled (~5s, trailing) from
   `timeupdate` and flushed immediately on `visibilitychange`→hidden /
   `pagehide`. On restore, if the persisted track matches the session's current
-  queue item, `AudioEngine.resumeAtSeconds` seeks there — deferred until
-  `loadedmetadata`, because an immediate `currentTime` write is dropped while
-  duration is still unknown.
+  queue item, the track is loaded with that start position
+  (`load(..., startPositionSeconds)`) — the same mechanism as any start
+  mid-track (see "Streaming, seek and next-track prefetch"): a native seek on
+  `loadedmetadata` for raw/Blob sources (an immediate `currentTime` write is
+  dropped while duration is still unknown), a `t` stream for a transcode.
 
 `PlasmaFBM` destroys its WebGL context while the document is hidden and builds
 a fresh canvas when it becomes visible. This cannot prohibit mobile browsers
@@ -275,8 +277,8 @@ behind `RequireAuth`) subscribes to `playerStore` and feeds snapshots to
 | queue end (`idle`), error, logout | `stopped` |
 | `pagehide` | `stopped` via `navigator.sendBeacon` (JSON Blob, same-origin cookie; keepalive `fetch` if the beacon is refused or on native builds) |
 
-`loading` (track load, mid-track buffering) and the engine pause during a
-slow-path seek (`seekBuffering`) are transients and send nothing. Identical
+`loading` (track load, mid-track buffering) and a transcoded seek reload
+waiting for data (`seekBuffering`) are transients and send nothing. Identical
 consecutive states are deduplicated (`starting`→`playing` of the same track is
 not a change). Reports are fire-and-forget: failures are swallowed, a 403 (no
 user behind the session) turns reporting off for the page, nothing is ever
@@ -285,71 +287,99 @@ session. The guest `SharedPlayerPage` has its own `<audio>`, never mounts
 `AppShell` and reports nothing. Repeat-one restarts the same track silently
 (no new `starting`).
 
-## Browser audio prefetch
+## Streaming, seek and next-track prefetch
 
-`AudioEngine` uses `preload="auto"` for immediate playback, then explicitly
-fetches the active response into a complete in-memory `Blob`. This closes the
-mobile-browser gap where native buffering stops around 90%. When the Blob is
-ready, playback switches to its local `blob:` URL at the same timestamp; only
-then is the active track reported as 100% available and next-track prefetch is
-allowed. If native `TimeRanges` reach 100% first, the redundant fetch is
-aborted.
+The current track plays as a plain progressive stream in a bare `<audio>`
+(`preload="auto"`, outside any `AudioContext` — mobile background/lock-screen
+playback depends on that, see "Background reliability" above). Its bytes are
+fetched exactly once, by the browser; there is no parallel full-track
+download of the current track and no swap to a `blob:` source mid-play.
+
+**Seek** (`PlayerPlaybackFacade.seek` / `seekToSeconds`) depends on what the
+source can do:
+
+- *Raw profile* (`format=raw`, Navidrome answers `Range` with `206`) and local
+  `blob:` sources: `currentTime` is written directly and the browser issues
+  the range request itself. No pause, no wait, no fetch from our code. Only a
+  still-unknown duration defers the write to `loadedmetadata` (it would be
+  dropped otherwise).
+- *Transcoded profiles* (`format=mp3&maxBitRate`, `Accept-Ranges: none`, Range
+  ignored): a native seek is only used when the target lies inside both
+  `el.buffered` and `el.seekable` of the current stream. Chrome reports a
+  non-Range transcode with a known length as seekable `[0, 0]`, and writing
+  `currentTime` outside `seekable` snaps the playhead to 0 (the old "track
+  restarts" bug) — so in practice a transcoded seek is **server-side**: the
+  same element is reloaded with `/api/v1/tracks/{id}/audio?…&t=<whole
+  seconds>` (Navidrome `timeOffset`, see `docs/architecture.md`). The facade
+  keeps `streamOffset`; the reported position is `streamOffset +
+  el.currentTime`, the duration is the track's API metadata (not
+  `el.duration`, which for an offset stream is the remainder), and buffered
+  ranges are shifted by the offset before they reach the seek bar. Seeking
+  inside the already buffered part of an offset stream stays native where
+  the browser reports it seekable; seeking before the offset reloads again.
+  If an offset stream fails (the backend answers `400` for `t` on a track it
+  serves from a local file, or an older backend), the plain source is reopened
+  once and the position is applied natively.
+
+`playerStore.seekBuffering` is `true` only while such a transcoded reload is
+waiting for its first data (cleared on `playing`, or `canplay` when paused);
+the seek bar renders a soft pulsing dot at the seek target meanwhile. The
+reload's own interruption of a playing element is not reported as a pause.
+There is no pause-until-full-download anymore.
+
+**Starting mid-track** uses the same mechanism: `load(url, …, knownDuration,
+startPositionSeconds)` (raw/Blob: native seek on `loadedmetadata` before
+anything is audible; transcode: `t`). `playerStore.playTrack(id, {
+startPositionSeconds })` and `playFromEnvelope(envelope, preferredTrackId, {
+startPositionSeconds })` expose it to callers (session restore, the planned
+"listen along"); the start position is also what gets persisted as the
+playback position. `resumeAtSeconds` remains as the indicator-free seek.
+
 The seek bar renders every browser `TimeRanges` segment separately, so a gap
 created by an unbuffered seek is not shown as downloaded. Dragging uses Pointer
 Events and pointer capture, giving mouse, touch, and pen the same commit path;
 `pointercancel` never seeks to a bogus fallback position. The commit uses the
 last pointerdown/pointermove value rather than `pointerup.clientX`, because
-mobile pointer capture can report a zero release coordinate. If media metadata
-is temporarily unavailable during a source swap, fractional seek is deferred
-until `loadedmetadata` instead of being discarded.
-Before falling back to the slow path below, `seek()` first checks the native
-element's own `buffered` `TimeRanges`: if the target second is already covered
-(within a small tolerance), it writes `currentTime` directly and returns. This
-is just a pointer move over bytes the browser already holds — no new network
-request — so none of the transcoding unreliability applies. Computing that
-target second needs a duration, and a chunked transcoded stream (no
-`Content-Length`, see above) can leave `el.duration` unresolved — `NaN` or
-`Infinity` — for the entire download, since the browser has no signal that
-the resource is bounded. `load()` accepts the track's real duration from API
-metadata as a fallback (`activeKnownDuration`) precisely so this fast path
-isn't dead code for exactly the profile that needs it most. This covers the
-common case (scrubbing near the current position, rewinding into already-
-played audio) instantly instead of waiting on the full-file path.
-The raw upstream stream is not reliably seekable while it is still being
-transcoded — writing `currentTime` directly on it can be silently accepted and
-then reset to zero, audible as the track restarting from the beginning. So
-while the first network-backed track is being promoted to its complete local
-Blob, seeking *past the already-buffered range* never writes to the network
-element at all: it pauses playback, records the requested fraction (and
-whether playback should resume) as a pending seek, and forces the active-track
-cache fetch to start immediately if it hasn't already. The position is applied
-— and playback resumed, if it was playing — only once the Blob swap's
-`loadedmetadata` fires on the new, always-locally-seekable element.
-`playerStore.seekBuffering` reflects this pending state; the seek bar renders a
-soft pulsing dot at the seek target while it is `true`. A failed active-track
-cache fetch is retried once before surfacing `onError` and clearing the
-pending seek, so a single flaky request cannot leave playback stuck paused
-indefinitely. In ordinary mode this Blob replacement remains a plain `<audio>`
-element and is routed into Web Audio only when the DJ engine is already
-active.
+mobile pointer capture can report a zero release coordinate.
 `playerStore.seek()`'s optimistic `currentTime` write is preceded by
 `throttledSetTime.cancel()`: without it, a trailing throttled `timeupdate`
 already scheduled from just before the seek (leading+trailing throttle, up to
 ~250ms late) could still fire afterwards and snap the seek bar back to the
 stale pre-seek position.
-After that signal, `playerStore` fetches the next queue item as a `Blob`
-(also retried once on failure). A completed Blob is consumed through a local
-`blob:` URL at transition time; an unfinished or stale prefetch is aborted and
-playback falls back immediately to the normal `/api/v1/tracks/{id}/audio` URL.
-`playerStore.nextTrackBuffer` mirrors this next-track prefetch state
-(`null` when nothing is in flight/ready); the seek bar renders a second dot
-pinned to its right edge — pulsing while the next track is still buffering,
-static once it is fully ready — since the current track's own buffered range
-is always full width by the time next-track prefetch is even allowed to start.
 
-The browser retains at most the forced complete active Blob and one upcoming Blob.
-Object URLs are revoked after use, on profile/source changes, and on logout.
-This is intentionally an in-memory transition buffer, not offline storage.
+**Next-track prefetch** starts once the current track's buffering has
+*settled* — `onBufferingSettled(trackId, profileKey)`, recorded by
+`playerStore` as `bufferSettledSource` — fired once per track by the first of:
+
+1. the buffered range under the playhead reaches the end of the track;
+2. a `suspend` event with `networkState === NETWORK_IDLE`,
+   `readyState >= HAVE_FUTURE_DATA` and at least `min(60 s, remaining)`
+   buffered ahead — the browser decided it has enough (mobile browsers stop
+   around 80–90%);
+3. safety nets: the buffered end passes 80% of the track, or fewer than 45 s
+   remain to play.
+
+All of it is measured on the track's timeline, so an offset stream counts
+from its offset. A local Blob (a consumed prefetch, a DJ handover) and a
+decoded stretch deck settle immediately and show a full buffer bar; a
+network stream keeps showing its real ranges — settling is a scheduling
+signal, not "100% downloaded".
+
+`playerStore` then fetches the next queue item as a `Blob` (`fetch` with
+`priority: "low"`, retried once on failure). A completed Blob is consumed
+through a local `blob:` URL at transition time; an unfinished or stale
+prefetch is aborted and playback falls back immediately to the normal
+`/api/v1/tracks/{id}/audio` URL. The Blob is what makes the transition
+independent of mobile networking (iOS background) and what the DJ engine
+seeds its incoming deck from. `playerStore.nextTrackBuffer` mirrors this
+next-track prefetch state (`null` when nothing is in flight/ready); the seek
+bar renders a second dot pinned to its right edge — pulsing while the next
+track is still buffering, static once it is fully ready.
+
+The browser retains at most one upcoming Blob (plus the consumed one that is
+currently playing). Object URLs are revoked after use, on profile/source
+changes, and on logout. This is intentionally an in-memory transition buffer,
+not offline storage.
 
 Opening the DJ workspace upgrades each physical deck from its plain routed
 `<audio>` element to Signalsmith Stretch, as soon as that deck's track

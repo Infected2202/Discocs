@@ -29,11 +29,50 @@ interface AudioEngineCallbacks {
   onTimeUpdate(currentTime: number, duration: number): void
   onPlaybackStateChange(state: PlaybackState): void
   onBufferUpdate(ranges: BufferedRange[]): void
-  onFullyBuffered?(trackId: number, profileKey: string): void
+  /**
+   * The current track's own buffering has settled (fully buffered, or the
+   * browser idled its download with enough audio ahead, or a safety net) —
+   * from here on fetching the next track no longer competes with it.
+   */
+  onBufferingSettled?(trackId: number, profileKey: string): void
   onSeekBufferingChange?(active: boolean): void
   onNextTrackBufferingChange?(info: NextTrackBufferInfo | null): void
   onEnded(): void
   onError(message: string): void
+}
+
+// HTMLMediaElement constants as literals: test fakes don't carry the statics.
+const HAVE_METADATA = 1
+const HAVE_FUTURE_DATA = 3
+const NETWORK_IDLE = 1
+const RANGE_TOLERANCE_SECONDS = 0.25
+/** Audio the browser must hold ahead of the playhead when it idles its download for that to count as settled. */
+export const SETTLED_AHEAD_SECONDS = 60
+/** Safety net: a buffered end at this share of the track counts as settled even if the browser keeps downloading. */
+export const SETTLED_BUFFERED_FRACTION = 0.8
+/** Safety net: this close to the end the next track is fetched no matter how the current one buffers. */
+export const SETTLED_REMAINING_SECONDS = 45
+
+/**
+ * The `/tracks/{id}/audio` URL of a transcoded stream that starts `seconds`
+ * into the track (server-side seek, Navidrome `timeOffset`).
+ */
+export function withStartOffset(url: string, seconds: number): string {
+  return `${url}${url.includes("?") ? "&" : "?"}t=${seconds}`
+}
+
+function rangeContaining(ranges: TimeRanges | undefined, seconds: number): { start: number; end: number } | null {
+  if (!ranges) return null
+  for (let i = 0; i < ranges.length; i++) {
+    const start = ranges.start(i)
+    const end = ranges.end(i)
+    if (start - RANGE_TOLERANCE_SECONDS <= seconds && end + RANGE_TOLERANCE_SECONDS >= seconds) return { start, end }
+  }
+  return null
+}
+
+function metadataReady(el: HTMLAudioElement): boolean {
+  return el.readyState >= HAVE_METADATA || (Number.isFinite(el.duration) && el.duration > 0)
 }
 
 export class PlayerPlaybackFacade {
@@ -43,19 +82,31 @@ export class PlayerPlaybackFacade {
   private activeTrackId: number | null = null
   private activeQueueItemId: string | null = null
   private activeProfileKey = "raw"
+  /** Base network URL of the current track (never carries `t`); null for a local Blob. */
   private activeNetworkUrl: string | null = null
   // The track's real duration from API metadata, not the <audio> element's
-  // own `.duration`. A transcoded/chunked network stream (no Content-Length)
-  // can leave el.duration unresolved (NaN/Infinity) for the whole download —
-  // this is the fallback that lets seek()'s buffered-range fast path compute
-  // a target second anyway.
+  // own `.duration`. An offset stream only knows its remainder, and a
+  // chunked/estimated transcode reports an unresolved or approximate
+  // el.duration — the track metadata is the stable timeline for them.
   private activeKnownDuration: number | null = null
-  private pendingNetworkSeek: { fraction: number; wasPlaying: boolean } | null = null
+  /**
+   * Seconds into the track at which the element's current source starts:
+   * >0 only for a transcoded stream reloaded with `t` (server-side seek).
+   * Reported position = streamOffset + el.currentTime.
+   */
+  private streamOffset = 0
+  /** A transcoded seek reload is waiting for its first data. */
+  private pendingReload: { wasPlaying: boolean; indicator: boolean } | null = null
+  /** The server refused/failed an offset stream once — this track seeks natively from now on. */
+  private offsetFallbackUsed = false
+  private pendingMetadataAction: { el: HTMLAudioElement; handler: () => void } | null = null
+  /** Bumped on every source (re)assignment, so a superseded play() can tell it was interrupted by us. */
+  private sourceGeneration = 0
+  private playRequested = false
   private activeObjectUrl: string | null = null
-  private activeCacheController: AbortController | null = null
-  private activeCacheTarget: { trackId: number; profileKey: string; url: string } | null = null
-  private activeCacheRetryCount = 0
-  private fullyBufferedReported = false
+  /** The whole track is local (Blob, decoded stretch deck): buffer bar is full. */
+  private fullyLocal = false
+  private bufferSettledReported = false
   private prefetched: {
     trackId: number
     queueItemId: string | null
@@ -112,11 +163,11 @@ export class PlayerPlaybackFacade {
     fullyAvailable = false,
     queueItemId: string | null = null,
     knownDurationSeconds?: number | null,
+    startPositionSeconds: number | null = null,
   ) {
-    this.cancelActiveCache()
-    if (this.pendingNetworkSeek) this.callbacks?.onSeekBufferingChange?.(false)
-    this.pendingNetworkSeek = null
-    this.activeCacheRetryCount = 0
+    this.cancelPendingMetadataAction()
+    this.endPendingReload()
+    this.playRequested = false
     const retainedBlob = fullyAvailable && this.activeObjectUrl === url ? this.activeBlob : null
     // Явно освобождаем буфер старого элемента — src='' надёжнее removeAttribute
     const prev = this.el
@@ -139,8 +190,6 @@ export class PlayerPlaybackFacade {
     if (this.graphActive) this.runtime.routeProgramElement(this.el, trackId, queueItemId)
     this.el.volume = prev.volume
     this.el.muted = prev.muted
-    this.el.src = url
-    this.el.load()
     this.activeTrackId = trackId
     this.activeQueueItemId = queueItemId
     this.activeProfileKey = profileKey
@@ -148,20 +197,29 @@ export class PlayerPlaybackFacade {
     this.activeKnownDuration = Number.isFinite(knownDurationSeconds) && (knownDurationSeconds as number) > 0
       ? (knownDurationSeconds as number)
       : null
-    this.fullyBufferedReported = false
+    this.offsetFallbackUsed = false
+    this.fullyLocal = false
+    this.bufferSettledReported = false
     this.lastRuntimeTransport = null
+    const startSeconds = Number.isFinite(startPositionSeconds) && (startPositionSeconds as number) > 0
+      ? (startPositionSeconds as number)
+      : 0
+    // The current track is a plain progressive stream: no full download of
+    // it is ever forced. A start position is applied the same way a seek is
+    // (Range for raw/Blob, `t` for a transcode).
+    this.openSource(this.el, url, startSeconds, false)
 
     // Reset immediately — otherwise the buffered indicator briefly shows
     // the previous track's ranges. A prepared Blob is already fully local.
     this.callbacks?.onBufferUpdate(fullyAvailable ? [{ start: 0, end: 1 }] : [])
-    if (fullyAvailable && trackId !== null) this.reportFullyBuffered()
+    if (fullyAvailable && trackId !== null) this.markFullyLocal()
     if (this.graphActive && trackId !== null) {
       this.queueStretchUpgrade(this.runtime.programDeck, {
         url,
         trackId,
         queueItemId,
         blob: this.activeBlob ?? undefined,
-      })
+      }, startSeconds > 0 ? { startAtSeconds: startSeconds } : {})
     }
   }
 
@@ -194,10 +252,14 @@ export class PlayerPlaybackFacade {
         const controller = new AbortController()
         this.prefetchController = controller
         try {
-          const response = await fetch(url, {
+          // Low priority: the current track may still be streaming (a safety
+          // net can settle it before the browser is done) — it must win.
+          const init: RequestInit & { priority?: "high" | "low" | "auto" } = {
             credentials: "same-origin",
             signal: controller.signal,
-          })
+            priority: "low",
+          }
+          const response = await fetch(url, init)
           if (!response.ok) throw new Error(`Audio prefetch failed: HTTP ${response.status}`)
           const blob = await response.blob()
           if (controller.signal.aborted) return
@@ -348,7 +410,6 @@ export class PlayerPlaybackFacade {
     const previous = this.el
     const previousObjectUrl = this.activeObjectUrl
     const previousBlob = this.activeBlob
-    this.cancelActiveCache()
     if (this.runtime.isStretchDeck(incoming.deck)) await this.runtime.playDeck(incoming.deck)
     else await incoming.element.play()
     let result: HandoverResult
@@ -362,15 +423,22 @@ export class PlayerPlaybackFacade {
       else incoming.element.pause()
       throw error
     }
+    this.cancelPendingMetadataAction()
+    this.endPendingReload()
     this.el = incoming.element
     this.retired = { element: previous, objectUrl: previousObjectUrl, blob: previousBlob, deck: result.outgoingDeck }
     this.activeTrackId = incoming.trackId
     this.activeQueueItemId = incoming.queueItemId
     this.activeProfileKey = incoming.profileKey
     this.activeNetworkUrl = null
+    this.activeKnownDuration = null
+    this.streamOffset = 0
+    this.offsetFallbackUsed = false
     this.activeObjectUrl = incoming.objectUrl
     this.activeBlob = incoming.blob
-    this.fullyBufferedReported = true
+    // The store records the settled source for a handover itself.
+    this.fullyLocal = true
+    this.bufferSettledReported = true
     this.prefetched = null
     this.djDeck = null
     this.callbacks?.onBufferUpdate([{ start: 0, end: 1 }])
@@ -418,6 +486,8 @@ export class PlayerPlaybackFacade {
     const trackId = this.activeTrackId
     if (trackId !== null) {
       const element = this.el
+      // The base URL, never the `t` offset stream: the stretch deck fetches
+      // and decodes the whole track and starts at the absolute position.
       const sourceUrl = this.activeObjectUrl ?? this.activeNetworkUrl ?? element.currentSrc ?? element.src
       const result = await this.queueStretchUpgrade(this.runtime.programDeck, {
         url: sourceUrl,
@@ -425,13 +495,13 @@ export class PlayerPlaybackFacade {
         queueItemId: this.activeQueueItemId,
         blob: this.activeBlob ?? undefined,
       }, {
-        startAtSeconds: element.currentTime,
+        startAtSeconds: this.streamOffset + element.currentTime,
         autoplay: !element.paused,
       })
       if (result.upgraded && element === this.el) {
         element.pause()
-        this.activeNetworkUrl = null
-        this.reportFullyBuffered()
+        this.endPendingReload()
+        this.markFullyLocal()
       }
     }
 
@@ -491,7 +561,8 @@ export class PlayerPlaybackFacade {
     const position = this.currentTime
     const wasPlaying = !this.paused
     // blob-трек, загруженный напрямую, не оседает в activeObjectUrl — тогда берём
-    // источник из самого элемента.
+    // источник из самого элемента. Сетевой трек — всегда базовый URL (без `t`):
+    // позицию openSource применит сам (Range или `t` для транскода).
     const sourceUrl = this.activeObjectUrl ?? this.activeNetworkUrl ?? previous.currentSrc ?? previous.src
 
     // Свежий, НЕ заведённый в граф <audio> на той же позиции. При клике разрыв
@@ -499,6 +570,8 @@ export class PlayerPlaybackFacade {
     const next = this.createElement()
     next.volume = previous.volume
     next.muted = previous.muted
+    this.cancelPendingMetadataAction()
+    this.endPendingReload()
     this.el = next
     this.graphActive = false
     this.djActivationPromise = null
@@ -506,22 +579,10 @@ export class PlayerPlaybackFacade {
     this.upgradePromises.A = null
     this.upgradePromises.B = null
 
-    if (sourceUrl) {
-      next.src = sourceUrl
-      const resume = () => {
-        next.removeEventListener("loadedmetadata", resume)
-        if (next !== this.el) return
-        next.currentTime = Math.min(position, next.duration || position)
-        if (wasPlaying) {
-          void next.play().catch((error: Error) => {
-            this.callbacks?.onPlaybackStateChange("error")
-            this.callbacks?.onError(error.message)
-          })
-        }
-      }
-      next.addEventListener("loadedmetadata", resume)
-      next.load()
-    }
+    // A stretch upgrade marked the track fully local; back on the network
+    // stream the buffer bar must show real ranges again.
+    this.fullyLocal = Boolean(sourceUrl) && sourceUrl !== this.activeNetworkUrl
+    if (sourceUrl) this.openSource(next, sourceUrl, position, wasPlaying)
 
     previous.pause()
     previous.src = ""
@@ -553,7 +614,8 @@ export class PlayerPlaybackFacade {
   }
 
   async play(): Promise<void> {
-    if (this.pendingNetworkSeek) this.pendingNetworkSeek.wasPlaying = true
+    this.playRequested = true
+    if (this.pendingReload) this.pendingReload.wasPlaying = true
     // Обычный режим не трогает AudioContext — иначе создание/резюм контекста
     // снова привязывает воспроизведение к суспендируемому в фоне графу.
     if (this.graphActive) await this.runtime.ensureReady()
@@ -561,19 +623,25 @@ export class PlayerPlaybackFacade {
     await this.upgradePromises[deck]
     if (this.runtime.isStretchDeck(deck)) {
       await this.runtime.playDeck(deck)
-      this.reportFullyBuffered()
-    } else {
-      await this.el.play()
+      this.markFullyLocal()
+      return
     }
-    // `preload=auto` is only a browser hint and commonly stalls around 90%.
-    // Once playback has actually started, explicitly consume the complete
-    // response into a Blob. Native playback remains uninterrupted; the Blob
-    // guarantees that all bytes are present before the next prefetch begins.
-    if (!this.runtime.isStretchDeck(deck)) this.cacheActiveTrack()
+    const el = this.el
+    const generation = this.sourceGeneration
+    try {
+      await el.play()
+    } catch (error) {
+      // A seek reload (or the offset-stream fallback) replaced this element's
+      // source while play() was pending — that rejects the pending promise
+      // (AbortError / NotSupportedError), but the reload owns resuming now.
+      if (el === this.el && generation !== this.sourceGeneration) return
+      throw error
+    }
   }
 
   pause() {
-    if (this.pendingNetworkSeek) this.pendingNetworkSeek.wasPlaying = false
+    this.playRequested = false
+    if (this.pendingReload) this.pendingReload.wasPlaying = false
     const deck = this.runtime.programDeck
     if (this.runtime.isStretchDeck(deck)) {
       void this.runtime.pauseDeck(deck).catch((error: Error) => this.callbacks?.onError(error.message))
@@ -591,18 +659,20 @@ export class PlayerPlaybackFacade {
     this.cancelPrefetch()
     this.clearPrefetched()
     this.clearDjDeck()
-    this.cancelActiveCache()
+    this.cancelPendingMetadataAction()
+    this.endPendingReload()
     if (this.activeObjectUrl) URL.revokeObjectURL(this.activeObjectUrl)
     this.activeObjectUrl = null
     this.activeBlob = null
     this.activeKnownDuration = null
     this.activeNetworkUrl = null
-    if (this.pendingNetworkSeek) this.callbacks?.onSeekBufferingChange?.(false)
-    this.pendingNetworkSeek = null
-    this.activeCacheRetryCount = 0
+    this.streamOffset = 0
+    this.offsetFallbackUsed = false
+    this.playRequested = false
     this.activeTrackId = null
     this.activeQueueItemId = null
-    this.fullyBufferedReported = false
+    this.fullyLocal = false
+    this.bufferSettledReported = false
     this.graphActive = false
     this.djActivationPromise = null
     this.djDeactivationPromise = null
@@ -646,70 +716,25 @@ export class PlayerPlaybackFacade {
     const deck = this.runtime.programDeck
     const snapshot = this.runtime.getSnapshot().decks[deck]
     if (snapshot.sourceKind === "signalsmith" && snapshot.duration) {
-      this.pendingNetworkSeek = null
       void this.runtime.seekDeck(deck, clamped * snapshot.duration)
         .catch((error: Error) => this.callbacks?.onError(error.message))
       return
     }
-    const el = this.el
-    if (this.activeNetworkUrl) {
-      // If the target has already arrived via native progressive buffering,
-      // repositioning is just a pointer move over bytes the browser already
-      // holds — no new network request, so none of the "transcoding upstream"
-      // unreliability below applies. This is the common case (scrubbing near
-      // the current position, rewinding into already-played audio) and used
-      // to be blocked behind a full-file wait for no reason.
-      // el.duration can stay unresolved (NaN/Infinity) for the whole download
-      // on a chunked transcoded stream with no Content-Length — fall back to
-      // the track's real duration from API metadata so the fast path below
-      // isn't dead code for exactly the profile that needs it most.
-      const durationSeconds = Number.isFinite(el.duration) && el.duration > 0
-        ? el.duration
-        : this.activeKnownDuration
-      const targetSeconds = durationSeconds !== null ? clamped * durationSeconds : null
-      if (targetSeconds !== null && this.isBufferedAt(el.buffered, targetSeconds)) {
-        this.pendingNetworkSeek = null
-        el.currentTime = targetSeconds
-        playerLog("seek", "fast path: target already buffered", {
-          trackId: this.activeTrackId,
-          targetSeconds: Math.round(targetSeconds * 100) / 100,
-        })
-        return
-      }
-      // The raw network stream is not reliably seekable while still being
-      // transcoded upstream: writing el.currentTime here can be silently
-      // accepted and then reset to 0, which is audible as the track
-      // restarting. Instead, pause and wait for the full-track Blob swap
-      // (activateCachedSource) to apply the position on a genuinely local,
-      // always-seekable source.
-      const wasPlaying = this.pendingNetworkSeek?.wasPlaying ?? !el.paused
-      this.pendingNetworkSeek = { fraction: clamped, wasPlaying }
-      el.pause()
-      this.callbacks?.onSeekBufferingChange?.(true)
-      playerLog("seek", "slow path: waiting for full cache", {
-        trackId: this.activeTrackId,
-        targetSeconds: targetSeconds !== null ? Math.round(targetSeconds * 100) / 100 : null,
-      })
-      this.cacheActiveTrack()
+    const duration = this.trackDuration()
+    if (duration !== null) {
+      this.seekToTrackSeconds(clamped * duration, true)
       return
     }
-    this.pendingNetworkSeek = null
-    const apply = () => {
-      el.removeEventListener("loadedmetadata", apply)
-      if (el !== this.el || !Number.isFinite(el.duration) || el.duration <= 0) return
-      el.currentTime = clamped * el.duration
-    }
-    if (Number.isFinite(el.duration) && el.duration > 0) apply()
-    else el.addEventListener("loadedmetadata", apply)
+    // No duration anywhere yet (fresh element, no API metadata): resolve the
+    // fraction once the source's metadata arrives instead of dropping it.
+    this.whenMetadataReady(this.el, () => {
+      const resolved = this.trackDuration()
+      if (resolved !== null) this.seekToTrackSeconds(clamped * resolved, true)
+    })
   }
 
   seekToSeconds(seconds: number) {
-    const deck = this.runtime.programDeck
-    if (this.runtime.isStretchDeck(deck)) {
-      void this.runtime.seekDeck(deck, seconds).catch((error: Error) => this.callbacks?.onError(error.message))
-    } else {
-      this.el.currentTime = seconds
-    }
+    this.seekToTrackSeconds(seconds, true)
   }
 
   seekDeckToSeconds(deck: DeckId, seconds: number): void {
@@ -719,6 +744,10 @@ export class PlayerPlaybackFacade {
     }
     const element = this.elementForDeck(deck)
     if (!element || !Number.isFinite(seconds)) return
+    if (element === this.el) {
+      this.seekToTrackSeconds(seconds, true)
+      return
+    }
     const maximum = Number.isFinite(element.duration) && element.duration > 0
       ? element.duration
       : Number.POSITIVE_INFINITY
@@ -726,26 +755,12 @@ export class PlayerPlaybackFacade {
   }
 
   /**
-   * Seek as soon as the track's metadata is available. Usable right after
-   * load(): duration can remain unknown until metadata arrives,
-   * so an immediate currentTime write would be silently dropped.
+   * Position the current track without the seek-buffering indicator (e.g.
+   * right after load()). Same mechanism as a seek: deferred to metadata for
+   * Range/Blob sources, a `t` reload for a transcode.
    */
   resumeAtSeconds(seconds: number) {
-    const deck = this.runtime.programDeck
-    if (this.runtime.isStretchDeck(deck)) {
-      void this.runtime.seekDeck(deck, seconds).catch((error: Error) => this.callbacks?.onError(error.message))
-      return
-    }
-    if (Number.isFinite(this.el.duration) && this.el.duration > 0) {
-      this.el.currentTime = seconds
-      return
-    }
-    const el = this.el
-    const apply = () => {
-      el.removeEventListener("loadedmetadata", apply)
-      el.currentTime = seconds
-    }
-    el.addEventListener("loadedmetadata", apply)
+    this.seekToTrackSeconds(seconds, false)
   }
 
   setVolume(v: number) {
@@ -766,7 +781,7 @@ export class PlayerPlaybackFacade {
     const snapshot = this.runtime.getSnapshot().decks[deck]
     return snapshot.sourceKind === "signalsmith"
       ? snapshot.anchor?.mediaSeconds ?? 0
-      : this.el.currentTime
+      : this.streamOffset + this.el.currentTime
   }
 
   get duration() {
@@ -774,7 +789,7 @@ export class PlayerPlaybackFacade {
     const snapshot = this.runtime.getSnapshot().decks[deck]
     return snapshot.sourceKind === "signalsmith"
       ? snapshot.duration ?? 0
-      : this.el.duration
+      : this.trackDuration() ?? this.el.duration
   }
 
   get paused() {
@@ -793,7 +808,8 @@ export class PlayerPlaybackFacade {
     const snapshot = this.runtime.getSnapshot().decks[deck]
     if (snapshot.sourceKind === "signalsmith") return snapshot.anchor?.mediaSeconds ?? null
     const element = this.elementForDeck(deck)
-    return element && Number.isFinite(element.currentTime) ? element.currentTime : null
+    if (!element || !Number.isFinite(element.currentTime)) return null
+    return element === this.el ? this.streamOffset + element.currentTime : element.currentTime
   }
 
   getMixerMeters(): Record<DeckId | "master", number> {
@@ -958,7 +974,7 @@ export class PlayerPlaybackFacade {
     if (!candidate) return null
     const snapshot = this.runtime.getSnapshot().decks[deck]
     const startAtSeconds = candidate.element
-      ? candidate.element.currentTime
+      ? candidate.element.currentTime + (candidate.element === this.el ? this.streamOffset : 0)
       : snapshot.anchor?.mediaSeconds ?? 0
     const autoplay = snapshot.transport === "playing" || (candidate.element ? !candidate.element.paused : false)
     const result = await this.queueStretchUpgrade(deck, candidate.source, { startAtSeconds, autoplay })
@@ -1006,7 +1022,7 @@ export class PlayerPlaybackFacade {
     const duration = deck.duration ?? 0
     const currentTime = deck.anchor?.mediaSeconds ?? 0
     this.callbacks?.onTimeUpdate(currentTime, duration)
-    if (duration > 0) this.reportFullyBuffered()
+    if (duration > 0) this.markFullyLocal()
     if (deck.transport === this.lastRuntimeTransport) return
     const previous = this.lastRuntimeTransport
     this.lastRuntimeTransport = deck.transport
@@ -1033,35 +1049,40 @@ export class PlayerPlaybackFacade {
   private attachListeners(el: HTMLAudioElement) {
     el.addEventListener("timeupdate", () => {
       if (el !== this.el) return
-      this.callbacks?.onTimeUpdate(el.currentTime, el.duration || 0)
+      this.callbacks?.onTimeUpdate(this.streamOffset + el.currentTime, this.trackDuration() ?? 0)
+      this.checkBufferingSettled(el, "timeupdate")
     })
 
     const reportBuffered = () => {
       if (el !== this.el) return
-      if (this.fullyBufferedReported) {
+      if (this.fullyLocal) {
         this.callbacks?.onBufferUpdate([{ start: 0, end: 1 }])
         return
       }
-      if (!Number.isFinite(el.duration) || el.duration <= 0) return
+      const duration = this.trackDuration()
+      if (duration === null) return
       // A media element may retain several disjoint ranges after seeking.
       // Preserve every segment so the UI never paints an unloaded gap as
-      // downloaded content.
+      // downloaded content. Ranges of an offset (`t`) stream are shifted
+      // onto the track's own timeline.
       const ranges: BufferedRange[] = []
       const { buffered } = el
       for (let i = 0; i < buffered.length; i++) {
         ranges.push({
-          start: Math.max(0, Math.min(1, buffered.start(i) / el.duration)),
-          end: Math.max(0, Math.min(1, buffered.end(i) / el.duration)),
+          start: Math.max(0, Math.min(1, (this.streamOffset + buffered.start(i)) / duration)),
+          end: Math.max(0, Math.min(1, (this.streamOffset + buffered.end(i)) / duration)),
         })
       }
       this.callbacks?.onBufferUpdate(ranges)
-      if (this.bufferCoversDuration(el.buffered, el.duration)) this.reportFullyBuffered()
+      this.checkBufferingSettled(el, "progress")
     }
 
     el.addEventListener("progress", reportBuffered)
     el.addEventListener("loadedmetadata", reportBuffered)
     el.addEventListener("durationchange", reportBuffered)
     el.addEventListener("canplaythrough", reportBuffered)
+    // The browser idled its download (mobile browsers stop around 80-90%).
+    el.addEventListener("suspend", () => this.checkBufferingSettled(el, "suspend"))
 
     el.addEventListener("play", () => {
       if (el !== this.el) return
@@ -1071,11 +1092,15 @@ export class PlayerPlaybackFacade {
     // "playing" fires after buffering resumes — fixes spinner stuck after "waiting"
     el.addEventListener("playing", () => {
       if (el !== this.el) return
+      this.endPendingReload()
       this.callbacks?.onPlaybackStateChange("playing")
     })
 
     el.addEventListener("pause", () => {
       if (el !== this.el) return
+      // A seek reload of a playing stream interrupts it; that is not a user
+      // pause (a real one clears pendingReload.wasPlaying first).
+      if (this.pendingReload?.wasPlaying) return
       if (!el.ended) this.callbacks?.onPlaybackStateChange("paused")
     })
 
@@ -1085,7 +1110,9 @@ export class PlayerPlaybackFacade {
     })
 
     el.addEventListener("canplay", () => {
-      // only emit if we were loading — play/pause events handle the rest
+      if (el !== this.el) return
+      // A paused seek reload is done once the new offset has data.
+      if (this.pendingReload && !this.pendingReload.wasPlaying) this.endPendingReload()
     })
 
     el.addEventListener("ended", () => {
@@ -1095,6 +1122,8 @@ export class PlayerPlaybackFacade {
 
     el.addEventListener("error", () => {
       if (el !== this.el) return
+      if (this.fallBackFromOffsetStream(el)) return
+      this.endPendingReload()
       const err = el.error
       const msg = err ? `Media error ${err.code}: ${err.message}` : "Unknown audio error"
       this.callbacks?.onPlaybackStateChange("error")
@@ -1102,57 +1131,246 @@ export class PlayerPlaybackFacade {
     })
   }
 
-  private isBufferedAt(buffered: TimeRanges, targetSeconds: number): boolean {
-    const tolerance = 0.25
-    for (let i = 0; i < buffered.length; i++) {
-      if (buffered.start(i) - tolerance <= targetSeconds && buffered.end(i) + tolerance >= targetSeconds) return true
-    }
-    return false
+  /** Base network source of a transcode profile — no Range support, seeks server-side with `t`. */
+  private isTranscodedNetworkSource(): boolean {
+    return this.activeNetworkUrl !== null && this.activeProfileKey !== "raw"
   }
 
-  private bufferCoversDuration(buffered: TimeRanges, duration: number): boolean {
-    if (!Number.isFinite(duration) || duration <= 0 || buffered.length === 0) return false
-    const tolerance = 0.25
-    let coveredEnd = 0
-    for (let i = 0; i < buffered.length; i++) {
-      const start = buffered.start(i)
-      const end = buffered.end(i)
-      if (start > coveredEnd + tolerance) return false
-      coveredEnd = Math.max(coveredEnd, end)
-      if (coveredEnd >= duration - tolerance) return true
+  /**
+   * The track's duration on its own timeline. Raw/Blob sources trust the
+   * element (exact). A transcode trusts the API metadata: its el.duration is
+   * a Content-Length estimate, unresolved when chunked, and only the
+   * remainder for an offset stream.
+   */
+  private trackDuration(): number | null {
+    const el = this.el
+    const elementDuration = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : null
+    if (!this.isTranscodedNetworkSource() && this.streamOffset === 0 && elementDuration !== null) {
+      return elementDuration
     }
-    return false
+    if (this.activeKnownDuration !== null) return this.activeKnownDuration
+    return elementDuration !== null ? this.streamOffset + elementDuration : null
   }
 
-  private reportFullyBuffered() {
-    if (this.fullyBufferedReported || this.activeTrackId === null) return
-    this.fullyBufferedReported = true
-    this.cancelActiveCache()
-    this.callbacks?.onBufferUpdate([{ start: 0, end: 1 }])
-    // Native buffering can independently reach full coverage (via `progress`/
-    // `canplaythrough`) before the explicit cacheActiveTrack() Blob swap
-    // finishes. If a network seek is still pending in that case, the element
-    // is now confirmed fully local — apply it directly instead of leaving
-    // playback paused with no swap ever coming to resolve it.
-    // Guarded on activeNetworkUrl: cacheActiveTrack()'s own success path
-    // already cleared it and swapped this.el to the new Blob element via
-    // activateCachedSource() *before* calling us — that element's resume()
-    // (on its own loadedmetadata) is the one that must apply pendingNetworkSeek,
-    // not this fallback, or the position gets applied against a duration that
-    // hasn't loaded yet and the swap's own resume() finds nothing left to do.
-    if (this.activeNetworkUrl && this.pendingNetworkSeek && Number.isFinite(this.el.duration) && this.el.duration > 0) {
-      const pendingSeek = this.pendingNetworkSeek
-      this.pendingNetworkSeek = null
-      this.el.currentTime = pendingSeek.fraction * this.el.duration
-      this.callbacks?.onSeekBufferingChange?.(false)
-      if (pendingSeek.wasPlaying) {
-        void this.el.play().catch((error: Error) => {
-          this.callbacks?.onPlaybackStateChange("error")
-          this.callbacks?.onError(error.message)
-        })
-      }
+  /** Whole-second server offset for a start/seek target, 0 when the source seeks natively. */
+  private serverOffsetFor(sourceUrl: string, targetSeconds: number): number {
+    if (
+      sourceUrl !== this.activeNetworkUrl
+      || !this.isTranscodedNetworkSource()
+      || this.offsetFallbackUsed
+      || targetSeconds < 1
+    ) return 0
+    let offset = Math.floor(targetSeconds)
+    if (this.activeKnownDuration !== null) {
+      offset = Math.min(offset, Math.max(0, Math.ceil(this.activeKnownDuration) - 1))
     }
-    this.callbacks?.onFullyBuffered?.(this.activeTrackId, this.activeProfileKey)
+    return offset
+  }
+
+  /**
+   * Point `el` at `sourceUrl` starting `startSeconds` into the track. A
+   * transcode starts server-side (`t`, the element's timeline then begins at
+   * streamOffset); everything else — raw Range-capable streams and Blobs —
+   * seeks natively once metadata is known.
+   */
+  private openSource(el: HTMLAudioElement, sourceUrl: string, startSeconds: number, autoplay: boolean): void {
+    this.cancelPendingMetadataAction()
+    const offset = this.serverOffsetFor(sourceUrl, startSeconds)
+    this.streamOffset = offset
+    this.sourceGeneration += 1
+    el.src = offset > 0 ? withStartOffset(sourceUrl, offset) : sourceUrl
+    el.load()
+    const nativeStart = offset > 0 ? 0 : startSeconds
+    if (nativeStart > 0) {
+      // Position before resuming, so nothing from 0 is audible first.
+      this.whenMetadataReady(el, () => {
+        const limit = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : nativeStart
+        el.currentTime = Math.min(nativeStart, limit)
+        if (autoplay) this.resumeElement(el)
+      })
+    } else if (autoplay) {
+      this.resumeElement(el)
+    }
+  }
+
+  private resumeElement(el: HTMLAudioElement): void {
+    const generation = this.sourceGeneration
+    void el.play().catch((error: Error) => {
+      if (el !== this.el || generation !== this.sourceGeneration || error.name === "AbortError") return
+      this.callbacks?.onPlaybackStateChange("error")
+      this.callbacks?.onError(error.message)
+    })
+  }
+
+  private seekToTrackSeconds(seconds: number, showIndicator: boolean): void {
+    if (!Number.isFinite(seconds)) return
+    const deck = this.runtime.programDeck
+    if (this.runtime.isStretchDeck(deck)) {
+      void this.runtime.seekDeck(deck, seconds).catch((error: Error) => this.callbacks?.onError(error.message))
+      return
+    }
+    const duration = this.trackDuration()
+    const target = Math.max(0, duration !== null ? Math.min(seconds, duration) : seconds)
+    const el = this.el
+    if (!this.isTranscodedNetworkSource() || this.offsetFallbackUsed) {
+      // Raw (Range-capable) stream or local Blob: the browser fetches the
+      // target range itself — no pause, no waiting for the whole file. Only a
+      // not-yet-known duration defers the write (it would be dropped).
+      this.whenMetadataReady(el, () => {
+        if (el !== this.el) return
+        el.currentTime = Math.max(0, target - this.streamOffset)
+      })
+      playerLog("seek", "native", { trackId: this.activeTrackId, targetSeconds: Math.round(target * 100) / 100 })
+      return
+    }
+    const local = target - this.streamOffset
+    if (local >= 0 && this.canSeekWithinStream(el, local)) {
+      // Already buffered and seekable in the current (possibly offset)
+      // stream: a pointer move over bytes the browser holds.
+      this.cancelPendingMetadataAction()
+      el.currentTime = local
+      playerLog("seek", "within transcoded stream", { trackId: this.activeTrackId, targetSeconds: Math.round(target * 100) / 100 })
+      return
+    }
+    this.reloadAtOffset(target, showIndicator)
+  }
+
+  /**
+   * A transcode ignores Range (Navidrome answers `Accept-Ranges: none`), and
+   * writing currentTime outside `seekable` snaps a browser back to 0 — so a
+   * native seek is only safe where the target is both buffered and seekable.
+   */
+  private canSeekWithinStream(el: HTMLAudioElement, localSeconds: number): boolean {
+    return rangeContaining(el.buffered, localSeconds) !== null
+      && rangeContaining(el.seekable as TimeRanges | undefined, localSeconds) !== null
+  }
+
+  /** Server-side seek: reload the transcode starting at `targetSeconds` (`t`). */
+  private reloadAtOffset(targetSeconds: number, showIndicator: boolean): void {
+    const url = this.activeNetworkUrl
+    if (url === null) return
+    const el = this.el
+    const wasPlaying = this.pendingReload?.wasPlaying ?? !el.paused
+    const indicator = showIndicator || (this.pendingReload?.indicator ?? false)
+    if (indicator && !this.pendingReload?.indicator) this.callbacks?.onSeekBufferingChange?.(true)
+    this.pendingReload = { wasPlaying, indicator }
+    this.openSource(el, url, targetSeconds, wasPlaying)
+    this.callbacks?.onBufferUpdate([])
+    playerLog("seek", "transcoded reload", {
+      trackId: this.activeTrackId,
+      targetSeconds: Math.round(targetSeconds * 100) / 100,
+      offset: this.streamOffset,
+    })
+  }
+
+  private endPendingReload(): void {
+    const pending = this.pendingReload
+    if (!pending) return
+    this.pendingReload = null
+    if (pending.indicator) this.callbacks?.onSeekBufferingChange?.(false)
+  }
+
+  /**
+   * An offset stream failed (e.g. the server refused `t` because this track
+   * is served from a local file, or a backend without `t` support): reopen
+   * the plain source once and seek natively instead of surfacing an error.
+   */
+  private fallBackFromOffsetStream(el: HTMLAudioElement): boolean {
+    const url = this.activeNetworkUrl
+    if (this.streamOffset <= 0 || url === null || this.offsetFallbackUsed) return false
+    const target = this.streamOffset
+    const autoplay = this.pendingReload?.wasPlaying ?? this.playRequested
+    if (this.pendingReload) this.pendingReload.wasPlaying = autoplay
+    this.offsetFallbackUsed = true
+    playerLog("seek", "offset stream failed, falling back to native seek", {
+      trackId: this.activeTrackId,
+      targetSeconds: target,
+    })
+    this.openSource(el, url, target, autoplay)
+    return true
+  }
+
+  /** Run `action` once `el` knows its metadata (immediately if it already does); the latest request wins. */
+  private whenMetadataReady(el: HTMLAudioElement, action: () => void): void {
+    this.cancelPendingMetadataAction()
+    if (metadataReady(el)) {
+      action()
+      return
+    }
+    const handler = () => {
+      el.removeEventListener("loadedmetadata", handler)
+      if (this.pendingMetadataAction?.handler === handler) this.pendingMetadataAction = null
+      if (el !== this.el) return
+      action()
+    }
+    this.pendingMetadataAction = { el, handler }
+    el.addEventListener("loadedmetadata", handler)
+  }
+
+  private cancelPendingMetadataAction(): void {
+    const pending = this.pendingMetadataAction
+    if (!pending) return
+    this.pendingMetadataAction = null
+    pending.el.removeEventListener("loadedmetadata", pending.handler)
+  }
+
+  /**
+   * Decide whether the current track's own buffering has settled, so the
+   * next track can be fetched without competing with it. Fired by the first of:
+   * fully buffered; the browser idling its download (`suspend`, NETWORK_IDLE)
+   * with at least min(SETTLED_AHEAD_SECONDS, remaining) ready ahead; or the
+   * safety nets — buffered end at SETTLED_BUFFERED_FRACTION of the track, or
+   * fewer than SETTLED_REMAINING_SECONDS left to play. All measured on the
+   * track's timeline, so an offset (`t`) stream counts from its offset.
+   */
+  private checkBufferingSettled(el: HTMLAudioElement, trigger: "progress" | "suspend" | "timeupdate"): void {
+    if (el !== this.el || this.bufferSettledReported || this.activeTrackId === null) return
+    if (this.activeNetworkUrl === null) return
+    const duration = this.trackDuration()
+    if (duration === null) return
+    const localPosition = Number.isFinite(el.currentTime) ? el.currentTime : 0
+    const position = this.streamOffset + localPosition
+    const remaining = Math.max(0, duration - position)
+    const range = rangeContaining(el.buffered, localPosition)
+    const ahead = range ? Math.max(0, range.end - localPosition) : 0
+    const bufferedEnd = position + ahead
+    let reason: string | null = null
+    if (bufferedEnd >= duration - RANGE_TOLERANCE_SECONDS) {
+      reason = "fully buffered"
+    } else if (
+      trigger === "suspend"
+      && el.networkState === NETWORK_IDLE
+      && el.readyState >= HAVE_FUTURE_DATA
+      && ahead >= Math.min(SETTLED_AHEAD_SECONDS, remaining)
+    ) {
+      reason = "browser stopped buffering"
+    } else if (bufferedEnd >= duration * SETTLED_BUFFERED_FRACTION) {
+      reason = "buffered past threshold"
+    } else if (remaining < SETTLED_REMAINING_SECONDS) {
+      reason = "near the end"
+    }
+    if (reason) this.reportBufferingSettled(reason)
+  }
+
+  private reportBufferingSettled(reason: string): void {
+    if (this.bufferSettledReported || this.activeTrackId === null) return
+    this.bufferSettledReported = true
+    playerLog("buffer", "current buffering settled", {
+      trackId: this.activeTrackId,
+      profile: this.activeProfileKey,
+      reason,
+    })
+    this.callbacks?.onBufferingSettled?.(this.activeTrackId, this.activeProfileKey)
+  }
+
+  /** The whole track is local (Blob or a decoded stretch deck). */
+  private markFullyLocal(): void {
+    if (this.activeTrackId === null) return
+    if (!this.fullyLocal) {
+      this.fullyLocal = true
+      this.callbacks?.onBufferUpdate([{ start: 0, end: 1 }])
+    }
+    this.reportBufferingSettled("local source")
   }
 
   private elementForDeck(deck: DeckId): HTMLAudioElement | null {
@@ -1160,134 +1378,6 @@ export class PlayerPlaybackFacade {
     if (this.djDeck?.deck === deck) return this.djDeck.element
     if (this.retired?.deck === deck) return this.retired.element
     return null
-  }
-
-  private cacheActiveTrack() {
-    const trackId = this.activeTrackId
-    const profileKey = this.activeProfileKey
-    const url = this.activeNetworkUrl
-    if (trackId === null || !url || this.fullyBufferedReported) return
-    if (
-      this.activeCacheTarget?.trackId === trackId
-      && this.activeCacheTarget.profileKey === profileKey
-      && this.activeCacheTarget.url === url
-    ) return
-
-    this.cancelActiveCache()
-    const controller = new AbortController()
-    const target = { trackId, profileKey, url }
-    this.activeCacheController = controller
-    this.activeCacheTarget = target
-    playerLog("buffer", "force-cache current", { trackId, profile: profileKey })
-
-    void this.fetchAudioBlob(url, controller.signal)
-      .then((blob) => {
-        if (controller.signal.aborted || this.activeCacheTarget !== target) return
-        if (
-          this.activeTrackId !== trackId
-          || this.activeProfileKey !== profileKey
-          || this.activeNetworkUrl !== url
-        ) return
-
-        if (this.activeObjectUrl) URL.revokeObjectURL(this.activeObjectUrl)
-        this.activeObjectUrl = URL.createObjectURL(blob)
-        this.activeBlob = blob
-        this.activeNetworkUrl = null
-        this.activeCacheController = null
-        this.activeCacheTarget = null
-        this.activateCachedSource(this.activeObjectUrl)
-        playerLog("buffer", "current Blob ready", { trackId, profile: profileKey })
-        this.reportFullyBuffered()
-      })
-      // Native media playback remains the fallback. A later play attempt may
-      // retry the explicit cache without turning the player into error.
-      .catch((error: Error) => {
-        if (error.name === "AbortError") return
-        const stillCurrent = this.activeTrackId === trackId
-          && this.activeProfileKey === profileKey
-          && this.activeNetworkUrl === url
-        if (stillCurrent && this.activeCacheRetryCount < 1) {
-          this.activeCacheRetryCount += 1
-          this.activeCacheTarget = null
-          this.activeCacheController = null
-          playerLog("buffer", "force-cache retry", { trackId, profile: profileKey })
-          this.cacheActiveTrack()
-          return
-        }
-        playerLog("buffer", "force-cache failed", {
-          trackId,
-          profile: profileKey,
-          message: error.message,
-        })
-        if (this.pendingNetworkSeek) {
-          this.pendingNetworkSeek = null
-          this.callbacks?.onSeekBufferingChange?.(false)
-        }
-        this.callbacks?.onError(error.message)
-      })
-      .finally(() => {
-        if (this.activeCacheController === controller) this.activeCacheController = null
-        if (this.activeCacheTarget === target) this.activeCacheTarget = null
-      })
-  }
-
-  private cancelActiveCache() {
-    this.activeCacheController?.abort()
-    this.activeCacheController = null
-    this.activeCacheTarget = null
-  }
-
-  private async fetchAudioBlob(url: string, signal: AbortSignal): Promise<Blob> {
-    const response = await fetch(url, {
-      credentials: "same-origin",
-      signal,
-    })
-    if (!response.ok) throw new Error(`Active audio cache failed: HTTP ${response.status}`)
-    return response.blob()
-  }
-
-  private activateCachedSource(objectUrl: string) {
-    const prev = this.el
-    const position = prev.currentTime
-    // Our own seek() pauses the raw element while buffering, so `!prev.paused`
-    // would always read false here; the seek's own play/pause intent
-    // (pendingNetworkSeek.wasPlaying) is the source of truth when a seek is
-    // in flight.
-    const shouldResume = this.pendingNetworkSeek ? this.pendingNetworkSeek.wasPlaying : !prev.paused
-    const next = this.createElement()
-    next.volume = prev.volume
-    next.muted = prev.muted
-    next.src = objectUrl
-
-    // Make stale element events inert before unloading it. The replacement is
-    // local, so metadata/seek do not require another network request.
-    this.el = next
-    if (this.graphActive) {
-      this.runtime.routeProgramElement(next, this.activeTrackId, this.activeQueueItemId)
-    }
-    prev.pause()
-    prev.src = ""
-    prev.load()
-
-    const resume = () => {
-      next.removeEventListener("loadedmetadata", resume)
-      if (next !== this.el) return
-      const pendingSeek = this.pendingNetworkSeek
-      const requestedPosition = pendingSeek === null
-        ? position
-        : pendingSeek.fraction * next.duration
-      this.pendingNetworkSeek = null
-      if (pendingSeek !== null) this.callbacks?.onSeekBufferingChange?.(false)
-      next.currentTime = Math.min(requestedPosition, next.duration || requestedPosition)
-      if (shouldResume) {
-        void next.play().catch((error: Error) => {
-          this.callbacks?.onPlaybackStateChange("error")
-          this.callbacks?.onError(error.message)
-        })
-      }
-    }
-    next.addEventListener("loadedmetadata", resume)
-    next.load()
   }
 }
 

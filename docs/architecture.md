@@ -212,15 +212,18 @@ Implementation files: `app/api/playback.py`, `app/store/playback.py`,
 ### Browser audio buffering and transcoding
 
 The web player keeps buffering on the client device. The active
-`HTMLAudioElement` uses `preload="auto"` for immediate playback and a parallel
-full-response fetch guarantees completion when a mobile browser stops native
-buffering early. Once ready, playback adopts the local `blob:` source at the
-same timestamp. Only after the active track is fully available does
-`playerStore` fetch the next queue item's `/audio` response as another Blob,
-so the transition does not wait for mobile networking. Only the active Blob
-and one next Blob are retained. Source/queue changes abort stale fetches, and
-object URLs are revoked after use or logout. An early skip never waits for
-prefetch and falls back to the ordinary network URL.
+`HTMLAudioElement` plays the `/audio` response as a plain progressive stream
+(`preload="auto"`); its bytes are fetched once, by the browser. Seeking a raw
+stream is a native Range seek; a transcoded stream (no Range support) seeks
+server-side by reloading with `t` (below). Once the current track's buffering
+has *settled* — fully buffered, the browser idling its download with enough
+audio ahead, or a safety net (80% buffered / under 45 s left) — `playerStore`
+fetches the next queue item's `/audio` response as a Blob at low fetch
+priority, so the transition does not wait for mobile networking. Only that
+next Blob (and a consumed one while it plays) is retained. Source/queue
+changes abort stale fetches, and object URLs are revoked after use or logout.
+An early skip never waits for prefetch and falls back to the ordinary network
+URL. Details: `docs/ui-player.md` ("Streaming, seek and next-track prefetch").
 
 Playback settings are per-user keys in `user_settings`:
 
@@ -233,20 +236,29 @@ Raw playback sends `format=raw` to Navidrome. Enabled transcoding sends
 the active user's Navidrome credentials. Navidrome must have an applicable MP3
 transcoding profile. The browser keeps no persistent/offline audio cache.
 
-`navidrome_audio_stream_response` (`app/api/tracks.py`) does not forward
-Navidrome's `Content-Length` when the request used `estimateContentLength`:
-that header is a bitrate × duration estimate for an on-the-fly transcode, not
-the real encoded size, and the actual stream can legitimately end up shorter.
-Forwarding it verbatim made Starlette compare bytes actually sent against
-that declared length and abort the response ("Response content shorter than
-Content-Length") whenever the estimate overshot — which propagated through
-both nginx hops as "upstream prematurely closed connection" and reached the
-browser as a failed fetch. That failure specifically broke the transcoded
-profile's `cacheActiveTrack()`/native-buffering fetches, which is what
-`playerStore.seek()`'s network gate waits on — so the transcoding path could
-appear to have the seek bar buffer stall and seeking staying blocked, when
-the actual fault was this backend response getting cut short, not the seek
-UI logic itself.
+`navidrome_audio_stream_response` (`app/api/tracks.py`) keeps Navidrome's
+`Content-Length` for an `estimateContentLength` transcode but makes the body
+honour it: the estimate (bitrate × duration) is not the real encoded size, so
+a short upstream is padded with zero bytes and an overlong one truncated.
+Forwarding the estimate verbatim with a shorter body made Starlette abort the
+response ("Response content shorter than Content-Length"), seen through both
+nginx hops as "upstream prematurely closed connection"; dropping the header
+instead left a plain request without any length, so the browser reported
+duration `Infinity`.
+
+**Server-side seek (`t`).** `GET /api/v1/tracks/{id}/audio?t=<seconds>`
+(`>= 0`, validated; fractional values are floored — Navidrome's `timeOffset`
+takes whole seconds) starts a transcoded stream mid-track: the proxy drops
+`estimateContentLength` (its estimate would describe the whole track) and
+passes `timeOffset`. The `Content-Length` it declares instead is the
+remainder estimated with Navidrome's own formula (`(duration − t) × kbps / 8 ×
+1024`, padded/truncated like above); without a known track duration the
+offset stream goes out chunked with no length. `t` past the track's duration
+is `400`; `t=0` is the ordinary stream. `t` is only meaningful for a
+transcode: for the raw profile (Range-capable, the browser seeks natively)
+and for tracks served from a local file it is rejected with `400` — the
+player only sends it for transcoded profiles and falls back to a native seek
+if an offset stream fails.
 
 Implementation files: `ui/src/engine/playback/PlayerPlaybackFacade.ts`,
 `ui/src/engine/playback/PlaybackEngine.ts`,
@@ -257,8 +269,9 @@ The browser player imports the compatibility facade from
 `ui/src/engine/playback/`. It preserves the established load, Blob cache,
 transport, buffer callback, Media Session and persisted-position semantics
 while routing two persistent physical deck strips through one lazy
-`PlaybackEngine`. Once the program track is fully buffered, the next-track
-Blob prefetch also creates and routes the free deck without changing the
+`PlaybackEngine`. Once the program track's buffering has settled, the
+next-track Blob is prefetched; that prefetch is graph-unaware — the free deck
+is seeded from the Blob only when DJ mode is activated — and never changes the
 compact-player projection or canonical queue item.
 
 Global Next uses the prepared deck when available: it starts incoming, applies

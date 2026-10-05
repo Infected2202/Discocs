@@ -223,6 +223,116 @@ export class FakeStretchNode {
   }
 }
 
+export class FakeTimeRanges implements TimeRanges {
+  private readonly ranges: ReadonlyArray<readonly [number, number]>
+
+  constructor(ranges: ReadonlyArray<readonly [number, number]> = []) {
+    this.ranges = ranges
+  }
+
+  get length(): number {
+    return this.ranges.length
+  }
+
+  start(index: number): number {
+    return this.ranges[index][0]
+  }
+
+  end(index: number): number {
+    return this.ranges[index][1]
+  }
+}
+
+// HTMLMediaElement network/ready states, mirrored for the fake below.
+export const MEDIA_NETWORK_IDLE = 1
+export const MEDIA_NETWORK_LOADING = 2
+export const MEDIA_HAVE_METADATA = 1
+export const MEDIA_HAVE_ENOUGH_DATA = 4
+
+/**
+ * A stand-in for HTMLAudioElement with the parts progressive streaming
+ * depends on: `buffered` *and* `seekable` (a non-Range transcode is buffered
+ * but not seekable — Chrome reports [0, 0]), `networkState`/`readyState` for
+ * the `suspend`-based buffering-settled signal, and a `load()` that resets the
+ * element the way a browser does on a new source.
+ */
+export class FakeMediaElement {
+  src = ""
+  preload = ""
+  volume = 1
+  muted = false
+  currentTime = 0
+  duration = Number.NaN
+  paused = true
+  ended = false
+  error: MediaError | null = null
+  readyState = 0
+  networkState = 0
+  buffered: TimeRanges = new FakeTimeRanges()
+  seekable: TimeRanges = new FakeTimeRanges()
+
+  private readonly listeners = new Map<string, Set<EventListener>>()
+
+  addEventListener = vi.fn((type: string, listener: EventListener) => {
+    const set = this.listeners.get(type) ?? new Set<EventListener>()
+    set.add(listener)
+    this.listeners.set(type, set)
+  })
+
+  removeEventListener = vi.fn((type: string, listener: EventListener) => {
+    this.listeners.get(type)?.delete(listener)
+  })
+
+  load = vi.fn(() => {
+    this.paused = true
+    this.currentTime = 0
+    this.duration = Number.NaN
+    this.readyState = 0
+    this.networkState = MEDIA_NETWORK_LOADING
+    this.error = null
+    this.buffered = new FakeTimeRanges()
+    this.seekable = new FakeTimeRanges()
+  })
+
+  play = vi.fn(async () => {
+    this.paused = false
+  })
+
+  pause = vi.fn(() => {
+    this.paused = true
+  })
+
+  emit(type: string): void {
+    for (const listener of [...(this.listeners.get(type) ?? [])]) listener(new Event(type))
+  }
+
+  /** Metadata arrived: duration known, `loadedmetadata` fired. */
+  loadMetadata(duration: number): void {
+    this.duration = duration
+    this.readyState = Math.max(this.readyState, MEDIA_HAVE_METADATA)
+    this.emit("loadedmetadata")
+  }
+
+  setBuffered(ranges: ReadonlyArray<readonly [number, number]>): void {
+    this.buffered = new FakeTimeRanges(ranges)
+  }
+
+  setSeekable(ranges: ReadonlyArray<readonly [number, number]>): void {
+    this.seekable = new FakeTimeRanges(ranges)
+  }
+}
+
+/** Stub the global `Audio` constructor; returns every element created, in order. */
+export function installFakeAudio(): FakeMediaElement[] {
+  const elements: FakeMediaElement[] = []
+  vi.stubGlobal("Audio", function () {
+    const element = new FakeMediaElement()
+    elements.push(element)
+    return element
+  })
+  return elements
+}
+
 export function createFakeStretchNode(
   clock: FakeStretchClock,
   init: FakeStretchNodeInit = {}

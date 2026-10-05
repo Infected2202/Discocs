@@ -1,13 +1,19 @@
 import { describe, expect, it, vi } from "vitest"
 import type { PlaybackEngine } from "./PlaybackEngine"
 import { PlayerPlaybackFacade } from "./PlayerPlaybackFacade"
+import {
+  installFakeAudio,
+  MEDIA_HAVE_ENOUGH_DATA,
+  MEDIA_NETWORK_IDLE,
+  type FakeMediaElement,
+} from "./testing/webAudioFakes"
 
 function stubCallbacks() {
   return {
     onTimeUpdate: vi.fn(),
     onPlaybackStateChange: vi.fn(),
     onBufferUpdate: vi.fn(),
-    onFullyBuffered: vi.fn(),
+    onBufferingSettled: vi.fn(),
     onSeekBufferingChange: vi.fn(),
     onNextTrackBufferingChange: vi.fn(),
     onEnded: vi.fn(),
@@ -193,9 +199,8 @@ describe("PlayerPlaybackFacade routing", () => {
     })
     const engine = runtime()
     const facade = new PlayerPlaybackFacade(engine)
-    // A blob: source (already local — e.g. a consumed prefetch) takes the
-    // non-network apply() path; a raw network URL now goes through the
-    // pause-and-buffer path covered by the tests below.
+    // A blob: source (already local — e.g. a consumed prefetch) with no
+    // known duration yet: the fraction can only be resolved on metadata.
     facade.load("blob:audio-1", 1)
     const element = audio.at(-1)!
     element.duration = Number.NaN
@@ -288,54 +293,6 @@ describe("PlayerPlaybackFacade routing", () => {
     expect(facade.djModeActive).toBe(true)
   })
 
-  it("keeps the forced active Blob replacement off the graph in ordinary mode", async () => {
-    const audio: MockAudio[] = []
-    vi.stubGlobal("Audio", function () {
-      const instance = new MockAudio()
-      audio.push(instance)
-      return instance
-    })
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      blob: () => Promise.resolve(new Blob(["complete audio"])),
-    }))
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:active-ordinary")
-    const engine = runtime()
-    const facade = new PlayerPlaybackFacade(engine)
-    facade.load("/audio/7", 7, "raw", false, "queue-7")
-
-    await facade.play()
-    await vi.waitFor(() => expect(audio).toHaveLength(3))
-
-    expect(audio.at(-1)?.src).toBe("blob:active-ordinary")
-    expect(engine.routeProgramElement).not.toHaveBeenCalled()
-  })
-
-  it("routes the forced active Blob replacement when the DJ engine is active", async () => {
-    const audio: MockAudio[] = []
-    vi.stubGlobal("Audio", function () {
-      const instance = new MockAudio()
-      audio.push(instance)
-      return instance
-    })
-    let finishBlob!: (blob: Blob) => void
-    const blob = new Promise<Blob>((resolve) => { finishBlob = resolve })
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => blob }))
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:active-dj")
-    const engine = runtime()
-    const facade = new PlayerPlaybackFacade(engine)
-    facade.load("/audio/7", 7, "raw", false, "queue-7")
-    await facade.play()
-    await facade.activateDjMode()
-
-    finishBlob(new Blob(["complete audio"]))
-    await vi.waitFor(() => expect(audio).toHaveLength(3))
-
-    expect(engine.routeProgramElement).toHaveBeenLastCalledWith(
-      audio.at(-1), 7, "queue-7",
-    )
-  })
-
   it("writes currentTime directly when the seek target is already covered by native buffering", () => {
     const audio: MockAudio[] = []
     vi.stubGlobal("Audio", function () {
@@ -365,221 +322,6 @@ describe("PlayerPlaybackFacade routing", () => {
     expect(networkElement.pause).not.toHaveBeenCalled()
     expect(fetchMock).not.toHaveBeenCalled()
     expect(callbacks.onSeekBufferingChange).not.toHaveBeenCalled()
-  })
-
-  it("falls back to the known track duration for the fast path when el.duration never resolves", () => {
-    // A chunked transcoded stream (no Content-Length) can leave el.duration as
-    // NaN/Infinity for the entire download — the fast path must still work
-    // using the track's real duration from API metadata, passed into load().
-    const audio: MockAudio[] = []
-    vi.stubGlobal("Audio", function () {
-      const instance = new MockAudio()
-      audio.push(instance)
-      return instance
-    })
-    const fetchMock = vi.fn()
-    vi.stubGlobal("fetch", fetchMock)
-    const callbacks = stubCallbacks()
-    const facade = new PlayerPlaybackFacade(runtime())
-    facade.init(callbacks)
-    facade.load("/audio/7", 7, "mp3-320", false, "queue-7", 200)
-    const networkElement = audio.at(-1)!
-    networkElement.duration = Number.POSITIVE_INFINITY
-    networkElement.buffered = {
-      length: 1,
-      start: vi.fn().mockReturnValue(0),
-      end: vi.fn().mockReturnValue(150),
-    }
-
-    facade.seek(0.6)
-
-    expect(networkElement.currentTime).toBe(120)
-    expect(networkElement.pause).not.toHaveBeenCalled()
-    expect(fetchMock).not.toHaveBeenCalled()
-    expect(callbacks.onSeekBufferingChange).not.toHaveBeenCalled()
-  })
-
-  it("pauses and waits for the Blob swap instead of writing currentTime on a not-yet-cached network track", async () => {
-    const audio: MockAudio[] = []
-    vi.stubGlobal("Audio", function () {
-      const instance = new MockAudio()
-      audio.push(instance)
-      return instance
-    })
-    let finishBlob!: (blob: Blob) => void
-    const blob = new Promise<Blob>((resolve) => { finishBlob = resolve })
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => blob }))
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:active-seek")
-    const callbacks = stubCallbacks()
-    const facade = new PlayerPlaybackFacade(runtime())
-    facade.init(callbacks)
-    facade.load("/audio/7", 7, "raw", false, "queue-7")
-    const networkElement = audio.at(-1)!
-    networkElement.duration = 200
-    networkElement.paused = false
-    await facade.play()
-
-    facade.seek(0.6)
-
-    // The raw upstream stream is not reliably seekable while still being
-    // transcoded — no optimistic currentTime write, just pause + wait.
-    expect(networkElement.currentTime).toBe(0)
-    expect(networkElement.pause).toHaveBeenCalledOnce()
-    expect(callbacks.onSeekBufferingChange).toHaveBeenLastCalledWith(true)
-
-    finishBlob(new Blob(["complete audio"]))
-    await vi.waitFor(() => expect(audio).toHaveLength(3))
-    const blobElement = audio.at(-1)!
-    blobElement.duration = 200
-    blobElement.emit("loadedmetadata")
-
-    expect(blobElement.currentTime).toBe(120)
-    expect(blobElement.play).toHaveBeenCalledOnce()
-    expect(callbacks.onSeekBufferingChange).toHaveBeenLastCalledWith(false)
-  })
-
-  it("keeps the latest seek target across repeated seeks while still buffering", async () => {
-    const audio: MockAudio[] = []
-    vi.stubGlobal("Audio", function () {
-      const instance = new MockAudio()
-      audio.push(instance)
-      return instance
-    })
-    let finishBlob!: (blob: Blob) => void
-    const blob = new Promise<Blob>((resolve) => { finishBlob = resolve })
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => blob }))
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:active-reseek")
-    const facade = new PlayerPlaybackFacade(runtime())
-    facade.load("/audio/7", 7, "raw", false, "queue-7")
-    const networkElement = audio.at(-1)!
-    networkElement.duration = 200
-    networkElement.paused = false
-    await facade.play()
-
-    facade.seek(0.6)
-    facade.seek(0.25)
-
-    finishBlob(new Blob(["complete audio"]))
-    await vi.waitFor(() => expect(audio).toHaveLength(3))
-    const blobElement = audio.at(-1)!
-    blobElement.duration = 200
-    blobElement.emit("loadedmetadata")
-
-    expect(blobElement.currentTime).toBe(50)
-    expect(blobElement.play).toHaveBeenCalledOnce()
-  })
-
-  it("does not resume playback after the Blob swap if the user explicitly paused during a pending network seek", async () => {
-    const audio: MockAudio[] = []
-    vi.stubGlobal("Audio", function () {
-      const instance = new MockAudio()
-      audio.push(instance)
-      return instance
-    })
-    let finishBlob!: (blob: Blob) => void
-    const blob = new Promise<Blob>((resolve) => { finishBlob = resolve })
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => blob }))
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:active-pause-during-seek")
-    const facade = new PlayerPlaybackFacade(runtime())
-    facade.load("/audio/7", 7, "raw", false, "queue-7")
-    const networkElement = audio.at(-1)!
-    networkElement.duration = 200
-    networkElement.paused = false
-    await facade.play()
-
-    facade.seek(0.6)
-    facade.pause()
-
-    finishBlob(new Blob(["complete audio"]))
-    await vi.waitFor(() => expect(audio).toHaveLength(3))
-    const blobElement = audio.at(-1)!
-    blobElement.duration = 200
-    blobElement.emit("loadedmetadata")
-
-    expect(blobElement.currentTime).toBe(120)
-    expect(blobElement.play).not.toHaveBeenCalled()
-  })
-
-  it("triggers buffering from seek() even before the track has ever played, without autoplaying once ready", async () => {
-    const audio: MockAudio[] = []
-    vi.stubGlobal("Audio", function () {
-      const instance = new MockAudio()
-      audio.push(instance)
-      return instance
-    })
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob(["complete audio"])) })
-    vi.stubGlobal("fetch", fetchMock)
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:active-seek-before-play")
-    const facade = new PlayerPlaybackFacade(runtime())
-    facade.load("/audio/7", 7, "raw", false, "queue-7")
-    const networkElement = audio.at(-1)!
-    networkElement.duration = 200
-    // Never played — paused stays true, play() was never called.
-
-    facade.seek(0.6)
-
-    expect(fetchMock).toHaveBeenCalledOnce()
-    await vi.waitFor(() => expect(audio).toHaveLength(3))
-    const blobElement = audio.at(-1)!
-    blobElement.duration = 200
-    blobElement.emit("loadedmetadata")
-
-    expect(blobElement.currentTime).toBe(120)
-    expect(blobElement.play).not.toHaveBeenCalled()
-  })
-
-  it("retries the active-track cache fetch once after a failure, then swaps in the Blob", async () => {
-    const audio: MockAudio[] = []
-    vi.stubGlobal("Audio", function () {
-      const instance = new MockAudio()
-      audio.push(instance)
-      return instance
-    })
-    const fetchMock = vi.fn()
-      .mockRejectedValueOnce(new Error("network hiccup"))
-      .mockResolvedValueOnce({ ok: true, blob: () => Promise.resolve(new Blob(["complete audio"])) })
-    vi.stubGlobal("fetch", fetchMock)
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:active-retry-success")
-    const callbacks = stubCallbacks()
-    const facade = new PlayerPlaybackFacade(runtime())
-    facade.init(callbacks)
-    facade.load("/audio/7", 7, "raw", false, "queue-7")
-    const networkElement = audio.at(-1)!
-    networkElement.duration = 200
-    networkElement.paused = false
-
-    await facade.play()
-
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-    await vi.waitFor(() => expect(audio).toHaveLength(3))
-    expect(callbacks.onError).not.toHaveBeenCalled()
-  })
-
-  it("gives up after one retry, clears any pending seek and reports an error", async () => {
-    const audio: MockAudio[] = []
-    vi.stubGlobal("Audio", function () {
-      const instance = new MockAudio()
-      audio.push(instance)
-      return instance
-    })
-    const fetchMock = vi.fn().mockRejectedValue(new Error("still failing"))
-    vi.stubGlobal("fetch", fetchMock)
-    const callbacks = stubCallbacks()
-    const facade = new PlayerPlaybackFacade(runtime())
-    facade.init(callbacks)
-    facade.load("/audio/7", 7, "raw", false, "queue-7")
-    const networkElement = audio.at(-1)!
-    networkElement.duration = 200
-    networkElement.paused = false
-    await facade.play()
-
-    facade.seek(0.6)
-
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-    await vi.waitFor(() => expect(callbacks.onError).toHaveBeenCalledWith("still failing"))
-    expect(callbacks.onSeekBufferingChange).toHaveBeenLastCalledWith(false)
-    // Constructor + load() only — no runaway retry loop, no Blob swap.
-    expect(audio).toHaveLength(2)
   })
 
   it("does not create a graph deck for prefetch while DJ mode is inactive", async () => {
@@ -885,5 +627,338 @@ describe("PlayerPlaybackFacade routing", () => {
     await facade.confirmHandover()
     expect(audio[1]?.src).toBe("")
     expect(engine.confirmRetirement).toHaveBeenCalledWith("A")
+  })
+})
+
+const RAW_URL = "/api/v1/tracks/7/audio?profile=raw"
+const MP3_URL = "/api/v1/tracks/7/audio?profile=mp3-192"
+
+function streamingFacade() {
+  const audio = installFakeAudio()
+  const fetchMock = vi.fn()
+  vi.stubGlobal("fetch", fetchMock)
+  const callbacks = stubCallbacks()
+  const engine = runtime()
+  const facade = new PlayerPlaybackFacade(engine)
+  facade.init(callbacks)
+  const current = (): FakeMediaElement => audio.at(-1)!
+  return { audio, fetchMock, callbacks, engine, facade, current }
+}
+
+describe("PlayerPlaybackFacade progressive streaming", () => {
+  it.each([
+    ["raw", RAW_URL],
+    ["mp3-192", MP3_URL],
+  ])("plays the current %s track as a plain stream without downloading it a second time", async (profile, url) => {
+    const { audio, fetchMock, facade, current } = streamingFacade()
+    facade.load(url, 7, profile, false, "queue-7", 200)
+
+    await facade.play()
+    current().loadMetadata(200)
+    current().setBuffered([[0, 30]])
+    current().emit("progress")
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    // Constructor + load() only — the current track is never swapped to a Blob.
+    expect(audio).toHaveLength(2)
+    expect(current().src).toBe(url)
+    expect(current().play).toHaveBeenCalledOnce()
+  })
+
+  it("seeks a raw (Range-capable) stream immediately, even outside the buffered part", async () => {
+    const { fetchMock, callbacks, facade, current } = streamingFacade()
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 200)
+    await facade.play()
+    const el = current()
+    el.loadMetadata(200)
+    el.setBuffered([[0, 30]])
+
+    facade.seek(0.6)
+
+    expect(el.currentTime).toBe(120)
+    expect(el.src).toBe(RAW_URL)
+    expect(el.pause).not.toHaveBeenCalled()
+    expect(el.load).toHaveBeenCalledOnce()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(callbacks.onSeekBufferingChange).not.toHaveBeenCalled()
+    expect(facade.currentTime).toBe(120)
+  })
+
+  it("reloads a transcoded stream with t for a seek outside what it can seek natively", async () => {
+    const { fetchMock, callbacks, facade, current } = streamingFacade()
+    facade.load(MP3_URL, 7, "mp3-192", false, "queue-7", 200)
+    await facade.play()
+    const el = current()
+    // A transcode answers Range with the whole stream: Chrome keeps it
+    // buffered but only [0, 0] seekable.
+    el.loadMetadata(204.8)
+    el.setBuffered([[0, 30]])
+    el.setSeekable([[0, 0]])
+
+    facade.seek(0.6)
+
+    expect(el.src).toBe(`${MP3_URL}&t=120`)
+    expect(el.load).toHaveBeenCalledTimes(2)
+    expect(el.play).toHaveBeenCalledTimes(2)
+    expect(el.pause).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(callbacks.onSeekBufferingChange).toHaveBeenLastCalledWith(true)
+    expect(facade.currentTime).toBe(120)
+
+    // The element's timeline starts at the offset; duration is the track's.
+    el.currentTime = 5
+    el.emit("timeupdate")
+    expect(callbacks.onTimeUpdate).toHaveBeenLastCalledWith(125, 200)
+    el.loadMetadata(80)
+    el.setBuffered([[0, 20]])
+    el.emit("progress")
+    expect(callbacks.onBufferUpdate).toHaveBeenLastCalledWith([{ start: 0.6, end: 0.7 }])
+    expect(facade.duration).toBe(200)
+
+    el.emit("playing")
+    expect(callbacks.onSeekBufferingChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it("seeks natively inside the buffered, seekable part of a transcoded offset stream", async () => {
+    const { facade, current } = streamingFacade()
+    facade.load(MP3_URL, 7, "mp3-192", false, "queue-7", 200)
+    await facade.play()
+    const el = current()
+    el.loadMetadata(200)
+    el.setSeekable([[0, 0]])
+    facade.seek(0.6)
+    expect(el.src).toBe(`${MP3_URL}&t=120`)
+    el.emit("playing")
+    // Chunked offset stream: infinite duration, so the browser reports it seekable.
+    el.loadMetadata(Number.POSITIVE_INFINITY)
+    el.setBuffered([[0, 30]])
+    el.setSeekable([[0, Number.POSITIVE_INFINITY]])
+
+    facade.seek(0.65)
+
+    expect(el.src).toBe(`${MP3_URL}&t=120`)
+    expect(el.currentTime).toBe(10)
+    expect(facade.currentTime).toBe(130)
+
+    // Backwards past the offset is not in this stream at all: new offset.
+    facade.seek(0.1)
+    expect(el.src).toBe(`${MP3_URL}&t=20`)
+    expect(facade.currentTime).toBe(20)
+  })
+
+  it("does not resume a transcoded seek reload the user paused while it was loading", async () => {
+    const { callbacks, facade, current } = streamingFacade()
+    facade.load(MP3_URL, 7, "mp3-192", false, "queue-7", 200)
+    await facade.play()
+    const el = current()
+    el.loadMetadata(200)
+
+    facade.seek(0.5)
+    // The reload's own interruption is not reported as a user pause.
+    el.emit("pause")
+    expect(callbacks.onPlaybackStateChange).not.toHaveBeenCalledWith("paused")
+
+    facade.pause()
+    el.emit("pause")
+    expect(callbacks.onPlaybackStateChange).toHaveBeenLastCalledWith("paused")
+    el.emit("canplay")
+    expect(callbacks.onSeekBufferingChange).toHaveBeenLastCalledWith(false)
+    expect(el.play).toHaveBeenCalledTimes(2)
+  })
+
+  it("starts a transcoded track at a position with t and no seek indicator", () => {
+    const { callbacks, facade, current } = streamingFacade()
+
+    facade.load(MP3_URL, 7, "mp3-192", false, "queue-7", 200, 95.6)
+
+    expect(current().src).toBe(`${MP3_URL}&t=95`)
+    expect(facade.currentTime).toBe(95)
+    expect(callbacks.onSeekBufferingChange).not.toHaveBeenCalled()
+  })
+
+  it("starts a raw track at a position by seeking natively once metadata is known", () => {
+    const { facade, current } = streamingFacade()
+
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 200, 42)
+    const el = current()
+    expect(el.src).toBe(RAW_URL)
+    expect(el.currentTime).toBe(0)
+
+    el.loadMetadata(200)
+    expect(el.currentTime).toBe(42)
+    expect(facade.currentTime).toBe(42)
+  })
+
+  it("starts a consumed Blob at a position natively", () => {
+    const { facade, current } = streamingFacade()
+
+    facade.load("blob:track-7", 7, "mp3-192", true, "queue-7", 200, 42)
+    const el = current()
+    el.loadMetadata(200)
+
+    expect(el.src).toBe("blob:track-7")
+    expect(el.currentTime).toBe(42)
+  })
+
+  it("resumeAtSeconds on a transcode restores the position through t", () => {
+    const { callbacks, facade, current } = streamingFacade()
+    facade.load(MP3_URL, 7, "mp3-192", false, "queue-7", 200)
+
+    facade.resumeAtSeconds(61.2)
+
+    expect(current().src).toBe(`${MP3_URL}&t=61`)
+    expect(callbacks.onSeekBufferingChange).not.toHaveBeenCalled()
+  })
+
+  it("falls back to the plain source and a native seek when the offset stream fails", async () => {
+    const { callbacks, facade, current } = streamingFacade()
+    facade.load(MP3_URL, 7, "mp3-192", false, "queue-7", 200, 95)
+    const el = current()
+    let rejectPlay!: (error: Error) => void
+    el.play.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { rejectPlay = reject }))
+    const playing = facade.play()
+    await vi.waitFor(() => expect(el.play).toHaveBeenCalledOnce())
+
+    // e.g. the server answers 400 for `t` on a track served from a local file.
+    el.emit("error")
+    rejectPlay(Object.assign(new Error("no supported sources"), { name: "NotSupportedError" }))
+    await expect(playing).resolves.toBeUndefined()
+
+    expect(el.src).toBe(MP3_URL)
+    expect(callbacks.onError).not.toHaveBeenCalled()
+    el.loadMetadata(200)
+    expect(el.currentTime).toBe(95)
+    expect(facade.currentTime).toBe(95)
+    expect(el.play).toHaveBeenCalledTimes(2)
+  })
+
+  it("hands the DJ upgrade the base URL and the absolute position of an offset stream", async () => {
+    const { engine, facade, current } = streamingFacade()
+    facade.load(MP3_URL, 7, "mp3-192", false, "queue-7", 200, 120)
+    const el = current()
+    el.currentTime = 4
+    el.paused = false
+
+    await facade.activateDjMode()
+
+    expect(engine.upgradeDeckSource).toHaveBeenLastCalledWith(
+      "A",
+      expect.objectContaining({ url: MP3_URL, trackId: 7 }),
+      { startAtSeconds: 124, autoplay: true },
+    )
+  })
+})
+
+describe("PlayerPlaybackFacade buffering settled", () => {
+  it("settles once the browser idles its download with a minute of audio ahead, without a full download", async () => {
+    const { fetchMock, callbacks, facade, current } = streamingFacade()
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 300)
+    await facade.play()
+    const el = current()
+    el.loadMetadata(300)
+    el.currentTime = 10
+    el.setBuffered([[0, 100]])
+    el.emit("progress")
+    expect(callbacks.onBufferingSettled).not.toHaveBeenCalled()
+
+    el.networkState = MEDIA_NETWORK_IDLE
+    el.readyState = MEDIA_HAVE_ENOUGH_DATA
+    el.emit("suspend")
+
+    expect(callbacks.onBufferingSettled).toHaveBeenCalledOnce()
+    expect(callbacks.onBufferingSettled).toHaveBeenCalledWith(7, "raw")
+    expect(fetchMock).not.toHaveBeenCalled()
+    // Not faked as fully buffered: the bar keeps showing real ranges.
+    expect(callbacks.onBufferUpdate).not.toHaveBeenCalledWith([{ start: 0, end: 1 }])
+  })
+
+  it("does not settle on a suspend with too little audio buffered ahead", () => {
+    const { callbacks, facade, current } = streamingFacade()
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 300)
+    const el = current()
+    el.loadMetadata(300)
+    el.currentTime = 10
+    el.setBuffered([[0, 40]])
+    el.networkState = MEDIA_NETWORK_IDLE
+    el.readyState = MEDIA_HAVE_ENOUGH_DATA
+
+    el.emit("suspend")
+    el.emit("progress")
+
+    expect(callbacks.onBufferingSettled).not.toHaveBeenCalled()
+  })
+
+  it("settles via the safety net once the buffered end passes 80% of the track", () => {
+    const { callbacks, facade, current } = streamingFacade()
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 300)
+    const el = current()
+    el.loadMetadata(300)
+    el.setBuffered([[0, 239]])
+    el.emit("progress")
+    expect(callbacks.onBufferingSettled).not.toHaveBeenCalled()
+
+    el.setBuffered([[0, 241]])
+    el.emit("progress")
+    el.emit("progress")
+
+    expect(callbacks.onBufferingSettled).toHaveBeenCalledOnce()
+  })
+
+  it("settles via the safety net when less than 45 s remain to play", () => {
+    const { callbacks, facade, current } = streamingFacade()
+    // Short track: 44 s left while the buffered end is still below 80%.
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 200)
+    const el = current()
+    el.loadMetadata(200)
+    el.currentTime = 150
+    el.setBuffered([[148, 152]])
+    el.emit("timeupdate")
+    expect(callbacks.onBufferingSettled).not.toHaveBeenCalled()
+
+    el.currentTime = 156
+    el.setBuffered([[148, 158]])
+    el.emit("timeupdate")
+
+    expect(callbacks.onBufferingSettled).toHaveBeenCalledWith(7, "raw")
+  })
+
+  it("measures an offset stream on the track's timeline", async () => {
+    const { callbacks, facade, current } = streamingFacade()
+    facade.load(MP3_URL, 7, "mp3-192", false, "queue-7", 300)
+    await facade.play()
+    const el = current()
+    el.loadMetadata(300)
+    el.setBuffered([[0, 30]])
+    el.setSeekable([[0, 0]])
+    el.emit("progress")
+
+    facade.seek(0.5)
+    expect(el.src).toBe(`${MP3_URL}&t=150`)
+    // 91 s into a stream starting at 150 s = 241 s of a 300 s track (>80%);
+    // read without the offset it would be a mere 30%.
+    el.setBuffered([[0, 91]])
+    el.emit("progress")
+
+    expect(callbacks.onBufferingSettled).toHaveBeenCalledWith(7, "mp3-192")
+  })
+
+  it("settles a fully local Blob immediately", () => {
+    const { callbacks, facade } = streamingFacade()
+
+    facade.load("blob:track-7", 7, "raw", true, "queue-7", 300)
+
+    expect(callbacks.onBufferingSettled).toHaveBeenCalledWith(7, "raw")
+    expect(callbacks.onBufferUpdate).toHaveBeenLastCalledWith([{ start: 0, end: 1 }])
+  })
+
+  it("requests the next-track prefetch at low fetch priority", async () => {
+    const { fetchMock, facade } = streamingFacade()
+    fetchMock.mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob(["audio"])) })
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:next-low")
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 300)
+
+    await facade.prefetch(8, "/audio/8", "raw", "queue-8")
+
+    expect(fetchMock).toHaveBeenCalledWith("/audio/8", expect.objectContaining({ priority: "low" }))
   })
 })

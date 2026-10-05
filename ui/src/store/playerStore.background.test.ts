@@ -3,6 +3,7 @@ import { playerPlayback as audioEngine } from "@/engine/playback"
 import { fetchQueue, patchQueue, postEvent, refillAutoplay } from "@/api/playback"
 import { cancelAllBackgroundRetries } from "@/lib/backgroundRetry"
 import { usePlayerStore } from "./playerStore"
+import { persistPlaybackPosition, persistSessionId } from "./sessionPersistence"
 import type { PlaybackEnvelope, PlaybackSession, PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
 
 vi.mock("@/engine/playback", () => ({
@@ -349,5 +350,51 @@ describe("refreshQueue background retry", () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe("restoreSession — resume position", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    cancelAllBackgroundRetries()
+    localStorage.clear()
+    usePlayerStore.setState({
+      session: null,
+      queue: null,
+      currentTrackId: null,
+      currentQueueItemId: null,
+      currentTrack: null,
+      playbackState: "idle",
+      currentTime: 0,
+      error: null,
+      djEngineActive: false,
+      playbackProfile: { transcodingEnabled: true, bitrateKbps: 192, key: "mp3-192" },
+    })
+  })
+
+  it("reopens the current track at the persisted position through load(), without autoplay", async () => {
+    const items = [makeItem("current", 10), makeItem("next", 20)]
+    persistSessionId("s1")
+    persistPlaybackPosition({ sessionId: "s1", queueItemId: "current", trackId: 10, seconds: 73 })
+    vi.mocked(fetchQueue).mockResolvedValue({ session: stubSession(10), queue: stubQueue(items, "current") })
+
+    await usePlayerStore.getState().restoreSession()
+
+    // The engine applies it like any start position (native seek or `t`).
+    expect(audioEngine.load).toHaveBeenCalledWith("/audio/10", 10, "mp3-192", false, "current", 180, 73)
+    expect(usePlayerStore.getState().currentTime).toBe(73)
+    expect(audioEngine.play).not.toHaveBeenCalled()
+  })
+
+  it("starts from the beginning when the persisted position belongs to another queue item", async () => {
+    const items = [makeItem("current", 10), makeItem("next", 20)]
+    persistSessionId("s1")
+    persistPlaybackPosition({ sessionId: "s1", queueItemId: "older", trackId: 10, seconds: 73 })
+    vi.mocked(fetchQueue).mockResolvedValue({ session: stubSession(10), queue: stubQueue(items, "current") })
+
+    await usePlayerStore.getState().restoreSession()
+
+    expect(audioEngine.load).toHaveBeenCalledWith("/audio/10", 10, "mp3-192", false, "current", 180, null)
+    expect(usePlayerStore.getState().currentTime).toBe(0)
   })
 })

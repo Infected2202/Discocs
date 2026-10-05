@@ -3072,6 +3072,143 @@ def test_track_audio_keeps_content_length_for_raw_profile(tmp_path: Path, monkey
     assert response.headers["content-length"] == "11"
 
 
+def _recording_transcode_stream(seen: dict, declared: str | None, chunks: list[bytes]):
+    class FakeStreamResponse:
+        status = 200
+
+        def __init__(self):
+            self.headers = {"Accept-Ranges": "none", "Content-Type": "audio/mpeg"}
+            if declared is not None:
+                self.headers["Content-Length"] = declared
+            self._chunks = [*chunks, b""]
+
+        def read(self, _size):
+            return self._chunks.pop(0)
+
+        def close(self):
+            pass
+
+        def getcode(self):
+            return self.status
+
+    def fake_urlopen(request, timeout):
+        seen.setdefault("calls", 0)
+        seen["calls"] += 1
+        seen["query"] = parse_qs(urlparse(request.full_url).query)
+        return FakeStreamResponse()
+
+    return fake_urlopen
+
+
+def test_track_audio_offset_forwards_time_offset_for_transcoded_stream(tmp_path: Path, monkeypatch):
+    # Server-side seek: Navidrome ignores Range on a transcode, but honours
+    # timeOffset. The full-track length estimate would be wrong for the
+    # remainder, so estimateContentLength is dropped and the proxy declares
+    # the remaining-duration estimate itself (track duration 123 s, t=120 →
+    # 3 s at 192 kbps, Navidrome's duration*kbps/8*1024 formula), padding the
+    # body to it like any estimated transcode.
+    _store, track_id = _transcoding_track(tmp_path, monkeypatch)
+    seen: dict = {}
+    monkeypatch.setattr(
+        "app.api.tracks.urlopen",
+        _recording_transcode_stream(seen, "9999999", [b"tail-audio"]),
+    )
+
+    response = TestClient(app).get(f"/api/v1/tracks/{track_id}/audio?profile=mp3-192&t=120.7")
+
+    expected_length = int(3 * 192 / 8 * 1024)
+    assert response.status_code == 200
+    assert seen["query"]["timeOffset"] == ["120"]
+    assert seen["query"]["format"] == ["mp3"]
+    assert seen["query"]["maxBitRate"] == ["192"]
+    assert "estimateContentLength" not in seen["query"]
+    assert response.headers["content-length"] == str(expected_length)
+    assert len(response.content) == expected_length
+    assert response.content.startswith(b"tail-audio")
+
+
+def test_track_audio_zero_offset_is_the_plain_estimated_stream(tmp_path: Path, monkeypatch):
+    _store, track_id = _transcoding_track(tmp_path, monkeypatch)
+    seen: dict = {}
+    monkeypatch.setattr(
+        "app.api.tracks.urlopen",
+        _recording_transcode_stream(seen, "12", [b"full-audio"]),
+    )
+
+    response = TestClient(app).get(f"/api/v1/tracks/{track_id}/audio?t=0")
+
+    assert response.status_code == 200
+    assert "timeOffset" not in seen["query"]
+    assert seen["query"]["estimateContentLength"] == ["true"]
+    assert response.headers["content-length"] == "12"
+
+
+def test_track_audio_offset_is_rejected_for_raw_profile(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")
+    track_id = add_track(store, tmp_path / "missing.flac")
+    store.upsert_external_track("navidrome", "song-1", track_id)
+    seen: dict = {}
+    monkeypatch.setattr("app.api.tracks.urlopen", _recording_transcode_stream(seen, None, []))
+
+    response = TestClient(app).get(f"/api/v1/tracks/{track_id}/audio?t=30")
+
+    assert response.status_code == 400
+    assert "Range" in response.json()["detail"]
+    assert "calls" not in seen
+
+
+def test_track_audio_offset_is_rejected_for_local_file(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    path = tmp_path / "present.flac"
+    path.write_bytes(b"fake")
+    track_id = add_track(store, path)
+
+    response = TestClient(app).get(f"/api/v1/tracks/{track_id}/audio?t=30")
+
+    assert response.status_code == 400
+
+
+def test_track_audio_offset_validation(tmp_path: Path, monkeypatch):
+    _store, track_id = _transcoding_track(tmp_path, monkeypatch)
+    seen: dict = {}
+    monkeypatch.setattr("app.api.tracks.urlopen", _recording_transcode_stream(seen, None, []))
+    client = TestClient(app)
+
+    assert client.get(f"/api/v1/tracks/{track_id}/audio?t=-1").status_code == 422
+    assert client.get(f"/api/v1/tracks/{track_id}/audio?t=abc").status_code == 422
+    past_end = client.get(f"/api/v1/tracks/{track_id}/audio?t=123")
+    assert past_end.status_code == 400
+    assert past_end.json()["detail"] == "t is past the end of the track"
+    assert "calls" not in seen
+
+
+def test_transcoded_offset_stream_without_duration_streams_chunked(tmp_path: Path, monkeypatch):
+    params, length = api_tracks_module.transcoded_offset_stream(
+        {"format": "mp3", "maxBitRate": 192, "estimateContentLength": "true"}, 30, None
+    )
+    assert params == {"format": "mp3", "maxBitRate": 192, "timeOffset": 30}
+    assert length is None
+
+    init_api_store(tmp_path, monkeypatch)
+    monkeypatch.setenv("DISCOCS_NAVIDROME_URL", "http://navidrome:4533")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_USER", "tester")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_PASSWORD", "secret")
+    monkeypatch.setenv("DISCOCS_NAVIDROME_AUTH_MODE", "plain")
+    seen: dict = {}
+    # Whatever length upstream declares describes the full track, not the
+    # remainder — it must not reach the client.
+    monkeypatch.setattr(
+        "app.api.tracks.urlopen", _recording_transcode_stream(seen, "9999999", [b"tail"])
+    )
+    response = api_tracks_module.navidrome_audio_stream_response(
+        Settings.from_env(), "song-1", stream_params=params
+    )
+
+    assert "content-length" not in response.headers
+    assert seen["query"]["timeOffset"] == ["30"]
+
+
 def test_track_audio_profile_defaults_to_raw(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
 

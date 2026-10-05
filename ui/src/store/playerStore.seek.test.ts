@@ -47,3 +47,20 @@ describe("seek() — не откатывается к устаревшей по�
     expect(usePlayerStore.getState().currentTime).toBe(90)
   })
 })
+
+describe("seek() — forwards straight to the engine", () => {
+  beforeEach(() => {
+    vi.mocked(audioEngine.seek).mockClear()
+    vi.mocked(audioEngine.pause).mockClear()
+    usePlayerStore.setState({ duration: 200, currentTime: 10, seekGeneration: 0 })
+  })
+
+  it("hands the fraction to the engine without pausing and bumps seekGeneration", () => {
+    usePlayerStore.getState().seek(0.25)
+
+    expect(audioEngine.seek).toHaveBeenCalledWith(0.25)
+    expect(audioEngine.pause).not.toHaveBeenCalled()
+    expect(usePlayerStore.getState().currentTime).toBe(50)
+    expect(usePlayerStore.getState().seekGeneration).toBe(1)
+  })
+})

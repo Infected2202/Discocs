@@ -335,10 +335,19 @@ def get_track_analysis(track_id: int) -> dict[str, object]:
 
 
 _TRACK_AUDIO_RESPONSES = {
+    400: {"description": "Start offset `t` not applicable to this stream"},
     404: {"description": _TRACK_NOT_FOUND},
+    409: {"description": "Playback profile changed"},
     410: {"description": "Audio file not mounted or no longer exists"},
     502: {"description": "Navidrome audio stream unavailable"},
 }
+
+# Upper bound for the `t` start offset — a sanity cap, real validation is
+# against the track's own duration.
+_MAX_STREAM_OFFSET_SECONDS = 24 * 60 * 60
+_OFFSET_REQUIRES_TRANSCODE = (
+    "t is only supported for transcoded playback; raw streams seek with Range requests"
+)
 
 
 @router.head("/tracks/{track_id}/audio", responses=_TRACK_AUDIO_RESPONSES)
@@ -347,6 +356,18 @@ def get_track_audio(
     track_id: int,
     request: Request,
     profile: Annotated[str | None, Query()] = None,
+    t: Annotated[
+        float | None,
+        Query(
+            ge=0,
+            le=_MAX_STREAM_OFFSET_SECONDS,
+            description=(
+                "Start offset in seconds for a transcoded stream (server-side seek, "
+                "Navidrome timeOffset; whole seconds). Rejected with 400 for raw "
+                "streams, which seek natively via Range."
+            ),
+        ),
+    ] = None,
 ) -> Response:
     store, settings = context()
     track = store.get_track(track_id)
@@ -358,6 +379,13 @@ def get_track_audio(
         stream_params, profile_key = playback_stream_profile(store)
         if profile is not None and profile != profile_key:
             raise HTTPException(status_code=409, detail="Playback profile changed")
+        content_length: int | None = None
+        if t is not None:
+            if profile_key == "raw":
+                raise HTTPException(status_code=400, detail=_OFFSET_REQUIRES_TRANSCODE)
+            stream_params, content_length = transcoded_offset_stream(
+                stream_params, int(t), track.duration
+            )
         navidrome_settings = active_user_navidrome_settings(settings)
         try:
             response = navidrome_audio_stream_response(
@@ -367,6 +395,7 @@ def get_track_audio(
                 method=request.method,
                 navidrome_settings=navidrome_settings,
                 stream_params=stream_params,
+                content_length=content_length,
             )
         except Exception as exc:
             logger.warning(
@@ -381,6 +410,10 @@ def get_track_audio(
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         store.mark_track_available(track_id)
         return response
+    if t is not None:
+        # A local file is served as-is (FileResponse, Range-capable): there is
+        # no transcoder to start mid-track, so the client must seek natively.
+        raise HTTPException(status_code=400, detail=_OFFSET_REQUIRES_TRANSCODE)
     path = Path(track.path)
     if not path.exists() or not path.is_file():
         logger.warning("Audio file missing track_id=%s path=%s", track_id, path)
@@ -658,7 +691,15 @@ def navidrome_audio_stream_response(
     method: str = "GET",
     navidrome_settings: NavidromeSettings | None = None,
     stream_params: dict[str, object] | None = None,
+    content_length: int | None = None,
 ) -> StreamingResponse:
+    """Proxy a Navidrome stream.
+
+    ``content_length`` (when given) replaces whatever length Navidrome
+    declares: the body is padded/truncated to it exactly like an
+    ``estimateContentLength`` transcode. Used for offset (``timeOffset``)
+    streams, whose length Navidrome does not estimate itself.
+    """
     navidrome_settings = navidrome_settings or settings.navidrome  # type: ignore[attr-defined]
     client = NavidromeClient(navidrome_settings)
     headers = {"Accept": "*/*"}
@@ -699,7 +740,15 @@ def navidrome_audio_stream_response(
     # generator below pads a short upstream with silence and truncates an
     # overlong one, which keeps the response well-formed for every client.
     declared_length: int | None = None
-    if stream_params and stream_params.get("estimateContentLength"):
+    if content_length is not None:
+        declared_length = content_length
+        response_headers["Content-Length"] = str(content_length)
+    elif stream_params and stream_params.get("timeOffset"):
+        # An offset transcode with no length we could estimate: whatever
+        # Navidrome might declare would describe the full track, not the
+        # remainder, so stream it chunked rather than lie about the size.
+        response_headers.pop("Content-Length", None)
+    elif stream_params and stream_params.get("estimateContentLength"):
         declared_length = _declared_stream_length(response_headers.get("Content-Length"))
         if declared_length is None:
             # Nothing to honour and nothing worth forwarding: an unparseable
@@ -760,6 +809,50 @@ def playback_stream_profile(store: object) -> tuple[dict[str, object], str]:
         },
         f"mp3-{bitrate}",
     )
+
+
+def estimated_transcode_length(duration_seconds: float, bitrate_kbps: int) -> int:
+    """Navidrome's own ``estimateContentLength`` formula (duration * kbps / 8 * 1024).
+
+    Kept identical so an offset stream gets the same (slightly generous)
+    estimate as a full-track transcode; the proxy pads the short remainder.
+    """
+    return max(0, int(duration_seconds * bitrate_kbps / 8 * 1024))
+
+
+def transcoded_offset_stream(
+    stream_params: dict[str, object],
+    offset_seconds: int,
+    track_duration: float | None,
+) -> tuple[dict[str, object], int | None]:
+    """Stream params and Content-Length for a transcode starting at ``offset_seconds``.
+
+    Server-side seek for transcoded playback: Navidrome answers Range requests
+    on a transcode with the whole stream (``Accept-Ranges: none``), but honours
+    ``timeOffset`` (whole seconds). ``estimateContentLength`` would describe
+    the full track, so it is dropped and the remainder is estimated here from
+    the track's duration and bitrate instead; without a duration the stream
+    goes out chunked (``None``). Offset 0 is the plain full-track stream.
+    """
+    if offset_seconds <= 0:
+        return stream_params, None
+    if track_duration is not None and offset_seconds >= track_duration:
+        raise HTTPException(status_code=400, detail="t is past the end of the track")
+    params = {
+        key: value
+        for key, value in stream_params.items()
+        if key != "estimateContentLength"
+    }
+    params["timeOffset"] = offset_seconds
+    if track_duration is None:
+        return params, None
+    try:
+        bitrate = int(params.get("maxBitRate", 0))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        bitrate = 0
+    if bitrate <= 0:
+        return params, None
+    return params, estimated_transcode_length(track_duration - offset_seconds, bitrate)
 
 
 def active_user_navidrome_settings(settings: object) -> NavidromeSettings:

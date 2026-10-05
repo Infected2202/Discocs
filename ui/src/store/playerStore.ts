@@ -89,7 +89,7 @@ interface PlayerState {
   duration: number
   /** Downloaded segments as 0-1 fractions of duration (gaps are preserved). */
   bufferedRanges: BufferedRange[]
-  /** True while a seek waits for the not-yet-cached current track to finish buffering. */
+  /** True while a seek waits for data that has to be fetched anew (a transcoded stream reloaded at the target). */
   seekBuffering: boolean
   /** Bumped on every user seek, so observers (presence) can tell a seek from playback progress. */
   seekGeneration: number
@@ -113,7 +113,10 @@ interface PlayerState {
     preferredTrackId?: number,
     options?: { shuffle?: boolean },
   ): Promise<void>
-  playTrack(trackId: number, opts?: { queueItemId?: string; recordStarted?: boolean }): Promise<void>
+  playTrack(
+    trackId: number,
+    opts?: { queueItemId?: string; recordStarted?: boolean; startPositionSeconds?: number },
+  ): Promise<void>
   jumpToQueueItem(queueItemId: string): Promise<void>
   jumpToAutoplayItem(poolItemId: string): Promise<void>
   togglePlay(): void
@@ -134,7 +137,15 @@ interface PlayerState {
   refreshQueue(): Promise<void>
   recordEvent(eventType: string, extra?: Record<string, unknown>): Promise<void>
   handleTrackEnded(): Promise<void>
-  playFromEnvelope(envelope: PlaybackEnvelope, preferredTrackId?: number): Promise<void>
+  /**
+   * Start a pre-built session. `startPositionSeconds` starts the first track
+   * mid-way (e.g. joining someone else's listening at their position).
+   */
+  playFromEnvelope(
+    envelope: PlaybackEnvelope,
+    preferredTrackId?: number,
+    options?: { startPositionSeconds?: number },
+  ): Promise<void>
   adoptInstantMix(envelope: PlaybackEnvelope): Promise<void>
   playNext(trackId: number, sourceLabel?: string): Promise<void>
   prepareDjDeck(trackId: number, deck: DeckId): Promise<void>
@@ -159,7 +170,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
   // purpose, it's a transient in-flight flag, not something a subscriber
   // should ever render off of.
   let refillInFlight = false
-  let fullyBufferedSource: { trackId: number; profileKey: string } | null = null
+  // The current track whose own buffering has settled (see
+  // PlayerPlaybackFacade.onBufferingSettled) — the gate for next-track prefetch.
+  let bufferSettledSource: { trackId: number; profileKey: string } | null = null
   let pendingHandover: {
     sessionId: string
     queueItemId: string
@@ -188,8 +201,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     if (
       !queue || !currentQueueItemId || currentTrackId === null
       || session?.repeat_mode === "one"
-      || fullyBufferedSource?.trackId !== currentTrackId
-      || fullyBufferedSource?.profileKey !== playbackProfile.key
+      || bufferSettledSource?.trackId !== currentTrackId
+      || bufferSettledSource?.profileKey !== playbackProfile.key
     ) return
     const currentIndex = queue.items.findIndex((item) => item.id === currentQueueItemId)
     const next = currentIndex >= 0 ? queue.items[currentIndex + 1] : undefined
@@ -277,9 +290,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       }
     },
     onBufferUpdate: (ranges) => get()._setBuffered(ranges),
-    onFullyBuffered: (trackId, profileKey) => {
-      fullyBufferedSource = { trackId, profileKey }
-      playerLog("buffer", "current fully buffered", { trackId, profile: profileKey })
+    onBufferingSettled: (trackId, profileKey) => {
+      bufferSettledSource = { trackId, profileKey }
+      playerLog("buffer", "current buffering settled", { trackId, profile: profileKey })
       scheduleNextPrefetch()
     },
     onSeekBufferingChange: (active) => get()._setSeekBuffering(active),
@@ -412,7 +425,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     addCurrentToHistory()
     try {
       await audioEngine.handoverPrepared(clientHandoverId)
-      fullyBufferedSource = { trackId: next.track_id, profileKey: get().playbackProfile.key }
+      bufferSettledSource = { trackId: next.track_id, profileKey: get().playbackProfile.key }
       set({
         currentTrackId: next.track_id,
         currentQueueItemId: next.id,
@@ -442,6 +455,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
   async function playFirstOrPreferred(
     applied: ReturnType<typeof applyEnvelope>,
     preferredTrackId?: number,
+    startPositionSeconds?: number,
   ) {
     const { queue, currentItem } = applied
     const preferred = preferredTrackId
@@ -457,6 +471,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       await get().playTrack(first.track_id, {
         queueItemId: first.id,
         recordStarted: true,
+        startPositionSeconds,
       })
     }
   }
@@ -584,19 +599,30 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       }
     },
 
-    async playTrack(trackId, { queueItemId, recordStarted = true } = {}) {
+    async playTrack(trackId, { queueItemId, recordStarted = true, startPositionSeconds } = {}) {
+      const startSeconds = Number.isFinite(startPositionSeconds) && (startPositionSeconds as number) > 0
+        ? (startPositionSeconds as number)
+        : null
       set({ error: null, playbackState: "loading" })
       if (queueItemId) set({ currentQueueItemId: queueItemId })
       set({ currentTrackId: trackId })
-      // A deliberate start is a new playback occurrence. Persist zero now so
-      // an older position for the same track can never leak into this queue item.
-      resetCurrentPosition()
+      // A deliberate start is a new playback occurrence. Persist its start
+      // (zero, or the requested position) now so an older position for the
+      // same track can never leak into this queue item.
+      if (startSeconds === null) {
+        resetCurrentPosition()
+      } else {
+        throttledSetTime.cancel()
+        throttledPersistPosition.cancel()
+        persistCurrentPosition(startSeconds)
+        set({ currentTime: startSeconds })
+      }
 
       const profile = get().playbackProfile
       const prefetchedUrl = audioEngine.consumePrefetched(trackId, profile.key)
       audioEngine.cancelPrefetch()
       if (!prefetchedUrl) audioEngine.clearPrefetched()
-      fullyBufferedSource = null
+      bufferSettledSource = null
       const url = prefetchedUrl ?? trackAudioUrl(trackId, profile.key)
       playerLog("buffer", prefetchedUrl ? "prefetched blob consumed" : "network source fallback", {
         trackId,
@@ -604,7 +630,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       })
       const knownTrack = get().currentTrack
       const knownDurationSeconds = knownTrack?.id === trackId ? knownTrack.duration : null
-      audioEngine.load(url, trackId, profile.key, prefetchedUrl !== null, queueItemId ?? null, knownDurationSeconds)
+      audioEngine.load(
+        url,
+        trackId,
+        profile.key,
+        prefetchedUrl !== null,
+        queueItemId ?? null,
+        knownDurationSeconds,
+        startSeconds,
+      )
       audioEngine.setVolume(get().volume)
       audioEngine.setMuted(get().muted)
 
@@ -867,7 +901,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
     setPlaybackProfile(profile) {
       if (profile.key === get().playbackProfile.key) return
-      fullyBufferedSource = null
+      bufferSettledSource = null
       audioEngine.cancelPrefetch()
       set({ playbackProfile: profile })
       playerLog("buffer", "playback profile changed", { profile: profile.key })
@@ -1005,12 +1039,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       scheduleAutoplayRefill("completed")
     },
 
-    async playFromEnvelope(envelope, preferredTrackId) {
+    async playFromEnvelope(envelope, preferredTrackId, options) {
       set({ error: null })
       try {
         const applied = applyEnvelope(envelope, true)
         persistSessionId(envelope.session.id)
-        await playFirstOrPreferred(applied, preferredTrackId)
+        await playFirstOrPreferred(applied, preferredTrackId, options?.startPositionSeconds)
         scheduleAutoplayRefill()
       } catch (err) {
         set({ error: (err as Error).message })
@@ -1148,6 +1182,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         const { currentTrackId, currentTrack, currentQueueItemId: restoreQueueItemId } = get()
         if (currentTrackId) {
           const profile = get().playbackProfile
+          // Сохранённая позиция возвращается тем же механизмом, что и старт с
+          // позиции: raw/Blob — нативный seek по метаданным, транскод — `t`.
+          const persisted = loadPersistedPlaybackPosition()
+          const sessionId = get().session?.id
+          const queueItemId = restoreQueueItemId
+          const resumeSeconds = (
+            persisted
+            && sessionId
+            && queueItemId
+            && playbackPositionMatches(persisted, { sessionId, queueItemId, trackId: currentTrackId })
+            && persisted.seconds > 0
+          ) ? persisted.seconds : null
           audioEngine.load(
             trackAudioUrl(currentTrackId, profile.key),
             currentTrackId,
@@ -1155,24 +1201,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
             false,
             restoreQueueItemId,
             currentTrack?.id === currentTrackId ? currentTrack.duration : null,
+            resumeSeconds,
           )
           audioEngine.setVolume(get().volume)
           audioEngine.setMuted(get().muted)
-          // Вернуть сохранённую позицию — сработает, когда пользователь
-          // нажмёт play (метаданные при preload="none" грузятся только тогда).
-          const persisted = loadPersistedPlaybackPosition()
-          const sessionId = get().session?.id
-          const queueItemId = restoreQueueItemId
-          if (
-            persisted
-            && sessionId
-            && queueItemId
-            && playbackPositionMatches(persisted, { sessionId, queueItemId, trackId: currentTrackId })
-            && persisted.seconds > 0
-          ) {
-            audioEngine.resumeAtSeconds(persisted.seconds)
-            set({ currentTime: persisted.seconds })
-          }
+          if (resumeSeconds !== null) set({ currentTime: resumeSeconds })
           applyMediaSession(currentTrack)
           audioEngine.registerMediaSessionHandlers({
             play: () => get().togglePlay(),
@@ -1194,7 +1227,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       throttledSetTime.cancel()
       throttledPersistPosition.cancel()
       refillInFlight = false
-      fullyBufferedSource = null
+      bufferSettledSource = null
       pendingHandover = null
       pendingQueueJump = null
       lastMediaSessionKey = null

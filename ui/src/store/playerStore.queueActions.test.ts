@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { playerPlayback as audioEngine } from "@/engine/playback"
-import { patchQueue, postEvent } from "@/api/playback"
+import { patchQueue, patchSession, postEvent } from "@/api/playback"
 import { cancelAllBackgroundRetries } from "@/lib/backgroundRetry"
 import { usePlayerStore } from "./playerStore"
+import { loadPersistedPlaybackPosition } from "./sessionPersistence"
 import type { PlaybackEnvelope, QueueItem, TrackSummary } from "@/api/types"
 
 vi.mock("@/engine/playback", () => ({
@@ -185,7 +186,7 @@ describe("player queue actions", () => {
     expect(usePlayerStore.getState().queue?.items.map((item) => item.track_id)).toEqual([10, 30, 20])
   })
 
-  it("prefetches the next queue item only after the current track is fully buffered", () => {
+  it("prefetches the next queue item once the current track's buffering has settled", async () => {
     const current = makeItem("current", 10)
     const next = makeItem("next", 20)
     const envelope = makeEnvelope("session", [current, next], current.id)
@@ -194,11 +195,39 @@ describe("player queue actions", () => {
       queue: envelope.queue,
       currentTrackId: 10,
       currentQueueItemId: current.id,
+      currentTrack: current.track,
       playbackProfile: { transcodingEnabled: false, bitrateKbps: 192, key: "raw" },
     })
-    audioCallbacks.onFullyBuffered?.(10, "raw")
+    // Starting the current track resets the gate: nothing is fetched while
+    // the current track is still buffering.
+    await usePlayerStore.getState().playTrack(10, { queueItemId: current.id, recordStarted: false })
+    // Any queue update re-runs the prefetch scheduler — still gated.
+    vi.mocked(patchSession).mockResolvedValueOnce(envelope)
+    await usePlayerStore.getState().setShuffle(true)
+    expect(patchSession).toHaveBeenCalledOnce()
+    expect(audioEngine.prefetch).not.toHaveBeenCalled()
+
+    audioCallbacks.onBufferingSettled?.(10, "raw")
 
     expect(audioEngine.prefetch).toHaveBeenCalledWith(20, "/audio/20", "raw", "next")
+  })
+
+  it("ignores a buffering-settled signal for another track or profile", () => {
+    const current = makeItem("current", 10)
+    const next = makeItem("next", 20)
+    const envelope = makeEnvelope("session", [current, next], current.id)
+    usePlayerStore.setState({
+      session: envelope.session,
+      queue: envelope.queue,
+      currentTrackId: 10,
+      currentQueueItemId: current.id,
+      playbackProfile: { transcodingEnabled: true, bitrateKbps: 192, key: "mp3-192" },
+    })
+
+    audioCallbacks.onBufferingSettled?.(99, "mp3-192")
+    audioCallbacks.onBufferingSettled?.(10, "raw")
+
+    expect(audioEngine.prefetch).not.toHaveBeenCalled()
   })
 
   it("plays a matching prefetched Blob without requesting a new network source", async () => {
@@ -210,7 +239,49 @@ describe("player queue actions", () => {
 
     await usePlayerStore.getState().playTrack(20, { queueItemId: "next", recordStarted: false })
 
-    expect(audioEngine.load).toHaveBeenCalledWith("blob:track-20", 20, "mp3-128", true, "next", 100)
+    expect(audioEngine.load).toHaveBeenCalledWith("blob:track-20", 20, "mp3-128", true, "next", 100, null)
+  })
+
+  it("starts a track at a requested position and persists that position", async () => {
+    const current = makeItem("current", 20)
+    const envelope = makeEnvelope("session", [current], current.id)
+    usePlayerStore.setState({
+      session: envelope.session,
+      queue: envelope.queue,
+      currentTrack: makeTrack(20),
+      playbackProfile: { transcodingEnabled: true, bitrateKbps: 192, key: "mp3-192" },
+    })
+
+    await usePlayerStore.getState().playTrack(20, {
+      queueItemId: "current",
+      recordStarted: false,
+      startPositionSeconds: 61.5,
+    })
+
+    expect(audioEngine.load).toHaveBeenCalledWith("/audio/20", 20, "mp3-192", false, "current", 100, 61.5)
+    expect(audioEngine.play).toHaveBeenCalledOnce()
+    expect(usePlayerStore.getState().currentTime).toBe(61.5)
+    expect(loadPersistedPlaybackPosition()).toMatchObject({
+      sessionId: "session",
+      queueItemId: "current",
+      trackId: 20,
+      seconds: 61.5,
+    })
+  })
+
+  it("starts the first track of an envelope at a requested position", async () => {
+    const first = makeItem("first", 10)
+    const second = makeItem("second", 20)
+
+    await usePlayerStore.getState().playFromEnvelope(
+      makeEnvelope("listen-along", [first, second], first.id),
+      20,
+      { startPositionSeconds: 42 },
+    )
+
+    expect(audioEngine.load).toHaveBeenCalledTimes(1)
+    expect(audioEngine.load).toHaveBeenCalledWith("/audio/20", 20, "raw", false, "second", 100, 42)
+    expect(usePlayerStore.getState().currentTrackId).toBe(20)
   })
 
   it("moves a dropped playlist track next and prepares the free physical deck", async () => {
