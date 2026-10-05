@@ -84,6 +84,11 @@ Default-deny `Store.for_user` не ослабляется. `app/services/profile
 сессии/очередь, `user_settings` (кроме аватара), Navidrome-креды,
 preference-score/дизлайки.
 
+Единственное чтение чужой сессии — [«Слушать вместе»](#слушать-вместе-ф6):
+`app/services/listen_along.py` вызывает на store ведущего один явный метод
+`playback_presence_snapshot` и не отдаёт наружу ни сессию, ни её id/состояние —
+только копирует id треков очереди в новую сессию **зрителя**.
+
 ## API профиля (Ф3)
 
 Роутер `app/api/profile.py`, сборка ответов — `app/services/profile.py`,
@@ -295,13 +300,15 @@ preference-score/дизлайки.
 
 ## Присутствие («сейчас слушает»)
 
-Источник правды — Navidrome (OpenSubsonic-расширение `playbackReport`): discocs
-ничего о присутствии у себя не хранит.
+Источник правды для «кто что слушает» — Navidrome (OpenSubsonic-расширение
+`playbackReport`). Локально discocs помнит только последнее состояние плеера
+на строке его собственной сессии (`playback_sessions.presence_*`, Ф6) — это
+нужно «Слушать вместе», чтобы найти очередь и позицию ведущего.
 
 ### Запись: `POST /api/v1/playback/presence`
 
-Тело `{track_id, state, position_ms}`, `state` ∈ `starting | playing | paused |
-stopped`, `position_ms ≥ 0`, лишние поля → 422. Бэкенд
+Тело `{track_id, state, position_ms, session_id?, queue_item_id?}`, `state` ∈
+`starting | playing | paused | stopped`, `position_ms ≥ 0`, лишние поля → 422. Бэкенд
 (`app/services/presence.py:report_presence`) маппит трек в Navidrome-id
 (`external_id_for_track`) и вызывает `reportPlayback(mediaId, mediaType=song,
 positionMs, state, playbackRate=1, ignoreScrobble=true)` **кредами текущей
@@ -315,6 +322,17 @@ positionMs, state, playbackRate=1, ignoreScrobble=true)` **кредами тек
 | `{"status": "skipped", "reason": "no_navidrome_mapping"}` | у трека нет Navidrome-id |
 | `{"status": "skipped", "reason": "missing_user_credentials"}` | auth включён, но в сессии нет Navidrome-кредов |
 | `{"status": "failed"}` | Navidrome недоступен/ошибка (пишется warning в лог) |
+
+**Запись на сессию (Ф6).** Если передан `session_id`, до обращения к Navidrome
+(и независимо от его исхода и от маппинга трека) на строку этой сессии пишутся
+`presence_state`, `presence_position_ms`, `presence_at` (UTC, время сервера),
+`presence_track_id` и `presence_queue_item_id`
+(`Store.record_playback_presence`). Только своя сессия: чужой или
+несуществующий `session_id` молча игнорируется (ответ тот же 200, строка не
+меняется); `queue_item_id` не из этой сессии сохраняется как `NULL`.
+`updated_at` и `current_*` сессии не трогаются — это поля протокола очереди
+плеера. Отчёты идут только на переходах, так что запись дешёвая; в БД, а не в
+памяти — переживает рестарт/деплой.
 
 Присутствие не ломает воспроизведение: ошибки Navidrome не превращаются в
 HTTP-ошибки, таймаут вызова ≤ 5 с. В `playback_events`, `listens` и
@@ -374,6 +392,73 @@ CSRF-гейт (`auth_middleware`) пропускает same-origin POST с за�
 - *Проверить вживую:* что сервисный аккаунт видит в `getNowPlaying` сессии всех
   пользователей, что Navidrome отдаёт `state`/`positionMs` в записях и что
   `ignoreScrobble=true` не даёт двойного счёта.
+
+## Слушать вместе (Ф6)
+
+Разовое «подхватить» чужое воспроизведение (решения — `plans/social-spec.md`
+§1.6). Зритель получает **свою новую** сессию, стартующую там, где ведущий
+сейчас: тот же трек, та же позиция с поправкой на прошедшее время, дальше —
+остаток очереди ведущего или радио по треку. Никакой синхронизации потом нет;
+у ведущего ничего не меняется. Прослушивания и пропуски зрителя в этой сессии
+считаются как обычно (это обычная сессия с обычными событиями).
+
+### `POST /api/v1/users/{username}/listen-along`
+
+Без тела. Роутер — `app/api/profile.py`, логика — `app/services/listen_along.py`.
+
+1. `{username}` резолвится как у профиля (без учёта регистра): неизвестный →
+   404 `not_found`, service-принципал → 403 `forbidden`, без сессии → 401.
+   Сам себе → 400 `invalid_request`.
+2. Что играет ведущий — `getNowPlaying` сервисным аккаунтом, тот же кэш и
+   фильтр, что у `GET /social/people` (`now_playing_for`: `state` ∈
+   `starting | playing` или без `state`; несколько плееров — наименьший
+   `minutesAgo`). Не играет / Navidrome недоступен → 409 `not_playing`.
+   Песня без трека discocs (`get_track_by_external_id`) → 409
+   `track_not_mapped` (кнопки в UI в этом случае нет).
+3. Сессия ведущего — `Store.for_user(host).playback_presence_snapshot(track_id)`:
+   среди его незавершённых (`status != 'ended'`) сессий, у которых
+   `presence_track_id` или `current_track_id` = этот трек, берётся с самым
+   свежим `presence_at`; сессии без отчётов — после них, по `updated_at`.
+4. Очередь новой сессии:
+
+   | Случай | Очередь | `mode` | `strategy` |
+   |---|---|---|---|
+   | обычный источник (release/artist/label/playlist/search/manual/track/autoplay/listen_along) | остаток очереди ведущего в **порядке проигрывания** (`position`, т.е. с учётом shuffle), начиная с текущего элемента; `removed` пропускаются | `linear` | `queue` |
+   | личный источник (`flow`, `generated_mix`) | `[трек]` — радио | `radio` | `personal_source` |
+   | у ведущего нет сессии discocs (другой клиент Navidrome) | `[трек]` | `radio` | `no_session` |
+   | трек не нашёлся в очереди сессии | `[трек]` | `radio` | `not_in_queue` |
+
+   Текущий элемент — `presence_queue_item_id`, иначе `current_queue_item_id`
+   сессии (если в нём этот трек), иначе первый элемент очереди с этим треком.
+5. Позиция (`live_position_ms`): если последний отчёт сессии про этот трек —
+   `starting`/`playing` → `presence_position_ms + (now − presence_at)`;
+   `paused`/`stopped` → `presence_position_ms`. Иначе (нет сессии или отчёт
+   про другой трек) — `positionMs` из записи Navidrome, если он есть, иначе 0.
+   Позиция ≥ длительности трека считается устаревшей → 0.
+6. Сессия зрителя: `source_type = "listen_along"`, `source_id` = id
+   ведущего в `users`, `source_label` = его логин (UI форматирует «Вместе с
+   <логин>» через i18n), `autoplay_enabled = true`, `shuffle_enabled = false`
+   (очередь уже в нужном порядке), настройки — дефолтные
+   (`playback_session_settings`). Конец очереди → обычный автоплей: для
+   `listen_along` сиды — треки скопированной очереди (стратегия
+   `listen_along_queue` в `app/autoplay.py`), `source_id` как трек не читается.
+
+Ответ — тот же envelope, что у `POST /playback/sessions`, плюс точка старта:
+
+```json
+{"session": {"source_type": "listen_along", "source_id": 2, "source_label": "bob", "…": "…"},
+ "queue": {"items": ["…"], "current_item": {"…": "…"}, "…": "…"},
+ "start_track_id": 42,
+ "start_queue_item_id": "uuid первого элемента новой очереди",
+ "start_position_seconds": 73.4,
+ "listen_along": {"host": "bob", "strategy": "queue"}}
+```
+
+Фронт: `listenAlong(username)` и тип `ListenAlongEnvelope` в
+`ui/src/api/profile.ts`; поле `session_id`/`queue_item_id` в `PresenceReport`
+(`ui/src/api/playback.ts`) — плеер начнёт его слать в Ф7. Пока плеер не шлёт
+`session_id`, сессия ведущего находится по `current_track_id`, а позиция
+берётся из Navidrome.
 
 ## UI главной (Ф4)
 

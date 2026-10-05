@@ -498,10 +498,14 @@ class PlaybackPresenceRequest(BaseModel):
     """What the player is doing right now (social presence, docs/social.md).
 
     Forwarded to Navidrome ``reportPlayback``; never recorded as a playback event.
+    With ``session_id`` (the caller's own playback session) the state is also
+    remembered on that session for listen-along.
     """
 
     track_id: int
     state: Literal["starting", "playing", "paused", "stopped"]
     position_ms: int = Field(ge=0)
+    session_id: str | None = Field(default=None, min_length=1, max_length=64)
+    queue_item_id: str | None = Field(default=None, min_length=1, max_length=64)
 
     model_config = ConfigDict(extra="forbid")

@@ -299,11 +299,22 @@ queues through one shared model, per the "generic events" decision in the
 original plan.
 
 `playback_sessions`: `id` (UUID), `user_id` (owner), `source_type`/`source_id`/`source_label`
-(what started the session — release, artist, playlist, search, flow,
-autoplay, manual, generated_mix), `mode` (`linear | shuffle | radio | flow |
-autoplay`), `status` (`active | paused | ended`), `current_track_id`,
-`current_queue_item_id`, `autoplay_enabled`, `shuffle_enabled`,
-`repeat_mode`, `settings_json`, `state_json`, timestamps.
+(what started the session — release, artist, label, track, playlist, search,
+flow, autoplay, manual, generated_mix, listen_along), `mode` (`linear | shuffle |
+radio | flow | autoplay`), `status` (`active | paused | ended`),
+`current_track_id`, `current_queue_item_id`, `autoplay_enabled`,
+`shuffle_enabled`, `repeat_mode`, `settings_json`, `state_json`, timestamps.
+For `listen_along` (social "listen along", `docs/social.md`) `source_id` is the
+host's `users.id`, not a track, and `source_label` the host's username.
+
+Presence columns (social Ф6, added by `_ensure_column`): `presence_state`
+(`starting | playing | paused | stopped`), `presence_position_ms`,
+`presence_at` (UTC ISO, server time of the report), `presence_track_id`,
+`presence_queue_item_id` — the last `POST /playback/presence` that carried
+this session's id, written only for the caller's own session
+(`Store.record_playback_presence`). They do not bump `updated_at` and never
+touch `current_*`. Read back only by listen-along through
+`Store.playback_presence_snapshot` on a store bound to the host.
 
 `queue_items`: `id` (UUID), `session_id` (FK, cascade delete), `track_id`,
 `position` (unique per session), `origin` (`source | manual | autoplay |

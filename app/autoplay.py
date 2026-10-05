@@ -11,7 +11,9 @@ from app.recommender import Recommender
 from app.store import PlaybackEvent, PlaybackSession, QueueItem, Store, Track
 
 
-AUTOPLAY_SOURCE_TYPES = {"track", "release", "artist", "playlist", "search", "manual", "generated_mix", "flow"}
+AUTOPLAY_SOURCE_TYPES = {
+    "track", "release", "artist", "playlist", "search", "manual", "generated_mix", "flow", "listen_along",
+}
 POSITIVE_EVENTS = {"completed", "liked", "play_threshold_reached", "replayed"}
 NEGATIVE_EVENTS = {"skipped", "disliked"}
 AUTOPLAY_POOL_STATE_KEY = "autoplay_pool"
@@ -465,6 +467,10 @@ def _source_seed_track_ids(
         strategy = "playlist_queue"
     elif session.source_type == "generated_mix":
         strategy = "generated_mix_queue"
+    elif session.source_type == "listen_along":
+        # source_id is the host's *user* id, not a track: seed from the copied
+        # queue (or the single track of a listen-along radio).
+        strategy = "listen_along_queue"
     return queue_track_ids, {"strategy": strategy, "queue_track_count": len(queue_track_ids)}
 
 

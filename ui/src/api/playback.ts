@@ -116,6 +116,9 @@ export interface PresenceReport {
   track_id: number
   state: PresenceState
   position_ms: number
+  /** The player's own session: lets others "listen along" (social Ф6). */
+  session_id?: string
+  queue_item_id?: string
 }
 
 export interface PresenceResponse {

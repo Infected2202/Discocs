@@ -1098,6 +1098,13 @@ class StoreBase:
             self._ensure_column(conn, "playback_sessions", "current_queue_item_id", "TEXT")
             self._ensure_column(conn, "playback_sessions", "settings_json", "TEXT")
             self._ensure_column(conn, "playback_sessions", "state_json", "TEXT")
+            # Last presence report of this session's player (social listen-along,
+            # docs/social.md): written by POST /playback/presence with session_id.
+            self._ensure_column(conn, "playback_sessions", "presence_state", "TEXT")
+            self._ensure_column(conn, "playback_sessions", "presence_position_ms", "INTEGER")
+            self._ensure_column(conn, "playback_sessions", "presence_at", "TEXT")
+            self._ensure_column(conn, "playback_sessions", "presence_track_id", "INTEGER")
+            self._ensure_column(conn, "playback_sessions", "presence_queue_item_id", "TEXT")
             self._ensure_column(conn, "queue_items", "source_position", "INTEGER")
             self._ensure_column(conn, "queue_items", "locked", _INT_NOT_NULL_DEFAULT_0)
             self._ensure_column(conn, "queue_items", "reason", "TEXT")

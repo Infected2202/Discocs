@@ -1,6 +1,6 @@
 // User profile API (social features Ф3, docs/social.md "API профиля").
 import { apiFetch, apiUrl } from "./client"
-import type { PlaylistSummary, ShelfItem, TrackSummary } from "./types"
+import type { PlaybackEnvelope, PlaylistSummary, ShelfItem, TrackSummary } from "./types"
 
 export const PROFILE_PERIODS = ["7d", "30d", "90d", "180d", "365d", "all"] as const
 export type ProfilePeriod = (typeof PROFILE_PERIODS)[number]
@@ -113,6 +113,29 @@ export function fetchUserLikes(username: string, params: { limit?: number } = {}
 
 export function fetchUserPlaylists(username: string): Promise<UserPlaylists> {
   return apiFetch(userPath(username, "playlists"))
+}
+
+/** How the listen-along queue was built (docs/social.md "Слушать вместе"). */
+export type ListenAlongStrategy = "queue" | "personal_source" | "no_session" | "not_in_queue"
+
+/**
+ * A new playback session of the viewer that picks up what another user plays.
+ * `session.source_type` is `"listen_along"`, `source_label` the host's login.
+ */
+export interface ListenAlongEnvelope extends PlaybackEnvelope {
+  start_track_id: number
+  start_queue_item_id: string | null
+  /** Seek here once the first track is loaded. */
+  start_position_seconds: number
+  listen_along: { host: string; strategy: ListenAlongStrategy }
+}
+
+/**
+ * One-shot "pick up" of another user's playback. 400 on yourself, 404 unknown
+ * user, 409 `not_playing` / `track_not_mapped`.
+ */
+export function listenAlong(username: string): Promise<ListenAlongEnvelope> {
+  return apiFetch(userPath(username, "listen-along"), { method: "POST" })
 }
 
 /** Pick one of the built-in avatars for the current user. */

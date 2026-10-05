@@ -3,10 +3,14 @@
 Write side — ``report_presence``: the logged-in player reports its state
 (starting/playing/paused/stopped + position) and discocs forwards it to
 Navidrome's OpenSubsonic ``reportPlayback`` with the *session's* Navidrome
-credentials, ``ignoreScrobble=true``. Nothing is written locally: presence is
-not a playback event and never touches ``playback_events``/``listens``/
-preferences. Any Navidrome failure is swallowed (``status: failed``) —
-presence must never break playback.
+credentials, ``ignoreScrobble=true``. Presence is not a playback event and
+never touches ``playback_events``/``listens``/preferences. When the report
+carries the caller's own ``session_id`` (Ф6), the state, position, track and
+queue item are also stored on that ``playback_sessions`` row
+(``presence_*`` columns) — regardless of the Navidrome outcome or mapping —
+so listen-along can find where the host is, across restarts/deploys. Reports
+come only on transitions, so the writes are cheap. Any Navidrome failure is
+swallowed (``status: failed``) — presence must never break playback.
 
 Read side — ``people``: every discocs user (the viewer too), with their
 avatar and what they play now. Live data is one ``getNowPlaying`` call with
@@ -70,7 +74,19 @@ def report_presence(
     track_id: int,
     state: str,
     position_ms: int,
+    session_id: str | None = None,
+    queue_item_id: str | None = None,
 ) -> dict[str, object]:
+    if session_id:
+        # Scoped to the caller: another user's session id matches no row and
+        # is silently ignored (the player fires and forgets).
+        store.record_playback_presence(
+            session_id,
+            track_id=track_id,
+            state=state,
+            position_ms=position_ms,
+            queue_item_id=queue_item_id,
+        )
     item_id = store.external_id_for_track("navidrome", track_id)
     if not item_id:
         return {"status": "skipped", "reason": "no_navidrome_mapping", "track_id": track_id}
@@ -181,6 +197,12 @@ def _freshest_by_username(entries: list[NowPlayingEntry]) -> dict[str, NowPlayin
         if current is None or age < current_age:
             best[key] = entry
     return best
+
+
+def now_playing_for(settings, username: str) -> NowPlayingEntry | None:
+    """The user's active ``getNowPlaying`` entry (cached), as the people shelf sees it."""
+    entries = now_playing_entries(settings) or []
+    return _freshest_by_username(entries).get(username.casefold())
 
 
 def _now_playing_dict(store: Store, entry: NowPlayingEntry) -> dict[str, object]:

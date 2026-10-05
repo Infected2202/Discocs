@@ -89,6 +89,7 @@ from app.models import (
     PlaybackEventCreate,
     PLAYBACK_EVENT_TYPES,
     PlaybackEventResult,
+    PlaybackPresenceSnapshot,
     PLAYBACK_MODES,
     PLAYBACK_REPEAT_MODES,
     PlaybackSession,
@@ -297,6 +298,95 @@ class PlaybackStoreMixin:
                 (session_id, user_id),
             ).fetchone()
         return row_to_playback_session(row) if row else None
+
+    def record_playback_presence(
+        self,
+        session_id: str,
+        *,
+        track_id: int,
+        state: str,
+        position_ms: int,
+        queue_item_id: str | None = None,
+        at: str | None = None,
+    ) -> bool:
+        """Remember the last presence report on the bound user's own session.
+
+        Social listen-along (docs/social.md) reads it back to find where the
+        host is. Only the ``presence_*`` columns change: ``updated_at`` and
+        ``current_*`` belong to the player's queue protocol. A session of
+        another user (or an unknown id) is not touched → False. A queue item
+        outside this session is stored as NULL rather than trusted.
+        """
+        user_id = self.require_user_id()
+        with self.connect() as conn:
+            if queue_item_id is not None and conn.execute(
+                _QUEUE_ITEM_IN_SESSION_SQL, (queue_item_id, session_id)
+            ).fetchone() is None:
+                queue_item_id = None
+            cursor = conn.execute(
+                """
+                UPDATE playback_sessions
+                SET presence_state = ?, presence_position_ms = ?, presence_at = ?,
+                    presence_track_id = ?, presence_queue_item_id = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (
+                    state,
+                    max(0, int(position_ms)),
+                    at or utc_now(),
+                    int(track_id),
+                    queue_item_id,
+                    session_id,
+                    user_id,
+                ),
+            )
+            return cursor.rowcount > 0
+
+    def playback_presence_snapshot(self, track_id: int) -> PlaybackPresenceSnapshot | None:
+        """The bound user's live session playing ``track_id``, with its queue.
+
+        Explicit read for listen-along: the service calls it on a store bound
+        to the *host* (``Store.for_user``), never through the viewer's store.
+        Candidates are non-ended sessions whose last presence report or
+        current track is ``track_id``; the freshest presence wins, sessions
+        without any presence report fall back to ``updated_at``.
+        """
+        user_id = self.require_user_id()
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM playback_sessions
+                WHERE user_id = ?
+                  AND status != 'ended'
+                  AND (presence_track_id = ? OR current_track_id = ?)
+                ORDER BY presence_at IS NULL, presence_at DESC, updated_at DESC
+                LIMIT 1
+                """,
+                (user_id, int(track_id), int(track_id)),
+            ).fetchone()
+            if row is None:
+                return None
+            queue_rows = conn.execute(
+                """
+                SELECT * FROM queue_items
+                WHERE session_id = ? AND status != 'removed'
+                ORDER BY position, created_at, id
+                """,
+                (row["id"],),
+            ).fetchall()
+        return PlaybackPresenceSnapshot(
+            session=row_to_playback_session(row),
+            presence_state=row["presence_state"],
+            presence_position_ms=(
+                int(row["presence_position_ms"]) if row["presence_position_ms"] is not None else None
+            ),
+            presence_at=row["presence_at"],
+            presence_track_id=(
+                int(row["presence_track_id"]) if row["presence_track_id"] is not None else None
+            ),
+            presence_queue_item_id=row["presence_queue_item_id"],
+            queue=[row_to_queue_item(queue_row) for queue_row in queue_rows],
+        )
 
     def list_queue_items(self, session_id: str, include_removed: bool = False) -> list[QueueItem]:
         if self.get_playback_session(session_id) is None:

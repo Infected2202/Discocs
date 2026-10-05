@@ -284,7 +284,8 @@ def api_v1_report_playback_presence(
     """Forward the player's now-playing state to Navidrome (docs/social.md).
 
     Lightweight on purpose: no playback event, no listen, no preference
-    change. Navidrome being down or the track being unmapped is a 200 with a
+    change. With ``session_id`` the state is also stored on the caller's own
+    session (listen-along). Navidrome being down or the track being unmapped is a 200 with a
     ``skipped``/``failed`` status — the player fires and forgets.
     """
     store, settings = context()
@@ -296,4 +297,6 @@ def api_v1_report_playback_presence(
         track_id=request.track_id,
         state=request.state,
         position_ms=request.position_ms,
+        session_id=request.session_id,
+        queue_item_id=request.queue_item_id,
     )

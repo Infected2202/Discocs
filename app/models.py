@@ -471,6 +471,24 @@ class PlaybackSession:
 
 
 @dataclass(frozen=True)
+class PlaybackPresenceSnapshot:
+    """The session a user's player last reported presence for (listen-along).
+
+    ``presence_*`` mirror the last ``POST /playback/presence`` that carried
+    this session's id; ``queue`` is the session's non-removed queue in play
+    order. Built only by ``Store.playback_presence_snapshot``.
+    """
+
+    session: PlaybackSession
+    presence_state: str | None
+    presence_position_ms: int | None
+    presence_at: str | None
+    presence_track_id: int | None
+    presence_queue_item_id: str | None
+    queue: list["QueueItem"]
+
+
+@dataclass(frozen=True)
 class QueueItem:
     id: str
     session_id: str
@@ -707,6 +725,9 @@ PLAYBACK_SOURCE_TYPES = {
     "autoplay",
     "manual",
     "generated_mix",
+    # Social "listen along" (docs/social.md): a one-shot copy of another
+    # user's playback; source_id = the host's user id.
+    "listen_along",
 }
 PLAYBACK_MODES = {"linear", "shuffle", "radio", "flow", "autoplay"}
 PLAYBACK_SESSION_STATUSES = {"active", "paused", "ended"}

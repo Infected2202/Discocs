@@ -5,6 +5,9 @@ app/services/profile.py, which binds a store to the *target* user and returns
 only whitelisted fields; private playlists are listed only to their owner.
 A service principal (no ``user_id``) gets 403, an unknown username 404; the
 username is matched case-insensitively. Contract: docs/social.md.
+
+``POST /users/{username}/listen-along`` (Ф6) starts the viewer's own session
+from what that user plays right now — see app/services/listen_along.py.
 """
 from __future__ import annotations
 
@@ -14,7 +17,13 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
-from app.api.deps import api_error, context
+from app.api.deps import api_error, context, playback_session_settings
+from app.serializers.playback import playback_session_response
+from app.services.listen_along import (
+    ListenAlongSelfError,
+    ListenAlongUnavailableError,
+    listen_along,
+)
 from app.services.profile import (
     DEFAULT_PROFILE_PERIOD,
     ProfileNotFoundError,
@@ -78,3 +87,45 @@ def api_v1_user_likes(
 def api_v1_user_playlists(username: str) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     return _profile_response(lambda: profile_playlists_payload(store, username))
+
+
+_LISTEN_ALONG_RESPONSES: dict[int | str, dict[str, object]] = {
+    **_ERROR_RESPONSES,
+    400: {"description": "Listening along with yourself"},
+    409: {"description": "The user is not playing, or the track is not in the library"},
+}
+
+
+@router.post("/users/{username}/listen-along", response_model=None, responses=_LISTEN_ALONG_RESPONSES)
+def api_v1_user_listen_along(username: str) -> dict[str, object] | JSONResponse:
+    """One-shot "pick up" of what ``username`` plays now (docs/social.md).
+
+    Creates the caller's own playback session (``source_type =
+    "listen_along"``) and returns the usual session envelope plus where to
+    start: ``start_track_id``/``start_queue_item_id`` and
+    ``start_position_seconds``.
+    """
+    store, settings = context()
+    try:
+        start = listen_along(
+            store,
+            settings,
+            username,
+            session_settings=playback_session_settings({}),
+        )
+    except ProfileViewerRequiredError as exc:
+        return api_error(403, "forbidden", str(exc))
+    except ProfileNotFoundError as exc:
+        return api_error(404, "not_found", str(exc))
+    except ListenAlongSelfError as exc:
+        return api_error(400, "invalid_request", str(exc))
+    except ListenAlongUnavailableError as exc:
+        return api_error(409, exc.code, str(exc))
+    envelope = playback_session_response(store, start.session)
+    return {
+        **envelope,
+        "start_track_id": start.start_track_id,
+        "start_queue_item_id": start.queue[0].id if start.queue else None,
+        "start_position_seconds": start.position_ms / 1000,
+        "listen_along": {"host": start.host_username, "strategy": start.strategy},
+    }
