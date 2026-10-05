@@ -37,6 +37,10 @@ export function fetchArtistSimilar(
   return apiFetch(apiUrl(`/api/v1/artists/${id}/similar`, { limit, offset }))
 }
 
-export function fetchArtistLabels(id: number): Promise<ArtistLabelsResponse> {
-  return apiFetch(`/api/v1/artists/${id}/labels`)
+export function fetchArtistLabels(
+  id: number,
+  limit = SHELF_PREVIEW_LIMIT,
+  offset?: number,
+): Promise<ArtistLabelsResponse> {
+  return apiFetch(apiUrl(`/api/v1/artists/${id}/labels`, { limit, offset }))
 }

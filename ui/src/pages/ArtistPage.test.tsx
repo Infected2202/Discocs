@@ -209,7 +209,10 @@ describe("ArtistPage — кнопка Shuffle", () => {
     useArtistLabels.mockReturnValue({
       data: {
         artist: { id: 3, name: "Max Cooper" },
-        total: 2,
+        total: 30,
+        limit: 16,
+        offset: 0,
+        next_offset: 16,
         items: [
           { id: 7, name: "Mesh", release_count: 9, liked: false,
             artwork: { url: "/api/v1/labels/7/image?v=1", source: "discogs", placeholder: false } },
@@ -228,9 +231,12 @@ describe("ArtistPage — кнопка Shuffle", () => {
     expect(within(last).getByText("Mesh")).toBeInTheDocument()
     expect(within(last).getByText("Traum Schallplatten")).toBeInTheDocument()
     expect(shelves[shelves.length - 2]).toHaveTextContent("Similar artists")
-    // Как полка лейблов на главной: слайдер, а не сетка, и карточки без подписей.
+    // Как полка лейблов на главной: слайдер, подпись — только число релизов лейбла,
+    // «Ещё» ведёт на полный список лейблов артиста.
     expect(last).not.toHaveAttribute("data-grid")
-    expect(within(last).getByText("Mesh")).not.toHaveAttribute("data-subtitle")
+    expect(within(last).getByText("Mesh")).toHaveAttribute("data-subtitle", "9 releases")
+    expect(last).toHaveAttribute("data-more-href", "/artists/3/labels")
+    expect(last).toHaveAttribute("data-total", "30")
   })
 })
 

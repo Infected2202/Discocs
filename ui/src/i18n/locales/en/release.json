@@ -10,7 +10,6 @@
     "minutes": "{{minutes}} min"
   },
   "moreFromArtists": "More from these artists",
-  "fromThisLabel": "From this label",
-  "fromNamedLabel": "From {{name}}",
+  "fromLabel": "From {{name}}",
   "recommendedAlbums": "Recommended Albums"
 }

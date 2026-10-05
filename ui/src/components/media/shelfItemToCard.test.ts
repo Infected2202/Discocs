@@ -41,7 +41,7 @@ describe("shelfItemToCard", () => {
     expect(card.onPlay).toBeUndefined()
   })
 
-  it("adds the label's two main styles after the release count", () => {
+  it("captions a label with its release count only, without styles", () => {
     const card = shelfItemToCard(
       item({
         id: "label:5",
@@ -58,7 +58,7 @@ describe("shelfItemToCard", () => {
       i18n.t,
     )
 
-    expect(card.subtitle).toBe("588 releases · Techno, Tech House")
+    expect(card.subtitle).toBe("588 releases")
   })
 
   it("keeps the backend subtitle and play action for other entities", () => {

@@ -10,15 +10,13 @@ interface LabelReleasesShelfProps {
   readonly releaseId: number
   /** Артисты релиза: их релизы уже на полке «Ещё от этих артистов». */
   readonly artistIds: readonly number[]
-  /** У релиза несколько лейблов — в заголовке нужно название, иначе «От этого лейбла». */
-  readonly named: boolean
 }
 
 /**
- * Полка «От этого лейбла» на странице релиза: популярные релизы лейбла других
+ * Полка «От лейбла …» внизу страницы релиза: популярные релизы лейбла других
  * артистов. Пусто (лейбл самого артиста) — полки нет; «Ещё» ведёт на страницу лейбла.
  */
-export default function LabelReleasesShelf({ label, releaseId, artistIds, named }: LabelReleasesShelfProps) {
+export default function LabelReleasesShelf({ label, releaseId, artistIds }: LabelReleasesShelfProps) {
   const { t } = useTranslation("release")
   const playSource = usePlayerStore((s) => s.playSource)
   const { data } = useLabelReleases(label.id, "popularity")
@@ -30,7 +28,7 @@ export default function LabelReleasesShelf({ label, releaseId, artistIds, named 
 
   return (
     <Shelf
-      title={named ? t("fromNamedLabel", { name: label.name }) : t("fromThisLabel")}
+      title={t("fromLabel", { name: label.name })}
       total={others.length}
       moreHref={`/labels/${label.id}`}
       items={others.slice(0, PREVIEW).map((r) => ({

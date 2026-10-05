@@ -74,17 +74,21 @@ def api_v1_artist(artist_id: int) -> dict[str, object] | JSONResponse:
 
 
 @router.get("/artists/{artist_id}/labels", response_model=None)
-def api_v1_artist_labels(artist_id: int) -> dict[str, object] | JSONResponse:
-    """Лейблы релизов артиста — полка «Лейблы артиста»; ``release_count`` — релизы этого артиста."""
+def api_v1_artist_labels(
+    artist_id: int,
+    limit: Annotated[int, Query(ge=1, le=FULL_LIST_MAX_LIMIT)] = SHELF_PREVIEW_LIMIT,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict[str, object] | JSONResponse:
+    """Лейблы релизов артиста — полка «Лейблы артиста» и её полный список (страницами)."""
     store, _settings = context()
     artist = store.get_artist(artist_id)
     if artist is None:
         return api_error(404, "not_found", _ARTIST_NOT_FOUND)
-    labels = store.artist_labels(artist_id)
+    page, paging = page_of(store.artist_labels(artist_id), limit, offset)
     return {
         "artist": artist_link_dict(artist.artist),
-        "items": [label_summary_dict(label) for label in labels],
-        "total": len(labels),
+        "items": [label_summary_dict(label) for label in page],
+        **paging,
     }
 
 

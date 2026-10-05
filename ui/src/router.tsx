@@ -16,6 +16,7 @@ import SharedLinksPage from "@/pages/SharedLinksPage"
 import ProfilePage from "@/pages/ProfilePage"
 import ListeningHistoryPage from "@/pages/ListeningHistoryPage"
 import ArtistSimilarPage from "@/pages/ArtistSimilarPage"
+import ArtistLabelsPage from "@/pages/ArtistLabelsPage"
 import { ReleaseRecommendationsPage, ReleaseRelatedPage } from "@/pages/ReleaseListPages"
 import { ProfileLikesPage, ProfilePlaylistsPage, ProfileTopPage } from "@/pages/ProfileListPages"
 
@@ -32,6 +33,7 @@ export const router = createBrowserRouter([
           { path: "search", Component: SearchPage },
           { path: "artists/:id", Component: ArtistPage },
           { path: "artists/:id/similar", Component: ArtistSimilarPage },
+          { path: "artists/:id/labels", Component: ArtistLabelsPage },
           { path: "releases/:id", Component: ReleasePage },
           { path: "releases/:id/related", Component: ReleaseRelatedPage },
           { path: "releases/:id/recommendations", Component: ReleaseRecommendationsPage },

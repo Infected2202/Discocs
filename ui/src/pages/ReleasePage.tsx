@@ -215,17 +215,6 @@ export default function ReleasePage() {
         />
       )}
 
-      {/* From this label — one shelf per label of the release */}
-      {release.labels?.map((label) => (
-        <LabelReleasesShelf
-          key={label.id}
-          label={label}
-          releaseId={releaseId}
-          artistIds={release.artists.map((a) => a.id)}
-          named={(release.labels?.length ?? 0) > 1}
-        />
-      ))}
-
       {/* Recommended albums */}
       {recsData?.available && recsData.items.length > 0 && (
         <Shelf
@@ -247,6 +236,16 @@ export default function ReleasePage() {
           }))}
         />
       )}
+
+      {/* «От лейбла …» — one shelf per label of the release, at the very bottom */}
+      {release.labels?.map((label) => (
+        <LabelReleasesShelf
+          key={label.id}
+          label={label}
+          releaseId={releaseId}
+          artistIds={release.artists.map((a) => a.id)}
+        />
+      ))}
       </div>{/* /z-10 */}
     </div>
   )

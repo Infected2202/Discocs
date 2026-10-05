@@ -50,6 +50,8 @@ export default function Shelf({
   const navigate = useNavigate()
   const { cols, isMobile } = useColumns()
   const [page, setPage] = useState(0)
+  // «Ещё» полки без страницы полного списка раскрывает её на месте сеткой.
+  const [expanded, setExpanded] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const touchMomentumHandlers = useTouchMomentum(containerRef)
   const animating = useRef(false)
@@ -58,7 +60,8 @@ export default function Shelf({
   const totalPages = Math.ceil(sliced.length / cols)
   const canPrev = page > 0
   const canNext = page < totalPages - 1
-  const showArrows = !grid && !isMobile && totalPages > 1
+  const asGrid = grid || expanded
+  const showArrows = !asGrid && !isMobile && totalPages > 1
 
   useEffect(() => {
     setPage(0)
@@ -81,16 +84,20 @@ export default function Shelf({
   const pages = Array.from({ length: totalPages }, (_, i) =>
     sliced.slice(i * cols, (i + 1) * cols)
   )
-  // «Ещё» only when the full list has something the shelf does not show:
-  // more in the source than loaded, or more loaded than the slider fits.
+  // «Ещё» on every shelf whose full list has something the shelf does not show:
+  // more in the source than loaded, or more loaded than the slider fits. It
+  // leads to the full-list page; a shelf without one unfolds in place into a
+  // grid of everything loaded (and folds back), so no shelf hides cards silently.
   const hasMore = !grid && (total ?? items.length) > sliced.length
   const fullListHref = moreHref ?? (shelfKey ? `/shelf/${shelfKey}` : null)
   const shelfHref = hasMore ? fullListHref : null
+  const canUnfold = !grid && !fullListHref && items.length > sliced.length
+  const toggle = canUnfold ? () => setExpanded((open) => !open) : null
 
   return (
     <section className="shelf-section space-y-1">
       {/* Header */}
-      {(title || shelfHref || showArrows) && <div className="px-4 sm:px-6 flex items-center gap-2 min-w-0">
+      {(title || shelfHref || toggle || showArrows) && <div className="px-4 sm:px-6 flex items-center gap-2 min-w-0">
         {shelfHref ? (
           <button
             type="button"
@@ -112,13 +119,14 @@ export default function Shelf({
           />
         )}
         <div className={cn("flex items-center gap-1 shrink-0", !title && "ml-auto")}>
-          {shelfHref && (
+          {(shelfHref || toggle) && (
             <button
               type="button"
-              onClick={() => navigate(shelfHref)}
+              onClick={() => (shelfHref ? navigate(shelfHref) : toggle?.())}
+              aria-expanded={toggle ? expanded : undefined}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors px-1.5 py-0.5 rounded hover:bg-muted"
             >
-              {t("shelf.more")}
+              {toggle && expanded ? t("shelf.less") : t("shelf.more")}
             </button>
           )}
           {showArrows && (
@@ -147,7 +155,7 @@ export default function Shelf({
       </div>}
 
       {/* Body */}
-      {grid ? (
+      {asGrid ? (
         <div
           className="px-3 pb-1"
           style={{

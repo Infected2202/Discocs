@@ -44,3 +44,8 @@ export function useArtistLabels(id: number) {
     queryFn: () => fetchArtistLabels(id),
   })
 }
+
+/** Full list of the artist's labels (`/artists/:id/labels`). */
+export function useArtistLabelsList(id: number) {
+  return usePagedList(["artist", id, "labels-list"], ({ limit, offset }) => fetchArtistLabels(id, limit, offset))
+}

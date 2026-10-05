@@ -10,6 +10,7 @@ import CollectionHeader from "@/components/media/CollectionHeader"
 import GenreTags from "@/components/media/GenreTags"
 import LikeButton from "@/components/media/LikeButton"
 import Shelf from "@/components/media/Shelf"
+import { labelToCard } from "@/components/media/labelCard"
 import PopularTracks from "@/components/media/PopularTracks"
 import { pickPopularTracks } from "@/lib/popularTracks"
 import { usePlayerStore } from "@/store/playerStore"
@@ -164,12 +165,9 @@ export default function ArtistPage() {
       {(labelsData?.items.length ?? 0) > 0 && (
         <Shelf
           title={t("labels")}
-          items={(labelsData?.items ?? []).map((label: LabelSummary) => ({
-            id: label.id,
-            type: "label" as const,
-            title: label.name,
-            artwork: label.artwork,
-          }))}
+          total={labelsData?.total}
+          moreHref={`/artists/${artistId}/labels`}
+          items={(labelsData?.items ?? []).map((label: LabelSummary) => labelToCard(label, t))}
         />
       )}
       </div>{/* /z-10 */}

@@ -557,10 +557,14 @@ def test_artist_labels_count_the_artists_own_releases_and_skip_missing_ones(tmp_
 
     data = client.get(f"/api/v1/artists/{artist_id}/labels").json()
 
-    # Больше релизов артиста — выше; релиз Someone Else на Warp не считается, Ninja Tune — не его
-    # лейбл, Gone Records — релиз без файлов.
-    assert [(item["name"], item["release_count"]) for item in data["items"]] == [("Warp", 3), ("Bleep", 2)]
+    # Больше релизов артиста — выше (Warp 3, Bleep 2); подпись карточки — все релизы лейбла,
+    # как везде (у Warp ещё релиз Someone Else). Ninja Tune — не его лейбл, Gone Records — без файлов.
+    assert [(item["name"], item["release_count"]) for item in data["items"]] == [("Warp", 4), ("Bleep", 2)]
     assert data["total"] == 2
+    page = client.get(f"/api/v1/artists/{artist_id}/labels", params={"limit": 1, "offset": 1}).json()
+    assert [item["name"] for item in page["items"]] == ["Bleep"]
+    assert (page["total"], page["next_offset"]) == (2, None)
+    assert client.get(f"/api/v1/artists/{artist_id}/labels", params={"limit": 1}).json()["next_offset"] == 1
     assert data["items"][0]["artwork"]["url"].startswith(f"/api/v1/labels/{store.label_id_by_name('Warp')}/image")
     assert client.get(f"/api/v1/artists/{artist_id}").json()["links"]["labels"] == f"/api/v1/artists/{artist_id}/labels"
     assert client.get("/api/v1/artists/999999/labels").status_code == 404

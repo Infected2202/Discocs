@@ -1,5 +1,6 @@
 import type { Namespace, TFunction } from "i18next"
 import type { MediaCardProps } from "./MediaCard"
+import { labelCardSubtitle } from "./labelCard"
 import type { ShelfItem } from "@/api/types"
 import i18n from "@/i18n"
 import { formatRelativeTime } from "@/lib/relativeTime"
@@ -16,9 +17,7 @@ export function shelfItemToCard<Ns extends Namespace>(
 ): MediaCardProps {
   const subtitle =
     item.entity_type === "label" && item.release_count !== undefined
-      ? [t("releaseCount", { ns: "label", count: item.release_count }), item.top_genres?.join(", ")]
-          .filter(Boolean)
-          .join(" · ")
+      ? labelCardSubtitle(item.release_count, t)
       : item.subtitle
   return {
     id: item.entity_id,

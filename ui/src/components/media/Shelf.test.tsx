@@ -326,6 +326,39 @@ describe("Shelf", () => {
     expect(screen.getByRole("button", { name: "More" })).toBeInTheDocument()
   })
 
+  it("unfolds a shelf without a full-list page in place instead of hiding cards", () => {
+    columns = 4
+    const items = Array.from({ length: 9 }, (_, i) => ({
+      id: i + 1,
+      type: "user" as const,
+      title: `Person ${i + 1}`,
+    }))
+    render(
+      <MemoryRouter>
+        <Shelf title="People" items={items} />
+      </MemoryRouter>
+    )
+
+    expect(screen.queryByText("Person 9")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "More" }))
+
+    expect(navigate).not.toHaveBeenCalled()
+    expect(screen.getByText("Person 9")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Next" })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Less" }))
+    expect(screen.queryByText("Person 9")).not.toBeInTheDocument()
+  })
+
+  it("does not offer to unfold a shelf that already shows every card", () => {
+    columns = 4
+    render(
+      <MemoryRouter>
+        <Shelf title="People" items={[{ id: 1, type: "user", title: "Solo" }]} />
+      </MemoryRouter>
+    )
+    expect(screen.queryByRole("button", { name: "More" })).not.toBeInTheDocument()
+  })
+
   it("never offers «More» on a grid shelf, which already shows everything", () => {
     render(
       <MemoryRouter>

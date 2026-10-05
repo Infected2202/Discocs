@@ -82,11 +82,14 @@ export interface ArtistSimilarResponse {
   basis: string
 }
 
-/** Labels of the artist's releases; `release_count` counts the artist's releases there. */
+/** One page of the labels of the artist's releases, most of the artist's releases first. */
 export interface ArtistLabelsResponse {
   artist: ArtistLink
   items: LabelSummary[]
   total: number
+  limit: number
+  offset: number
+  next_offset: number | null
 }
 
 export interface ArtistTopTrack extends TrackSummary {
@@ -275,7 +278,7 @@ export interface ShelfItem {
   reason: string | null
   /** Only on label cards: the subtitle is built from it on the client (i18n plurals). */
   release_count?: number
-  /** Only on label cards: two main styles, shown after the release count. */
+  /** Only on label cards: two main styles (not shown — a label card is name + release count). */
   top_genres?: string[]
   /** Only on History shelf cards: when the track was last played (ISO-8601), shown as relative time. */
   played_at?: string | null

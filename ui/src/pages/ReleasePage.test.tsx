@@ -287,16 +287,20 @@ describe("ReleasePage — полка «От этого лейбла»", () => {
       },
     })
 
+    useReleaseRecommendations.mockReturnValue({ data: { ...makeRecsData(), total: 1 } })
     renderPage()
 
-    expect(await screen.findByText("From this label")).toBeInTheDocument()
+    const title = await screen.findByText("From Warp")
+    // Полка лейбла — последняя на странице, под рекомендациями.
+    const recs = screen.getByText("Recommended Albums")
+    expect(recs.compareDocumentPosition(title)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(useLabelReleases).toHaveBeenCalledWith(7, "popularity")
     expect(screen.getByText("Selected Ambient Works")).toBeInTheDocument()
     expect(screen.getByText("Geogaddi")).toBeInTheDocument()
     expect(screen.queryByText("Older Synth Unit Album")).toBeNull()
   })
 
-  it("называет лейбл в заголовке, когда у релиза их несколько, и прячет полку лейбла самого артиста", async () => {
+  it("даёт полку каждому лейблу релиза и прячет полку лейбла самого артиста", async () => {
     const data = makeReleaseData()
     data.release.labels = [{ id: 7, name: "Warp" }, { id: 8, name: "Synth Unit Records" }]
     useRelease.mockReturnValue({ data, isLoading: false, error: null })
@@ -313,6 +317,5 @@ describe("ReleasePage — полка «От этого лейбла»", () => {
 
     expect(await screen.findByText("From Warp")).toBeInTheDocument()
     expect(screen.queryByText("From Synth Unit Records")).toBeNull()
-    expect(screen.queryByText("From this label")).toBeNull()
   })
 })

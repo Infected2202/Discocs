@@ -59,6 +59,7 @@ Defined in `ui/src/router.tsx`:
 /search                -> SearchPage
 /artists/:id           -> ArtistPage
 /artists/:id/similar   -> ArtistSimilarPage          (full list)
+/artists/:id/labels    -> ArtistLabelsPage           (full list)
 /releases/:id          -> ReleasePage
 /releases/:id/related  -> ReleaseRelatedPage         (full list)
 /releases/:id/recommendations -> ReleaseRecommendationsPage (full list)
@@ -169,15 +170,15 @@ track count, duration; under that line up to five styles (`GenreTags`,
 like-heart actions. Below the
 header: `TrackTable` for the release's tracks, a "More from these artists"
 `Shelf` built from the related-discography response (filtering out the
-current release), a "From this label" `Shelf` per record label
-(`LabelReleasesShelf`: `GET /api/v1/labels/{id}/releases?sort=popularity`,
-without the current release and releases of its artists — those are on the
-previous shelf; titled "From <label>" when the release has several labels,
-hidden when nothing is left, e.g. the artist's own label; "More" leads to
-`/labels/:id`), and a "Recommended Albums" `Shelf` shown only when the
-recommendations response reports `available: true` with items. Both preview
+current release), a "Recommended Albums" `Shelf` shown only when the
+recommendations response reports `available: true` with items — both preview
 16 cards and link to their full lists (`/releases/:id/related`,
-`/releases/:id/recommendations`) when the response's `total` is larger. Missing cover
+`/releases/:id/recommendations`) when the response's `total` is larger — and
+last an «От лейбла <name>» `Shelf` per record label (`LabelReleasesShelf`:
+`GET /api/v1/labels/{id}/releases?sort=popularity`, without the current
+release and releases of its artists — those are on the first shelf; hidden
+when nothing is left, e.g. the artist's own label; «Ещё» leads to
+`/labels/:id`). Missing cover
 falls back to a letter placeholder inside `ArtworkImage`.
 
 ### Artist page (`/artists/:id`, `ArtistPage.tsx`)
@@ -201,10 +202,11 @@ Albums, EPs, Singles, Featured In — grouping logic lives server-side). A
 regular 16-item "Similar artists" shelf follows when artist
 aggregates are available, with «Ещё» to the full ranked list (up to 200
 artists) when there are more. Last comes the "Artist's labels" slider `Shelf`
-(`useArtistLabels`, `GET /api/v1/artists/{id}/labels`), label cards as on the
-dashboard but without a subtitle: labels of releases credited to the artist (a
-guest track on another label's compilation does not count), most of the
-artist's releases first; the card opens `/labels/:id`; hidden when the
+(`useArtistLabels`, `GET /api/v1/artists/{id}/labels`, paged like similar
+artists) with the same label cards as the dashboard (name and the label's
+release count): labels of releases credited to the artist (a guest track on
+another label's compilation does not count), most of the artist's releases
+first; «Ещё» opens the full list `/artists/:id/labels`; hidden when the
 artist's releases carry no label. Missing similar-artist images are enriched through
 the same Navidrome `getArtistInfo2` path used by search and artist pages, then
 served through the backend cover proxy. There is no tabbed Discography/Top
@@ -252,9 +254,9 @@ style and at least 0.05; styles the model systematically gets wrong (Tech
 Trance, Bassline, Electro House…) are never shown, and sub-styles Discogs folds
 into a parent (Halftime, Jungle, Schranz, Hard Techno…) only next to that
 parent. An artist (its own releases) and a label show how many releases carry
-each style — styles on at least 5% of them, up to ten. Label cards add the two
-main styles after the release count: "588 releases · Techno, Tech House"
-(`top_genres` of the list/shelf items, read from the cache only).
+each style — styles on at least 5% of them, up to ten. A label card is the
+same everywhere (`components/media/labelCard.ts`): the name and the label's
+release count ("588 releases"), no styles.
 
 ### Mix page (`/mixes/:id`, `MixPage.tsx`)
 
@@ -353,6 +355,7 @@ route pages only plug in the source and the item → card mapping:
 |---|---|---|
 | `/shelf/:key` | `ShelfPage` | `GET /api/v1/dashboard/shelves/{key}` |
 | `/artists/:id/similar` | `ArtistSimilarPage` | `GET /api/v1/artists/{id}/similar` |
+| `/artists/:id/labels` | `ArtistLabelsPage` | `GET /api/v1/artists/{id}/labels` |
 | `/releases/:id/related` | `ReleaseRelatedPage` | `GET /api/v1/releases/{id}/related-discography` |
 | `/releases/:id/recommendations` | `ReleaseRecommendationsPage` | `GET /api/v1/releases/{id}/recommendations` |
 | `/u/:username/top/:kind?period=` | `ProfileTopPage` | `GET /api/v1/users/{username}/top/{kind}` |
@@ -632,8 +635,8 @@ Every horizontal shelf previews the same number of cards:
 `ui/src/lib/shelves.ts` and `app/services/shelves.py` — and every preview
 uses it instead of its own number: the dashboard (`useDashboard`, default
 `limit` of `/api/v1/dashboard` and `/dashboard/shelves/{key}`), profile tops,
-likes and playlists, similar artists, "More from these artists" and
-recommended albums. Grid shelves (`grid`: artist discography groups, label
+likes and playlists, similar artists, the artist's labels, "More from these
+artists" and recommended albums. Grid shelves (`grid`: artist discography groups, label
 releases) are not previews — they show everything and never get «Ещё».
 
 `Shelf` takes `moreHref` (the full list; `shelfKey` is sugar for
@@ -644,9 +647,11 @@ desktop and every loaded card on mobile. So a shelf whose whole source fits
 has no «Ещё», and a shelf without `total` still offers it when the loaded
 cards do not fit the slider.
 
-Shelves without a continuation: `ForYouShelf` (static entry cards),
-`PeopleShelf` (the people list is all users, polled whole; no paginated
-source) and the grid shelves.
+The rule holds for every slider shelf: no shelf hides cards without «Ещё». A
+shelf without a full-list page (`PeopleShelf`: the people list is all users,
+polled whole; `ForYouShelf`: static entry cards) unfolds in place — «Ещё»
+turns the slider into a grid of every loaded card and becomes «Свернуть».
+Grid shelves show everything and need neither.
 
 Some of the pixel-level claims above (exact card widths, exact heading sizes
 across all breakpoints) were spot-checked against current Tailwind classes

@@ -263,7 +263,7 @@ class LabelsStoreMixin:
         return track_ids[:limit]
 
     def artist_labels(self, artist_id: int) -> list[Label]:
-        """Лейблы живых релизов артиста; ``release_count`` — сколько из них у артиста.
+        """Лейблы живых релизов артиста; ``release_count`` — все живые релизы лейбла, как везде.
 
         Только релизы, где артист в кредитах релиза: гостевой трек на чужом сборнике не
         делает лейбл сборника лейблом артиста. Больше релизов артиста — выше.
@@ -271,7 +271,12 @@ class LabelsStoreMixin:
         with self.connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT l.*, COUNT(DISTINCT rl.release_id) AS release_count,
+                SELECT l.*, COUNT(DISTINCT rl.release_id) AS artist_release_count,
+                    (
+                        SELECT COUNT(DISTINCT rl.release_id)
+                        FROM release_labels rl
+                        WHERE rl.label_id = l.id AND {_AVAILABLE_RELEASE}
+                    ) AS release_count,
                     COALESCE(MAX(p.liked), 0) AS liked
                 FROM release_artists ra
                 JOIN release_labels rl ON rl.release_id = ra.release_id
@@ -280,7 +285,7 @@ class LabelsStoreMixin:
                   ON p.label_id = l.id AND p.user_id = ?
                 WHERE ra.artist_id = ? AND {_AVAILABLE_RELEASE}
                 GROUP BY l.id
-                ORDER BY release_count DESC, l.name COLLATE NOCASE, l.id
+                ORDER BY artist_release_count DESC, release_count DESC, l.name COLLATE NOCASE, l.id
                 """,
                 (self.user_id, artist_id),
             ).fetchall()
