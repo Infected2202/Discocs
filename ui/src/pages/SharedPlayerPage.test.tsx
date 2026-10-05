@@ -1,23 +1,35 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { ApiError } from "@/api/client"
 import SharedPlayerPage from "./SharedPlayerPage"
 
 const fetchPublicShare = vi.fn()
+const resolveShareForMember = vi.fn()
+const stageSharedRelease = vi.fn()
 const useArtworkTheme = vi.fn()
 
 vi.mock("@/api/shares", () => ({
   fetchPublicShare: (...args: unknown[]) => fetchPublicShare(...args),
+  resolveShareForMember: (...args: unknown[]) => resolveShareForMember(...args),
+}))
+
+vi.mock("@/lib/shareLanding", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/shareLanding")>()),
+  stageSharedRelease: (...args: unknown[]) => stageSharedRelease(...args),
 }))
 
 vi.mock("@/hooks/useArtworkTheme", () => ({
   useArtworkTheme: (artworkUrl: string | null) => useArtworkTheme(artworkUrl),
 }))
 
-function renderPage() {
+function renderPage(entry = "/share/test-token") {
   return render(
-    <MemoryRouter initialEntries={["/share/test-token"]}>
-      <Routes><Route path="/share/:token" element={<SharedPlayerPage />} /></Routes>
+    <MemoryRouter initialEntries={[entry]}>
+      <Routes>
+        <Route path="/share/:token" element={<SharedPlayerPage />} />
+        <Route path="/releases/:id" element={<h1>Release page</h1>} />
+      </Routes>
     </MemoryRouter>,
   )
 }
@@ -26,7 +38,12 @@ describe("SharedPlayerPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     fetchPublicShare.mockReset()
+    resolveShareForMember.mockReset()
+    stageSharedRelease.mockReset()
     useArtworkTheme.mockReset()
+    // A guest by default: no session, so the share stays on the public player.
+    resolveShareForMember.mockRejectedValue(new ApiError(401, "unauthorized", "Authentication required."))
+    stageSharedRelease.mockResolvedValue(undefined)
     vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined)
     vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined)
     vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined)
@@ -182,10 +199,91 @@ describe("SharedPlayerPage", () => {
     expect(container.querySelector(".share-seek-thumb")).toHaveAttribute("data-dragging", "false")
   })
 
-  it("shows one generic unavailable state for a rejected token", async () => {
-    fetchPublicShare.mockRejectedValueOnce(new Error("404"))
+  it("offers a retry when the share cannot be loaded at all", async () => {
+    fetchPublicShare.mockRejectedValueOnce(new Error("Failed to fetch"))
     renderPage()
 
     expect(await screen.findByRole("heading", { name: "This link is unavailable" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument()
+  })
+
+  it("shows the expired stub to a guest whose link the server refuses", async () => {
+    fetchPublicShare.mockRejectedValueOnce(new ApiError(404, "share_unavailable", "Share unavailable"))
+    renderPage()
+
+    expect(await screen.findByRole("heading", { name: "Oops, this link has expired" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument()
+  })
+
+  it("shows the expired stub when no shared track is left in the library", async () => {
+    fetchPublicShare.mockResolvedValueOnce({
+      kind: "track",
+      title: "Gone",
+      subtitle: null,
+      expires_at: null,
+      artwork_url: "/cover",
+      download_url: "/share-download",
+      items: [{ position: 0, title: "Gone", artist: null, duration: 60, available: false, audio_url: "/audio/0", download_url: "/download/0" }],
+    })
+    renderPage()
+
+    expect(await screen.findByRole("heading", { name: "Oops, this link has expired" })).toBeInTheDocument()
+  })
+})
+
+describe("SharedPlayerPage for a signed-in user", () => {
+  const target = { release_id: 7, release_title: "Shared album", track_id: 42 }
+
+  beforeEach(() => {
+    fetchPublicShare.mockReset()
+    resolveShareForMember.mockReset()
+    stageSharedRelease.mockReset()
+    stageSharedRelease.mockResolvedValue(undefined)
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined)
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined)
+  })
+
+  it("stages the shared track and moves to its release instead of the guest player", async () => {
+    resolveShareForMember.mockResolvedValueOnce(target)
+    renderPage()
+
+    expect(await screen.findByRole("heading", { name: "Release page" })).toBeInTheDocument()
+    expect(resolveShareForMember).toHaveBeenCalledWith("test-token")
+    expect(stageSharedRelease).toHaveBeenCalledWith(target)
+    expect(fetchPublicShare).not.toHaveBeenCalled()
+  })
+
+  it("still lands on the release when the player could not be staged", async () => {
+    resolveShareForMember.mockResolvedValueOnce(target)
+    stageSharedRelease.mockRejectedValueOnce(new Error("offline"))
+    renderPage()
+
+    expect(await screen.findByRole("heading", { name: "Release page" })).toBeInTheDocument()
+  })
+
+  it("shows the expired stub for a dead link instead of falling back to the guest player", async () => {
+    resolveShareForMember.mockRejectedValueOnce(new ApiError(404, "share_unavailable", "Share unavailable"))
+    renderPage()
+
+    expect(await screen.findByRole("heading", { name: "Oops, this link has expired" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Go to home" })).toHaveAttribute("href", "/")
+    expect(fetchPublicShare).not.toHaveBeenCalled()
+    expect(stageSharedRelease).not.toHaveBeenCalled()
+  })
+
+  it("opens the guest player without resolving when asked for ?guest=1", async () => {
+    fetchPublicShare.mockResolvedValueOnce({
+      kind: "track",
+      title: "First",
+      subtitle: "Artist",
+      expires_at: null,
+      artwork_url: "/cover",
+      download_url: "/share-download",
+      items: [{ position: 0, title: "First", artist: "Artist", duration: 60, available: true, audio_url: "/audio/0", download_url: "/download/0" }],
+    })
+    renderPage("/share/test-token?guest=1")
+
+    expect(await screen.findByRole("heading", { name: "First" })).toBeInTheDocument()
+    expect(resolveShareForMember).not.toHaveBeenCalled()
   })
 })

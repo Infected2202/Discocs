@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
-import { Loader2, Pause, Play, Repeat1, RotateCcw, SkipBack, SkipForward, Volume2, VolumeX } from "lucide-react"
+import { Link2Off, Loader2, Pause, Play, Repeat1, RotateCcw, SkipBack, SkipForward, Volume2, VolumeX } from "lucide-react"
 import { useTranslation } from "react-i18next"
-import { Link, useParams } from "react-router"
-import { fetchPublicShare, type PublicShare } from "@/api/shares"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router"
+import { ApiError } from "@/api/client"
+import { fetchPublicShare, resolveShareForMember, type PublicShare } from "@/api/shares"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import { useDragSlider } from "@/components/player/useDragSlider"
 import ShareDownloadMenu from "@/components/share/ShareDownloadMenu"
 import { useArtworkTheme } from "@/hooks/useArtworkTheme"
+import { shareTargetPath, stageSharedRelease } from "@/lib/shareLanding"
 import { cn } from "@/lib/utils"
 
 function formatTime(seconds: number): string {
@@ -29,15 +31,78 @@ function resolveDuration(reported: number | undefined, fromApi: number | null | 
   return 0
 }
 
-export default function SharedPlayerPage() {
+/** A refusal the server gives for a dead link, as opposed to a failed request. */
+function isDeadLink(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 404 || error.status === 422)
+}
+
+function PageSpinner() {
+  return <main className="min-h-dvh grid place-items-center bg-background text-foreground"><Loader2 className="animate-spin" /></main>
+}
+
+function ExpiredShare() {
   const { t } = useTranslation("share")
+  return (
+    <main className="min-h-dvh grid place-items-center bg-background px-6 text-center text-foreground">
+      <div className="space-y-4">
+        <Link2Off size={32} className="mx-auto text-muted-foreground" />
+        <h1 className="text-xl font-semibold">{t("expiredTitle")}</h1>
+        <p className="max-w-sm text-sm text-muted-foreground">{t("expiredDescription")}</p>
+        <Link to="/" className="inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">{t("home")}</Link>
+      </div>
+    </main>
+  )
+}
+
+type Landing = "checking" | "guest" | "expired"
+
+/**
+ * A signed-in user opening a share link belongs in the library, not in the
+ * guest player: resolve the link for them, stage the shared track paused in
+ * their player and move to its release page. A guest (401) — or anyone who
+ * asked for `?guest=1`, e.g. an owner checking what the recipient sees — gets
+ * the public player. A dead link is the same stub for both.
+ */
+export default function SharedPlayerPage() {
   const { token = "" } = useParams<{ token: string }>()
+  const [searchParams] = useSearchParams()
+  const forceGuest = searchParams.get("guest") === "1"
+  const navigate = useNavigate()
+  const [landing, setLanding] = useState<Landing>(forceGuest ? "guest" : "checking")
+
+  useEffect(() => {
+    if (forceGuest) {
+      setLanding("guest")
+      return
+    }
+    let cancelled = false
+    setLanding("checking")
+    resolveShareForMember(token)
+      .then(async (target) => {
+        // Staging is a convenience; the user still lands on the release if it fails.
+        await stageSharedRelease(target).catch(() => undefined)
+        if (!cancelled) navigate(shareTargetPath(target), { replace: true })
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setLanding(isDeadLink(error) ? "expired" : "guest")
+      })
+    return () => { cancelled = true }
+  }, [forceGuest, navigate, token])
+
+  if (landing === "checking") return <PageSpinner />
+  if (landing === "expired") return <ExpiredShare />
+  return <GuestSharePlayer token={token} />
+}
+
+function GuestSharePlayer({ token }: { readonly token: string }) {
+  const { t } = useTranslation("share")
   const audioRef = useRef<HTMLAudioElement>(null)
   const autoplayNextRef = useRef(false)
   const durationRef = useRef(0)
   const [share, setShare] = useState<PublicShare | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const [expired, setExpired] = useState(false)
   const [index, setIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [buffering, setBuffering] = useState(false)
@@ -90,6 +155,7 @@ export default function SharedPlayerPage() {
     let cancelled = false
     setLoading(true)
     setError(false)
+    setExpired(false)
     fetchPublicShare(token)
       .then((payload) => {
         if (cancelled) return
@@ -97,8 +163,10 @@ export default function SharedPlayerPage() {
         const firstAvailable = payload.items.findIndex((entry) => entry.available)
         setIndex(Math.max(firstAvailable, 0))
       })
-      .catch(() => {
-        if (!cancelled) setError(true)
+      .catch((reason: unknown) => {
+        if (cancelled) return
+        if (isDeadLink(reason)) setExpired(true)
+        else setError(true)
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -203,10 +271,10 @@ export default function SharedPlayerPage() {
     }
   }, [availableIndexes, index, share])
 
-  if (loading) {
-    return <main className="min-h-dvh grid place-items-center bg-background text-foreground"><Loader2 className="animate-spin" /></main>
-  }
-  if (error || !share || availableIndexes.length === 0) {
+  if (loading) return <PageSpinner />
+  // Every track of the snapshot gone from the library is a dead link too.
+  if (expired || (share && availableIndexes.length === 0)) return <ExpiredShare />
+  if (error || !share) {
     return (
       <main className="min-h-dvh grid place-items-center bg-background px-6 text-center text-foreground">
         <div className="space-y-4">

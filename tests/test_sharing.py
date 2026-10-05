@@ -724,3 +724,123 @@ def test_management_api_rejects_service_principal(tmp_path, monkeypatch):
         headers=headers,
     )
     assert response.status_code == 401
+
+
+def _resolve(client: TestClient, token: str):
+    return client.post("/api/v1/shares/resolve", json={"token": token})
+
+
+def test_member_resolve_points_a_track_share_at_its_release(tmp_path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    first = _track(store, tmp_path / "01.flac", title="First")
+    second = _track(store, tmp_path / "02.flac", title="Second")
+    release_id = _release(store, [first, second], title="Shared album")
+    share, token = _user_store(store, "alice").create_share(
+        source_type="track", source_id=second, expires_at=_future()
+    )
+    client = _session_client(store, "bob")
+
+    response = _resolve(client, token)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "release_id": release_id,
+        "release_title": "Shared album",
+        "track_id": second,
+    }
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    # A member landing in the library is not a guest visit.
+    with store.connect() as conn:
+        row = conn.execute("SELECT access_count FROM shares WHERE id = ?", (share.id,)).fetchone()
+    assert row["access_count"] == 0
+
+
+def test_member_resolve_points_a_release_share_at_the_release_without_a_track(tmp_path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    track_id = _track(store, tmp_path / "01.flac", title="Only")
+    release_id = _release(store, [track_id], title="Record")
+    _share, token = _user_store(store).create_share(
+        source_type="release", source_id=release_id, expires_at=_future()
+    )
+
+    response = _resolve(_session_client(store), token)
+
+    assert response.status_code == 200
+    assert response.json() == {"release_id": release_id, "release_title": "Record", "track_id": None}
+
+
+def test_member_resolve_requires_a_user_session(tmp_path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    track_id = _track(store, tmp_path / "01.flac", title="One")
+    _release(store, [track_id])
+    _share, token = _user_store(store).create_share(
+        source_type="track", source_id=track_id, expires_at=_future()
+    )
+    monkeypatch.setenv("DISCOCS_SERVICE_TOKEN", "service-secret")
+
+    guest = _resolve(TestClient(app), token)
+    service = TestClient(app).post(
+        "/api/v1/shares/resolve",
+        json={"token": token},
+        headers={"x-discocs-service-token": "service-secret"},
+    )
+
+    assert guest.status_code == 401
+    assert "release_id" not in guest.text
+    assert service.status_code == 401
+
+
+def test_member_resolve_refuses_dead_tokens_with_one_response(tmp_path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    track_id = _track(store, tmp_path / "01.flac", title="One")
+    _release(store, [track_id])
+    scoped = _user_store(store)
+    _expired, expired_token = scoped.create_share(
+        source_type="track",
+        source_id=track_id,
+        expires_at=(datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+    )
+    revoked, revoked_token = scoped.create_share(
+        source_type="track", source_id=track_id, expires_at=_future()
+    )
+    scoped.revoke_user_share(revoked.id)
+    client = _session_client(store)
+
+    responses = [
+        _resolve(client, expired_token),
+        _resolve(client, revoked_token),
+        _resolve(client, "A" * 43),
+        _resolve(client, "not a token"),
+    ]
+
+    assert [response.status_code for response in responses] == [404, 404, 404, 404]
+    assert len({response.text for response in responses}) == 1
+
+
+def test_member_resolve_refuses_a_source_gone_from_the_library(tmp_path, monkeypatch):
+    store = _init_store(tmp_path, monkeypatch)
+    gone = _track(store, tmp_path / "gone.flac", title="Gone")
+    kept = _track(store, tmp_path / "kept.flac", title="Kept")
+    orphan = _track(store, tmp_path / "orphan.flac", title="Orphan")
+    _release(store, [gone, kept], title="Partly gone")
+    emptied = _track(store, tmp_path / "emptied.flac", title="Emptied")
+    emptied_release = _release(store, [emptied], title="Emptied")
+    scoped = _user_store(store)
+    _s1, gone_token = scoped.create_share(source_type="track", source_id=gone, expires_at=_future())
+    _s2, kept_token = scoped.create_share(source_type="track", source_id=kept, expires_at=_future())
+    _s3, orphan_token = scoped.create_share(source_type="track", source_id=orphan, expires_at=_future())
+    _s4, emptied_token = scoped.create_share(
+        source_type="release", source_id=emptied_release, expires_at=_future()
+    )
+    with store.connect() as conn:
+        conn.execute(
+            "UPDATE tracks SET missing_at = ? WHERE id IN (?, ?)", (utc_now(), gone, emptied)
+        )
+    client = _session_client(store)
+
+    assert _resolve(client, gone_token).status_code == 404
+    assert _resolve(client, orphan_token).status_code == 404
+    assert _resolve(client, emptied_token).status_code == 404
+    # A release missing one of its tracks is still a place to land.
+    assert _resolve(client, kept_token).status_code == 200

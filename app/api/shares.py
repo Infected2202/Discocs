@@ -63,6 +63,12 @@ class ShareUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ShareResolveRequest(BaseModel):
+    token: str = Field(max_length=128)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class _SlidingRateLimiter:
     def __init__(self) -> None:
         self._events: dict[str, deque[float]] = defaultdict(deque)
@@ -371,6 +377,67 @@ def share_capabilities(request: Request) -> dict[str, bool]:
             and isinstance(getattr(request.state, "user_id", None), int)
         ),
     }
+
+
+def _member_target(store: object, share: Share) -> tuple[int, str, int | None] | None:
+    """The library place a share points at: (release id, release title, track id).
+
+    Nothing when that place no longer exists — a track gone missing, or a
+    release with no playable track left. A track without a release has no
+    page to land on either.
+    """
+    if share.source_type == "track":
+        track = store.get_track(share.source_id)  # type: ignore[attr-defined]
+        if track is None or track.missing_at is not None:
+            return None
+        release_id = store.release_id_for_track(track.id)  # type: ignore[attr-defined]
+        track_id: int | None = track.id
+    else:
+        release_id = share.source_id
+        track_id = None
+    if release_id is None:
+        return None
+    release = store.get_release(release_id)  # type: ignore[attr-defined]
+    if release is None:
+        return None
+    if not any(
+        row.track.missing_at is None
+        for row in store.list_release_tracks(release_id)  # type: ignore[attr-defined]
+    ):
+        return None
+    return release_id, release.release.title, track_id
+
+
+@router.post("/shares/resolve", response_model=None)
+def resolve_share_for_member(request: Request, payload: ShareResolveRequest) -> Response:
+    """Where a signed-in user opening a share link lands instead of the guest player.
+
+    The token travels in the body, not the path: unlike `/share/{token}` and
+    the public API, this URL is not masked in access logs. Every reason the
+    link is refused — malformed, unknown, expired or revoked token, source gone
+    from the library — is the same 404 the guest page gets. Opening a link here
+    is not a guest visit, so the share's access counter is left alone.
+    """
+    store, settings = context()
+    _require_creator(request, settings)
+    if not _request_limiter.allow(
+        f"resolve:{getattr(request.state, 'user_id', 'unknown')}", limit=60, window_seconds=60
+    ):
+        return _rate_limited()
+    resolved = _resolved_public_share(payload.token)
+    if resolved is None:
+        return _unavailable()
+    _store, _settings, share = resolved
+    target = _member_target(store, share)
+    if target is None:
+        return _unavailable()
+    release_id, release_title, track_id = target
+    return _share_headers(
+        JSONResponse(
+            {"release_id": release_id, "release_title": release_title, "track_id": track_id}
+        ),
+        cache_control="private, no-store",
+    )
 
 
 @router.get("/shares/{share_id}", response_model=None)

@@ -2,6 +2,7 @@ import type { ComponentProps, ReactNode } from "react"
 import { render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { ApiError } from "@/api/client"
 import SharedPlayerPage from "./SharedPlayerPage"
 
 const fetchPublicShare = vi.fn()
@@ -19,6 +20,8 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 
 vi.mock("@/api/shares", () => ({
   fetchPublicShare: (...args: unknown[]) => fetchPublicShare(...args),
+  // A guest: no session, so the share stays on the public player.
+  resolveShareForMember: () => Promise.reject(new ApiError(401, "unauthorized", "Authentication required.")),
 }))
 
 vi.mock("@/hooks/useArtworkTheme", () => ({ useArtworkTheme: () => undefined }))

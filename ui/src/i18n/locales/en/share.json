@@ -39,8 +39,11 @@
     "downloadAll": "Download all"
   },
   "unavailableTitle": "This link is unavailable",
-  "unavailableDescription": "It may have expired, been revoked, or no longer contain playable tracks.",
+  "unavailableDescription": "The link could not be loaded. Check your connection and try again.",
   "retry": "Try again",
+  "expiredTitle": "Oops, this link has expired",
+  "expiredDescription": "It has run out, been revoked, or what was shared is no longer in the library.",
+  "home": "Go to home",
   "management": {
     "title": "Shared links",
     "description": "Review and revoke public access to tracks and releases.",

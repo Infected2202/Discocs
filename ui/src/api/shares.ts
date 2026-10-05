@@ -78,3 +78,21 @@ export function revokeShare(id: string): Promise<void> {
 export function fetchPublicShare(token: string): Promise<PublicShare> {
   return apiFetch(`/api/v1/public/shares/${encodeURIComponent(token)}`)
 }
+
+/** Where a signed-in user opening a share link belongs in the library. */
+export interface ShareMemberTarget {
+  release_id: number
+  release_title: string
+  /** The shared track; null when the whole release was shared. */
+  track_id: number | null
+}
+
+/**
+ * Resolve a share link for the signed-in user. Rejects with 401 for a guest
+ * and 404 for a link that is dead or whose source left the library. The token
+ * goes in the body: unlike the public share URLs, this path is not masked in
+ * access logs.
+ */
+export function resolveShareForMember(token: string): Promise<ShareMemberTarget> {
+  return apiFetch("/api/v1/shares/resolve", { method: "POST", body: JSON.stringify({ token }) })
+}
