@@ -78,6 +78,7 @@ from app.models import (
     utc_now,
 )
 from app.scanner import ScannedTrack
+from app.store.label_merge import merge_labels_first_time
 from app.store.listens import backfill_listens_from_events
 from app.store.user_merge import merge_case_variant_users
 
@@ -141,6 +142,7 @@ class StoreBase:
                 # Own connections: the backup (VACUUM INTO) can't run inside
                 # the schema transaction.
                 merge_case_variant_users(self.db_path)
+                merge_labels_first_time(self.db_path)
                 INITIALIZED_DB_PATHS.add(resolved_path)
         if self._bind_default_user and self.user_id is None:
             owner_username = os.getenv(OWNER_USER_ENV, "").strip() or DEFAULT_OWNER_USERNAME
@@ -343,7 +345,8 @@ class StoreBase:
                     external_ids_json TEXT,
                     metadata_synced_at TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    official_name TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS release_labels (
@@ -389,6 +392,14 @@ class StoreBase:
                     discogs_id TEXT,
                     error TEXT,
                     attempted_at TEXT NOT NULL,
+                    FOREIGN KEY (label_id) REFERENCES labels(id) ON DELETE CASCADE
+                );
+
+                -- Ключи склейки лейблов (app/label_names.merge_key) → лейбл: «ТРИП»,
+                -- «trip recordings» и «Trip» из тегов попадают в один лейбл.
+                CREATE TABLE IF NOT EXISTS label_aliases (
+                    key TEXT PRIMARY KEY,
+                    label_id INTEGER NOT NULL,
                     FOREIGN KEY (label_id) REFERENCES labels(id) ON DELETE CASCADE
                 );
 
@@ -1128,6 +1139,7 @@ class StoreBase:
             self._ensure_column(conn, "generated_mixes", "cover_path", "TEXT")
             self._ensure_column(conn, "playlists", "description", "TEXT")
             self._ensure_column(conn, "playlists", "cover_path", "TEXT")
+            self._ensure_column(conn, "labels", "official_name", "TEXT")
             # Sessions created before identity binding may still resolve their
             # user lazily by username; personal domain rows may not be unscoped.
             self._ensure_column(conn, "sessions", "user_id", "INTEGER")

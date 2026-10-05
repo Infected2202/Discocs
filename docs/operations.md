@@ -224,6 +224,36 @@ Operations -> Labels -> Sync labels
   found release must list this very label id, not a namesake). Description: ru Wikipedia → en Wikipedia (Wikidata by the
   Discogs label id) → Discogs profile → Beatport bio. Hand-written
   (`editorial`) descriptions are never overwritten.
+- **Self-released** — a label that is not a label gets the status
+  `self_released` instead of "not found" and is never looked up again (not even
+  by "Retry not found"): DistroKid's auto-filled "123456 Records DK",
+  "Independent", "Self-released", "Unsigned…", "Not On Label…", or a not-found
+  label whose release Discogs knows by barcode as "Not On Label". It stays
+  visible everywhere; the panel counts it separately.
+- **Merging duplicates** — one label is one row whatever the tags call it (see
+  `app/store/label_merge.py`). A merge key — the name without legal wrappers
+  ("Universal Music Division Decca Records France" → "Decca Records France",
+  "X under exclusive license from Y" → "X", "(p)", "©", "distributed by…",
+  'ЗАО "Си Ди Лэнд+"' → "Си Ди Лэнд+"),
+  then without punctuation, a leading ООО/LLC and a trailing
+  Records/Recordings/Music/Ltd…, transliterated to Latin and without spaces —
+  makes "ТРИП", "trip recordings" and "Trip" one label. A string with several
+  labels split by "/" ("OWSLA/Atlantic") goes to the one of them with more
+  releases, even when Beatport keeps the pair as a label of its own (what was
+  found for the pair — image, description, ids — is dropped, not given to
+  Atlantic); if none of the parts is a known label it stays whole ("KR/LF",
+  "Ki/oon"). Commas are not split: tags use them for publishers and copyright
+  lines. The scan files a release straight into the right
+  label through `label_aliases`. After every label sync, labels that share a
+  merge key, a Beatport/Discogs id or the key of an official name are merged:
+  the main one is the found one with more releases; it gets the releases and
+  likes, and the image, description, links and ids when it has none. Its name
+  becomes the official one — Beatport first, then Discogs (the first run after
+  this change fills official names of already-found labels, mostly from the
+  cache). A not-found label whose name changed ("Decca Records France") is
+  looked up again under the new name. The first start with merging merges the
+  old duplicates once, after a `app.db.pre-label-merge-*.bak` backup; merged
+  labels' old ids stop working.
 - **Concurrency** — the job (`label-sync`) does not take the shared job queue
   (`NON_BLOCKING_JOB_KINDS` in `app/services/jobs.py`): it only writes label
   data, so Navidrome sync, analysis and indexing run alongside. Only one label

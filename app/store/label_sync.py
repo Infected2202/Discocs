@@ -16,6 +16,8 @@ _CHUNK = 500
 LABEL_SYNC_FOUND = "found"
 LABEL_SYNC_NOT_FOUND = "not_found"
 LABEL_SYNC_ERROR = "error"
+# Релиз без лейбла («123456 Records DK», «Independent», Discogs: «Not On Label») — искать нечего.
+LABEL_SYNC_SELF_RELEASED = "self_released"
 
 
 @dataclass(frozen=True)
@@ -178,8 +180,9 @@ class LabelSyncStoreMixin:
             conn.execute("UPDATE label_sync_state SET keys_hash = ? WHERE label_id = ?", (keys_hash, label_id))
 
     def label_sync_counts(self) -> dict[str, int]:
-        """Сколько живых лейблов найдено / не найдено / с ошибкой / ещё не обрабатывалось."""
-        counts = {LABEL_SYNC_FOUND: 0, LABEL_SYNC_NOT_FOUND: 0, LABEL_SYNC_ERROR: 0, "pending": 0}
+        """Сколько живых лейблов найдено / не найдено / самиздат / с ошибкой / ещё не обрабатывалось."""
+        counts = {LABEL_SYNC_FOUND: 0, LABEL_SYNC_NOT_FOUND: 0, LABEL_SYNC_SELF_RELEASED: 0, LABEL_SYNC_ERROR: 0,
+                  "pending": 0}
         for candidate in self.label_sync_candidates():
             counts[candidate.status or "pending"] = counts.get(candidate.status or "pending", 0) + 1
         return counts
@@ -202,6 +205,33 @@ class LabelSyncStoreMixin:
                     out[int(label_id)] = {str(k): str(v) for k, v in value.items()} if isinstance(value, dict) else {}
         return out
 
+    def labels_without_official_name(self) -> list[tuple[int, dict[str, str]]]:
+        """Найденные лейблы, чьё официальное название ещё не запомнено: (id, внешние id)."""
+        with self.connect() as conn:  # type: ignore[attr-defined]
+            rows = conn.execute(
+                """
+                SELECT l.id, l.external_ids_json FROM labels l
+                JOIN label_sync_state s ON s.label_id = l.id
+                WHERE s.status = ? AND l.official_name IS NULL
+                ORDER BY l.id
+                """,
+                (LABEL_SYNC_FOUND,),
+            ).fetchall()
+        out = []
+        for label_id, raw in rows:
+            try:
+                value = json.loads(raw or "{}")
+            except ValueError:
+                value = {}
+            ids = {str(k): str(v) for k, v in value.items() if v} if isinstance(value, dict) else {}
+            if ids.get("beatport") or ids.get("discogs"):
+                out.append((int(label_id), ids))
+        return out
+
+    def set_label_official_name(self, label_id: int, name: str) -> None:
+        with self.connect() as conn:  # type: ignore[attr-defined]
+            conn.execute("UPDATE labels SET official_name = ? WHERE id = ?", (name, label_id))
+
     def clear_label_match(self, label_id: int) -> None:
         """Забыть неверную привязку: ссылки, внешние id, картинку и описание (кроме написанного вручную)."""
         with self.connect() as conn:  # type: ignore[attr-defined]
@@ -209,6 +239,7 @@ class LabelSyncStoreMixin:
                 """
                 UPDATE labels
                 SET links_json = '[]', external_ids_json = '{}', image_path = NULL, image_source = NULL,
+                    official_name = NULL,
                     description = CASE WHEN description_source = ? THEN description END,
                     description_source = CASE WHEN description_source = ? THEN description_source END,
                     updated_at = ?

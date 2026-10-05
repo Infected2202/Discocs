@@ -6,6 +6,9 @@
 (служебная запись Discogs, чужое название); в админке кнопки нет — только API. Задача не входит
 в общую очередь (``NON_BLOCKING_JOB_KINDS``): она пишет только данные лейблов и никому не мешает.
 Итог каждого прогона пишется в ``label_sync_runs`` — задачи живут в памяти и пропадают при перезапуске.
+Лейбл без лейбла (автоподстановка DistroKid, «Independent», Discogs: «Not On Label») получает статус
+«самиздат» и больше не ищется. После поиска лейблы склеиваются (``app/store/label_merge.py``):
+найденные получают официальное название, дубли сливаются.
 """
 from __future__ import annotations
 
@@ -24,6 +27,7 @@ from pathlib import Path
 import httpx
 
 from app.config import Settings
+from app.label_names import is_self_released
 from app.models import LabelMetadata
 from app.services.label_sync.clients import (
     BeatportClient,
@@ -42,6 +46,7 @@ from app.store.label_sync import (
     LABEL_SYNC_ERROR,
     LABEL_SYNC_FOUND,
     LABEL_SYNC_NOT_FOUND,
+    LABEL_SYNC_SELF_RELEASED,
     LabelSyncCandidate,
     LabelTrackSource,
 )
@@ -77,11 +82,20 @@ class LabelSyncSummary:
     images: int = 0
     descriptions: int = 0
     mismatched: int = 0
+    self_released: int = 0
+    merged: int = 0
+    renamed: int = 0
 
     def message(self) -> str:
         text = (f"Checked {self.checked} labels: found {self.found} (images {self.images}, "
                 f"descriptions {self.descriptions}), not found {self.not_found}, errors {self.errors}")
-        return f"{text}, wrong matches looked up again {self.mismatched}" if self.mismatched else text
+        if self.self_released:
+            text += f", self-released {self.self_released}"
+        if self.mismatched:
+            text += f", wrong matches looked up again {self.mismatched}"
+        if self.merged or self.renamed:
+            text += f". Duplicates merged {self.merged}, renamed {self.renamed}"
+        return text
 
 
 # ---------- какие лейблы и с какими ключами ----------
@@ -154,12 +168,15 @@ def labels_to_sync(
     only_label_id: int | None,
     remember_baseline: Callable[[int, str], None],
 ) -> list[tuple[LabelSyncCandidate, LabelKeys]]:
-    """Кого искать: новых, с ошибкой, ненайденных с новыми ключами (или все ненайденные по кнопке)."""
+    """Кого искать: новых, с ошибкой, ненайденных с новыми ключами (или все ненайденные по кнопке).
+
+    Найденный и самиздат не ищутся: у самиздата внешнего лейбла нет.
+    """
     if only_label_id is not None:
         chosen = [c for c in candidates if c.label_id == only_label_id]
         known = keys([c.label_id for c in chosen])
         return [(c, known[c.label_id]) for c in chosen]
-    pending = [c for c in candidates if c.status != LABEL_SYNC_FOUND]
+    pending = [c for c in candidates if c.status not in (LABEL_SYNC_FOUND, LABEL_SYNC_SELF_RELEASED)]
     known = keys([c.label_id for c in pending])
     todo = []
     for candidate in pending:
@@ -189,8 +206,14 @@ def sync_one_label(
     def titles() -> list[str]:
         return [row.release.title for row in store.label_releases(candidate.label_id)]
 
+    if is_self_released(candidate.name):
+        _self_released(store, candidate, keys, summary, lock)
+        return
     result = resolver.resolve(candidate.name, keys.barcodes, keys.isrcs, titles)
     if not result.found:
+        if result.self_released:
+            _self_released(store, candidate, keys, summary, lock)
+            return
         store.set_label_sync_state(candidate.label_id, LABEL_SYNC_NOT_FOUND, keys_hash=keys.hash)
         with lock:
             summary.not_found += 1
@@ -203,6 +226,7 @@ def sync_one_label(
         description_source=result.description_source,
         links=result.links,
         external_ids=result.external_ids,
+        official_name=result.official_name,
     ), image)
     store.set_label_sync_state(
         candidate.label_id, LABEL_SYNC_FOUND, keys_hash=keys.hash,
@@ -212,6 +236,43 @@ def sync_one_label(
         summary.found += 1
         summary.images += image is not None
         summary.descriptions += bool(result.description)
+
+
+def _self_released(
+    store: Store, candidate: LabelSyncCandidate, keys: LabelKeys, summary: LabelSyncSummary, lock: threading.Lock,
+) -> None:
+    store.set_label_sync_state(candidate.label_id, LABEL_SYNC_SELF_RELEASED, keys_hash=keys.hash)
+    with lock:
+        summary.self_released += 1
+
+
+def fill_official_names(
+    store: Store,
+    resolver: LabelResolver,
+    progress: Callable[[int, int, str | None], None] = lambda done, total, current: None,
+    cancelled: Callable[[], bool] = lambda: False,
+) -> int:
+    """Официальные названия лейблов, найденных до того, как их стали запоминать.
+
+    Ответы Beatport/Discogs по найденным лейблам обычно уже в кэше, так что это быстро.
+    """
+    missing = store.labels_without_official_name()
+    filled = 0
+    for done, (label_id, external_ids) in enumerate(missing, start=1):
+        if cancelled():
+            break
+        try:
+            name = resolver.official_name(external_ids.get("beatport"), external_ids.get("discogs"))
+        except ServiceAuthError:
+            raise
+        except Exception:  # noqa: BLE001 — без имени лейбл просто не переименуется
+            logger.warning("Label official name lookup failed label_id=%s", label_id, exc_info=True)
+            continue
+        if name:
+            store.set_label_official_name(label_id, name)
+            filled += 1
+        progress(done, len(missing), name)
+    return filled
 
 
 def recheck_one_label(
@@ -331,6 +392,11 @@ def run_label_sync(
                 for pending in futures:
                     pending.cancel()
                 break
+    if not cancelled():
+        fill_official_names(store, resolver, progress, cancelled)
+    if not cancelled():
+        merge = store.merge_duplicate_labels()
+        summary.merged, summary.renamed = merge.merged, merge.renamed
     return summary
 
 

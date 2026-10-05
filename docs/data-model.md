@@ -115,9 +115,10 @@ the cache only) stay current.
 
 ### Labels
 
-`labels`: `id`, `name` (display name of the first spelling seen — later
-syncs do not rename it), `normalized_name` (unique; `normalize_text`, so
-"trip recordings" and "Trip Recordings" are one label), `image_path`
+`labels`: `id`, `name` (display name: the first spelling seen without legal
+wrappers, renamed to `official_name` once the label sync finds it),
+`normalized_name` (unique; `normalize_text` of `name`), `official_name` (the
+label's name on Beatport, else Discogs; NULL until found), `image_path`
 (file under `data/label_images/`, NULL → the bundled Beatport placeholder
 `app/assets/label-placeholder.jpg` is served), `image_source`
 (`beatport`/`discogs`), `description` (plain text; `[a=Name]` marks an
@@ -134,8 +135,14 @@ current library). It is replaced from the album's `recordLabels` on every
 sync; when the album list could not be fetched the existing links are kept
 (no `recordLabels` key means "unknown", an empty list means "no labels").
 MusicBrainz's `[no label]` marker is not treated as a label. Spelling
-variants, distributors-as-labels and sub-labels are not merged yet — see
-`plans/labels-shelf.md`.
+variants are merged: `label_aliases` (`key` PK, `label_id`, cascade) maps every
+merge key of a label (`app/label_names.merge_key`: "ТРИП", "trip recordings",
+"Trip" → `trip`) to its row, and the scan files a release through it. A string
+of several labels ("OWSLA/Atlantic") goes to the part with more releases.
+`app/store/label_merge.py` merges rows that share a merge key, a
+Beatport/Discogs id or an official-name key (after every label sync; once on
+the first start, after a backup) and rebuilds `label_aliases`. Digital
+sub-labels ("Harthouse Digital") stay separate.
 
 `user_label_preferences` (`user_id`, `label_id`, `liked`, `liked_at`,
 `updated_at`; PK `(user_id, label_id)`) holds label likes. Unlike track/
@@ -154,11 +161,12 @@ A hand-written description goes through `PUT /api/v1/labels/{id}/description`
 updating the image and links but leaves that description alone. An empty
 description clears it and hands the field back to the sync.
 
-`label_sync_state` (`label_id` PK, `status` found/not_found/error,
+`label_sync_state` (`label_id` PK, `status` found/not_found/self_released/error,
 `keys_hash` — the barcodes and ISRCs the label was looked up with,
 `beatport_id`, `discogs_id`, `error`, `attempted_at`) remembers what the sync
-already did: found labels are skipped, not-found ones are retried only when
-`keys_hash` changes (new releases). `keys_hash` NULL marks labels filled by the
+already did: found and self-released labels are skipped, not-found ones are
+retried only when `keys_hash` changes (new releases); a not-found label renamed
+by the merge loses its row and is looked up again. `keys_hash` NULL marks labels filled by the
 old `tools/label-sync` script: the first run records their keys without a
 lookup. `label_sync_runs` (`id`, `mode` sync/retry/recheck/label, `status`
 running/completed/failed/cancelled, `message`, `started_at`, `finished_at`)

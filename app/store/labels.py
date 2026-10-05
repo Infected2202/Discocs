@@ -10,9 +10,11 @@ import random
 import sqlite3
 from dataclasses import replace
 
+from app.label_names import label_parts, merge_key, pick_part, strip_legal
 from app.library import clean_display_text, normalize_text
 from app.models import Label, LabelMetadata, ReleaseSummaryRow, utc_now
 from app.store._helpers import _discography_group_key, row_to_release
+from app.store.label_merge import LabelMergeSummary, merge_labels
 
 # Порядок групп на странице лейбла — как в дискографии артиста; «releases» —
 # всё, чей тип не альбом/EP/сингл/сборник (саундтреки, миксы, неизвестный тип).
@@ -124,24 +126,42 @@ class LabelsStoreMixin:
         display_name = clean_display_text(name)
         if not display_name:
             raise ValueError("Label name is empty")
+        display_name = strip_legal(display_name)
+        # Ключ склейки: «ТРИП», «trip recordings» и «Trip» — один лейбл, имя первой встречи
+        # (или официальное после синхронизации лейблов) остаётся.
+        row = conn.execute("SELECT label_id FROM label_aliases WHERE key = ?", (merge_key(display_name),)).fetchone()
+        if row is not None:
+            return int(row[0])
+        # «OWSLA/Atlantic» — релиз уходит лейблу из пары, у которого больше релизов
+        # (если такой строки ещё не было: «A&M/Octone Records» — это название).
+        display_name = pick_part(label_parts(display_name), lambda part: _alias_releases(conn, part)) or display_name
+        key = merge_key(display_name)
+        row = conn.execute("SELECT label_id FROM label_aliases WHERE key = ?", (key,)).fetchone()
+        if row is not None:
+            return int(row[0])
         normalized_name = normalize_text(display_name)
-        # Имя первой встречи остаётся: разные релизы пишут один лейбл по-разному
-        # («trip recordings» / «Trip Recordings»), перезапись при каждом синке
-        # гоняла бы его туда-сюда.
         row = conn.execute(
             "SELECT id FROM labels WHERE normalized_name = ?",
             (normalized_name,),
         ).fetchone()
         if row is not None:
-            return int(row["id"])
-        cursor = conn.execute(
-            """
-            INSERT INTO labels (name, normalized_name, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (display_name, normalized_name, now, now),
-        )
-        return int(cursor.lastrowid)
+            label_id = int(row["id"])
+        else:
+            cursor = conn.execute(
+                """
+                INSERT INTO labels (name, normalized_name, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (display_name, normalized_name, now, now),
+            )
+            label_id = int(cursor.lastrowid)
+        conn.execute("INSERT OR IGNORE INTO label_aliases (key, label_id) VALUES (?, ?)", (key, label_id))
+        return label_id
+
+    def merge_duplicate_labels(self) -> LabelMergeSummary:
+        """Склейка лейблов (``app/store/label_merge.py``) — после синхронизации лейблов."""
+        with self.connect() as conn:
+            return merge_labels(conn)
 
     def list_labels(self, *, limit: int, offset: int) -> tuple[list[Label], int]:
         """Лейблы с живыми релизами: лайкнутые первыми, дальше — больше релизов выше.
@@ -299,7 +319,9 @@ class LabelsStoreMixin:
                 "SELECT id FROM labels WHERE normalized_name = ?",
                 (normalize_text(name),),
             ).fetchone()
-        return int(row["id"]) if row is not None else None
+            if row is None:
+                row = conn.execute("SELECT label_id FROM label_aliases WHERE key = ?", (merge_key(name),)).fetchone()
+        return int(row[0]) if row is not None else None
 
     def labels_for_release(self, release_id: int) -> list[Label]:
         with self.connect() as conn:
@@ -332,6 +354,7 @@ class LabelsStoreMixin:
                 SET description = CASE WHEN description_source = ? THEN description ELSE ? END,
                     description_source = CASE WHEN description_source = ? THEN description_source ELSE ? END,
                     links_json = ?, external_ids_json = ?,
+                    official_name = COALESCE(?, official_name),
                     metadata_synced_at = ?, updated_at = ?
                 WHERE id = ?
                 """,
@@ -342,6 +365,7 @@ class LabelsStoreMixin:
                     metadata.description_source if description else None,
                     json.dumps(metadata.links or [], ensure_ascii=False),
                     json.dumps(metadata.external_ids or {}, ensure_ascii=False, sort_keys=True),
+                    metadata.official_name,
                     now,
                     now,
                     label_id,
@@ -377,6 +401,19 @@ def clean_description(value: str | None) -> str | None:
     while "\n\n\n" in text:
         text = text.replace("\n\n\n", "\n\n")
     return text or None
+
+
+def _alias_releases(conn: sqlite3.Connection, name: str) -> int:
+    """Сколько релизов у лейбла с таким ключом склейки; лейбла нет — 0."""
+    row = conn.execute(
+        """
+        SELECT COUNT(rl.release_id) FROM label_aliases a
+        JOIN release_labels rl ON rl.label_id = a.label_id
+        WHERE a.key = ?
+        """,
+        (merge_key(name),),
+    ).fetchone()
+    return int(row[0] or 0)
 
 
 def _int_or_zero(value: str) -> int:

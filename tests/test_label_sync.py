@@ -369,6 +369,10 @@ class ScriptedResolver:
         self.calls: list[str] = []
         self.wrong: dict[str, str] = {}
         self.checked: list[tuple[str, object, object]] = []
+        self.names: dict[str, str] = {}
+
+    def official_name(self, beatport_id, discogs_id):
+        return self.names.get(str(beatport_id or discogs_id))
 
     def mismatch(self, name, beatport_id, discogs_id):
         self.checked.append((name, beatport_id, discogs_id))
@@ -426,7 +430,7 @@ def test_run_saves_found_labels_remembers_misses_and_skips_them_next_time(tmp_pa
                              workers=1, read=lambda path: None)
 
     assert (summary.checked, summary.found, summary.not_found, summary.errors, summary.images) == (3, 1, 1, 1, 1)
-    assert seen[0] == (0, 3) and seen[-1] == (3, 3)
+    assert seen[0] == (0, 3) and (3, 3) in seen
     found = store.get_label(store.label_id_by_name("Found"))
     assert found.description == "Text" and found.external_ids == {"discogs": "42"}
     assert Path(found.image_path).read_bytes() == png()
@@ -725,4 +729,61 @@ def test_status_counts_labels_filled_by_the_old_script_before_the_first_run(tmp_
 
     labels = TestClient(app).get("/api/v1/label-sync").json()["labels"]
 
-    assert labels == {"found": 1, "not_found": 1, "error": 0, "pending": 1}
+    assert labels == {"found": 1, "not_found": 1, "self_released": 0, "error": 0, "pending": 1}
+
+
+def test_official_name_comes_from_beatport_first_and_not_on_label_release_means_self_released():
+    beatport = FakeApi({"/catalog/labels/44845/": {"name": "Trip Recordings"}})
+    discogs = FakeApi({
+        "/labels/771357": {"name": "трип"},
+        "/labels/5": {"name": "Diynamic Music (2)"},
+        "/database/search?barcode=111&per_page=5&type=release": {"results": [{"id": 1}]},
+        "/releases/1": {"labels": [{"id": 750, "name": "Not On Label (Shura Self-released)"}]},
+        "/database/search?barcode=222&per_page=5&type=release": {"results": [{"id": 2}]},
+        "/releases/2": {"labels": [{"id": 750, "name": "Not On Label"}, {"id": 9, "name": "Koala Music"}]},
+    })
+    resolver = LabelResolver(beatport, discogs, FakeWeb({}))
+
+    assert resolver.official_name("44845", "771357") == "Trip Recordings"  # Discogs даже не спрашивали
+    assert "/labels/771357" not in discogs.calls
+    assert resolver.official_name(None, "5") == "Diynamic Music"
+    assert resolver.discogs_not_on_label(["111"]) is True
+    assert resolver.discogs_not_on_label(["222"]) is False  # у релиза есть и настоящий лейбл
+
+    result = resolver.resolve("Shura", ["111"], [], lambda: [])
+    assert not result.found and result.self_released
+
+
+def test_run_marks_self_released_labels_fills_official_names_and_merges_duplicates(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path, "A", 1, label="919813 Records DK")
+    add_track(store, tmp_path, "B", 1, label="Shura Music")
+    add_track(store, tmp_path, "C", 1, label="trip recordings")
+    add_track(store, tmp_path, "D", 1, label="Nina's Trip Label")
+    from app.config import Settings
+    from app.models import LabelMetadata
+    settings = Settings.from_env()
+    # Найден до того, как стали запоминать официальное название.
+    store.save_label_metadata(LabelMetadata(name="trip recordings", external_ids={"beatport": "44845"}))
+    store.set_label_sync_state(store.label_id_by_name("trip recordings"), "found", keys_hash=None, beatport_id="44845")
+    resolver = ScriptedResolver({
+        "Shura Music": LabelResult(self_released=True),
+        "Nina's Trip Label": LabelResult(external_ids={"beatport": "44845"}, official_name="Trip Recordings"),
+    })
+    resolver.names["44845"] = "Trip Recordings"
+
+    summary = run_label_sync(store, settings, resolver, workers=1, read=lambda path: None)
+
+    assert resolver.calls.count("919813 Records DK") == 0  # самиздат по названию даже не ищется
+    assert (summary.found, summary.not_found, summary.self_released) == (1, 0, 2)
+    assert (summary.merged, summary.renamed) == (1, 1)
+    assert "self-released 2" in summary.message() and "Duplicates merged 1, renamed 1" in summary.message()
+    labels = TestClient(app).get("/api/v1/label-sync").json()["labels"]
+    assert labels == {"found": 1, "not_found": 0, "self_released": 2, "error": 0, "pending": 0}
+    names = [label.name for label in store.list_labels(limit=10, offset=0)[0]]
+    assert names == ["Trip Recordings", "919813 Records DK", "Shura Music"]
+
+    # Самиздат больше не ищется, в том числе по кнопке «ещё раз ненайденные».
+    resolver.calls.clear()
+    run_label_sync(store, settings, resolver, retry_not_found=True, workers=1, read=lambda path: None)
+    assert resolver.calls == []

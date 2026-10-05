@@ -3306,7 +3306,7 @@
         const summary = document.getElementById("labelSyncSummary");
         if (summary) {
           summary.textContent = `${countText(labels.found)} found · ${countText(labels.not_found)} not found · ` +
-            `${countText(labels.error)} errors · ${countText(labels.pending)} never looked up · ${labelAccessText(data)}`;
+            `${countText(labels.self_released)} self-released · ${countText(labels.error)} errors · ${countText(labels.pending)} never looked up · ${labelAccessText(data)}`;
         }
         const access = document.getElementById("labelSyncAccess");
         if (access) access.textContent = labelAccessText(data);

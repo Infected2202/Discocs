@@ -667,3 +667,118 @@ def test_playback_session_from_label_without_tracks_is_not_found(tmp_path, monke
     response = client.post("/api/v1/playback/sessions", json={"source_type": "label", "source_id": 999999})
 
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# склейка лейблов
+# ---------------------------------------------------------------------------
+
+def test_scan_puts_every_spelling_of_a_label_into_one_label(tmp_path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    _, first = add_release(store, tmp_path, "R1", ("trip recordings",))
+    _, cyrillic = add_release(store, tmp_path, "R2", ("ТРИП",))
+    _, short = add_release(store, tmp_path, "R3", ("Trip",))
+    _, legal = add_release(store, tmp_path, "R4", ("Universal Music Division Decca Records France",))
+    add_release(store, tmp_path, "A1", ("Atlantic",))
+    add_release(store, tmp_path, "A2", ("Atlantic Records",))
+    _, pair = add_release(store, tmp_path, "R5", ("OWSLA/Atlantic",))
+    _, unknown_pair = add_release(store, tmp_path, "R6", ("KR/LF",))
+
+    assert release_labels(store, first) == release_labels(store, cyrillic) == release_labels(store, short) == [
+        "trip recordings"
+    ]
+    assert release_labels(store, legal) == ["Decca Records France"]
+    assert release_labels(store, pair) == ["Atlantic"]  # из пары — тот, у кого больше релизов
+    assert release_labels(store, unknown_pair) == ["KR/LF"]  # частей нет среди лейблов — строка целиком
+    labels, total = store.list_labels(limit=10, offset=0)
+    assert [(label.name, label.release_count) for label in labels] == [
+        ("Atlantic", 3), ("trip recordings", 3), ("Decca Records France", 1), ("KR/LF", 1),
+    ]
+    assert total == 4
+    assert store.label_id_by_name("Трип") == store.label_id_by_name("trip recordings")
+
+
+def make_legacy_label(store: Store, label_id: int, name: str) -> None:
+    """Лейбл, заведённый до склейки: своё написание, ключей склейки нет."""
+    with store.connect() as conn:
+        conn.execute("UPDATE labels SET name = ?, normalized_name = ? WHERE id = ?", (name, name.casefold(), label_id))
+        conn.execute("DELETE FROM label_aliases")
+
+
+def test_first_start_merges_old_duplicates_into_the_found_label_under_its_official_name(tmp_path, monkeypatch):
+    from app.models import LabelMetadata
+    from app.store.label_merge import merge_labels_first_time
+
+    store = init_api_store(tmp_path, monkeypatch)
+    add_release(store, tmp_path, "T1", ("trip recordings",))
+    add_release(store, tmp_path, "T2", ("trip recordings",))
+    trip_id = store.label_id_by_name("trip recordings")
+    store.save_label_metadata(LabelMetadata(
+        name="trip recordings", description="Moscow label.", description_source="discogs",
+        external_ids={"beatport": "44845"}, official_name="Trip Recordings",
+    ))
+    store.set_label_sync_state(trip_id, "found", keys_hash=None, beatport_id="44845")
+    _, cyrillic_release = add_release(store, tmp_path, "C1", ("Tmp One",))
+    cyrillic_id = store.label_id_by_name("Tmp One")
+    store.set_label_liked(cyrillic_id, True)
+    add_release(store, tmp_path, "S1", ("Tmp Two",))
+    other_id = store.label_id_by_name("Tmp Two")
+    # Другое написание, найденное синхронизацией как тот же лейбл Beatport.
+    store.save_label_metadata(LabelMetadata(name="Tmp Two", external_ids={"beatport": "44845"}))
+    add_release(store, tmp_path, "D1", ("Tmp Three",))
+    decca_id = store.label_id_by_name("Tmp Three")
+    store.set_label_sync_state(decca_id, "not_found", keys_hash="old")
+    make_legacy_label(store, cyrillic_id, "ТРИП")
+    make_legacy_label(store, other_id, "Nina's Trip Label")
+    make_legacy_label(store, decca_id, "Universal Music Division Decca Records France")
+
+    summary = merge_labels_first_time(store.db_path)
+
+    assert (summary.merged, summary.renamed) == (2, 2)
+    assert list(tmp_path.glob("app.db.pre-label-merge-*.bak"))
+    trip = store.get_label(trip_id)
+    assert (trip.name, trip.release_count, trip.liked, trip.description) == ("Trip Recordings", 4, True, "Moscow label.")
+    assert store.get_label(cyrillic_id) is None and store.get_label(other_id) is None
+    assert release_labels(store, cyrillic_release) == ["Trip Recordings"]
+    # Ненайденный с новым названием ищется снова — под новым названием.
+    assert store.get_label(decca_id).name == "Decca Records France"
+    with store.connect() as conn:
+        assert conn.execute("SELECT 1 FROM label_sync_state WHERE label_id = ?", (decca_id,)).fetchone() is None
+    # Новые релизы с любым из прежних написаний идут в основной лейбл.
+    _, later = add_release(store, tmp_path, "T3", ("ТРИП Recordings",))
+    assert release_labels(store, later) == ["Trip Recordings"]
+    # Ключи уже есть — второй запуск ничего не делает.
+    assert merge_labels_first_time(store.db_path) is None
+
+
+def test_label_pair_goes_to_the_part_with_more_releases_without_what_was_found_for_the_pair(tmp_path):
+    from app.models import LabelMetadata
+
+    store = Store(tmp_path / "app.db")
+    store.init()
+    add_release(store, tmp_path, "A1", ("A&M",))
+    am_id = store.label_id_by_name("A&M")
+    _, pair = add_release(store, tmp_path, "P1", ("Tmp Pair",))
+    pair_id = store.label_id_by_name("Tmp Pair")
+    # Beatport держит «A&M/Octone Records» отдельным лейблом — синхронизация нашла пару целиком.
+    store.save_label_metadata(LabelMetadata(
+        name="Tmp Pair", description="Joint venture.", description_source="beatport",
+        external_ids={"beatport": "1"}, official_name="A&M/Octone Records",
+    ))
+    store.set_label_sync_state(pair_id, "found", keys_hash=None, beatport_id="1")
+    _, kept = add_release(store, tmp_path, "K1", ("Tmp Kept",))
+    kept_id = store.label_id_by_name("Tmp Kept")
+    make_legacy_label(store, pair_id, "A&M/Octone Records")
+    make_legacy_label(store, kept_id, "Ki/oon")
+
+    summary = store.merge_duplicate_labels()
+
+    assert summary.merged == 1
+    am = store.get_label(am_id)
+    assert release_labels(store, pair) == ["A&M"]
+    # Найденное для пары к A&M не переходит, и основной — не пара, хоть она и «найдена».
+    assert (am.name, am.release_count, am.description, am.external_ids) == ("A&M", 2, None, {})
+    assert release_labels(store, kept) == ["Ki/oon"]  # частей нет среди лейблов — строка целиком
+    _, later = add_release(store, tmp_path, "P2", ("A&M/Octone Records",))
+    assert release_labels(store, later) == ["A&M"]

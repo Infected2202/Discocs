@@ -15,6 +15,7 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
+from app.label_names import clean_name, label_key, strip_legal
 from app.services.label_sync.clients import BeatportClient, DiscogsClient, WebClient
 
 # Серый квадрат со значком Beatport вместо логотипа — «картинки нет».
@@ -25,12 +26,9 @@ MAX_CODES = 40
 CONFIRM_PAGES = 3
 # Не нашёлся в первых страницах — ищем внутри лейбла по названиям стольких наших релизов.
 CONFIRM_TITLES = 5
-# Хвосты, которыми одно и то же название различается в тегах и в каталогах.
-_LABEL_SUFFIXES = frozenset({
-    "records", "recordings", "recording", "music", "discs", "ltd", "limited", "inc", "llc", "label",
-})
-# Юридическая форма перед названием: Discogs пишет «ООО "Союз Мьюзик"», теги — «Союз Мьюзик».
-_LABEL_PREFIXES = frozenset({"ооо", "оао", "зао", "пао", "llc"})
+# Самиздат по Discogs проверяется по стольким штрихкодам (ответы уже в кэше после поиска лейбла).
+SELF_RELEASED_CODES = 3
+_NOT_ON_LABEL = re.compile(r"^not on label\b", re.I)
 # Служебные записи Discogs с названием настоящего лейбла (часто с «(2)»): для бутлегов
 # («This is [b]NOT[/b] a real label»), для контрафакта («This page catalogues counterfeit
 # editions…») и для копирайтных строк («For the copyright or licensing entries of label…»).
@@ -38,26 +36,6 @@ _PLACEHOLDER_PROFILE = re.compile(
     r"\bnot\s+a\s+real\s+label\b|\bcatalogues\s+counterfeit\b|\bfor\s+the\s+copyright\s+or\s+licensing\s+entries\b",
     re.I,
 )
-
-
-def norm(text: object) -> str:
-    """Как normalize_text в discocs: пробелы схлопнуты, без учёта регистра."""
-    return " ".join(str(text or "").split()).casefold()
-
-
-def clean_name(name: object) -> str:
-    """Discogs: 'Hermeth (2)' → 'Hermeth', 'Nina Kraviz*' → 'Nina Kraviz'."""
-    return re.sub(r"\s*\(\d+\)$", "", str(name or "").strip()).rstrip("*").strip()
-
-
-def label_key(name: object) -> str:
-    """Ключ сравнения названий лейблов: без «(2)», пунктуации, «ООО» и хвоста Records/Discs/Ltd/LLC."""
-    words = re.sub(r"[^\w]+", " ", norm(clean_name(name))).split()
-    while len(words) > 1 and words[0] in _LABEL_PREFIXES:
-        words.pop(0)
-    while len(words) > 1 and words[-1] in _LABEL_SUFFIXES:
-        words.pop()
-    return " ".join(words)
 
 
 def is_placeholder_label(label: dict) -> bool:
@@ -103,6 +81,10 @@ class LabelResult:
     links: list[dict[str, str]] = field(default_factory=list)
     external_ids: dict[str, str] = field(default_factory=dict)
     how: dict[str, str | None] = field(default_factory=dict)
+    # Название лейбла на Beatport (иначе Discogs) — им называется лейбл в библиотеке.
+    official_name: str | None = None
+    # Не найден, а Discogs по штрихкоду показывает релиз «Not On Label» — самиздат.
+    self_released: bool = False
 
     @property
     def found(self) -> bool:
@@ -209,6 +191,23 @@ class LabelResolver:
                     return True
         return False
 
+    def discogs_not_on_label(self, codes: Sequence[str]) -> bool:
+        """Discogs знает релиз по штрихкоду и пишет у него «Not On Label (… Self-released)»."""
+        for code in codes[:SELF_RELEASED_CODES]:
+            results = self.discogs.get("/database/search", barcode=code, type="release", per_page=5).get("results", [])
+            if not results:
+                continue
+            labels = self.discogs.get(f"/releases/{results[0]['id']}").get("labels", [])
+            if labels and all(_NOT_ON_LABEL.match(str(entry.get("name") or "")) for entry in labels):
+                return True
+        return False
+
+    def official_name(self, beatport_id: object, discogs_id: object) -> str | None:
+        """Название найденного лейбла: Beatport, иначе Discogs (там больше мусора вроде «(2)» и «, LLC»)."""
+        bp = self.beatport.label(int(str(beatport_id))) if beatport_id else {}
+        dc = self.discogs.get(f"/labels/{discogs_id}") if discogs_id and not bp.get("name") else {}
+        return _official_name(bp, dc)
+
     def _discogs_real(self, label_id: object) -> bool:
         return not is_placeholder_label(self.discogs.get(f"/labels/{label_id}"))
 
@@ -312,6 +311,9 @@ class LabelResolver:
 
         result.links = _links(dc, dc_id, bp, bp_id)
         result.external_ids = {k: str(v) for k, v in (("beatport", bp_id), ("discogs", dc_id), ("wikidata", qid)) if v}
+        result.official_name = _official_name(bp, dc)
+        if not result.found and barcodes:
+            result.self_released = self.discogs_not_on_label(barcodes)
         return result
 
     @staticmethod
@@ -328,6 +330,11 @@ _DISCOGS_NAMED = re.compile(r"\[(a|l)=([^\]]+)\]", re.I)
 _DISCOGS_URL = re.compile(r"\[url=([^\]]+)\](.*?)\[/url\]", re.I | re.S)
 _DISCOGS_BARE_URL = re.compile(r"\[url\](.*?)\[/url\]", re.I | re.S)
 _DISCOGS_TAGS = re.compile(r"\[/?(?:b|i|u|s)\]|\[g[^\]]*\]", re.I)
+
+
+def _official_name(bp: dict, dc: dict) -> str | None:
+    name = clean_name(bp.get("name")) or clean_name(dc.get("name"))
+    return strip_legal(name) if name else None
 
 
 def _matching_label(key: str, labels) -> int | None:

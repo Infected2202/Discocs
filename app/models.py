@@ -100,6 +100,8 @@ class LabelMetadata:
     description_source: str | None = None
     links: list[dict[str, str]] | None = None
     external_ids: dict[str, str] | None = None
+    # Название на Beatport/Discogs — им лейбл называется после склейки (app/store/label_merge.py).
+    official_name: str | None = None
 
 
 @dataclass(frozen=True)
