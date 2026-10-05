@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react"
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ApiError } from "../client"
 import {
@@ -13,6 +14,7 @@ import {
   type ProfilePeriod,
   type ProfileTopKind,
 } from "../profile"
+import type { PersonNowPlaying } from "../social"
 import { SHELF_PREVIEW_LIMIT } from "@/lib/shelves"
 import { PEOPLE_QUERY_KEY } from "./usePeople"
 import { usePagedList } from "./usePagedList"
@@ -53,6 +55,29 @@ export function useUserListens(username: string, pageSize = LISTENS_PAGE_SIZE) {
     getNextPageParam: (last) => last.next_offset ?? undefined,
     retry: retryUnlessClientError,
   })
+}
+
+/**
+ * Refetch a user's listens (the profile's recent ones and the full history)
+ * whenever what they play changes or stops: the play that just ended may now
+ * be a listen. Only the now-playing line polls (usePeople), so without this the
+ * lists stayed as they were when the page opened while "now" moved on.
+ *
+ * `nowPlaying` is `undefined` while the people list is not loaded yet; that
+ * first answer is not a change. A repeat of the same track is not seen.
+ */
+export function useRefreshListensOnPlayChange(username: string, nowPlaying: PersonNowPlaying | null | undefined) {
+  const queryClient = useQueryClient()
+  const play = nowPlaying === undefined ? undefined : nowPlaying && `${nowPlaying.track_id ?? ""}:${nowPlaying.title}`
+  const previous = useRef(play)
+  useEffect(() => {
+    const before = previous.current
+    previous.current = play
+    if (before === undefined || play === undefined || before === play) return
+    const user = username.toLowerCase()
+    void queryClient.invalidateQueries({ queryKey: [...PROFILE_QUERY_KEY, user, "stats"] })
+    void queryClient.invalidateQueries({ queryKey: [...PROFILE_QUERY_KEY, user, "listens"] })
+  }, [play, username, queryClient])
 }
 
 export function useUserLikes(username: string) {

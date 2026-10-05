@@ -15,8 +15,10 @@ const useUserPlaylists = vi.fn()
 const mutate = vi.fn()
 const reset = vi.fn()
 const usePeople = vi.fn()
+const useRefreshListensOnPlayChange = vi.fn()
 
 vi.mock("@/api/hooks/useProfile", () => ({
+  useRefreshListensOnPlayChange: (...args: unknown[]) => useRefreshListensOnPlayChange(...args),
   useUserProfile: (...args: unknown[]) => useUserProfile(...args),
   useUserLikes: (...args: unknown[]) => useUserLikes(...args),
   useUserPlaylists: (...args: unknown[]) => useUserPlaylists(...args),
@@ -372,6 +374,18 @@ describe("ProfilePage", () => {
     usePeople.mockReturnValue({ data: { items: [person("alice", null), person("bob", { track_id: 1, title: "X", artists: "Y", state: "playing", track: null })] } })
     renderPage()
     expect(screen.queryByTestId("now-playing")).not.toBeInTheDocument()
+  })
+
+  it("refreshes the listens on this user's play changes, once the people list is known", () => {
+    usePeople.mockReturnValue({ data: undefined })
+    const { unmount } = renderPage()
+    expect(useRefreshListensOnPlayChange).toHaveBeenLastCalledWith("alice", undefined)
+    unmount()
+
+    const playing = { track_id: 3, title: "Signals", artists: "Alpha", state: "playing" as const, track: null }
+    usePeople.mockReturnValue({ data: { items: [person("bob", null), person("Alice", playing)] } })
+    renderPage()
+    expect(useRefreshListensOnPlayChange).toHaveBeenLastCalledWith("alice", playing)
   })
 
   it("shows the live line on one's own profile too", () => {

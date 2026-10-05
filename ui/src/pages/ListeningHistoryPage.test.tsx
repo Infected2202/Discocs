@@ -9,8 +9,10 @@ import type { ListenItem, UserListensPage } from "@/api/profile"
 const useUserListens = vi.fn()
 const fetchNextPage = vi.fn()
 
+const useRefreshListensOnPlayChange = vi.fn()
 vi.mock("@/api/hooks/useProfile", () => ({
   useUserListens: (...args: unknown[]) => useUserListens(...args),
+  useRefreshListensOnPlayChange: (...args: unknown[]) => useRefreshListensOnPlayChange(...args),
 }))
 
 const usePeople = vi.fn()
@@ -104,6 +106,11 @@ describe("ListeningHistoryPage", () => {
     expect(within(rows[0]).getByTestId("listen-now")).toHaveTextContent("now")
     // The listen recorded mid-play is not listed again under "today".
     expect(rows.map((row) => row.textContent?.split(" | ")[0])).toEqual(["Track 7", "Track 2"])
+    // The next track or a stop refetches the history.
+    expect(useRefreshListensOnPlayChange).toHaveBeenLastCalledWith(
+      "alice",
+      expect.objectContaining({ track_id: 7 }),
+    )
   })
 
   it("groups the listens of all loaded pages under local day headings", () => {

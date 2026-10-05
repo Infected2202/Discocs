@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react"
 import { useNavigate, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { ChevronLeft } from "lucide-react"
-import { useUserListens } from "@/api/hooks/useProfile"
+import { useRefreshListensOnPlayChange, useUserListens } from "@/api/hooks/useProfile"
 import { usePeople } from "@/api/hooks/usePeople"
 import { isNetworkError } from "@/lib/apiErrorKind"
 import { formatDayHeading, groupListensByDay, withoutCurrentPlay } from "@/lib/listenHistory"
@@ -28,6 +28,10 @@ export default function ListeningHistoryPage() {
   const sentinelRef = useRef<HTMLDivElement>(null)
   const { data, isLoading, error, hasNextPage, isFetchingNextPage, fetchNextPage } = useUserListens(username)
   const { data: people } = usePeople()
+  const nowPlaying = people
+    ? (people.items.find((p) => p.username.toLowerCase() === username.toLowerCase())?.now_playing ?? null)
+    : undefined
+  useRefreshListensOnPlayChange(username, nowPlaying)
 
   // Load the next page when the bottom comes into view (the button stays as a fallback).
   useEffect(() => {
@@ -44,8 +48,7 @@ export default function ListeningHistoryPage() {
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
 
   const now = new Date()
-  const playing =
-    people?.items.find((p) => p.username.toLowerCase() === username.toLowerCase())?.now_playing?.track ?? null
+  const playing = nowPlaying?.track ?? null
   const listens = withoutCurrentPlay(data?.pages.flatMap((page) => page.items) ?? [], playing, now)
   const total = data?.pages[0]?.total
   const groups = groupListensByDay(listens)

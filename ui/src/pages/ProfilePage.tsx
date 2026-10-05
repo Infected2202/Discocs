@@ -5,6 +5,7 @@ import { Pencil } from "lucide-react"
 import {
   useUserLikes,
   useUserPlaylists,
+  useRefreshListensOnPlayChange,
   useUserProfile,
 } from "@/api/hooks/useProfile"
 import { usePeople } from "@/api/hooks/usePeople"
@@ -97,6 +98,11 @@ export default function ProfilePage() {
   const { data: likes } = useUserLikes(username)
   const { data: playlists } = useUserPlaylists(username)
   const { data: people } = usePeople()
+  // The people list includes the viewer, so this covers one's own profile too.
+  const nowPlaying = people
+    ? (people.items.find((p) => p.username.toLowerCase() === username.toLowerCase())?.now_playing ?? null)
+    : undefined
+  useRefreshListensOnPlayChange(username, nowPlaying)
   const playSource = usePlayerStore((s) => s.playSource)
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
 
@@ -156,9 +162,6 @@ export default function ProfilePage() {
 
   const { header } = profile
   const isOwner = header.viewer_is_owner
-  // The people list includes the viewer, so this covers one's own profile too.
-  const nowPlaying =
-    people?.items.find((p) => p.username.toLowerCase() === header.username.toLowerCase())?.now_playing ?? null
   const createdAt = new Date(header.created_at)
   const memberSince = Number.isNaN(createdAt.getTime())
     ? null

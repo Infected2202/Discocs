@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PEOPLE_QUERY_KEY } from "./usePeople"
 import {
   PROFILE_QUERY_KEY,
+  useRefreshListensOnPlayChange,
   useSetMyAvatar,
   useUserLikes,
   useUserLikesList,
@@ -14,6 +15,7 @@ import {
   useUserTopList,
 } from "./useProfile"
 import type { ProfilePeriod } from "../profile"
+import type { PersonNowPlaying } from "../social"
 
 const fetchUserProfile = vi.fn()
 const fetchUserListens = vi.fn()
@@ -176,6 +178,53 @@ describe("useSetMyAvatar", () => {
     await act(async () => {
       await result.current.mutateAsync("zz").catch(() => {})
     })
+
+    expect(invalidate).not.toHaveBeenCalled()
+  })
+})
+
+describe("useRefreshListensOnPlayChange", () => {
+  const play = (trackId: number, title: string): PersonNowPlaying => ({
+    track_id: trackId, title, artists: "", state: "playing", track: null,
+  })
+
+  beforeEach(() => {
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  })
+
+  function renderRefresh(initial: PersonNowPlaying | null | undefined) {
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const view = renderHook(
+      ({ nowPlaying }: { nowPlaying: PersonNowPlaying | null | undefined }) =>
+        useRefreshListensOnPlayChange("Alice", nowPlaying),
+      { wrapper, initialProps: { nowPlaying: initial } },
+    )
+    return { invalidate, ...view }
+  }
+
+  it("refetches the recent listens and the history when the next track starts", () => {
+    const { invalidate, rerender } = renderRefresh(play(1, "One"))
+    expect(invalidate).not.toHaveBeenCalled()
+
+    rerender({ nowPlaying: play(2, "Two") })
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: [...PROFILE_QUERY_KEY, "alice", "stats"] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: [...PROFILE_QUERY_KEY, "alice", "listens"] })
+  })
+
+  it("refetches when playback stops", () => {
+    const { invalidate, rerender } = renderRefresh(play(1, "One"))
+
+    rerender({ nowPlaying: null })
+
+    expect(invalidate).toHaveBeenCalledTimes(2)
+  })
+
+  it("ignores polls of the same play and the first answer of the people list", () => {
+    const { invalidate, rerender } = renderRefresh(undefined)
+
+    rerender({ nowPlaying: play(1, "One") })
+    rerender({ nowPlaying: play(1, "One") })
 
     expect(invalidate).not.toHaveBeenCalled()
   })
