@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.api.deps import _navidrome_user_client, api_error, context
-from app.api.playlists import _liked_track_ids
+from app.api.playlists import _liked_tracks
 from app.audio_source import navidrome_item_id_for_track
 from app.downloads import (
     DownloadEntry,
@@ -132,10 +132,9 @@ def download_release(release_id: int):
 def download_likes():
     store, settings = context()
     try:
-        track_ids = _liked_track_ids(store, settings)
+        tracks = _liked_tracks(store, settings)
     except HTTPException as exc:
         return api_error(exc.status_code, "navidrome_starred_failed", str(exc.detail))
-    tracks = [track for track_id in track_ids if (track := store.get_track(track_id)) is not None]
     entries = [
         DownloadEntry(track=track, basename=f"{index:03d} - {track_download_basename(track)}")
         for index, track in enumerate(tracks, start=1)
