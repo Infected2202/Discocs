@@ -16,7 +16,7 @@ vi.mock("./client", () => ({
   },
 }))
 
-import { fetchReleaseRecommendations } from "./releases"
+import { fetchReleaseRecommendations, fetchReleaseRelated } from "./releases"
 
 describe("fetchReleaseRecommendations", () => {
   beforeEach(() => {
@@ -34,5 +34,26 @@ describe("fetchReleaseRecommendations", () => {
     await fetchReleaseRecommendations(42, 30)
 
     expect(apiFetch).toHaveBeenCalledWith("/api/v1/releases/42/recommendations?limit=30")
+  })
+
+  it("pages the full list by offset", async () => {
+    await fetchReleaseRecommendations(42, 48, 48)
+
+    expect(apiFetch).toHaveBeenCalledWith("/api/v1/releases/42/recommendations?limit=48&offset=48")
+  })
+})
+
+describe("fetchReleaseRelated", () => {
+  beforeEach(() => {
+    apiFetch.mockReset()
+    apiFetch.mockResolvedValue({ items: [] })
+  })
+
+  it("previews the common shelf size and pages the full list by offset", async () => {
+    await fetchReleaseRelated(7)
+    expect(apiFetch).toHaveBeenLastCalledWith("/api/v1/releases/7/related-discography?limit=16")
+
+    await fetchReleaseRelated(7, 48, 48)
+    expect(apiFetch).toHaveBeenLastCalledWith("/api/v1/releases/7/related-discography?limit=48&offset=48")
   })
 })

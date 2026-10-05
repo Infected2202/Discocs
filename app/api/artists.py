@@ -17,6 +17,7 @@ from app.schemas.responses import (
     ArtistAvailabilityStubResponse,
     ArtistDiscographyResponse,
     ArtistResponse,
+    ArtistSimilarResponse,
     ImageInfoResponse,
 )
 from app.serializers.entities import (
@@ -39,6 +40,7 @@ from app.services.cover import (
 )
 from app.state import COVER_TIMEOUT_SECONDS
 from app.services.artist_similarity import find_similar_artists
+from app.services.shelves import FULL_LIST_MAX_LIMIT, SHELF_PREVIEW_LIMIT, page_info, page_of
 
 logger = logging.getLogger(__name__)
 
@@ -205,10 +207,16 @@ def _top_track_items(store, artist_id: int) -> list[dict[str, object]]:
     return items
 
 
-@router.get("/artists/{artist_id}/similar", response_model=ArtistAvailabilityStubResponse)
+# The full similar-artists list: the reranked candidate pool of
+# find_similar_artists. Ranked once, then paged, so pages never overlap.
+SIMILAR_ARTISTS_MAX = 200
+
+
+@router.get("/artists/{artist_id}/similar", response_model=ArtistSimilarResponse)
 def api_v1_artist_similar(
     artist_id: int,
-    limit: Annotated[int, Query(ge=1, le=50)] = 16,
+    limit: Annotated[int, Query(ge=1, le=FULL_LIST_MAX_LIMIT)] = SHELF_PREVIEW_LIMIT,
+    offset: Annotated[int, Query(ge=0)] = 0,
     include_debug: bool = False,
 ) -> dict[str, object] | JSONResponse:
     store, settings = context()
@@ -222,10 +230,13 @@ def api_v1_artist_similar(
             "items": [],
             "available": False,
             "basis": "no_aggregate",
+            **page_info(0, limit, offset),
         }
 
+    ranked = find_similar_artists(store, model_name, artist_id, limit=SIMILAR_ARTISTS_MAX)
+    page, paging = page_of(ranked, limit, offset)
     items: list[dict[str, object]] = []
-    for result in find_similar_artists(store, model_name, artist_id, limit=limit):
+    for result in page:
         candidate = store.get_artist(result.artist_id)
         if candidate is None:
             continue
@@ -240,4 +251,5 @@ def api_v1_artist_similar(
         "items": items,
         "available": True,
         "basis": "artist_similarity",
+        **paging,
     }

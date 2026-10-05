@@ -3,11 +3,24 @@ import { act, renderHook, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PEOPLE_QUERY_KEY } from "./usePeople"
-import { PROFILE_QUERY_KEY, useSetMyAvatar, useUserListens, useUserProfile } from "./useProfile"
+import {
+  PROFILE_QUERY_KEY,
+  useSetMyAvatar,
+  useUserLikes,
+  useUserLikesList,
+  useUserListens,
+  useUserPlaylists,
+  useUserProfile,
+  useUserTopList,
+} from "./useProfile"
 import type { ProfilePeriod } from "../profile"
 
 const fetchUserProfile = vi.fn()
 const fetchUserListens = vi.fn()
+const fetchUserTop = vi.fn()
+const fetchUserLikes = vi.fn()
+const fetchUserLikesOfKind = vi.fn()
+const fetchUserPlaylists = vi.fn()
 const setMyAvatar = vi.fn()
 
 vi.mock("../profile", async (importOriginal) => {
@@ -16,6 +29,10 @@ vi.mock("../profile", async (importOriginal) => {
     ...actual,
     fetchUserProfile: (...args: unknown[]) => fetchUserProfile(...args),
     fetchUserListens: (...args: unknown[]) => fetchUserListens(...args),
+    fetchUserTop: (...args: unknown[]) => fetchUserTop(...args),
+    fetchUserLikes: (...args: unknown[]) => fetchUserLikes(...args),
+    fetchUserLikesOfKind: (...args: unknown[]) => fetchUserLikesOfKind(...args),
+    fetchUserPlaylists: (...args: unknown[]) => fetchUserPlaylists(...args),
     setMyAvatar: (...args: unknown[]) => setMyAvatar(...args),
     viewerTimeZone: () => "Europe/Moscow",
   }
@@ -71,6 +88,60 @@ describe("useUserListens", () => {
     expect(fetchUserListens).toHaveBeenNthCalledWith(1, "bob", { limit: 50, offset: 0 })
     expect(fetchUserListens).toHaveBeenNthCalledWith(2, "bob", { limit: 50, offset: 50 })
     await waitFor(() => expect(result.current.hasNextPage).toBe(false))
+  })
+})
+
+describe("profile shelves", () => {
+  beforeEach(() => {
+    fetchUserLikes.mockReset().mockResolvedValue({})
+    fetchUserPlaylists.mockReset().mockResolvedValue({})
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  })
+
+  it("preview likes and playlists with the common shelf size", async () => {
+    renderHook(() => useUserLikes("bob"), { wrapper })
+    renderHook(() => useUserPlaylists("bob"), { wrapper })
+
+    await waitFor(() => expect(fetchUserPlaylists).toHaveBeenCalled())
+    expect(fetchUserLikes).toHaveBeenCalledWith("bob", { limit: 16 })
+    expect(fetchUserPlaylists).toHaveBeenCalledWith("bob", { limit: 16 })
+  })
+})
+
+describe("full lists of profile shelves", () => {
+  beforeEach(() => {
+    fetchUserTop.mockReset()
+    fetchUserLikesOfKind.mockReset()
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  })
+
+  it("pages the period's top in the viewer's time zone", async () => {
+    fetchUserTop
+      .mockResolvedValueOnce({ items: [], total: 60, next_offset: 48 })
+      .mockResolvedValueOnce({ items: [], total: 60, next_offset: null })
+    const { result } = renderHook(() => useUserTopList("bob", "artists", "90d"), { wrapper })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    await act(async () => {
+      await result.current.fetchNextPage()
+    })
+
+    expect(fetchUserTop).toHaveBeenNthCalledWith(1, "bob", "artists", {
+      period: "90d", tz: "Europe/Moscow", limit: 48, offset: 0,
+    })
+    expect(fetchUserTop).toHaveBeenNthCalledWith(2, "bob", "artists", {
+      period: "90d", tz: "Europe/Moscow", limit: 48, offset: 48,
+    })
+    await waitFor(() => expect(result.current.hasNextPage).toBe(false))
+  })
+
+  it("pages one kind of likes", async () => {
+    fetchUserLikesOfKind.mockResolvedValue({ items: [], total: 1, next_offset: null })
+    const { result } = renderHook(() => useUserLikesList("bob", "releases"), { wrapper })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(fetchUserLikesOfKind).toHaveBeenCalledWith("bob", "releases", { limit: 48, offset: 0 })
+    expect(result.current.hasNextPage).toBe(false)
   })
 })
 

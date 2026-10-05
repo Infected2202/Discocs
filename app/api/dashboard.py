@@ -11,13 +11,14 @@ from fastapi.responses import JSONResponse
 
 from app.api.deps import api_error, context
 from app.services.dashboard import dashboard_shelf_response, ensure_dashboard_mixes_fast
+from app.services.shelves import SHELF_PREVIEW_LIMIT
 
 router = APIRouter(prefix="/api/v1")
 
 
 @router.get("/dashboard", response_model=None)
 def api_v1_dashboard(
-    limit: Annotated[int, Query(ge=1, le=50)] = 12,
+    limit: Annotated[int, Query(ge=1, le=50)] = SHELF_PREVIEW_LIMIT,
     include_debug: bool = False,
 ) -> dict[str, object]:
     store, settings = context()
@@ -54,7 +55,7 @@ def api_v1_dashboard(
 @router.get("/dashboard/shelves/{key}", response_model=None)
 def api_v1_dashboard_shelf(
     key: str,
-    limit: Annotated[int, Query(ge=1, le=50)] = 12,
+    limit: Annotated[int, Query(ge=1, le=50)] = SHELF_PREVIEW_LIMIT,
     offset: Annotated[int, Query(ge=0)] = 0,
     include_debug: bool = False,
 ) -> dict[str, object] | JSONResponse:

@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useParams } from "react-router"
+import { useParams, useSearchParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { Pencil } from "lucide-react"
 import {
@@ -12,6 +12,7 @@ import { apiFetch } from "@/api/client"
 import {
   DEFAULT_PROFILE_PERIOD,
   PROFILE_PERIODS,
+  isProfilePeriod,
   listenAlong,
   type ProfilePeriod,
   type ProfileShelfItem,
@@ -29,9 +30,9 @@ import ArtworkImage from "@/components/media/ArtworkImage"
 import CollectionHeader from "@/components/media/CollectionHeader"
 import Shelf from "@/components/media/Shelf"
 import VirtualTrackList from "@/components/media/VirtualTrackList"
-import type { MediaCardProps } from "@/components/media/MediaCard"
 import { shelfItemToCard } from "@/components/media/shelfItemToCard"
 import AvatarPickerDialog from "@/components/profile/AvatarPickerDialog"
+import { listensLabel, profilePlaylistCard, profileTopCard } from "@/components/profile/profileCards"
 import ListenRows from "@/components/profile/ListenRows"
 import ProfileSection from "@/components/profile/ProfileSection"
 import ProfileStats from "@/components/profile/ProfileStats"
@@ -74,7 +75,22 @@ function LiveDot() {
 export default function ProfilePage() {
   const { t, i18n } = useTranslation("user")
   const { username = "" } = useParams<{ username: string }>()
-  const [period, setPeriod] = useState<ProfilePeriod>(DEFAULT_PROFILE_PERIOD)
+  // The period lives in the URL (?period=), so coming back from a top's full
+  // list (which carries the same period) restores the same view.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const periodParam = searchParams.get("period")
+  const period: ProfilePeriod = isProfilePeriod(periodParam) ? periodParam : DEFAULT_PROFILE_PERIOD
+  const setPeriod = (next: ProfilePeriod) => {
+    setSearchParams(
+      (params) => {
+        const updated = new URLSearchParams(params)
+        if (next === DEFAULT_PROFILE_PERIOD) updated.delete("period")
+        else updated.set("period", next)
+        return updated
+      },
+      { replace: true },
+    )
+  }
   const [pickerOpen, setPickerOpen] = useState(false)
   const [joining, setJoining] = useState(false)
   const { data: profile, isLoading, isPlaceholderData, error } = useUserProfile(username, period)
@@ -134,29 +150,9 @@ export default function ProfilePage() {
 
   const locale = i18n.language
   const number = new Intl.NumberFormat(locale)
-  const listensLabel = (count: number) => t("listenCount", { count, formatted: number.format(count) })
-
-  function topCard(item: ProfileShelfItem): MediaCardProps {
-    const count = listensLabel(item.listens)
-    return {
-      ...shelfItemToCard(item, playShelfItem, t),
-      // The listens count replaces the artist links: one plain subtitle line.
-      subtitleLinks: undefined,
-      subtitle: item.subtitle ? `${item.subtitle} · ${count}` : count,
-    }
-  }
-
-  function playlistCard(playlist: PlaylistSummary): MediaCardProps {
-    return {
-      id: playlist.id,
-      type: "playlist",
-      title: playlist.title,
-      subtitle: t("trackCount", { ns: "playlist", count: playlist.track_count }),
-      artwork: playlist.artwork,
-      href: playlist.action.target,
-      onPlay: () => void playEnvelope(playlist.play_action.endpoint),
-    }
-  }
+  const topCard = (item: ProfileShelfItem) => profileTopCard(item, playShelfItem, t, locale)
+  const playlistCard = (playlist: PlaylistSummary) =>
+    profilePlaylistCard(playlist, (endpoint) => void playEnvelope(endpoint), t)
 
   const { header } = profile
   const isOwner = header.viewer_is_owner
@@ -171,7 +167,10 @@ export default function ProfilePage() {
   const recent = withoutCurrentPlay(profile.recent, nowPlaying?.track)
   // Period-driven sections say which period they show: «Статистика (30 дн.)».
   const forPeriod = (title: string) => `${title} (${t(`periodSuffix.${period}`)})`
-  const historyHref = `/u/${encodeURIComponent(header.username)}/history`
+  const profilePath = `/u/${encodeURIComponent(header.username)}`
+  const historyHref = `${profilePath}/history`
+  // Full lists of the shelves (docs/web-ui.md «Полки»); tops keep the period.
+  const topHref = (kind: "artists" | "releases") => `${profilePath}/top/${kind}?period=${period}`
 
   const avatar = (
     <ArtworkImage
@@ -185,9 +184,9 @@ export default function ProfilePage() {
 
   const likeShelves = likes
     ? [
-        { key: "tracks", title: t("sections.likedTracks"), items: likes.tracks.items },
-        { key: "releases", title: t("sections.likedReleases"), items: likes.releases.items },
-        { key: "artists", title: t("sections.likedArtists"), items: likes.artists.items },
+        { key: "tracks", title: t("sections.likedTracks"), ...likes.tracks },
+        { key: "releases", title: t("sections.likedReleases"), ...likes.releases },
+        { key: "artists", title: t("sections.likedArtists"), ...likes.artists },
       ].filter((shelf) => shelf.items.length > 0)
     : []
 
@@ -221,7 +220,7 @@ export default function ProfilePage() {
           <>
             <p>
               {memberSince && `${t("memberSince", { date: memberSince })} · `}
-              {listensLabel(header.totals.listens)}
+              {listensLabel(t, locale, header.totals.listens)}
               {` · ${t("artistCount", { count: header.totals.artists, formatted: number.format(header.totals.artists) })}`}
               {` · ${t("likeCount", { count: header.totals.likes, formatted: number.format(header.totals.likes) })}`}
             </p>
@@ -284,8 +283,18 @@ export default function ProfilePage() {
             )}
           </ProfileSection>
 
-          <Shelf title={forPeriod(t("sections.topArtists"))} items={profile.top_artists.map(topCard)} />
-          <Shelf title={forPeriod(t("sections.topReleases"))} items={profile.top_releases.map(topCard)} />
+          <Shelf
+            title={forPeriod(t("sections.topArtists"))}
+            items={profile.top_artists.map(topCard)}
+            total={profile.top_artists_total}
+            moreHref={topHref("artists")}
+          />
+          <Shelf
+            title={forPeriod(t("sections.topReleases"))}
+            items={profile.top_releases.map(topCard)}
+            total={profile.top_releases_total}
+            moreHref={topHref("releases")}
+          />
           <TopTracks profile={profile} title={forPeriod(t("sections.topTracks"))} />
         </div>
       ) : (
@@ -299,13 +308,20 @@ export default function ProfilePage() {
               key={shelf.key}
               title={shelf.title}
               items={shelf.items.map((item) => shelfItemToCard(item, playShelfItem, t))}
+              total={shelf.total}
+              moreHref={`${profilePath}/likes/${shelf.key}`}
             />
           ))}
         </ProfileSection>
       )}
 
       {(playlists?.items.length ?? 0) > 0 && (
-        <Shelf title={t("sections.playlists")} items={(playlists?.items ?? []).map(playlistCard)} />
+        <Shelf
+          title={t("sections.playlists")}
+          items={(playlists?.items ?? []).map(playlistCard)}
+          total={playlists?.total}
+          moreHref={`${profilePath}/playlists`}
+        />
       )}
     </div>
   )

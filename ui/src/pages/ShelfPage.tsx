@@ -1,125 +1,27 @@
-import { useEffect, useRef } from "react"
-import { useParams, useNavigate } from "react-router"
+import { useParams } from "react-router"
 import { useTranslation } from "react-i18next"
-import { ChevronLeft } from "lucide-react"
 import { useShelf } from "@/api/hooks/useShelf"
-import { usePlayerStore } from "@/store/playerStore"
-import { apiFetch } from "@/api/client"
-import MediaCard from "@/components/media/MediaCard"
-import VirtualCardGrid from "@/components/media/VirtualCardGrid"
+import FullListPage from "@/components/media/FullListPage"
 import { shelfItemToCard } from "@/components/media/shelfItemToCard"
-import { Skeleton } from "@/components/ui/skeleton"
-import type { ShelfItem, PlaybackEnvelope } from "@/api/types"
+import { usePlayShelfItem } from "@/hooks/usePlayShelfItem"
+import type { ShelfItem } from "@/api/types"
 
-function GridSkeleton() {
-  return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-1 px-3">
-      {Array.from({ length: 16 }).map((_, i) => (
-        <div key={i} className="p-3 space-y-3">
-          <Skeleton className="w-full aspect-square rounded-md" />
-          <Skeleton className="h-4 w-3/4" />
-          <Skeleton className="h-3 w-1/2" />
-        </div>
-      ))}
-    </div>
-  )
-}
-
+/** `/shelf/:key` — the full list of a dashboard shelf. */
 export default function ShelfPage() {
   const { t, i18n } = useTranslation("media")
   const { key = "" } = useParams<{ key: string }>()
-  const navigate = useNavigate()
-  const playSource = usePlayerStore((s) => s.playSource)
-  const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
-  const sentinelRef = useRef<HTMLDivElement>(null)
+  const playShelfItem = usePlayShelfItem()
+  const source = useShelf(key)
 
-  const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage } = useShelf(key)
-
-  async function handlePlayShelfItem(item: ShelfItem) {
-    const pa = item.play_action
-    if (!pa) return
-    if (pa.type === "post") {
-      try {
-        const envelope = await apiFetch<PlaybackEnvelope>(pa.endpoint, { method: "POST" })
-        await playFromEnvelope(envelope)
-      } catch {
-        // silently ignore
-      }
-    } else {
-      playSource(pa.source_type, Number(pa.source_id), pa.source_label ?? item.title)
-    }
-  }
-
-  // Infinite scroll sentinel
-  useEffect(() => {
-    const el = sentinelRef.current
-    if (!el) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
-          fetchNextPage()
-        }
-      },
-      { rootMargin: "200px" },
-    )
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
-
-  const firstPage = data?.pages[0]
+  const firstPage = source.data?.pages[0]
   const title = t(`shelves.${key}`, { ns: "dashboard", defaultValue: firstPage?.title ?? key })
-  const allItems = data?.pages.flatMap((p) => p.items) ?? []
 
   return (
-    <div className="py-6 space-y-6">
-      {/* Header */}
-      <div className="px-4 sm:px-6 flex items-center gap-3">
-        <button
-          onClick={() => navigate(-1)}
-          className="flex items-center justify-center w-8 h-8 rounded-full hover:bg-muted transition-colors"
-          aria-label={t("actions.back", { ns: "common" })}
-        >
-          <ChevronLeft size={18} />
-        </button>
-        <h1 className="text-xl font-semibold">{title}</h1>
-        {firstPage && (
-          <span className="text-sm text-muted-foreground">{t("itemCount", { count: firstPage.total })}</span>
-        )}
-      </div>
-
-      {/* Grid — virtualized so only visible cards (and their images) stay in DOM */}
-      {isLoading ? (
-        <GridSkeleton />
-      ) : (
-        <div className="px-3">
-          <VirtualCardGrid
-            items={allItems as ShelfItem[]}
-            getKey={(item) => `${item.entity_type}-${item.entity_id}`}
-            renderItem={(item) => (
-              <MediaCard
-                {...shelfItemToCard(item, handlePlayShelfItem, t, i18n.language)}
-                variant="shelf"
-                className="w-full"
-              />
-            )}
-          />
-        </div>
-      )}
-
-      {/* Infinite scroll sentinel */}
-      <div ref={sentinelRef} className="h-4" />
-
-      {isFetchingNextPage && (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-1 px-3">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="p-3 space-y-3">
-              <Skeleton className="w-full aspect-square rounded-md" />
-              <Skeleton className="h-4 w-3/4" />
-              <Skeleton className="h-3 w-1/2" />
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    <FullListPage<ShelfItem>
+      title={title}
+      source={source}
+      getKey={(item) => `${item.entity_type}-${item.entity_id}`}
+      toCard={(item) => shelfItemToCard(item, playShelfItem, t, i18n.language)}
+    />
   )
 }

@@ -1,6 +1,7 @@
-import { useInfiniteQuery } from "@tanstack/react-query"
 import { apiFetch, apiUrl } from "../client"
 import type { Shelf } from "../types"
+import { FULL_LIST_PAGE_SIZE } from "@/lib/shelves"
+import { usePagedList } from "./usePagedList"
 
 interface ShelfPage extends Shelf {
   limit: number
@@ -8,17 +9,14 @@ interface ShelfPage extends Shelf {
   next_offset: number | null
 }
 
-function fetchShelfPage(key: string, limit: number, offset: number): Promise<ShelfPage> {
+export function fetchShelfPage(key: string, limit: number, offset: number): Promise<ShelfPage> {
   return apiFetch(apiUrl(`/api/v1/dashboard/shelves/${key}`, { limit, offset }))
 }
 
-export function useShelf(key: string, pageSize = 48, refetchInterval?: number) {
-  return useInfiniteQuery({
-    queryKey: ["shelf", key, pageSize],
-    queryFn: ({ pageParam }) => fetchShelfPage(key, pageSize, pageParam),
-    initialPageParam: 0,
-    getNextPageParam: (last) => last.next_offset ?? undefined,
-    staleTime: 60_000,
+/** A dashboard shelf's full list (`/shelf/:key`), page by page. */
+export function useShelf(key: string, pageSize = FULL_LIST_PAGE_SIZE, refetchInterval?: number) {
+  return usePagedList(["shelf", key], ({ limit, offset }) => fetchShelfPage(key, limit, offset), {
+    pageSize,
     refetchInterval,
   })
 }

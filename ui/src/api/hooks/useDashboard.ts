@@ -3,6 +3,7 @@ import { fetchDashboard } from "../dashboard"
 import { apiFetch, apiUrl } from "../client"
 import type { DashboardResponse, Shelf, ShelfItem } from "../types"
 import { useEffect } from "react"
+import { SHELF_PREVIEW_LIMIT } from "@/lib/shelves"
 
 type HistoryShelf = Shelf & { items: ShelfItem[] }
 
@@ -33,7 +34,7 @@ async function fetchSyncedDashboard(limit: number): Promise<DashboardResponse> {
   return fetchDashboard(limit)
 }
 
-export function useDashboard(limit = 12) {
+export function useDashboard(limit = SHELF_PREVIEW_LIMIT) {
   const queryClient = useQueryClient()
 
   // Refresh history shelf every 60s

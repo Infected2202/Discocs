@@ -16,15 +16,21 @@ from app.scanner import ScannedTrack
 from app.services.profile import (
     GENRE_MODEL,
     MOOD_MODEL,
+    TOP_ARTISTS_LIMIT,
+    TOP_RELEASES_LIMIT,
     ProfileNotFoundError,
     ProfileViewerRequiredError,
     bucket_listens,
     profile_likes,
+    profile_likes_of_kind,
     profile_listens,
+    profile_playlists_payload,
     profile_stats,
+    profile_top,
     profile_window,
     resolve_timezone,
 )
+from app.services.shelves import SHELF_PREVIEW_LIMIT
 from app.store import INITIALIZED_DB_PATHS, PlaybackEventCreate, Store
 
 NOW = datetime(2026, 10, 4, 10, 0, tzinfo=UTC)
@@ -353,6 +359,69 @@ def test_top_tracks_are_capped_at_five(tmp_path: Path):
     assert [item["id"] for item in stats["top_tracks"]] == tracks[:5]
 
 
+def _ranked_artists(root: Store, alice: Store, tmp_path: Path, count: int) -> list[int]:
+    """``count`` tracks by distinct artists; track n is played ``count - n`` times
+    within the last day, so the top order is the creation order."""
+    tracks = [_track(root, tmp_path, f"rank{n}", artist=f"Rank Artist {n:02d}") for n in range(count)]
+    for rank, track_id in enumerate(tracks):
+        for repeat in range(count - rank):
+            _listen(root, alice, track_id, _at(hours=1, minutes=repeat))
+    return tracks
+
+
+def test_profile_tops_preview_the_common_shelf_size_and_report_full_totals(tmp_path: Path):
+    root, alice, _bob = _stores(tmp_path)
+    tracks = _ranked_artists(root, alice, tmp_path, SHELF_PREVIEW_LIMIT + 3)
+
+    stats = _stats(alice, period="7d", tz_name="UTC")
+
+    assert TOP_ARTISTS_LIMIT == TOP_RELEASES_LIMIT == SHELF_PREVIEW_LIMIT == 16
+    assert len(stats["top_artists"]) == SHELF_PREVIEW_LIMIT
+    assert len(stats["top_releases"]) == SHELF_PREVIEW_LIMIT
+    assert stats["top_artists_total"] == len(tracks)
+    assert stats["top_releases_total"] == len(tracks)
+
+
+def test_profile_top_pages_continue_the_preview_in_the_same_order(tmp_path: Path):
+    root, alice, bob = _stores(tmp_path)
+    tracks = _ranked_artists(root, alice, tmp_path, 7)
+    preview = _stats(alice, period="7d", tz_name="UTC")
+
+    first = profile_top(bob, "ALICE", "artists", period="7d", tz_name="UTC", limit=3, offset=0, now=NOW)
+    last = profile_top(bob, "alice", "artists", period="7d", tz_name="UTC", limit=3, offset=6, now=NOW)
+    releases = profile_top(bob, "alice", "releases", period="7d", tz_name="UTC", limit=50, now=NOW)
+
+    assert [item["title"] for item in first["items"]] == ["Rank Artist 00", "Rank Artist 01", "Rank Artist 02"]
+    assert [item["listens"] for item in first["items"]] == [7, 6, 5]
+    assert (first["total"], first["limit"], first["offset"], first["next_offset"]) == (7, 3, 0, 3)
+    assert [item["title"] for item in last["items"]] == ["Rank Artist 06"]
+    assert last["next_offset"] is None
+    assert first["period"]["key"] == "7d" and first["period"]["tz"] == "UTC"
+    assert [item["entity_id"] for item in releases["items"]] == [_release_of(root, t) for t in tracks]
+    assert [item["entity_id"] for item in releases["items"]] == [
+        item["entity_id"] for item in preview["top_releases"]
+    ]
+    assert releases["total"] == 7 and releases["next_offset"] is None
+
+
+def test_profile_top_respects_the_period(tmp_path: Path):
+    root, alice, _bob = _stores(tmp_path)
+    old = _track(root, tmp_path, "old-top", artist="Old")
+    new = _track(root, tmp_path, "new-top", artist="New")
+    _listen(root, alice, old, _at(days=40))
+    _listen(root, alice, new, _at(days=1))
+
+    week = profile_top(alice, "alice", "artists", period="7d", tz_name="UTC", limit=10, now=NOW)
+    quarter = profile_top(alice, "alice", "releases", period="90d", tz_name="UTC", limit=10, now=NOW)
+
+    assert [item["title"] for item in week["items"]] == ["New"]
+    assert week["total"] == 1
+    assert {item["entity_id"] for item in quarter["items"]} == {_release_of(root, old), _release_of(root, new)}
+    assert quarter["total"] == 2
+    with pytest.raises(ValueError):
+        profile_top(alice, "alice", "tracks", limit=10, now=NOW)
+
+
 def test_sound_profile_is_weighted_by_listens(tmp_path: Path):
     root, alice, _bob = _stores(tmp_path)
     techno = _track(root, tmp_path, "techno")
@@ -450,6 +519,54 @@ def test_likes_are_the_targets_own(tmp_path: Path):
     assert profile_likes(alice, "bob", limit=50)["tracks"]["items"][0]["entity_id"] == bobs_track
 
 
+def test_likes_of_one_kind_are_paged_with_totals(tmp_path: Path):
+    root, alice, bob = _stores(tmp_path)
+    tracks = [_track(root, tmp_path, f"like{n}", artist=f"Like Artist {n}") for n in range(5)]
+    for track in tracks:
+        alice.set_track_liked(track, True)
+        alice.set_release_liked(_release_of(root, track), True)
+    bob.set_track_liked(tracks[0], True)
+
+    first = profile_likes_of_kind(bob, "alice", "tracks", limit=2, offset=0)
+    middle = profile_likes_of_kind(bob, "alice", "tracks", limit=2, offset=2)
+    rest = profile_likes_of_kind(bob, "alice", "tracks", limit=2, offset=4)
+    releases = profile_likes_of_kind(bob, "alice", "releases", limit=3, offset=0)
+    artists = profile_likes_of_kind(bob, "alice", "artists", limit=3, offset=0)
+
+    assert (first["total"], first["limit"], first["offset"], first["next_offset"]) == (5, 2, 0, 2)
+    assert len(first["items"]) == 2 and first["items"][0]["entity_type"] == "track"
+    assert len(rest["items"]) == 1 and rest["next_offset"] is None
+    paged = [item["entity_id"] for page in (first, middle, rest) for item in page["items"]]
+    assert sorted(paged) == sorted(tracks)
+    assert releases["total"] == 5 and releases["next_offset"] == 3
+    assert releases["items"][0]["entity_type"] == "release"
+    assert artists["total"] == 0 and artists["items"] == [] and artists["next_offset"] is None
+    # Bob's own like is not on Alice's list and vice versa.
+    assert profile_likes_of_kind(alice, "bob", "tracks", limit=10)["total"] == 1
+    with pytest.raises(ValueError):
+        profile_likes_of_kind(alice, "alice", "playlists", limit=10)
+
+
+def test_playlists_are_paged_and_private_ones_stay_hidden(tmp_path: Path):
+    _root, alice, bob = _stores(tmp_path)
+    for n in range(3):
+        alice.create_playlist(title=f"Public {n}", source={"visibility": "public"})
+    alice.create_playlist(title="Secret")
+
+    seen_by_bob = profile_playlists_payload(bob, "alice", limit=2, offset=0)
+    bob_rest = profile_playlists_payload(bob, "alice", limit=2, offset=2)
+    own = profile_playlists_payload(alice, "alice", limit=2, offset=0)
+    everything = profile_playlists_payload(bob, "alice")
+
+    assert (seen_by_bob["total"], seen_by_bob["limit"], seen_by_bob["next_offset"]) == (3, 2, 2)
+    assert len(seen_by_bob["items"]) == 2 and len(bob_rest["items"]) == 1
+    assert bob_rest["next_offset"] is None
+    titles = {item["title"] for item in seen_by_bob["items"] + bob_rest["items"]}
+    assert titles == {"Public 0", "Public 1", "Public 2"}
+    assert own["total"] == 4 and own["next_offset"] == 2
+    assert everything["total"] == 3 and len(everything["items"]) == 3 and everything["next_offset"] is None
+
+
 def test_service_principal_and_unknown_users_are_refused(tmp_path: Path):
     _root, alice, _bob = _stores(tmp_path)
     service = Store(tmp_path / "app.db", user_id=None)
@@ -462,6 +579,12 @@ def test_service_principal_and_unknown_users_are_refused(tmp_path: Path):
         profile_stats(alice, "carol")
     with pytest.raises(ProfileNotFoundError):
         profile_likes(alice, "carol", limit=10)
+    with pytest.raises(ProfileNotFoundError):
+        profile_top(alice, "carol", "artists", limit=10)
+    with pytest.raises(ProfileNotFoundError):
+        profile_likes_of_kind(alice, "carol", "tracks", limit=10)
+    with pytest.raises(ProfileViewerRequiredError):
+        profile_top(service, "alice", "releases", limit=10)
 
 
 # ---------------------------------------------------------------------------
@@ -502,7 +625,7 @@ def _user_store(store: Store, username: str) -> Store:
     return store.for_user(int(store.get_user_by_username(username)["id"]))
 
 
-_PROFILE_PATHS = ("profile", "listens", "likes", "playlists")
+_PROFILE_PATHS = ("profile", "listens", "likes", "playlists", "top/artists", "top/releases", "likes/tracks")
 
 
 def test_api_profile_contract_and_case_insensitive_username(tmp_path: Path, monkeypatch):
@@ -519,7 +642,8 @@ def test_api_profile_contract_and_case_insensitive_username(tmp_path: Path, monk
     body = response.json()
     assert set(body) == {
         "header", "period", "summary", "by_day_bucket", "by_day", "by_hour",
-        "sound", "top_artists", "top_releases", "top_tracks", "recent",
+        "sound", "top_artists", "top_artists_total", "top_releases", "top_releases_total",
+        "top_tracks", "recent",
     }
     assert set(body["header"]) == {"username", "avatar", "created_at", "viewer_is_owner", "totals"}
     assert body["header"]["username"] == "alice"
@@ -534,6 +658,43 @@ def test_api_profile_contract_and_case_insensitive_username(tmp_path: Path, monk
 
     listens = bob.get("/api/v1/users/Alice/listens", params={"limit": 1}).json()
     assert listens["total"] == 1 and listens["items"][0]["id"] == track
+
+
+def test_api_full_lists_of_profile_shelves(tmp_path: Path, monkeypatch):
+    store = _init_auth_store(tmp_path, monkeypatch)
+    _login("alice")
+    bob = _login("bob")
+    alice_store = _user_store(store, "alice")
+    tracks = [_track(store, tmp_path, f"full{n}", artist=f"Full Artist {n}") for n in range(3)]
+    for rank, track in enumerate(tracks):
+        for _repeat in range(3 - rank):
+            _listen(store, alice_store, track, utc_now())
+        alice_store.set_track_liked(track, True)
+    old = _track(store, tmp_path, "full-old", artist="Full Old")
+    _listen(store, alice_store, old, (datetime.now(UTC) - timedelta(days=60)).isoformat())
+
+    month = bob.get(
+        "/api/v1/users/ALICE/top/artists", params={"period": "30d", "tz": "UTC", "limit": 2}
+    ).json()
+    year_releases = bob.get(
+        "/api/v1/users/alice/top/releases", params={"period": "365d", "limit": 2, "offset": 2}
+    ).json()
+    likes = bob.get("/api/v1/users/alice/likes/tracks", params={"limit": 2, "offset": 2}).json()
+
+    assert [item["title"] for item in month["items"]] == ["Full Artist 0", "Full Artist 1"]
+    assert (month["total"], month["limit"], month["offset"], month["next_offset"]) == (3, 2, 0, 2)
+    assert month["period"]["key"] == "30d"
+    assert year_releases["total"] == 4 and year_releases["next_offset"] is None
+    assert [item["entity_id"] for item in year_releases["items"]] == [
+        _release_of(store, tracks[2]),
+        _release_of(store, old),
+    ]
+    assert likes["total"] == 3 and len(likes["items"]) == 1 and likes["next_offset"] is None
+    assert bob.get("/api/v1/users/alice/top/tracks").status_code == 422
+    assert bob.get("/api/v1/users/alice/top/artists", params={"period": "14d"}).status_code == 422
+    assert bob.get("/api/v1/users/alice/top/artists", params={"limit": 101}).status_code == 422
+    assert bob.get("/api/v1/users/alice/likes/playlists").status_code == 422
+    assert bob.get("/api/v1/users/alice/likes/artists", params={"offset": -1}).status_code == 422
 
 
 def test_api_rejects_invalid_period_and_limits(tmp_path: Path, monkeypatch):
@@ -575,6 +736,12 @@ def test_api_playlists_private_only_for_the_owner(tmp_path: Path, monkeypatch):
     assert seen_by_bob["total"] == 1
     assert all(item["editable"] is True for item in own["items"])
     assert all(item["editable"] is False for item in seen_by_bob["items"])
+
+    own_page = alice.get("/api/v1/users/alice/playlists", params={"limit": 1}).json()
+    bob_page = bob.get("/api/v1/users/alice/playlists", params={"limit": 1, "offset": 1}).json()
+    assert own_page["total"] == 2 and len(own_page["items"]) == 1 and own_page["next_offset"] == 1
+    assert bob_page["total"] == 1 and bob_page["items"] == [] and bob_page["next_offset"] is None
+    assert bob.get("/api/v1/users/alice/playlists", params={"limit": 0}).status_code == 422
 
 
 def test_api_never_exposes_preferences_dislikes_or_settings(tmp_path: Path, monkeypatch):

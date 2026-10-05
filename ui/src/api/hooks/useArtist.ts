@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { usePagedList } from "./usePagedList"
 import { fetchArtist, fetchArtistDiscography, fetchArtistSimilar, fetchArtistTopTracks, type DiscographySort } from "../artists"
 
 export function useArtist(id: number) {
@@ -20,6 +21,11 @@ export function useArtistTopTracks(id: number) {
     queryKey: ["artist", id, "top-tracks"],
     queryFn: () => fetchArtistTopTracks(id),
   })
+}
+
+/** Full list of similar artists (`/artists/:id/similar`). */
+export function useArtistSimilarList(id: number) {
+  return usePagedList(["artist", id, "similar-list"], ({ limit, offset }) => fetchArtistSimilar(id, limit, offset))
 }
 
 export function useArtistSimilar(id: number) {

@@ -199,6 +199,8 @@ export default function ReleasePage() {
       {related.length > 0 && (
         <Shelf
           title={t("moreFromArtists")}
+          total={relatedData?.total}
+          moreHref={`/releases/${releaseId}/related`}
           items={related
             .filter((r) => r.id !== releaseId)
             .map((r) => ({
@@ -216,6 +218,8 @@ export default function ReleasePage() {
       {recsData?.available && recsData.items.length > 0 && (
         <Shelf
           title={t("recommendedAlbums")}
+          total={recsData.total}
+          moreHref={`/releases/${releaseId}/recommendations`}
           items={recsData.items.map((item) => ({
             id: item.entity_id,
             type: "release" as const,

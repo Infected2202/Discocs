@@ -39,6 +39,12 @@
     "likedArtists": "Артисты",
     "playlists": "Плейлисты"
   },
+  "lists": {
+    "likedTracks": "Лайкнутые треки",
+    "likedReleases": "Лайкнутые релизы",
+    "likedArtists": "Лайкнутые артисты",
+    "notFound": "Такого списка нет."
+  },
   "seeAll": "Все",
   "summary": {
     "listens": "Прослушивания",

@@ -31,4 +31,9 @@ describe("fetchArtistSimilar", () => {
     await fetchArtistSimilar(42, 24)
     expect(apiFetch).toHaveBeenCalledWith("/api/v1/artists/42/similar?limit=24")
   })
+
+  it("pages the full list by offset", async () => {
+    await fetchArtistSimilar(42, 48, 96)
+    expect(apiFetch).toHaveBeenCalledWith("/api/v1/artists/42/similar?limit=48&offset=96")
+  })
 })

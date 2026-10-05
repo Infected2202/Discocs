@@ -15,6 +15,9 @@ import SharedPlayerPage from "@/pages/SharedPlayerPage"
 import SharedLinksPage from "@/pages/SharedLinksPage"
 import ProfilePage from "@/pages/ProfilePage"
 import ListeningHistoryPage from "@/pages/ListeningHistoryPage"
+import ArtistSimilarPage from "@/pages/ArtistSimilarPage"
+import { ReleaseRecommendationsPage, ReleaseRelatedPage } from "@/pages/ReleaseListPages"
+import { ProfileLikesPage, ProfilePlaylistsPage, ProfileTopPage } from "@/pages/ProfileListPages"
 
 export const router = createBrowserRouter([
   { path: "/login", Component: LoginPage },
@@ -28,7 +31,10 @@ export const router = createBrowserRouter([
           { index: true, Component: DashboardPage },
           { path: "search", Component: SearchPage },
           { path: "artists/:id", Component: ArtistPage },
+          { path: "artists/:id/similar", Component: ArtistSimilarPage },
           { path: "releases/:id", Component: ReleasePage },
+          { path: "releases/:id/related", Component: ReleaseRelatedPage },
+          { path: "releases/:id/recommendations", Component: ReleaseRecommendationsPage },
           { path: "labels/:id", Component: LabelPage },
           { path: "mixes/:id", Component: MixPage },
           { path: "settings", Component: SettingsPage },
@@ -37,6 +43,9 @@ export const router = createBrowserRouter([
           { path: "shared-links", Component: SharedLinksPage },
           { path: "u/:username", Component: ProfilePage },
           { path: "u/:username/history", Component: ListeningHistoryPage },
+          { path: "u/:username/top/:kind", Component: ProfileTopPage },
+          { path: "u/:username/likes/:kind", Component: ProfileLikesPage },
+          { path: "u/:username/playlists", Component: ProfilePlaylistsPage },
         ],
       },
     ],

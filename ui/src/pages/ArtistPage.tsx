@@ -147,6 +147,8 @@ export default function ArtistPage() {
       {(similarData?.items.length ?? 0) > 0 && (
         <Shelf
           title={t("similarArtists")}
+          total={similarData?.total}
+          moreHref={`/artists/${artistId}/similar`}
           items={(similarData?.items ?? []).map((item: ArtistSummary) => ({
             id: item.id,
             type: "artist" as const,

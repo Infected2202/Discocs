@@ -26,12 +26,19 @@ from app.serializers.entities import (
 )
 from app.serializers.search import _release_shelf_item
 from app.services.release_similarity import find_similar_releases
+from app.services.shelves import FULL_LIST_MAX_LIMIT, SHELF_PREVIEW_LIMIT, page_info, page_of
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1")
 
 _RELEASE_NOT_FOUND = "Release not found"
+# The full "recommended albums" list: the nearest releases by centroid,
+# ranked once and then paged.
+RECOMMENDED_RELEASES_MAX = 200
+
+PageLimit = Annotated[int, Query(ge=1, le=FULL_LIST_MAX_LIMIT)]
+PageOffset = Annotated[int, Query(ge=0)]
 
 
 @router.get("/releases/{release_id}", response_model=ReleaseResponse)
@@ -68,12 +75,16 @@ def api_v1_release_tracks(release_id: int) -> dict[str, object] | JSONResponse:
 
 
 @router.get("/releases/{release_id}/related-discography", response_model=RelatedDiscographyResponse)
-def api_v1_release_related_discography(release_id: int) -> dict[str, object] | JSONResponse:
+def api_v1_release_related_discography(
+    release_id: int,
+    limit: PageLimit = SHELF_PREVIEW_LIMIT,
+    offset: PageOffset = 0,
+) -> dict[str, object] | JSONResponse:
     store, _settings = context()
     release = store.get_release(release_id)
     if release is None:
         return api_error(404, "not_found", _RELEASE_NOT_FOUND)
-    items = store.related_discography_for_release(release_id)
+    items, paging = page_of(store.related_discography_for_release(release_id, limit=None), limit, offset)
     return {
         "release": {"id": release.release.id, "title": release.release.title},
         "context_artists": [
@@ -81,13 +92,15 @@ def api_v1_release_related_discography(release_id: int) -> dict[str, object] | J
             for artist in store.participating_artists_for_release(release_id)
         ],
         "items": [release_summary_dict(item) for item in items],
+        **paging,
     }
 
 
 @router.get("/releases/{release_id}/recommendations", response_model=None)
 def api_v1_release_recommendations(
     release_id: int,
-    limit: Annotated[int, Query(ge=1, le=50)] = 12,
+    limit: PageLimit = SHELF_PREVIEW_LIMIT,
+    offset: PageOffset = 0,
     include_debug: bool = False,
 ) -> dict[str, object] | JSONResponse:
     store, settings = context()
@@ -104,6 +117,7 @@ def api_v1_release_recommendations(
             "available": False,
             "basis": "no_aggregate",
             "items": [],
+            **page_info(0, limit, offset),
         }
 
     # Exclude the source release and all other releases by the same artist(s)
@@ -123,11 +137,12 @@ def api_v1_release_recommendations(
         model_name,
         source_centroid,
         exclude_release_ids=exclude_ids,
-        limit=limit,
+        limit=RECOMMENDED_RELEASES_MAX,
     )
+    page, paging = page_of(similar, limit, offset)
 
     items: list[dict[str, object]] = []
-    for rel_id, score in similar:
+    for rel_id, score in page:
         row = store.get_release(rel_id)
         if row is None:
             continue
@@ -141,6 +156,7 @@ def api_v1_release_recommendations(
         "available": True,
         "basis": "release_similarity",
         "items": items,
+        **paging,
     }
 
 

@@ -6,6 +6,11 @@ only whitelisted fields; private playlists are listed only to their owner.
 A service principal (no ``user_id``) gets 403, an unknown username 404; the
 username is matched case-insensitively. Contract: docs/social.md.
 
+Horizontal profile shelves (tops, likes, playlists) preview
+``SHELF_PREVIEW_LIMIT`` cards; their full lists page through
+``/users/{username}/top/{kind}``, ``/users/{username}/likes/{kind}`` and
+``/users/{username}/playlists`` with ``limit``/``offset``.
+
 ``POST /users/{username}/listen-along`` (Ф6) starts the viewer's own session
 from what that user plays right now — see app/services/listen_along.py.
 """
@@ -29,14 +34,21 @@ from app.services.profile import (
     ProfileNotFoundError,
     ProfileViewerRequiredError,
     profile_likes,
+    profile_likes_of_kind,
     profile_listens,
     profile_playlists_payload,
     profile_stats,
+    profile_top,
 )
+from app.services.shelves import FULL_LIST_MAX_LIMIT
 
 router = APIRouter(prefix="/api/v1")
 
 ProfilePeriod = Literal["7d", "30d", "90d", "180d", "365d", "all"]
+TopKind = Literal["artists", "releases"]
+LikeKind = Literal["tracks", "releases", "artists"]
+PageLimit = Annotated[int, Query(ge=1, le=FULL_LIST_MAX_LIMIT)]
+PageOffset = Annotated[int, Query(ge=0)]
 
 _ERROR_RESPONSES: dict[int | str, dict[str, object]] = {
     403: {"description": "A signed-in user is required (service principal)"},
@@ -63,6 +75,22 @@ def api_v1_user_profile(
     return _profile_response(lambda: profile_stats(store, username, period=period, tz_name=tz))
 
 
+@router.get("/users/{username}/top/{kind}", response_model=None, responses=_ERROR_RESPONSES)
+def api_v1_user_top(
+    username: str,
+    kind: TopKind,
+    period: Annotated[ProfilePeriod, Query()] = DEFAULT_PROFILE_PERIOD,
+    tz: Annotated[str | None, Query(description="IANA timezone; invalid or missing → UTC")] = None,
+    limit: PageLimit = 50,
+    offset: PageOffset = 0,
+) -> dict[str, object] | JSONResponse:
+    """Full top artists/releases of a period — the profile's top shelves, paged."""
+    store, _settings = context()
+    return _profile_response(
+        lambda: profile_top(store, username, kind, period=period, tz_name=tz, limit=limit, offset=offset)
+    )
+
+
 @router.get("/users/{username}/listens", response_model=None, responses=_ERROR_RESPONSES)
 def api_v1_user_listens(
     username: str,
@@ -83,10 +111,30 @@ def api_v1_user_likes(
     return _profile_response(lambda: profile_likes(store, username, limit=limit, offset=offset))
 
 
-@router.get("/users/{username}/playlists", response_model=None, responses=_ERROR_RESPONSES)
-def api_v1_user_playlists(username: str) -> dict[str, object] | JSONResponse:
+@router.get("/users/{username}/likes/{kind}", response_model=None, responses=_ERROR_RESPONSES)
+def api_v1_user_likes_of_kind(
+    username: str,
+    kind: LikeKind,
+    limit: PageLimit = 50,
+    offset: PageOffset = 0,
+) -> dict[str, object] | JSONResponse:
+    """One kind of likes (tracks/releases/artists), page by page."""
     store, _settings = context()
-    return _profile_response(lambda: profile_playlists_payload(store, username))
+    return _profile_response(
+        lambda: profile_likes_of_kind(store, username, kind, limit=limit, offset=offset)
+    )
+
+
+@router.get("/users/{username}/playlists", response_model=None, responses=_ERROR_RESPONSES)
+def api_v1_user_playlists(
+    username: str,
+    limit: Annotated[int | None, Query(ge=1, le=FULL_LIST_MAX_LIMIT, description="Omitted → all")] = None,
+    offset: PageOffset = 0,
+) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    return _profile_response(
+        lambda: profile_playlists_payload(store, username, limit=limit, offset=offset)
+    )
 
 
 _LISTEN_ALONG_RESPONSES: dict[int | str, dict[str, object]] = {

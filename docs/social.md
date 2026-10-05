@@ -98,7 +98,8 @@ preference-score/дизлайки.
 агрегации — SQL в `ListensStoreMixin` (`app/store/listens.py`) на store,
 привязанном к **владельцу профиля**. Новых таблиц нет.
 
-Общее для всех четырёх эндпоинтов:
+Общее для всех эндпоинтов профиля (`/profile`, `/listens`, `/likes`,
+`/likes/{kind}`, `/top/{kind}`, `/playlists`):
 
 - нужен залогиненный пользователь: service-принципал → 403
   `{"error": {"code": "forbidden", …}}`, без сессии → 401;
@@ -157,7 +158,9 @@ preference-score/дизлайки.
     "moods":  [{"label": "energetic", "listens": 98, "share": 0.3529}]
   },
   "top_artists":  ["элемент шелфа артиста + listens"],
+  "top_artists_total": 64,
   "top_releases": ["элемент шелфа релиза + listens"],
+  "top_releases_total": 40,
   "top_tracks":   ["TrackSummary + listens"],
   "recent":       ["прослушивание × 10"]
 }
@@ -182,8 +185,11 @@ preference-score/дизлайки.
   (метки `energetic`, `deep`, `dark`, …). Топ‑8 каждого; `share` (0..1, 4 знака)
   — доля среди прослушиваний периода, у трека которых есть предсказание этой
   модели. Нет предсказаний → пустые списки.
-- `top_artists` (12), `top_releases` (12), `top_tracks` (5) — за период,
-  поле `listens` у каждого. Артисты: прослушивание засчитывается каждому
+- `top_artists` (16), `top_releases` (16), `top_tracks` (5) — за период,
+  поле `listens` у каждого. 16 — общий размер превью полки
+  (`SHELF_PREVIEW_LIMIT`, `app/services/shelves.py`); `top_artists_total` /
+  `top_releases_total` — полная длина топа за период (по ним UI решает,
+  показывать ли «Ещё»; весь топ — `/top/{kind}`). Артисты: прослушивание засчитывается каждому
   артисту трека (один раз, сколько бы ролей ни было). Релиз трека — тот же,
   что в его `release` (наименьшая `release_tracks.position`). Ничьи: больше
   прослушиваний → позже последнее прослушивание → меньший id.
@@ -225,21 +231,52 @@ preference-score/дизлайки.
 диска, новые лайки первыми; релизы/артисты — те же запросы, что полки
 «Favourite Albums/Artists» на главной.
 
-### `GET /api/v1/users/{username}/playlists`
+### `GET /api/v1/users/{username}/likes/{kind}?limit=&offset=`
+
+Полный список одного вида лайков (`kind` ∈ `tracks | releases | artists`,
+другое → 422) — «Ещё» у полки лайков. `limit` 1–100 (по умолчанию 50),
+`offset` ≥ 0. Те же элементы и порядок, что в соответствующем списке
+`/likes`:
 
 ```json
-{"items": ["плейлист как в GET /api/v1/playlists"], "total": 3}
+{"items": ["элемент шелфа"], "total": 87, "limit": 50, "offset": 0, "next_offset": 50}
+```
+
+### `GET /api/v1/users/{username}/top/{kind}?period=&tz=&limit=&offset=`
+
+Полный топ периода (`kind` ∈ `artists | releases`, другое → 422) — «Ещё» у
+полок топов. `period`/`tz` — как у `/profile` (окно то же), `limit` 1–100
+(по умолчанию 50), `offset` ≥ 0. Порядок и элементы (с `listens`) — те же,
+что у `top_artists`/`top_releases` профиля, первая страница при `limit=16`
+совпадает с полкой:
+
+```json
+{"items": ["элемент шелфа + listens"], "total": 64, "limit": 50, "offset": 0,
+ "next_offset": 50, "period": {"key": "30d", "tz": "Europe/Moscow", "since": "…", "until": "…"}}
+```
+
+### `GET /api/v1/users/{username}/playlists?limit=&offset=`
+
+```json
+{"items": ["плейлист как в GET /api/v1/playlists"], "total": 3,
+ "limit": 16, "offset": 0, "next_offset": null}
 ```
 
 Только собственные плейлисты цели (`list_owned_playlists`), приватные — лишь
-когда зритель и есть владелец. Форма — `playlist_summary_dict`; `editable`
-считается относительно зрителя (на чужом профиле всегда `false`).
+когда зритель и есть владелец (и в `total` тоже: чужие приватные не видны и
+не считаются). Форма — `playlist_summary_dict`; `editable` считается
+относительно зрителя (на чужом профиле всегда `false`). `limit` 1–100 —
+необязателен: без него отдаются все плейлисты (`limit` в ответе = их число);
+`offset` ≥ 0. Новые (по `updated_at`) первыми.
 
 ## UI профиля (Ф5)
 
 Роуты (внутри `AppShell`, под `RequireAuth`): `/u/:username` →
 `ui/src/pages/ProfilePage.tsx`, `/u/:username/history` →
-`ui/src/pages/ListeningHistoryPage.tsx`. i18n — namespace `user`.
+`ui/src/pages/ListeningHistoryPage.tsx`, полные списки полок —
+`/u/:username/top/:kind?period=`, `/u/:username/likes/:kind`,
+`/u/:username/playlists` → `ui/src/pages/ProfileListPages.tsx` (см. «Полные
+списки» ниже). i18n — namespace `user`.
 
 **Данные.** Обёртки API — `ui/src/api/profile.ts` (типы по контракту выше),
 хуки — `ui/src/api/hooks/useProfile.ts`:
@@ -248,8 +285,11 @@ preference-score/дизлайки.
 |---|---|---|
 | `useUserProfile(username, period)` | `["profile", username, "stats", period, tz]` | `/profile`; `tz` = `Intl.DateTimeFormat().resolvedOptions().timeZone` (`viewerTimeZone`); `keepPreviousData` — при смене периода старые цифры видны до прихода новых |
 | `useUserListens(username)` | `["profile", username, "listens", 50]` | `/listens`, infinite по `next_offset` |
-| `useUserLikes(username)` | `["profile", username, "likes", 24]` | `/likes?limit=24` |
-| `useUserPlaylists(username)` | `["profile", username, "playlists"]` | `/playlists` |
+| `useUserLikes(username)` | `["profile", username, "likes", 16]` | `/likes?limit=16` (превью полок) |
+| `useUserPlaylists(username)` | `["profile", username, "playlists", 16]` | `/playlists?limit=16` (превью полки) |
+| `useUserTopList(username, kind, period)` | `["profile", username, "top", kind, period, tz, 48]` | `/top/{kind}`, infinite по `next_offset` |
+| `useUserLikesList(username, kind)` | `["profile", username, "likes-list", kind, 48]` | `/likes/{kind}`, infinite |
+| `useUserPlaylistsList(username)` | `["profile", username, "playlists-list", 48]` | `/playlists`, infinite |
 | `useSetMyAvatar()` | — | `PUT /me/avatar`; на успех инвалидирует `["profile"]` и `["social","people"]` |
 
 4xx (неизвестный пользователь) не ретраится.
@@ -267,7 +307,8 @@ preference-score/дизлайки.
    логином и статами; текст шапки выровнен по центру аватара
    (`CollectionHeader align="center"`). Кнопок действий нет.
 2. Переключатель периода — `tabs`: 7д/30д/90д/180д/год/всё время (по умолчанию
-   30д). Управляет статистикой и топами; их заголовки называют период:
+   30д; хранится в URL как `?period=`, по умолчанию параметра нет — возврат со
+   страницы полного топа восстанавливает период). Управляет статистикой и топами; их заголовки называют период:
    «Статистика (30 дн.)», «Топ артистов (год)», «… (всё время)» (`periodSuffix`).
 3. Последние прослушивания — 10 строк `VirtualTrackRow` (`ListenRows`): ключ —
    `listen_id` (повторы видны), вместо длительности — относительное время
@@ -284,16 +325,27 @@ preference-score/дизлайки.
    (`barHeightPercent`, ненулевое значение ≥ 2 %); у каждого столбика
    `aria-label`/`title` с датой и числом. Подписи оси — примерно 6 на график.
 5. Топ артистов, топ релизов — `Shelf` + `MediaCard` (`shelfItemToCard`), в
-   подписи «N прослушиваний».
+   подписи «N прослушиваний». 16 карточек; «Ещё» → полный топ того же периода.
 6. Топ треков — `VirtualTrackList` (`listens` → `play_count`, метрика строки
    «N plays»).
-7. Лайки — шелфы треков/релизов/артистов (пустые скрыты).
-8. Плейлисты — шелф (приватные API отдаёт только владельцу).
+7. Лайки — шелфы треков/релизов/артистов (пустые скрыты), «Ещё» → полный
+   список этого вида.
+8. Плейлисты — шелф (приватные API отдаёт только владельцу), «Ещё» → все.
 
 Пустые состояния: нет прослушиваний вообще — «Пока нет прослушиваний» вместо
 блоков 2–6 (лайки и плейлисты остаются); пустой период — сообщение в блоке
 статистики. Неизвестный пользователь — «Пользователь не найден», сетевая
 ошибка — «переподключение», как на других страницах; загрузка — скелетон.
+
+**Полные списки** (`ProfileListPages.tsx`) — общий `FullListPage` (сетка +
+бесконечная прокрутка, как `/shelf/:key`, см. docs/web-ui.md «Shelves: preview
+size and «Ещё»»). «Ещё» у полки появляется только когда `total` больше, чем
+полка показывает. Ссылки: `/u/:username/top/artists|releases?period=<период>`,
+`/u/:username/likes/tracks|releases|artists`, `/u/:username/playlists`.
+Заголовки — как у полки: «Топ артистов (30 дн.)» (период из URL, неизвестный
+→ 30д), «Лайкнутые треки/релизы/артисты», «Плейлисты»; подзаголовок — логин.
+Неизвестный `kind` — «Такого списка нет» без запроса к API. Правила доступа те
+же, что у полок: чужие приватные плейлисты не попадают и в полный список.
 
 **История** — `useUserListens`, группировка по локальным суткам
 (`groupListensByDay`, `lib/listenHistory.ts`) поверх всех загруженных страниц —

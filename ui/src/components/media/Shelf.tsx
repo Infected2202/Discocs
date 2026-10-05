@@ -14,7 +14,18 @@ interface ShelfProps {
   readonly title?: string
   readonly subtitle?: string | null
   readonly items: MediaCardProps[]
+  /**
+   * Full list of the shelf (docs/web-ui.md «Полки»): the title and «Ещё»
+   * lead there, but only while the source has more than the shelf shows.
+   */
+  readonly moreHref?: string
+  /** Dashboard shelf key — sugar for `moreHref="/shelf/{key}"`. */
   readonly shelfKey?: string
+  /**
+   * Full length of the source when the shelf only got a preview of it
+   * (`total` of the API). Without it the shelf knows only `items`.
+   */
+  readonly total?: number
   /**
    * Раскладывает все карточки статичной сеткой во много строк вместо
    * листаемого горизонтального слайдера. Ничего не обрезает и не пагинирует —
@@ -26,7 +37,15 @@ interface ShelfProps {
 const MOBILE_COLS = 2
 const MOBILE_GAP_PX = 8
 
-export default function Shelf({ title = "", subtitle, items, shelfKey, grid = false }: ShelfProps) {
+export default function Shelf({
+  title = "",
+  subtitle,
+  items,
+  moreHref,
+  shelfKey,
+  total,
+  grid = false,
+}: ShelfProps) {
   const { t } = useTranslation("media")
   const navigate = useNavigate()
   const { cols, isMobile } = useColumns()
@@ -62,12 +81,16 @@ export default function Shelf({ title = "", subtitle, items, shelfKey, grid = fa
   const pages = Array.from({ length: totalPages }, (_, i) =>
     sliced.slice(i * cols, (i + 1) * cols)
   )
-  const shelfHref = shelfKey ? `/shelf/${shelfKey}` : null
+  // «Ещё» only when the full list has something the shelf does not show:
+  // more in the source than loaded, or more loaded than the slider fits.
+  const hasMore = !grid && (total ?? items.length) > sliced.length
+  const fullListHref = moreHref ?? (shelfKey ? `/shelf/${shelfKey}` : null)
+  const shelfHref = hasMore ? fullListHref : null
 
   return (
     <section className="shelf-section space-y-1">
       {/* Header */}
-      {(title || shelfKey || showArrows) && <div className="px-4 sm:px-6 flex items-center gap-2 min-w-0">
+      {(title || shelfHref || showArrows) && <div className="px-4 sm:px-6 flex items-center gap-2 min-w-0">
         {shelfHref ? (
           <button
             type="button"

@@ -33,6 +33,12 @@
     "likedArtists": "Artists",
     "playlists": "Playlists"
   },
+  "lists": {
+    "likedTracks": "Liked tracks",
+    "likedReleases": "Liked releases",
+    "likedArtists": "Liked artists",
+    "notFound": "No such list."
+  },
   "seeAll": "All",
   "summary": {
     "listens": "Listens",

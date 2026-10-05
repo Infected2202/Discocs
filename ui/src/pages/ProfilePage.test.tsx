@@ -43,9 +43,14 @@ vi.mock("@/components/media/ArtworkImage", () => ({
 }))
 
 vi.mock("@/components/media/Shelf", () => ({
-  default: ({ title, items }: { title: string; items: Array<{ id: number | string; title: string; subtitle?: string | null }> }) =>
+  default: ({ title, items, moreHref, total }: {
+    title: string
+    items: Array<{ id: number | string; title: string; subtitle?: string | null }>
+    moreHref?: string
+    total?: number
+  }) =>
     items.length === 0 ? null : (
-      <div data-testid={`shelf-${title}`}>
+      <div data-testid={`shelf-${title}`} data-more-href={moreHref} data-total={total}>
         <span>{title}</span>
         {items.map((item) => (
           <span key={item.id}>{item.title} / {item.subtitle}</span>
@@ -119,7 +124,9 @@ function makeProfile(overrides: Partial<UserProfile> = {}, header: Partial<UserP
         artwork: { url: null, source: "none", placeholder: true }, reason: null, play_action: null, listens: 12,
       },
     ],
+    top_artists_total: 40,
     top_releases: [],
+    top_releases_total: 0,
     top_tracks: [{ ...makeListen(0, 9, THREE_HOURS_AGO), listens: 7 }],
     // The same track twice: a listening feed, not unique tracks.
     recent: [makeListen(11, 9, THREE_HOURS_AGO), makeListen(10, 9, THREE_HOURS_AGO)],
@@ -225,6 +232,46 @@ describe("ProfilePage", () => {
 
     expect(screen.getByRole("region", { name: "Statistics (year)" })).toBeInTheDocument()
     expect(screen.getByTestId("shelf-Top artists (year)")).toBeInTheDocument()
+  })
+
+  it("links the top shelves to their full lists for the selected period", () => {
+    mockProfile(makeProfile({
+      top_releases: [{
+        id: "release:4", entity_type: "release", entity_id: 4, title: "LP", subtitle: "",
+        artwork: { url: null, source: "none", placeholder: true }, reason: null, play_action: null, listens: 3,
+      }],
+      top_releases_total: 17,
+    }))
+    renderPage()
+
+    const artists = screen.getByTestId("shelf-Top artists (30 days)")
+    expect(artists).toHaveAttribute("data-more-href", "/u/alice/top/artists?period=30d")
+    expect(artists).toHaveAttribute("data-total", "40")
+    const releases = screen.getByTestId("shelf-Top releases (30 days)")
+    expect(releases).toHaveAttribute("data-more-href", "/u/alice/top/releases?period=30d")
+    expect(releases).toHaveAttribute("data-total", "17")
+
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "90d" }), { button: 0 })
+
+    expect(screen.getByTestId("shelf-Top artists (90 days)")).toHaveAttribute(
+      "data-more-href", "/u/alice/top/artists?period=90d",
+    )
+  })
+
+  it("takes the period from the URL, so a full list's back link restores it", () => {
+    renderPage("/u/alice?period=365d")
+
+    expect(useUserProfile).toHaveBeenLastCalledWith("alice", "365d")
+    expect(screen.getByRole("tab", { name: "Year" })).toHaveAttribute("aria-selected", "true")
+    expect(screen.getByTestId("shelf-Top artists (year)")).toHaveAttribute(
+      "data-more-href", "/u/alice/top/artists?period=365d",
+    )
+  })
+
+  it("ignores an unknown period in the URL", () => {
+    renderPage("/u/alice?period=14d")
+
+    expect(useUserProfile).toHaveBeenLastCalledWith("alice", "30d")
   })
 
   it("draws by-day bars proportional to the listens, labelled with their value", () => {
@@ -371,10 +418,10 @@ describe("ProfilePage", () => {
             id: "release:4", entity_type: "release", entity_id: 4, title: "Liked LP", subtitle: "Beta",
             artwork: { url: null, source: "none", placeholder: true }, reason: null, play_action: null,
           }],
-          total: 1,
+          total: 30,
         },
         artists: { items: [], total: 0 },
-        limit: 24,
+        limit: 16,
         offset: 0,
       },
     })
@@ -387,7 +434,10 @@ describe("ProfilePage", () => {
           action: { type: "open", target: "/playlists/8" },
           play_action: { type: "post", endpoint: "/api/v1/playlists/8/play" },
         }],
-        total: 1,
+        total: 20,
+        limit: 16,
+        offset: 0,
+        next_offset: 16,
       },
     })
     renderPage()
@@ -396,6 +446,11 @@ describe("ProfilePage", () => {
     expect(screen.getByTestId("shelf-Releases")).toHaveTextContent("Liked LP")
     expect(screen.queryByTestId("shelf-Tracks")).not.toBeInTheDocument()
     expect(screen.getByTestId("shelf-Playlists")).toHaveTextContent("Night drive / 3 tracks")
+    // Each shelf links to its full list and knows how long that list is.
+    expect(screen.getByTestId("shelf-Releases")).toHaveAttribute("data-more-href", "/u/alice/likes/releases")
+    expect(screen.getByTestId("shelf-Releases")).toHaveAttribute("data-total", "30")
+    expect(screen.getByTestId("shelf-Playlists")).toHaveAttribute("data-more-href", "/u/alice/playlists")
+    expect(screen.getByTestId("shelf-Playlists")).toHaveAttribute("data-total", "20")
   })
 
   describe("listen along", () => {

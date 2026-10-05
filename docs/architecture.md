@@ -129,6 +129,14 @@ Implementation notes vs. the original spec:
   Artist aggregates give every owned release (including singles) equal weight;
   featured appearances and the synthetic `Various Artists` identity are not
   included. The default response contains 16 artists.
+- Shelf-backing lists page with `limit`/`offset` and answer `total`, `limit`,
+  `offset`, `next_offset` (`app/services/shelves.py`): `/artists/{id}/similar`
+  (the ranked candidate pool, up to 200), `/releases/{id}/related-discography`
+  (all other releases of the participating artists, previously capped at 12)
+  and `/releases/{id}/recommendations` (up to 200 nearest releases). The
+  default `limit` is the common shelf preview size `SHELF_PREVIEW_LIMIT = 16`
+  (also the default of `/api/v1/dashboard`); the UI's «Ещё» opens the full
+  list (docs/web-ui.md, "Shelves: preview size and «Ещё»").
 - Artist and release cover art is always **proxied through the backend**,
   never linked directly. `artists.image_url` stores the raw URL that
   Navidrome's `getArtistInfo2` returned — it points at the LAN-internal

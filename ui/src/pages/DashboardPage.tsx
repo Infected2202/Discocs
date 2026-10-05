@@ -7,6 +7,7 @@ import ShelfSkeleton from "@/components/media/ShelfSkeleton"
 import { apiFetch } from "@/api/client"
 import { usePlayerStore } from "@/store/playerStore"
 import { shelfItemToCard } from "@/components/media/shelfItemToCard"
+import { SHELF_PREVIEW_LIMIT } from "@/lib/shelves"
 import type { PlaybackEnvelope, ShelfItem } from "@/api/types"
 
 function DashboardSkeleton() {
@@ -19,7 +20,7 @@ function DashboardSkeleton() {
 
 export default function DashboardPage() {
   const { t, i18n } = useTranslation("dashboard")
-  const { data, isLoading, error } = useDashboard(16)
+  const { data, isLoading, error } = useDashboard(SHELF_PREVIEW_LIMIT)
   const playSource = usePlayerStore((s) => s.playSource)
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
   async function handlePlayShelfItem(item: ShelfItem) {
@@ -60,6 +61,7 @@ export default function DashboardPage() {
           key={shelf.key}
           title={t(`shelves.${shelf.key}`, { defaultValue: shelf.title })}
           shelfKey={shelf.key}
+          total={shelf.total}
           items={shelf.items.map((item) => shelfItemToCard(item, handlePlayShelfItem, t, i18n.language))}
         />
       ))}

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen, within } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import ReleasePage from "./ReleasePage"
@@ -99,6 +99,7 @@ function renderPage() {
       <MemoryRouter initialEntries={["/releases/5"]}>
         <Routes>
           <Route path="/releases/:id" element={<ReleasePage />} />
+          <Route path="/releases/:id/recommendations" element={<p>recommendations list</p>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -114,12 +115,23 @@ describe("ReleasePage — шелф рекомендаций без битого 
     useShareCapabilities.mockReturnValue({ data: { enabled: true, can_create: true } })
   })
 
-  it("рендерит рекомендованные альбомы без кнопки More (у release_recommendations нет dashboard-шелфа)", async () => {
+  it("рендерит рекомендованные альбомы без кнопки More, когда полка показывает весь список", async () => {
+    useReleaseRecommendations.mockReturnValue({ data: { ...makeRecsData(), total: 1 } })
     renderPage()
     await screen.findByText("Recommended Album")
 
     expect(screen.getByText("Recommended Albums")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "More" })).toBeNull()
+  })
+
+  it("ведёт «More» рекомендаций на их полный список, когда альбомов больше, чем на полке", async () => {
+    useReleaseRecommendations.mockReturnValue({ data: { ...makeRecsData(), total: 40 } })
+    renderPage()
+    await screen.findByText("Recommended Album")
+
+    fireEvent.click(screen.getByRole("button", { name: "More" }))
+
+    expect(await screen.findByText("recommendations list")).toBeInTheDocument()
   })
 
   it("показывает download и share иконками перед завершающим лайком", () => {

@@ -58,7 +58,10 @@ Defined in `ui/src/router.tsx`:
 /                      -> DashboardPage
 /search                -> SearchPage
 /artists/:id           -> ArtistPage
+/artists/:id/similar   -> ArtistSimilarPage          (full list)
 /releases/:id          -> ReleasePage
+/releases/:id/related  -> ReleaseRelatedPage         (full list)
+/releases/:id/recommendations -> ReleaseRecommendationsPage (full list)
 /labels/:id            -> LabelPage
 /mixes/:id             -> MixPage
 /settings               -> SettingsPage
@@ -67,7 +70,13 @@ Defined in `ui/src/router.tsx`:
 /shared-links            -> SharedLinksPage
 /u/:username             -> ProfilePage
 /u/:username/history     -> ListeningHistoryPage
+/u/:username/top/:kind   -> ProfileTopPage   (kind = artists|releases, ?period=)
+/u/:username/likes/:kind -> ProfileLikesPage (kind = tracks|releases|artists)
+/u/:username/playlists   -> ProfilePlaylistsPage
 ```
+
+The "full list" routes are the «Ещё» destinations of horizontal shelves — see
+"Shelves: preview size and «Ещё»" below.
 
 All routes except `/login` are wrapped in `RequireAuth`, which gates on the
 Navidrome-as-IdP login flow. There is no standalone track page — tracks only
@@ -161,13 +170,16 @@ like-heart actions. Below the
 header: `TrackTable` for the release's tracks, a "More from these artists"
 `Shelf` built from the related-discography response (filtering out the
 current release), and a "Recommended Albums" `Shelf` shown only when the
-recommendations response reports `available: true` with items. Missing cover
+recommendations response reports `available: true` with items. Both preview
+16 cards and link to their full lists (`/releases/:id/related`,
+`/releases/:id/recommendations`) when the response's `total` is larger. Missing cover
 falls back to a letter placeholder inside `ArtworkImage`.
 
 ### Artist page (`/artists/:id`, `ArtistPage.tsx`)
 
 Backend calls: `useArtist`, `useArtistDiscography`, `useArtistSimilar` (`GET
-/api/v1/artists/{id}`, `/discography`, `/similar?limit=16`).
+/api/v1/artists/{id}`, `/discography`, `/similar?limit=16`; the full list
+`/artists/:id/similar` pages the same endpoint with `offset`).
 
 Layout: circular avatar (`144px`) on the left, artist name and local stats
 (`tracks · releases · plays`, each field only shown if > 0) with the artist's
@@ -182,7 +194,8 @@ data is genuinely absent, unlike the original "omit if unavailable" spec), then
 one grid `Shelf` per non-empty discography group returned by the API (e.g.
 Albums, EPs, Singles, Featured In — grouping logic lives server-side). A
 regular 16-item "Similar artists" shelf is rendered last when artist
-aggregates are available. Missing similar-artist images are enriched through
+aggregates are available, with «Ещё» to the full ranked list (up to 200
+artists) when there are more. Missing similar-artist images are enriched through
 the same Navidrome `getArtistInfo2` path used by search and artist pages, then
 served through the backend cover proxy. There is no tabbed Discography/Top
 Tracks/Similar Artists/Bio navigation on this page; it remains a single
@@ -314,12 +327,31 @@ posts the extended `/mixes/{id}/save` body). The likes playlist never
 appears in these dialogs or in the Playlists shelf — it is not stored in the
 `playlists` table.
 
-### Shelf page (`/shelf/:key`, `ShelfPage.tsx`)
+### Shelf page (`/shelf/:key`, `ShelfPage.tsx`) and other full lists
 
 The "View all" destination for any dashboard shelf. Backed by `useShelf`
-(paginated `GET /api/v1/dashboard/shelves/{key}`) with infinite-scroll via an
-`IntersectionObserver` sentinel, rendering results in a virtualized grid
-(`VirtualCardGrid`) of `MediaCard`s rather than a horizontal row.
+(paginated `GET /api/v1/dashboard/shelves/{key}`). The page itself is the
+generic `FullListPage` (`components/media/FullListPage.tsx`): back button,
+title (+ optional subtitle) with the total, infinite scroll via an
+`IntersectionObserver` sentinel, results in a virtualized grid
+(`VirtualCardGrid`) of `MediaCard`s rather than a horizontal row. Its data
+source is any `limit`/`offset` endpoint answering `items`/`total`/
+`next_offset`, wrapped in `usePagedList` (`api/hooks/usePagedList.ts`); the
+route pages only plug in the source and the item → card mapping:
+
+| Route | Page | Source |
+|---|---|---|
+| `/shelf/:key` | `ShelfPage` | `GET /api/v1/dashboard/shelves/{key}` |
+| `/artists/:id/similar` | `ArtistSimilarPage` | `GET /api/v1/artists/{id}/similar` |
+| `/releases/:id/related` | `ReleaseRelatedPage` | `GET /api/v1/releases/{id}/related-discography` |
+| `/releases/:id/recommendations` | `ReleaseRecommendationsPage` | `GET /api/v1/releases/{id}/recommendations` |
+| `/u/:username/top/:kind?period=` | `ProfileTopPage` | `GET /api/v1/users/{username}/top/{kind}` |
+| `/u/:username/likes/:kind` | `ProfileLikesPage` | `GET /api/v1/users/{username}/likes/{kind}` |
+| `/u/:username/playlists` | `ProfilePlaylistsPage` | `GET /api/v1/users/{username}/playlists` |
+
+Titles repeat the shelf's title (profile tops keep the period suffix,
+«Топ артистов (30 дн.)»); the artist name / release title / username is the
+subtitle.
 
 ### Profile page (`/u/:username`, `ProfilePage.tsx`)
 
@@ -330,7 +362,8 @@ details in [`docs/social.md`](social.md#ui-профиля-ф5)). Backend calls:
 "Now playing" line. One scrolling page, no tab navigation: `CollectionHeader`
 with the round built-in avatar (clickable on one's own profile → avatar picker
 dialog), member-since date and all-time totals; a `tabs` period switch
-(7d/30d/90d/180d/year/all, default 30d) driving the stats and tops; recent
+(7d/30d/90d/180d/year/all, default 30d, kept in the URL as `?period=` so
+coming back from a top's full list restores it) driving the stats and tops; recent
 listens (`VirtualTrackRow` with relative time, "All" → history); period stats
 with div bar charts (by day/month, by hour) and the sound profile; top
 artists/releases shelves; top tracks (`VirtualTrackList`); likes shelves;
@@ -572,14 +605,38 @@ for theming (`ui/src/index.css`):
   are moving the shelf. After scroll events become idle, the shelf smoothly
   moves to the nearest card while snap remains disabled; `proximity` is
   restored only after that alignment also settles. This keeps light gestures
-  local and avoids an abrupt final jump. A
-  "More" link routes to the full `/shelf/:key` grid page.
+  local and avoids an abrupt final jump. See "Shelves: preview size and
+  «Ещё»" below for the preview size and the "More" link.
   Every titled shelf header row (dashboard, artist discography groups, etc.)
   has a thin accent-colored divider (`bg-primary/50`) filling the gap between
   the title/subtitle and the More/prev/next controls, tracking the same
   dynamic per-track accent as the rest of the UI. Titleless shelves (the
   dashboard's For You row) omit the divider — its controls are right-aligned
   with `ml-auto` instead.
+
+### Shelves: preview size and «Ещё»
+
+Every horizontal shelf previews the same number of cards:
+`SHELF_PREVIEW_LIMIT = 16` — two slider pages at the widest 8-column layout
+(`useColumns`). The constant exists once on each side —
+`ui/src/lib/shelves.ts` and `app/services/shelves.py` — and every preview
+uses it instead of its own number: the dashboard (`useDashboard`, default
+`limit` of `/api/v1/dashboard` and `/dashboard/shelves/{key}`), profile tops,
+likes and playlists, similar artists, "More from these artists" and
+recommended albums. Grid shelves (`grid`: artist discography groups, label
+releases) are not previews — they show everything and never get «Ещё».
+
+`Shelf` takes `moreHref` (the full list; `shelfKey` is sugar for
+`/shelf/{key}`) and `total` (the source's full length from the API). The
+title link and «Ещё» appear only when there is more than the shelf shows:
+`(total ?? items.length) > shown`, where `shown` is `cols × 2` cards on
+desktop and every loaded card on mobile. So a shelf whose whole source fits
+has no «Ещё», and a shelf without `total` still offers it when the loaded
+cards do not fit the slider.
+
+Shelves without a continuation: `ForYouShelf` (static entry cards),
+`PeopleShelf` (the people list is all users, polled whole; no paginated
+source) and the grid shelves.
 
 Some of the pixel-level claims above (exact card widths, exact heading sizes
 across all breakpoints) were spot-checked against current Tailwind classes

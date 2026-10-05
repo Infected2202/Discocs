@@ -341,6 +341,7 @@ def test_api_v1_artist_discography_groups_unknown_releases(tmp_path: Path, monke
 
 def test_api_v1_artist_similar_returns_artist_cards_with_default_limit(tmp_path: Path, monkeypatch):
     import app.api.artists as api_artists_module
+    from app.api.artists import SIMILAR_ARTISTS_MAX
     from app.services.artist_similarity import ArtistSimilarityResult
 
     store = init_api_store(tmp_path, monkeypatch)
@@ -387,12 +388,47 @@ def test_api_v1_artist_similar_returns_artist_cards_with_default_limit(tmp_path:
         "placeholder": False,
     }
     assert store.get_artist(candidate_id).artist.image_url == "https://lastfm.example/candidate.jpg"  # type: ignore[union-attr]
+    # The whole ranked list is computed once and then paged.
     assert seen == {
         "store_is_valid": True,
         "model": "discogs_multi",
         "artist_id": source_id,
-        "limit": 16,
+        "limit": SIMILAR_ARTISTS_MAX,
     }
+    assert {key: response.json()[key] for key in ("total", "limit", "offset", "next_offset")} == {
+        "total": 1, "limit": 16, "offset": 0, "next_offset": None,
+    }
+
+
+def _id_by_name(store: Store, table: str, column: str, value: str) -> int:
+    with store.connect() as conn:
+        return int(conn.execute(f"SELECT id FROM {table} WHERE {column} = ?", (value,)).fetchone()[0])
+
+
+def test_api_v1_artist_similar_pages_the_ranked_list(tmp_path: Path, monkeypatch):
+    import app.api.artists as api_artists_module
+    from app.services.artist_similarity import ArtistSimilarityResult
+
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path / "source" / "one.flac", artist="Source", album="Source Album")
+    candidate_ids = []
+    for n in range(5):
+        add_track(store, tmp_path / f"c{n}" / "one.flac", artist=f"Candidate {n}", album=f"Album {n}")
+        candidate_ids.append(_id_by_name(store, "artists", "name", f"Candidate {n}"))
+    source_id = store.search_entities("Source")["artists"]["items"][0].artist.id
+    store.save_artist_embedding(source_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    ranked = [ArtistSimilarityResult(artist_id, 0.9 - n / 10, 0.9, 0.9) for n, artist_id in enumerate(candidate_ids)]
+    monkeypatch.setattr(api_artists_module, "find_similar_artists", lambda *_args, **_kwargs: ranked)
+    client = TestClient(app)
+
+    first = client.get(f"/api/v1/artists/{source_id}/similar", params={"limit": 2}).json()
+    last = client.get(f"/api/v1/artists/{source_id}/similar", params={"limit": 2, "offset": 4}).json()
+
+    assert [item["name"] for item in first["items"]] == ["Candidate 0", "Candidate 1"]
+    assert (first["total"], first["next_offset"]) == (5, 2)
+    assert [item["name"] for item in last["items"]] == ["Candidate 4"]
+    assert last["next_offset"] is None
+    assert client.get(f"/api/v1/artists/{source_id}/similar", params={"offset": -1}).status_code == 422
 
 
 def test_api_v1_search_prefers_exact_release_top_result(tmp_path: Path, monkeypatch):
@@ -483,6 +519,66 @@ def test_api_v1_release_related_discography_uses_track_participants(tmp_path: Pa
     data = response.json()
     assert [artist["name"] for artist in data["context_artists"]] == ["Alpha", "Beta"]
     assert [item["title"] for item in data["items"]] == ["Beta Release"]
+    assert (data["total"], data["limit"], data["offset"], data["next_offset"]) == (1, 16, 0, None)
+
+
+def test_api_v1_release_related_discography_pages_past_the_preview(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    for year in range(2000, 2006):
+        add_track(store, tmp_path / str(year) / "one.flac", artist="Alpha", album=f"LP {year}", year=year)
+    with store.connect() as conn:
+        conn.execute("UPDATE releases SET release_year = CAST(substr(title, 4) AS INTEGER) WHERE title LIKE 'LP %'")
+    source_id = _id_by_name(store, "releases", "title", "LP 2000")
+    client = TestClient(app)
+
+    first = client.get(f"/api/v1/releases/{source_id}/related-discography", params={"limit": 3}).json()
+    rest = client.get(
+        f"/api/v1/releases/{source_id}/related-discography", params={"limit": 3, "offset": 3}
+    ).json()
+
+    # Newest first, the source release itself excluded.
+    assert [item["title"] for item in first["items"]] == ["LP 2005", "LP 2004", "LP 2003"]
+    assert (first["total"], first["next_offset"]) == (5, 3)
+    assert [item["title"] for item in rest["items"]] == ["LP 2002", "LP 2001"]
+    assert rest["next_offset"] is None
+    # More than the old fixed cap of 12 is reachable through paging.
+    assert len(store.related_discography_for_release(source_id, limit=None)) == 5
+    assert len(store.related_discography_for_release(source_id, limit=2)) == 2
+
+
+def test_api_v1_release_recommendations_page_the_ranked_list(tmp_path: Path, monkeypatch):
+    import app.api.releases as api_releases_module
+    from app.api.releases import RECOMMENDED_RELEASES_MAX
+
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path / "source" / "one.flac", artist="Source", album="Source LP")
+    other_ids = []
+    for n in range(4):
+        add_track(store, tmp_path / f"o{n}" / "one.flac", artist=f"Other {n}", album=f"Other LP {n}")
+        other_ids.append(_id_by_name(store, "releases", "title", f"Other LP {n}"))
+    source_id = _id_by_name(store, "releases", "title", "Source LP")
+    store.save_release_embedding(source_id, "discogs_multi", np.array([1.0, 0.0], dtype=np.float32))
+    seen: dict[str, object] = {}
+
+    def fake_similar(_store, _model, _vector, *, exclude_release_ids, limit):
+        seen["limit"] = limit
+        seen["excluded"] = set(exclude_release_ids)
+        return [(release_id, 0.9 - n / 10) for n, release_id in enumerate(other_ids)]
+
+    monkeypatch.setattr(api_releases_module, "find_similar_releases", fake_similar)
+    client = TestClient(app)
+
+    preview = client.get(f"/api/v1/releases/{source_id}/recommendations").json()
+    page = client.get(f"/api/v1/releases/{source_id}/recommendations", params={"limit": 3, "offset": 3}).json()
+
+    assert seen["limit"] == RECOMMENDED_RELEASES_MAX
+    assert source_id in seen["excluded"]
+    assert [item["entity_id"] for item in preview["items"]] == other_ids
+    assert (preview["total"], preview["limit"], preview["next_offset"]) == (4, 16, None)
+    assert [item["entity_id"] for item in page["items"]] == other_ids[3:]
+    assert (page["total"], page["offset"], page["next_offset"]) == (4, 3, None)
+    first_two = client.get(f"/api/v1/releases/{source_id}/recommendations", params={"limit": 2}).json()
+    assert first_two["next_offset"] == 2
 
 
 def test_api_v1_missing_entity_uses_error_envelope(tmp_path: Path, monkeypatch):

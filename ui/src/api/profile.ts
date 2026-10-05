@@ -1,6 +1,7 @@
 // User profile API (social features Ф3, docs/social.md "API профиля").
 import { apiFetch, apiUrl } from "./client"
 import type { PlaybackEnvelope, PlaylistSummary, ShelfItem, TrackSummary } from "./types"
+import type { PagedList } from "@/lib/shelves"
 
 export const PROFILE_PERIODS = ["7d", "30d", "90d", "180d", "365d", "all"] as const
 export type ProfilePeriod = (typeof PROFILE_PERIODS)[number]
@@ -66,7 +67,10 @@ export interface UserProfile {
   by_hour: number[]
   sound: { genres: ProfileGenreShare[]; moods: ProfileMoodShare[] }
   top_artists: ProfileShelfItem[]
+  /** Full length of the period's top (the shelf previews the first ones). */
+  top_artists_total: number
   top_releases: ProfileShelfItem[]
+  top_releases_total: number
   top_tracks: ProfileTopTrack[]
   recent: ListenItem[]
 }
@@ -90,6 +94,22 @@ export interface UserLikes {
 export interface UserPlaylists {
   items: PlaylistSummary[]
   total: number
+  limit: number
+  offset: number
+  next_offset: number | null
+}
+
+/** Profile shelves with a full list (`/u/:username/top/:kind`, `/likes/:kind`). */
+export const PROFILE_TOP_KINDS = ["artists", "releases"] as const
+export type ProfileTopKind = (typeof PROFILE_TOP_KINDS)[number]
+export const PROFILE_LIKE_KINDS = ["tracks", "releases", "artists"] as const
+export type ProfileLikeKind = (typeof PROFILE_LIKE_KINDS)[number]
+
+export type UserTopPage = PagedList<ProfileShelfItem> & { period: ProfilePeriodWindow }
+export type UserLikesPage = PagedList<ShelfItem>
+
+export function isProfilePeriod(value: string | null | undefined): value is ProfilePeriod {
+  return (PROFILE_PERIODS as readonly string[]).includes(value ?? "")
 }
 
 function userPath(username: string, tail: string): string {
@@ -111,8 +131,29 @@ export function fetchUserLikes(username: string, params: { limit?: number } = {}
   return apiFetch(apiUrl(userPath(username, "likes"), { limit: params.limit }))
 }
 
-export function fetchUserPlaylists(username: string): Promise<UserPlaylists> {
-  return apiFetch(userPath(username, "playlists"))
+export function fetchUserPlaylists(
+  username: string,
+  params: { limit?: number; offset?: number } = {},
+): Promise<UserPlaylists> {
+  return apiFetch(apiUrl(userPath(username, "playlists"), { limit: params.limit, offset: params.offset }))
+}
+
+/** One page of the period's top artists/releases (the top shelf's full list). */
+export function fetchUserTop(
+  username: string,
+  kind: ProfileTopKind,
+  params: { period: ProfilePeriod; tz: string; limit: number; offset: number },
+): Promise<UserTopPage> {
+  return apiFetch(apiUrl(userPath(username, `top/${kind}`), params))
+}
+
+/** One page of one kind of likes (a likes shelf's full list). */
+export function fetchUserLikesOfKind(
+  username: string,
+  kind: ProfileLikeKind,
+  params: { limit: number; offset: number },
+): Promise<UserLikesPage> {
+  return apiFetch(apiUrl(userPath(username, `likes/${kind}`), params))
 }
 
 /** How the listen-along queue was built (docs/social.md "Слушать вместе"). */

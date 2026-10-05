@@ -142,6 +142,14 @@ class ArtistAvailabilityStubResponse(BaseModel):
     basis: str
 
 
+class ArtistSimilarResponse(ArtistAvailabilityStubResponse):
+    """One page of similar artists (the artist page's shelf and its full list)."""
+    total: int
+    limit: int
+    offset: int
+    next_offset: int | None
+
+
 class ReleaseAvailabilityStubResponse(BaseModel):
     release: TrackReleaseLinkResponse
     items: list[dict[str, object]]
@@ -174,6 +182,10 @@ class RelatedDiscographyResponse(BaseModel):
     release: TrackReleaseLinkResponse
     context_artists: list[ArtistLinkResponse]
     items: list[ReleaseSummaryResponse]
+    total: int
+    limit: int
+    offset: int
+    next_offset: int | None
 
 
 class ImageInfoResponse(BaseModel):

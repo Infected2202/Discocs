@@ -139,6 +139,7 @@ describe("Shelf", () => {
         <Shelf
           title="History"
           shelfKey="history"
+          total={40}
           items={[
             { id: 1, type: "release", title: "One" },
             { id: 2, type: "release", title: "Two" },
@@ -220,6 +221,7 @@ describe("Shelf", () => {
         <Shelf
           title="History"
           shelfKey="history"
+          total={3}
           items={[
             { id: 1, type: "release", title: "One" },
             { id: 2, type: "release", title: "Two" },
@@ -233,5 +235,110 @@ describe("Shelf", () => {
 
     expect(navigate).toHaveBeenNthCalledWith(1, "/shelf/history")
     expect(navigate).toHaveBeenNthCalledWith(2, "/shelf/history")
+  })
+
+  it("hides «More» and the title link when the shelf shows the whole list", () => {
+    render(
+      <MemoryRouter>
+        <Shelf
+          title="History"
+          shelfKey="history"
+          total={2}
+          items={[
+            { id: 1, type: "release", title: "One" },
+            { id: 2, type: "release", title: "Two" },
+          ]}
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.queryByRole("button", { name: "More" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "History" })).not.toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: "History" })).toBeInTheDocument()
+  })
+
+  it("links «More» to the given full-list href when the source has more than the preview", () => {
+    render(
+      <MemoryRouter>
+        <Shelf
+          title="Top artists"
+          moreHref="/u/alice/top/artists?period=7d"
+          total={30}
+          items={[{ id: 1, type: "artist", title: "Alpha" }]}
+        />
+      </MemoryRouter>
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "More" }))
+    fireEvent.click(screen.getByRole("button", { name: "Top artists" }))
+
+    expect(navigate).toHaveBeenNthCalledWith(1, "/u/alice/top/artists?period=7d")
+    expect(navigate).toHaveBeenNthCalledWith(2, "/u/alice/top/artists?period=7d")
+  })
+
+  it("offers «More» without a total when the loaded items do not fit the slider", () => {
+    columns = 4
+    const items = Array.from({ length: 9 }, (_, i) => ({
+      id: i + 1,
+      type: "release" as const,
+      title: `Album ${i + 1}`,
+    }))
+    const { unmount } = render(
+      <MemoryRouter>
+        <Shelf title="Similar" moreHref="/artists/1/similar" items={items} />
+      </MemoryRouter>
+    )
+
+    // 4 columns × 2 pages = 8 cards on the slider, the 9th only on the full list.
+    expect(screen.queryByText("Album 9")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "More" })).toBeInTheDocument()
+    unmount()
+
+    render(
+      <MemoryRouter>
+        <Shelf title="Similar" moreHref="/artists/1/similar" items={items.slice(0, 8)} />
+      </MemoryRouter>
+    )
+    expect(screen.queryByRole("button", { name: "More" })).not.toBeInTheDocument()
+  })
+
+  it("shows «More» on mobile only when the source has more than was loaded", () => {
+    isMobile = true
+    columns = 2
+    const items = Array.from({ length: 5 }, (_, i) => ({
+      id: i + 1,
+      type: "release" as const,
+      title: `Album ${i + 1}`,
+    }))
+    const { unmount } = render(
+      <MemoryRouter>
+        <Shelf title="Likes" moreHref="/u/alice/likes/releases" total={5} items={items} />
+      </MemoryRouter>
+    )
+    expect(screen.queryByRole("button", { name: "More" })).not.toBeInTheDocument()
+    unmount()
+
+    render(
+      <MemoryRouter>
+        <Shelf title="Likes" moreHref="/u/alice/likes/releases" total={6} items={items} />
+      </MemoryRouter>
+    )
+    expect(screen.getByRole("button", { name: "More" })).toBeInTheDocument()
+  })
+
+  it("never offers «More» on a grid shelf, which already shows everything", () => {
+    render(
+      <MemoryRouter>
+        <Shelf
+          title="Albums"
+          grid
+          moreHref="/somewhere"
+          total={50}
+          items={[{ id: 1, type: "release", title: "One" }]}
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.queryByRole("button", { name: "More" })).not.toBeInTheDocument()
   })
 })

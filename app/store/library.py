@@ -1158,7 +1158,11 @@ class LibraryStoreMixin:
             )
         return groups
 
-    def related_discography_for_release(self, release_id: int, limit: int = 12) -> list[ReleaseSummaryRow]:
+    def related_discography_for_release(
+        self, release_id: int, limit: int | None = 12
+    ) -> list[ReleaseSummaryRow]:
+        """Other releases of the release's artists, one per artist in turn;
+        ``limit=None`` returns all of them (the release page's full list)."""
         context_artists = self.participating_artists_for_release(release_id)
         if not context_artists:
             return []
@@ -1181,7 +1185,8 @@ class LibraryStoreMixin:
             rows_by_artist: dict[int, list[sqlite3.Row]] = {}
             for row in rows:
                 rows_by_artist.setdefault(int(row["context_artist_id"]), []).append(row)
-            while len(selected_ids) < limit:
+            cap = len(rows) if limit is None else limit
+            while len(selected_ids) < cap:
                 added = False
                 for artist_id in artist_ids:
                     candidates = rows_by_artist.get(artist_id, [])
@@ -1194,7 +1199,7 @@ class LibraryStoreMixin:
                         selected_ids.append(candidate_id)
                         added = True
                         break
-                    if len(selected_ids) >= limit:
+                    if len(selected_ids) >= cap:
                         break
                 if not added:
                     break

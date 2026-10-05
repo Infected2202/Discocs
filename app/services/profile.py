@@ -31,6 +31,7 @@ from app.models import Listen, Playlist, Track
 from app.serializers.entities import track_summary_dict
 from app.serializers.playlists import playlist_summary_dict
 from app.serializers.search import _release_shelf_item, _track_shelf_item, artist_shelf_item
+from app.services.shelves import SHELF_PREVIEW_LIMIT, page_info, page_of
 from app.store import Store
 
 
@@ -64,8 +65,12 @@ PROFILE_PERIODS: dict[str, int | None] = {
 DEFAULT_PROFILE_PERIOD = "30d"
 # Longer spans (only possible for ``all``) are bucketed by calendar month.
 MAX_DAY_BUCKETS = 366
-TOP_ARTISTS_LIMIT = 12
-TOP_RELEASES_LIMIT = 12
+# Profile shelves preview the common shelf size; their full lists page
+# through ``/users/{username}/top/{kind}`` and ``/likes/{kind}``.
+TOP_ARTISTS_LIMIT = SHELF_PREVIEW_LIMIT
+TOP_RELEASES_LIMIT = SHELF_PREVIEW_LIMIT
+TOP_KINDS = ("artists", "releases")
+LIKE_KINDS = ("tracks", "releases", "artists")
 TOP_TRACKS_LIMIT = 5
 RECENT_LISTENS_LIMIT = 10
 SOUND_LABELS_LIMIT = 8
@@ -282,18 +287,26 @@ def _genre_items(store: Store, window: ProfileWindow) -> list[dict[str, object]]
     return items
 
 
-def _top_artists(store: Store, window: ProfileWindow) -> list[dict[str, object]]:
+def _top_artists(
+    store: Store, window: ProfileWindow, *, limit: int = TOP_ARTISTS_LIMIT, offset: int = 0
+) -> list[dict[str, object]]:
     items = []
-    for count in store.top_listened_artists(since=window.since, until=window.until, limit=TOP_ARTISTS_LIMIT):
+    for count in store.top_listened_artists(
+        since=window.since, until=window.until, limit=limit, offset=offset
+    ):
         item = artist_shelf_item(int(count.key), str(count.name))
         item["listens"] = count.listens
         items.append(item)
     return items
 
 
-def _top_releases(store: Store, window: ProfileWindow) -> list[dict[str, object]]:
+def _top_releases(
+    store: Store, window: ProfileWindow, *, limit: int = TOP_RELEASES_LIMIT, offset: int = 0
+) -> list[dict[str, object]]:
     items = []
-    for count in store.top_listened_releases(since=window.since, until=window.until, limit=TOP_RELEASES_LIMIT):
+    for count in store.top_listened_releases(
+        since=window.since, until=window.until, limit=limit, offset=offset
+    ):
         release = store.get_release(int(count.key))
         if release is None:
             continue
@@ -349,12 +362,7 @@ def profile_stats(
     )
     return {
         "header": header,
-        "period": {
-            "key": window.period,
-            "tz": window.tz_name,
-            "since": window.since,
-            "until": window.until,
-        },
+        "period": _period_payload(window),
         "summary": {
             "listens": summary.listens,
             "hours": round(summary.seconds / 3600, 1),
@@ -368,10 +376,47 @@ def profile_stats(
             "moods": _sound_labels(store, MOOD_MODEL, window),
         },
         "top_artists": _top_artists(store, window),
+        # Full lengths of the tops: the shelves link to their full lists
+        # (``/users/{username}/top/{kind}``) only when there is more.
+        "top_artists_total": store.count_listened_artists(since=window.since, until=window.until),
         "top_releases": _top_releases(store, window),
+        "top_releases_total": store.count_listened_releases(since=window.since, until=window.until),
         "top_tracks": _top_tracks(store, window),
         "recent": _listen_items(store, store.list_library_listens(limit=RECENT_LISTENS_LIMIT)),
     }
+
+
+def _period_payload(window: ProfileWindow) -> dict[str, object]:
+    return {"key": window.period, "tz": window.tz_name, "since": window.since, "until": window.until}
+
+
+def profile_top(
+    viewer_store: Store,
+    username: str,
+    kind: str,
+    *,
+    period: str = DEFAULT_PROFILE_PERIOD,
+    tz_name: str | None = None,
+    limit: int,
+    offset: int = 0,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """``GET /users/{username}/top/{kind}`` — the full top artists/releases of a period.
+
+    Same order and items as the profile's top shelves, page by page.
+    """
+    if kind not in TOP_KINDS:
+        raise ValueError(f"Unknown top kind: {kind}")
+    viewer_user_id(viewer_store)
+    store = resolve_profile_target(viewer_store, username).store
+    window = profile_window(period, tz_name, now)
+    if kind == "artists":
+        total = store.count_listened_artists(since=window.since, until=window.until)
+        items = _top_artists(store, window, limit=limit, offset=offset)
+    else:
+        total = store.count_listened_releases(since=window.since, until=window.until)
+        items = _top_releases(store, window, limit=limit, offset=offset)
+    return {"items": items, **page_info(total, limit, offset), "period": _period_payload(window)}
 
 
 def profile_listens(viewer_store: Store, username: str, *, limit: int, offset: int) -> dict[str, object]:
@@ -416,11 +461,44 @@ def profile_likes(viewer_store: Store, username: str, *, limit: int, offset: int
     }
 
 
-def profile_playlists_payload(viewer_store: Store, username: str) -> dict[str, object]:
-    """``GET /users/{username}/playlists`` — private ones only for the owner."""
+def profile_likes_of_kind(
+    viewer_store: Store, username: str, kind: str, *, limit: int, offset: int = 0
+) -> dict[str, object]:
+    """``GET /users/{username}/likes/{kind}`` — one kind of likes, page by page."""
+    from app.services.dashboard import (  # noqa: PLC0415 — heavy module, profile-only use
+        _dashboard_liked_artists,
+        _dashboard_liked_releases,
+    )
+
+    if kind not in LIKE_KINDS:
+        raise ValueError(f"Unknown like kind: {kind}")
+    viewer_user_id(viewer_store)
+    store = resolve_profile_target(viewer_store, username).store
+    if kind == "tracks":
+        tracks = store.list_liked_tracks(limit=limit, offset=offset)
+        artists_by_track = store.artists_for_tracks([track.id for track in tracks])
+        items = [_track_shelf_item(store, track, artists_by_track.get(track.id, [])) for track in tracks]
+        total = store.count_liked_tracks()
+    elif kind == "releases":
+        items, total = _dashboard_liked_releases(store, limit, offset)
+    else:
+        items, total = _dashboard_liked_artists(store, limit, offset)
+    return {"items": items, **page_info(total, limit, offset)}
+
+
+def profile_playlists_payload(
+    viewer_store: Store, username: str, *, limit: int | None = None, offset: int = 0
+) -> dict[str, object]:
+    """``GET /users/{username}/playlists`` — private ones only for the owner.
+
+    ``limit``/``offset`` page the list (newest first); ``total`` is always the
+    number of playlists the viewer may see.
+    """
     viewer_id = viewer_user_id(viewer_store)
     target = resolve_profile_target(viewer_store, username)
-    playlists = _owned_playlists(viewer_id, target)
+    visible = _owned_playlists(viewer_id, target)
+    page_limit = limit if limit is not None else max(len(visible), 1)
+    playlists, paging = page_of(visible, page_limit, offset)
     counts = target.store.playlist_track_counts([playlist.id for playlist in playlists])
     items = []
     for playlist in playlists:
@@ -428,4 +506,4 @@ def profile_playlists_payload(viewer_store: Store, username: str) -> dict[str, o
         # Serialized on the owner's store; editability is the viewer's.
         item["editable"] = viewer_id == target.user_id
         items.append(item)
-    return {"items": items, "total": len(items)}
+    return {"items": items, **paging}

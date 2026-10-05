@@ -58,6 +58,20 @@ _LIBRARY_LISTENS = """
     FROM listens l
     JOIN tracks t ON t.id = l.track_id
 """
+# Top artists: every credited artist of the listened track (alias ``a``).
+_LISTENED_ARTISTS_JOIN = """
+    JOIN track_artists ta ON ta.track_id = l.track_id
+    JOIN artists a ON a.id = ta.artist_id
+"""
+# Top releases: the release the track payload shows (alias ``r``).
+_LISTENED_RELEASE_JOIN = """
+    JOIN releases r ON r.id = (
+        SELECT rt.release_id FROM release_tracks rt
+        WHERE rt.track_id = l.track_id
+        ORDER BY rt.position, rt.release_id
+        LIMIT 1
+    )
+"""
 
 
 def _window(since: str | None, until: str | None) -> tuple[str, tuple[str, ...]]:
@@ -270,7 +284,7 @@ class ListensStoreMixin:
     # listened, then the lowest id — deterministic for equal counts.
 
     def top_listened_artists(
-        self, *, since: str | None = None, until: str | None = None, limit: int = 12
+        self, *, since: str | None = None, until: str | None = None, limit: int = 16, offset: int = 0
     ) -> list[ListenCount]:
         """Artists by listens; a multi-artist track counts for every credited
         artist (once per listen, whatever the number of credit roles)."""
@@ -281,19 +295,30 @@ class ListensStoreMixin:
                 f"""
                 SELECT a.id, a.name, COUNT(DISTINCT l.id) AS listens, MAX(l.listened_at) AS last_listened_at
                 {_LIBRARY_LISTENS}
-                JOIN track_artists ta ON ta.track_id = l.track_id
-                JOIN artists a ON a.id = ta.artist_id
+                {_LISTENED_ARTISTS_JOIN}
                 {where}
                 GROUP BY a.id
                 ORDER BY listens DESC, last_listened_at DESC, a.id ASC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (*params, int(limit)),
+                (*params, int(limit), int(offset)),
             ).fetchall()
         return [ListenCount(int(row["id"]), int(row["listens"]), str(row["name"])) for row in rows]
 
+    def count_listened_artists(self, *, since: str | None = None, until: str | None = None) -> int:
+        """How many entries ``top_listened_artists`` has for the window (its full length)."""
+        self.require_user_id()
+        where, params = _window(since, until)
+        with self.connect() as conn:
+            return int(
+                conn.execute(
+                    f"SELECT COUNT(DISTINCT a.id) {_LIBRARY_LISTENS} {_LISTENED_ARTISTS_JOIN} {where}",
+                    params,
+                ).fetchone()[0]
+            )
+
     def top_listened_releases(
-        self, *, since: str | None = None, until: str | None = None, limit: int = 12
+        self, *, since: str | None = None, until: str | None = None, limit: int = 16, offset: int = 0
     ) -> list[ListenCount]:
         """Releases by listens. A track on several releases counts for the one
         its track payload shows (lowest ``release_tracks.position``)."""
@@ -304,20 +329,27 @@ class ListensStoreMixin:
                 f"""
                 SELECT r.id, COUNT(*) AS listens, MAX(l.listened_at) AS last_listened_at
                 {_LIBRARY_LISTENS}
-                JOIN releases r ON r.id = (
-                    SELECT rt.release_id FROM release_tracks rt
-                    WHERE rt.track_id = l.track_id
-                    ORDER BY rt.position, rt.release_id
-                    LIMIT 1
-                )
+                {_LISTENED_RELEASE_JOIN}
                 {where}
                 GROUP BY r.id
                 ORDER BY listens DESC, last_listened_at DESC, r.id ASC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (*params, int(limit)),
+                (*params, int(limit), int(offset)),
             ).fetchall()
         return [ListenCount(int(row["id"]), int(row["listens"])) for row in rows]
+
+    def count_listened_releases(self, *, since: str | None = None, until: str | None = None) -> int:
+        """How many entries ``top_listened_releases`` has for the window (its full length)."""
+        self.require_user_id()
+        where, params = _window(since, until)
+        with self.connect() as conn:
+            return int(
+                conn.execute(
+                    f"SELECT COUNT(DISTINCT r.id) {_LIBRARY_LISTENS} {_LISTENED_RELEASE_JOIN} {where}",
+                    params,
+                ).fetchone()[0]
+            )
 
     def top_listened_tracks(
         self, *, since: str | None = None, until: str | None = None, limit: int = 20

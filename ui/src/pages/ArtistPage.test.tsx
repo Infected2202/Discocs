@@ -36,8 +36,15 @@ vi.mock("@/components/media/PopularTracks", () => ({
 }))
 
 vi.mock("@/components/media/Shelf", () => ({
-  default: ({ title, items }: { title: string; items: Array<{ title: string }> }) => (
-    <div data-testid="shelf"><span>{title}</span>{items.map((item) => <span key={item.title}>{item.title}</span>)}</div>
+  default: ({ title, items, moreHref, total }: {
+    title: string
+    items: Array<{ title: string }>
+    moreHref?: string
+    total?: number
+  }) => (
+    <div data-testid="shelf" data-more-href={moreHref} data-total={total}>
+      <span>{title}</span>{items.map((item) => <span key={item.title}>{item.title}</span>)}
+    </div>
   ),
 }))
 
@@ -150,6 +157,32 @@ describe("ArtistPage — кнопка Shuffle", () => {
 
     expect(screen.getByTestId("shelf")).toHaveTextContent("Similar artists")
     expect(screen.getByTestId("shelf")).toHaveTextContent("Jon Hopkins")
+  })
+
+  it("ведёт полку похожих артистов на их полный список и передаёт его длину", () => {
+    useArtistSimilar.mockReturnValue({
+      data: {
+        artist: { id: 3, name: "Max Cooper" },
+        available: true,
+        basis: "artist_similarity",
+        items: [{
+          id: 9,
+          name: "Jon Hopkins",
+          sort_name: null,
+          image: { url: null, source: "none", placeholder: true },
+          library_stats: { tracks: 12, releases: 3, liked_tracks: 0, plays: 0 },
+        }],
+        total: 120,
+        limit: 16,
+        offset: 0,
+        next_offset: 16,
+      },
+    })
+
+    renderPage()
+
+    expect(screen.getByTestId("shelf")).toHaveAttribute("data-more-href", "/artists/3/similar")
+    expect(screen.getByTestId("shelf")).toHaveAttribute("data-total", "120")
   })
 })
 

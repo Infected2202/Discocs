@@ -16,9 +16,12 @@ vi.mock("./client", () => ({
 
 import {
   fetchUserLikes,
+  fetchUserLikesOfKind,
   fetchUserListens,
   fetchUserPlaylists,
   fetchUserProfile,
+  fetchUserTop,
+  isProfilePeriod,
   setMyAvatar,
   viewerTimeZone,
 } from "./profile"
@@ -51,6 +54,24 @@ describe("profile API", () => {
   it("asks for likes with a limit", async () => {
     await fetchUserLikes("bob", { limit: 24 })
     expect(apiFetch).toHaveBeenCalledWith("/api/v1/users/bob/likes?limit=24")
+  })
+
+  it("pages a period's top of one kind", async () => {
+    await fetchUserTop("bob", "releases", { period: "7d", tz: "UTC", limit: 48, offset: 96 })
+    expect(apiFetch).toHaveBeenCalledWith("/api/v1/users/bob/top/releases?period=7d&tz=UTC&limit=48&offset=96")
+  })
+
+  it("pages one kind of likes and the playlists", async () => {
+    await fetchUserLikesOfKind("bob", "artists", { limit: 48, offset: 0 })
+    expect(apiFetch).toHaveBeenCalledWith("/api/v1/users/bob/likes/artists?limit=48&offset=0")
+    await fetchUserPlaylists("bob", { limit: 16 })
+    expect(apiFetch).toHaveBeenLastCalledWith("/api/v1/users/bob/playlists?limit=16")
+  })
+
+  it("accepts only known periods from the URL", () => {
+    expect(isProfilePeriod("365d")).toBe(true)
+    expect(isProfilePeriod("14d")).toBe(false)
+    expect(isProfilePeriod(null)).toBe(false)
   })
 
   it("saves the avatar with PUT /me/avatar {key}", async () => {
