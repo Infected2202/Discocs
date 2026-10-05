@@ -122,6 +122,9 @@ describe("full lists of profile shelves", () => {
     const { result } = renderHook(() => useUserTopList("bob", "artists", "90d"), { wrapper })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    // Reading hasNextPage before paging also makes React Query track it
+    // (tracked result props): otherwise its change wouldn't re-render the hook.
+    expect(result.current.hasNextPage).toBe(true)
     await act(async () => {
       await result.current.fetchNextPage()
     })
