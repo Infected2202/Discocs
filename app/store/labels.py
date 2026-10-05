@@ -262,6 +262,32 @@ class LabelsStoreMixin:
             return random.sample(track_ids, limit)
         return track_ids[:limit]
 
+    def artist_labels(self, artist_id: int) -> list[Label]:
+        """Лейблы живых релизов артиста; ``release_count`` — сколько из них у артиста.
+
+        Только релизы, где артист в кредитах релиза: гостевой трек на чужом сборнике не
+        делает лейбл сборника лейблом артиста. Больше релизов артиста — выше.
+        """
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT l.*, COUNT(DISTINCT rl.release_id) AS release_count,
+                    COALESCE(MAX(p.liked), 0) AS liked
+                FROM release_artists ra
+                JOIN release_labels rl ON rl.release_id = ra.release_id
+                JOIN labels l ON l.id = rl.label_id
+                LEFT JOIN user_label_preferences p
+                  ON p.label_id = l.id AND p.user_id = ?
+                WHERE ra.artist_id = ? AND {_AVAILABLE_RELEASE}
+                GROUP BY l.id
+                ORDER BY release_count DESC, l.name COLLATE NOCASE, l.id
+                """,
+                (self.user_id, artist_id),
+            ).fetchall()
+        labels = [row_to_label(row) for row in rows]
+        top = self.top_label_genres([label.id for label in labels])  # type: ignore[attr-defined]
+        return [replace(label, top_genres=tuple(top.get(label.id, ()))) for label in labels]
+
     def label_id_by_name(self, name: str) -> int | None:
         with self.connect() as conn:
             row = conn.execute(

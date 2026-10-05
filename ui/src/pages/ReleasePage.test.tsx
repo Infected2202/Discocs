@@ -13,12 +13,17 @@ const useReleaseTracks = vi.fn()
 const useReleaseRelated = vi.fn()
 const useReleaseRecommendations = vi.fn()
 const useShareCapabilities = vi.fn()
+const useLabelReleases = vi.fn()
 
 vi.mock("@/api/hooks/useRelease", () => ({
   useRelease: (...args: unknown[]) => useRelease(...args),
   useReleaseTracks: (...args: unknown[]) => useReleaseTracks(...args),
   useReleaseRelated: (...args: unknown[]) => useReleaseRelated(...args),
   useReleaseRecommendations: (...args: unknown[]) => useReleaseRecommendations(...args),
+}))
+
+vi.mock("@/api/hooks/useLabel", () => ({
+  useLabelReleases: (...args: unknown[]) => useLabelReleases(...args),
 }))
 
 vi.mock("@/api/shares", () => ({
@@ -208,6 +213,7 @@ describe("ReleasePage — состояния ошибки", () => {
 
 describe("ReleasePage — лейбл релиза", () => {
   beforeEach(() => {
+    useLabelReleases.mockReturnValue({ data: undefined })
     useReleaseTracks.mockReturnValue({ data: makeTracksData(), isLoading: false })
     useReleaseRelated.mockReturnValue({ data: makeRelatedData() })
     useReleaseRecommendations.mockReturnValue({ data: makeRecsData() })
@@ -247,5 +253,66 @@ describe("ReleasePage — лейбл релиза", () => {
     await screen.findByRole("heading", { name: "Neon Lights" })
     expect(screen.queryByLabelText("Labels")).toBeNull()
     expect(screen.queryByRole("list", { name: "Genres" })).toBeNull()
+  })
+})
+
+function labelRelease(id: number, title: string, artistId: number, artist: string) {
+  return {
+    id, title, release_type: "album", artists: [{ id: artistId, name: artist }],
+    release_year: 2020, track_count: 8, artwork: { url: null, source: "placeholder", placeholder: true },
+  }
+}
+
+describe("ReleasePage — полка «От этого лейбла»", () => {
+  beforeEach(() => {
+    useReleaseTracks.mockReturnValue({ data: makeTracksData(), isLoading: false })
+    useReleaseRelated.mockReturnValue({ data: makeRelatedData() })
+    useReleaseRecommendations.mockReturnValue({ data: { ...makeRecsData(), items: [] } })
+    useShareCapabilities.mockReturnValue({ data: { enabled: true, can_create: true } })
+  })
+
+  it("показывает популярные релизы лейбла других артистов без текущего релиза и релизов его артистов", async () => {
+    const data = makeReleaseData()
+    data.release.labels = [{ id: 7, name: "Warp" }]
+    useRelease.mockReturnValue({ data, isLoading: false, error: null })
+    useLabelReleases.mockReturnValue({
+      data: {
+        label: { id: 7, name: "Warp" }, sort: "popularity", groups: [],
+        items: [
+          labelRelease(5, "Neon Lights", 1, "Synth Unit"),
+          labelRelease(11, "Selected Ambient Works", 2, "Aphex Twin"),
+          labelRelease(12, "Older Synth Unit Album", 1, "Synth Unit"),
+          labelRelease(13, "Geogaddi", 3, "Boards of Canada"),
+        ],
+      },
+    })
+
+    renderPage()
+
+    expect(await screen.findByText("From this label")).toBeInTheDocument()
+    expect(useLabelReleases).toHaveBeenCalledWith(7, "popularity")
+    expect(screen.getByText("Selected Ambient Works")).toBeInTheDocument()
+    expect(screen.getByText("Geogaddi")).toBeInTheDocument()
+    expect(screen.queryByText("Older Synth Unit Album")).toBeNull()
+  })
+
+  it("называет лейбл в заголовке, когда у релиза их несколько, и прячет полку лейбла самого артиста", async () => {
+    const data = makeReleaseData()
+    data.release.labels = [{ id: 7, name: "Warp" }, { id: 8, name: "Synth Unit Records" }]
+    useRelease.mockReturnValue({ data, isLoading: false, error: null })
+    useLabelReleases.mockImplementation((id: number) => ({
+      data: {
+        label: { id, name: "" }, sort: "popularity", groups: [],
+        items: id === 7
+          ? [labelRelease(11, "Selected Ambient Works", 2, "Aphex Twin")]
+          : [labelRelease(12, "Older Synth Unit Album", 1, "Synth Unit")],
+      },
+    }))
+
+    renderPage()
+
+    expect(await screen.findByText("From Warp")).toBeInTheDocument()
+    expect(screen.queryByText("From Synth Unit Records")).toBeNull()
+    expect(screen.queryByText("From this label")).toBeNull()
   })
 })

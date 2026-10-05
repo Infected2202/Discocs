@@ -1,7 +1,7 @@
 import { useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { Play, Shuffle } from "lucide-react"
-import { useArtist, useArtistDiscography, useArtistSimilar } from "@/api/hooks/useArtist"
+import { useArtist, useArtistDiscography, useArtistLabels, useArtistSimilar } from "@/api/hooks/useArtist"
 import { isNetworkError } from "@/lib/apiErrorKind"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -13,7 +13,7 @@ import Shelf from "@/components/media/Shelf"
 import PopularTracks from "@/components/media/PopularTracks"
 import { pickPopularTracks } from "@/lib/popularTracks"
 import { usePlayerStore } from "@/store/playerStore"
-import type { ArtistSummary, ReleaseSummary } from "@/api/types"
+import type { ArtistSummary, LabelSummary, ReleaseSummary } from "@/api/types"
 
 function releaseSummaryToCard(r: ReleaseSummary, onPlay: () => void) {
   return {
@@ -52,6 +52,7 @@ export default function ArtistPage() {
   const { data: artistData, isLoading: artistLoading, error } = useArtist(artistId)
   const { data: discoData, isLoading: discoLoading } = useArtistDiscography(artistId)
   const { data: similarData } = useArtistSimilar(artistId)
+  const { data: labelsData } = useArtistLabels(artistId)
   const popularTracks = pickPopularTracks(artistData?.top_tracks ?? [])
   const playSource = usePlayerStore((s) => s.playSource)
   const isLoading = artistLoading || discoLoading
@@ -155,6 +156,23 @@ export default function ArtistPage() {
             title: item.name,
             artwork: item.image,
             onPlay: () => playSource("artist", item.id, item.name),
+          }))}
+        />
+      )}
+
+      {/* Artist's labels — labels of the artist's releases, most releases first */}
+      {(labelsData?.items.length ?? 0) > 0 && (
+        <Shelf
+          title={t("labels")}
+          grid
+          items={(labelsData?.items ?? []).map((label: LabelSummary) => ({
+            id: label.id,
+            type: "label" as const,
+            title: label.name,
+            subtitle: [t("releaseCount", { ns: "label", count: label.release_count }), label.top_genres?.join(", ")]
+              .filter(Boolean)
+              .join(" · "),
+            artwork: label.artwork,
           }))}
         />
       )}

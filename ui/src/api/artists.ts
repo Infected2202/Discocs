@@ -1,5 +1,7 @@
 import { apiFetch, apiUrl } from "./client"
-import type { ArtistDiscographyResponse, ArtistTopTracksResponse, ArtistResponse, ArtistSimilarResponse } from "./types"
+import type {
+  ArtistDiscographyResponse, ArtistLabelsResponse, ArtistTopTracksResponse, ArtistResponse, ArtistSimilarResponse,
+} from "./types"
 import { SHELF_PREVIEW_LIMIT } from "@/lib/shelves"
 
 /** One page of similar artists: the shelf previews the first, the full list pages on. */
@@ -33,4 +35,8 @@ export function fetchArtistSimilar(
   offset?: number,
 ): Promise<ArtistSimilarPage> {
   return apiFetch(apiUrl(`/api/v1/artists/${id}/similar`, { limit, offset }))
+}
+
+export function fetchArtistLabels(id: number): Promise<ArtistLabelsResponse> {
+  return apiFetch(`/api/v1/artists/${id}/labels`)
 }

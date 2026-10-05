@@ -542,6 +542,30 @@ def test_release_detail_lists_its_labels_in_tag_order(tmp_path, monkeypatch):
     assert client.get(f"/api/v1/releases/{plain_id}").json()["release"]["labels"] == []
 
 
+def test_artist_labels_count_the_artists_own_releases_and_skip_missing_ones(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    _t, first_id = add_release(store, tmp_path, "One", ("Bleep",), artist="Synth Unit")
+    add_release(store, tmp_path, "Two", ("Warp", "Bleep"), artist="Synth Unit")
+    add_release(store, tmp_path, "Three", ("Warp",), artist="Synth Unit")
+    add_release(store, tmp_path, "Four", ("Warp",), artist="Synth Unit")
+    gone_track, _ = add_release(store, tmp_path, "Gone", ("Gone Records",), artist="Synth Unit")
+    add_release(store, tmp_path, "Other", ("Ninja Tune", "Warp"), artist="Someone Else")
+    with store.connect() as conn:
+        conn.execute("UPDATE tracks SET missing_at = '2026-01-01' WHERE id = ?", (gone_track,))
+    client = TestClient(app)
+    artist_id = client.get(f"/api/v1/releases/{first_id}").json()["release"]["artists"][0]["id"]
+
+    data = client.get(f"/api/v1/artists/{artist_id}/labels").json()
+
+    # Больше релизов артиста — выше; релиз Someone Else на Warp не считается, Ninja Tune — не его
+    # лейбл, Gone Records — релиз без файлов.
+    assert [(item["name"], item["release_count"]) for item in data["items"]] == [("Warp", 3), ("Bleep", 2)]
+    assert data["total"] == 2
+    assert data["items"][0]["artwork"]["url"].startswith(f"/api/v1/labels/{store.label_id_by_name('Warp')}/image")
+    assert client.get(f"/api/v1/artists/{artist_id}").json()["links"]["labels"] == f"/api/v1/artists/{artist_id}/labels"
+    assert client.get("/api/v1/artists/999999/labels").status_code == 404
+
+
 # ---------------------------------------------------------------------------
 # воспроизведение лейбла (кнопка «Перемешать»)
 # ---------------------------------------------------------------------------

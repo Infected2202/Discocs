@@ -82,6 +82,13 @@ export interface ArtistSimilarResponse {
   basis: string
 }
 
+/** Labels of the artist's releases; `release_count` counts the artist's releases there. */
+export interface ArtistLabelsResponse {
+  artist: ArtistLink
+  items: LabelSummary[]
+  total: number
+}
+
 export interface ArtistTopTrack extends TrackSummary {
   play_count: number
   /** rank трека в Deezer (снимок), если трек связан с Deezer */

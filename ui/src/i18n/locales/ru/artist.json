@@ -14,5 +14,6 @@
   "playCount_few": "{{formatted}} прослушивания",
   "playCount_many": "{{formatted}} прослушиваний",
   "playCount_other": "{{formatted}} прослушивания",
-  "similarArtists": "Похожие артисты"
+  "similarArtists": "Похожие артисты",
+  "labels": "Лейблы артиста"
 }

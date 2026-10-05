@@ -8,5 +8,6 @@
   "releaseCount_other": "{{formatted}} releases",
   "playCount_one": "{{formatted}} play",
   "playCount_other": "{{formatted}} plays",
-  "similarArtists": "Similar artists"
+  "similarArtists": "Similar artists",
+  "labels": "Artist's labels"
 }

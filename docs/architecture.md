@@ -101,6 +101,7 @@ GET  /api/v1/artists/{artist_id}/image
 GET  /api/v1/artists/{artist_id}/cover
 GET  /api/v1/artists/{artist_id}/top-tracks
 GET  /api/v1/artists/{artist_id}/similar
+GET  /api/v1/artists/{artist_id}/labels
 GET  /api/v1/releases/{release_id}
 GET  /api/v1/releases/{release_id}/tracks
 GET  /api/v1/releases/{release_id}/related-discography

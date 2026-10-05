@@ -12,5 +12,7 @@
     "minutes": "{{minutes}} мин"
   },
   "moreFromArtists": "Ещё от этих артистов",
+  "fromThisLabel": "От этого лейбла",
+  "fromNamedLabel": "От лейбла {{name}}",
   "recommendedAlbums": "Рекомендованные альбомы"
 }

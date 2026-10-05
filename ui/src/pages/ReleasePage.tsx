@@ -13,6 +13,7 @@ import GenreTags from "@/components/media/GenreTags"
 import LikeButton from "@/components/media/LikeButton"
 import VirtualTrackList from "@/components/media/VirtualTrackList"
 import Shelf from "@/components/media/Shelf"
+import LabelReleasesShelf from "@/components/media/LabelReleasesShelf"
 import { usePlayerStore } from "@/store/playerStore"
 import type { ReleaseSummary } from "@/api/types"
 import CreateShareDialog from "@/components/share/CreateShareDialog"
@@ -213,6 +214,17 @@ export default function ReleasePage() {
             }))}
         />
       )}
+
+      {/* From this label — one shelf per label of the release */}
+      {release.labels?.map((label) => (
+        <LabelReleasesShelf
+          key={label.id}
+          label={label}
+          releaseId={releaseId}
+          artistIds={release.artists.map((a) => a.id)}
+          named={(release.labels?.length ?? 0) > 1}
+        />
+      ))}
 
       {/* Recommended albums */}
       {recsData?.available && recsData.items.length > 0 && (

@@ -31,6 +31,7 @@ from app.serializers.entities import (
     sort_by_popularity,
     track_summary_dict,
 )
+from app.serializers.labels import label_summary_dict
 from app.services.cover import (
     cached_cover_error,
     cached_cover_response,
@@ -65,9 +66,25 @@ def api_v1_artist(artist_id: int) -> dict[str, object] | JSONResponse:
             "discography": f"/api/v1/artists/{artist_id}/discography",
             "top_tracks": f"/api/v1/artists/{artist_id}/top-tracks",
             "similar": f"/api/v1/artists/{artist_id}/similar",
+            "labels": f"/api/v1/artists/{artist_id}/labels",
         },
         "top_tracks": top_tracks,
         "genres": [{"name": name, "release_count": count} for name, count in store.artist_genres(artist_id)],
+    }
+
+
+@router.get("/artists/{artist_id}/labels", response_model=None)
+def api_v1_artist_labels(artist_id: int) -> dict[str, object] | JSONResponse:
+    """Лейблы релизов артиста — полка «Лейблы артиста»; ``release_count`` — релизы этого артиста."""
+    store, _settings = context()
+    artist = store.get_artist(artist_id)
+    if artist is None:
+        return api_error(404, "not_found", _ARTIST_NOT_FOUND)
+    labels = store.artist_labels(artist_id)
+    return {
+        "artist": artist_link_dict(artist.artist),
+        "items": [label_summary_dict(label) for label in labels],
+        "total": len(labels),
     }
 
 

@@ -4,16 +4,19 @@ import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import ArtistPage from "./ArtistPage"
 import { ApiError } from "@/api/client"
-import type { ArtistResponse, ArtistDiscographyResponse, ArtistSimilarResponse } from "@/api/types"
+import type { ArtistResponse, ArtistDiscographyResponse, ArtistLabelsResponse, ArtistSimilarResponse } from "@/api/types"
 
 const useArtist = vi.fn()
 const useArtistDiscography = vi.fn()
 const useArtistSimilar = vi.fn()
+// Без лейблов по умолчанию — полка не мешает тестам, которые ищут единственную полку.
+const useArtistLabels = vi.fn().mockReturnValue({ data: undefined })
 
 vi.mock("@/api/hooks/useArtist", () => ({
   useArtist: (...args: unknown[]) => useArtist(...args),
   useArtistDiscography: (...args: unknown[]) => useArtistDiscography(...args),
   useArtistSimilar: (...args: unknown[]) => useArtistSimilar(...args),
+  useArtistLabels: (...args: unknown[]) => useArtistLabels(...args),
 }))
 
 const playSource = vi.fn()
@@ -86,6 +89,7 @@ function renderPage() {
 
 describe("ArtistPage — кнопка Shuffle", () => {
   beforeEach(() => {
+    useArtistLabels.mockReturnValue({ data: undefined })
     playSource.mockReset()
     toggleShuffle.mockReset()
     toggleArtistLike.mockReset()
@@ -183,6 +187,45 @@ describe("ArtistPage — кнопка Shuffle", () => {
 
     expect(screen.getByTestId("shelf")).toHaveAttribute("data-more-href", "/artists/3/similar")
     expect(screen.getByTestId("shelf")).toHaveAttribute("data-total", "120")
+  })
+
+  it("показывает лейблы артиста последней полкой страницы", () => {
+    useArtistSimilar.mockReturnValue({
+      data: {
+        artist: { id: 3, name: "Max Cooper" },
+        available: true,
+        basis: "artist_similarity",
+        items: [{
+          id: 9,
+          name: "Jon Hopkins",
+          sort_name: null,
+          image: { url: null, source: "none", placeholder: true },
+          library_stats: { tracks: 12, releases: 3, liked_tracks: 0, plays: 0 },
+        }],
+      } satisfies ArtistSimilarResponse,
+    })
+    useArtistLabels.mockReturnValue({
+      data: {
+        artist: { id: 3, name: "Max Cooper" },
+        total: 2,
+        items: [
+          { id: 7, name: "Mesh", release_count: 9, liked: false,
+            artwork: { url: "/api/v1/labels/7/image?v=1", source: "discogs", placeholder: false } },
+          { id: 8, name: "Traum Schallplatten", release_count: 2, liked: false,
+            artwork: { url: null, source: "placeholder", placeholder: true } },
+        ],
+      } satisfies ArtistLabelsResponse,
+    })
+
+    renderPage()
+
+    expect(useArtistLabels).toHaveBeenCalledWith(3)
+    const shelves = screen.getAllByTestId("shelf")
+    const last = shelves[shelves.length - 1]
+    expect(last).toHaveTextContent("Artist's labels")
+    expect(within(last).getByText("Mesh")).toBeInTheDocument()
+    expect(within(last).getByText("Traum Schallplatten")).toBeInTheDocument()
+    expect(shelves[shelves.length - 2]).toHaveTextContent("Similar artists")
   })
 })
 

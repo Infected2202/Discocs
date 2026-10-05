@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { usePagedList } from "./usePagedList"
-import { fetchArtist, fetchArtistDiscography, fetchArtistSimilar, fetchArtistTopTracks, type DiscographySort } from "../artists"
+import {
+  fetchArtist, fetchArtistDiscography, fetchArtistLabels, fetchArtistSimilar, fetchArtistTopTracks, type DiscographySort,
+} from "../artists"
 
 export function useArtist(id: number) {
   return useQuery({
@@ -32,5 +34,13 @@ export function useArtistSimilar(id: number) {
   return useQuery({
     queryKey: ["artist", id, "similar"],
     queryFn: () => fetchArtistSimilar(id),
+  })
+}
+
+/** Labels of the artist's releases — the «Лейблы артиста» shelf at the bottom of the artist page. */
+export function useArtistLabels(id: number) {
+  return useQuery({
+    queryKey: ["artist", id, "labels"],
+    queryFn: () => fetchArtistLabels(id),
   })
 }

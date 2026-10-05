@@ -169,7 +169,12 @@ track count, duration; under that line up to five styles (`GenreTags`,
 like-heart actions. Below the
 header: `TrackTable` for the release's tracks, a "More from these artists"
 `Shelf` built from the related-discography response (filtering out the
-current release), and a "Recommended Albums" `Shelf` shown only when the
+current release), a "From this label" `Shelf` per record label
+(`LabelReleasesShelf`: `GET /api/v1/labels/{id}/releases?sort=popularity`,
+without the current release and releases of its artists — those are on the
+previous shelf; titled "From <label>" when the release has several labels,
+hidden when nothing is left, e.g. the artist's own label; "More" leads to
+`/labels/:id`), and a "Recommended Albums" `Shelf` shown only when the
 recommendations response reports `available: true` with items. Both preview
 16 cards and link to their full lists (`/releases/:id/related`,
 `/releases/:id/recommendations`) when the response's `total` is larger. Missing cover
@@ -193,9 +198,14 @@ none has either signal — i.e. it does not hide the section when popularity
 data is genuinely absent, unlike the original "omit if unavailable" spec), then
 one grid `Shelf` per non-empty discography group returned by the API (e.g.
 Albums, EPs, Singles, Featured In — grouping logic lives server-side). A
-regular 16-item "Similar artists" shelf is rendered last when artist
+regular 16-item "Similar artists" shelf follows when artist
 aggregates are available, with «Ещё» to the full ranked list (up to 200
-artists) when there are more. Missing similar-artist images are enriched through
+artists) when there are more. Last comes the "Artist's labels" grid `Shelf`
+(`useArtistLabels`, `GET /api/v1/artists/{id}/labels`): labels of releases
+credited to the artist (a guest track on another label's compilation does not
+count), most of the artist's releases first; the card subtitle is that count
+and the label's two main styles, the card opens `/labels/:id`; hidden when the
+artist's releases carry no label. Missing similar-artist images are enriched through
 the same Navidrome `getArtistInfo2` path used by search and artist pages, then
 served through the backend cover proxy. There is no tabbed Discography/Top
 Tracks/Similar Artists/Bio navigation on this page; it remains a single
