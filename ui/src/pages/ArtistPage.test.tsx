@@ -39,14 +39,16 @@ vi.mock("@/components/media/PopularTracks", () => ({
 }))
 
 vi.mock("@/components/media/Shelf", () => ({
-  default: ({ title, items, moreHref, total }: {
+  default: ({ title, items, moreHref, total, grid }: {
     title: string
-    items: Array<{ title: string }>
+    items: Array<{ title: string; subtitle?: string | null }>
     moreHref?: string
     total?: number
+    grid?: boolean
   }) => (
-    <div data-testid="shelf" data-more-href={moreHref} data-total={total}>
-      <span>{title}</span>{items.map((item) => <span key={item.title}>{item.title}</span>)}
+    <div data-testid="shelf" data-more-href={moreHref} data-total={total} data-grid={grid ? "true" : undefined}>
+      <span>{title}</span>
+      {items.map((item) => <span key={item.title} data-subtitle={item.subtitle ?? undefined}>{item.title}</span>)}
     </div>
   ),
 }))
@@ -226,6 +228,9 @@ describe("ArtistPage — кнопка Shuffle", () => {
     expect(within(last).getByText("Mesh")).toBeInTheDocument()
     expect(within(last).getByText("Traum Schallplatten")).toBeInTheDocument()
     expect(shelves[shelves.length - 2]).toHaveTextContent("Similar artists")
+    // Как полка лейблов на главной: слайдер, а не сетка, и карточки без подписей.
+    expect(last).not.toHaveAttribute("data-grid")
+    expect(within(last).getByText("Mesh")).not.toHaveAttribute("data-subtitle")
   })
 })
 

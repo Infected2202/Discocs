@@ -200,11 +200,11 @@ one grid `Shelf` per non-empty discography group returned by the API (e.g.
 Albums, EPs, Singles, Featured In — grouping logic lives server-side). A
 regular 16-item "Similar artists" shelf follows when artist
 aggregates are available, with «Ещё» to the full ranked list (up to 200
-artists) when there are more. Last comes the "Artist's labels" grid `Shelf`
-(`useArtistLabels`, `GET /api/v1/artists/{id}/labels`): labels of releases
-credited to the artist (a guest track on another label's compilation does not
-count), most of the artist's releases first; the card subtitle is that count
-and the label's two main styles, the card opens `/labels/:id`; hidden when the
+artists) when there are more. Last comes the "Artist's labels" slider `Shelf`
+(`useArtistLabels`, `GET /api/v1/artists/{id}/labels`), label cards as on the
+dashboard but without a subtitle: labels of releases credited to the artist (a
+guest track on another label's compilation does not count), most of the
+artist's releases first; the card opens `/labels/:id`; hidden when the
 artist's releases carry no label. Missing similar-artist images are enriched through
 the same Navidrome `getArtistInfo2` path used by search and artist pages, then
 served through the backend cover proxy. There is no tabbed Discography/Top

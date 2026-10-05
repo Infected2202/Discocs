@@ -164,14 +164,10 @@ export default function ArtistPage() {
       {(labelsData?.items.length ?? 0) > 0 && (
         <Shelf
           title={t("labels")}
-          grid
           items={(labelsData?.items ?? []).map((label: LabelSummary) => ({
             id: label.id,
             type: "label" as const,
             title: label.name,
-            subtitle: [t("releaseCount", { ns: "label", count: label.release_count }), label.top_genres?.join(", ")]
-              .filter(Boolean)
-              .join(" · "),
             artwork: label.artwork,
           }))}
         />
