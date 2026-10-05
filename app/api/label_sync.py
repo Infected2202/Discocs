@@ -99,5 +99,5 @@ def api_v1_start_label_sync(
         return api_error(409, "not_configured", "Connect Beatport and set the Discogs key and secret first")
     job_id = create_job(LABEL_SYNC_JOB_KIND, "Waiting to sync labels")
     update_job(job_id, status="running")
-    background_tasks.add_task(label_sync_job, job_id, request.retry_not_found, request.label_id)
+    background_tasks.add_task(label_sync_job, job_id, request.retry_not_found, request.label_id, request.recheck_found)
     return {"status": "accepted", "job_id": job_id}

@@ -1,8 +1,10 @@
 """Задача «синхронизировать лейблы»: найти новые лейблы и перепроверить те, у кого появились релизы.
 
 Что уже искали, лежит в ``label_sync_state``: найденный лейбл больше не ищется, ненайденный —
-только когда изменился набор его штрихкодов и ISRC (докачали релизы). Задача не входит в общую
-очередь (``NON_BLOCKING_JOB_KINDS``): она пишет только данные лейблов и никому не мешает.
+только когда изменился набор его штрихкодов и ISRC (докачали релизы). «Перепроверить найденные»
+(``recheck_found``) сверяет сохранённые привязки найденных лейблов и ищет заново только неверные
+(служебная запись Discogs для бутлегов, чужое название). Задача не входит в общую очередь
+(``NON_BLOCKING_JOB_KINDS``): она пишет только данные лейблов и никому не мешает.
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 import httpx
@@ -72,10 +75,12 @@ class LabelSyncSummary:
     errors: int = 0
     images: int = 0
     descriptions: int = 0
+    mismatched: int = 0
 
     def message(self) -> str:
-        return (f"Checked {self.checked} labels: found {self.found} (images {self.images}, "
+        text = (f"Checked {self.checked} labels: found {self.found} (images {self.images}, "
                 f"descriptions {self.descriptions}), not found {self.not_found}, errors {self.errors}")
+        return f"{text}, wrong matches looked up again {self.mismatched}" if self.mismatched else text
 
 
 # ---------- какие лейблы и с какими ключами ----------
@@ -208,6 +213,30 @@ def sync_one_label(
         summary.descriptions += bool(result.description)
 
 
+def recheck_one_label(
+    store: Store,
+    data_dir: Path,
+    resolver: LabelResolver,
+    candidate: LabelSyncCandidate,
+    external_ids: dict[str, str],
+    summary: LabelSyncSummary,
+    lock: threading.Lock,
+    read: Callable[[Path], str | None],
+) -> None:
+    """Найденный лейбл: привязка верна — ничего не делать, неверна — забыть её и искать заново."""
+    wrong = resolver.mismatch(candidate.name, external_ids.get("beatport"), external_ids.get("discogs"))
+    if wrong is None:
+        return
+    logger.info("Label match is wrong label_id=%s name=%s service=%s ids=%s",
+                candidate.label_id, candidate.name, wrong, external_ids)
+    keys = label_keys(store, [candidate.label_id], read)[candidate.label_id]
+    # Иначе неверная картинка и ссылки остались бы, если заново лейбл не найдётся или найдётся без них.
+    store.clear_label_match(candidate.label_id)
+    with lock:
+        summary.mismatched += 1
+    sync_one_label(store, data_dir, resolver, candidate, keys, summary, lock)
+
+
 def _image(resolver: LabelResolver, result: LabelResult):
     if not result.image_url:
         return None
@@ -249,26 +278,40 @@ def run_label_sync(
     *,
     retry_not_found: bool = False,
     only_label_id: int | None = None,
+    recheck_found: bool = False,
     progress: Callable[[int, int, str | None], None] = lambda done, total, current: None,
     cancelled: Callable[[], bool] = lambda: False,
     workers: int = WORKERS,
     read: Callable[[Path], str | None] = read_barcode,
 ) -> LabelSyncSummary:
     store.seed_label_sync_state()
-    todo = labels_to_sync(
-        store.label_sync_candidates(),
-        lambda ids: label_keys(store, ids, read),
-        retry_not_found=retry_not_found,
-        only_label_id=only_label_id,
-        remember_baseline=store.set_label_sync_keys_hash,
-    )
     summary = LabelSyncSummary()
     lock = threading.Lock()
+    todo: list[tuple[LabelSyncCandidate, Callable[[], None]]]
+    if recheck_found:
+        found = [c for c in store.label_sync_candidates() if c.status == LABEL_SYNC_FOUND]
+        ids = store.label_external_ids([c.label_id for c in found])
+        todo = [
+            (c, partial(recheck_one_label, store, settings.data_dir, resolver, c, ids.get(c.label_id, {}),
+                        summary, lock, read))
+            for c in found
+        ]
+    else:
+        todo = [
+            (c, partial(sync_one_label, store, settings.data_dir, resolver, c, keys, summary, lock))
+            for c, keys in labels_to_sync(
+                store.label_sync_candidates(),
+                lambda ids: label_keys(store, ids, read),
+                retry_not_found=retry_not_found,
+                only_label_id=only_label_id,
+                remember_baseline=store.set_label_sync_keys_hash,
+            )
+        ]
     progress(0, len(todo), None)
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         futures = {
-            pool.submit(_guarded, store, settings.data_dir, resolver, candidate, keys, summary, lock, cancelled): candidate
-            for candidate, keys in todo
+            pool.submit(_guarded, store, candidate, work, summary, lock, cancelled): candidate
+            for candidate, work in todo
         }
         for future in as_completed(futures):
             candidate = futures[future]
@@ -290,21 +333,24 @@ def run_label_sync(
     return summary
 
 
-def _guarded(store, data_dir, resolver, candidate, keys, summary, lock, cancelled) -> None:
+def _guarded(store, candidate, work, summary, lock, cancelled) -> None:
     if cancelled():
         return
     try:
-        sync_one_label(store, data_dir, resolver, candidate, keys, summary, lock)
+        work()
     except ServiceAuthError:
         raise
     except Exception as exc:  # noqa: BLE001 — один лейбл не должен ронять всю синхронизацию
         logger.exception("Label sync failed label_id=%s name=%s", candidate.label_id, candidate.name)
-        store.set_label_sync_state(candidate.label_id, LABEL_SYNC_ERROR, keys_hash=keys.hash, error=str(exc)[:500])
+        # Лейбл с ошибкой ищется в следующий раз в любом случае — ключи для этого не нужны.
+        store.set_label_sync_state(candidate.label_id, LABEL_SYNC_ERROR, keys_hash=None, error=str(exc)[:500])
         with lock:
             summary.errors += 1
 
 
-def label_sync_job(job_id: str, retry_not_found: bool, only_label_id: int | None) -> None:
+def label_sync_job(
+    job_id: str, retry_not_found: bool, only_label_id: int | None, recheck_found: bool = False,
+) -> None:
     """Фоновая задача из ``POST /api/v1/jobs/label-sync``."""
     from app.api.deps import context  # noqa: PLC0415 — как у остальных фоновых задач
     from app.services.jobs import finish_job, update_job  # noqa: PLC0415
@@ -327,7 +373,8 @@ def label_sync_job(job_id: str, retry_not_found: bool, only_label_id: int | None
         cache = HttpCache(settings.data_dir / CACHE_FILE)
         resolver = build_resolver(store, settings, http, cache)
         summary = run_label_sync(store, settings, resolver, retry_not_found=retry_not_found,
-                                 only_label_id=only_label_id, progress=progress, cancelled=cancelled)
+                                 only_label_id=only_label_id, recheck_found=recheck_found,
+                                 progress=progress, cancelled=cancelled)
         if not cancelled():
             finish_job(job_id, "completed", summary.message())
     except (LabelSyncUnavailable, ServiceAuthError) as exc:

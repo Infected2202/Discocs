@@ -485,6 +485,7 @@ class LabelSyncRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     retry_not_found: bool = False
+    recheck_found: bool = False
     label_id: int | None = Field(default=None, ge=1)
 
 

@@ -1,14 +1,16 @@
 """Поиск одного лейбла на Beatport и Discogs и сбор его картинки, описания и ссылок.
 
 Лейбл ищется через релизы, а не по названию (по названию Discogs на «Trip» отдаёт чужой TRIP):
-штрихкод → релиз → его лейбл, ISRC → трек → релиз → лейбл (только Beatport). Несколько
-релизов голосуют. Нет ни штрихкодов, ни ISRC — поиск по названию, но кандидат принимается,
-только если у него нашёлся релиз из библиотеки.
+штрихкод → релиз → его лейбл, ISRC → трек → релиз → лейбл (только Beatport). Лейбл релиза
+принимается, только если его название совпадает с нашим (``label_key``): у релиза бывает
+дистрибьютор или цифровой саб-лейбл, а ISRC трека встречается и на чужих сборниках. Нет ни
+штрихкодов, ни ISRC — поиск по названию, но кандидат принимается, только если у него нашёлся
+релиз из библиотеки. Служебные записи Discogs для бутлегов («This is NOT a real label») не
+принимаются никогда.
 """
 from __future__ import annotations
 
 import re
-from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
@@ -20,6 +22,11 @@ BEATPORT_PLACEHOLDER = "cda9862c-cf92-4d13-ac65-7e9277181f51"
 # перебираем до MAX_CODES, но останавливаемся, как только лейбл подтверждён.
 MAX_CODES = 40
 CONFIRM_PAGES = 3
+# Хвосты, которыми одно и то же название различается в тегах и в каталогах.
+_LABEL_SUFFIXES = frozenset({"records", "recordings", "recording", "music", "ltd", "limited", "inc", "label"})
+# Discogs заводит такие записи для бутлегов: «This is [b]NOT[/b] a real label. Use this for all
+# unofficial releases…» — название у них то же, что у настоящего лейбла (с «(2)»).
+_PLACEHOLDER_PROFILE = re.compile(r"\bnot\s+a\s+real\s+label\b", re.I)
 
 
 def norm(text: object) -> str:
@@ -30,6 +37,20 @@ def norm(text: object) -> str:
 def clean_name(name: object) -> str:
     """Discogs: 'Hermeth (2)' → 'Hermeth', 'Nina Kraviz*' → 'Nina Kraviz'."""
     return re.sub(r"\s*\(\d+\)$", "", str(name or "").strip()).rstrip("*").strip()
+
+
+def label_key(name: object) -> str:
+    """Ключ сравнения названий лейблов: без «(2)», пунктуации и хвоста Records/Recordings/Music/Ltd."""
+    words = re.sub(r"[^\w]+", " ", norm(clean_name(name))).split()
+    while len(words) > 1 and words[-1] in _LABEL_SUFFIXES:
+        words.pop()
+    return " ".join(words)
+
+
+def is_placeholder_label(label: dict) -> bool:
+    """Служебная запись Discogs для неофициальных релизов, а не лейбл."""
+    profile = re.sub(r"\[/?[a-z]+\]", "", str(label.get("profile") or ""), flags=re.I)
+    return bool(_PLACEHOLDER_PROFILE.search(profile))
 
 
 def title_key(title: object) -> str:
@@ -47,25 +68,6 @@ def titles_overlap(ours: Sequence[str], theirs: Sequence[str]) -> bool:
 def upc_variants(code: str) -> list[str]:
     bare = code.lstrip("0")
     return list(dict.fromkeys([code, bare, bare.zfill(12), bare.zfill(13)]))
-
-
-class Votes:
-    """Голоса релизов за лейбл; подтверждён — совпало название или два голоса."""
-
-    def __init__(self, name: str):
-        self.name = norm(name)
-        self.counter: Counter[int] = Counter()
-        self.confirmed: int | None = None
-
-    def add(self, label_id: int, label_name: object) -> None:
-        self.counter[label_id] += 1
-        if norm(clean_name(label_name)) == self.name or self.counter[label_id] >= 2:
-            self.confirmed = label_id
-
-    def best(self) -> int | None:
-        if self.confirmed is not None:
-            return self.confirmed
-        return self.counter.most_common(1)[0][0] if self.counter else None
 
 
 @dataclass
@@ -92,34 +94,30 @@ class LabelResolver:
     # ---------- Beatport ----------
 
     def beatport_by_barcodes(self, name: str, codes: Sequence[str]) -> int | None:
-        votes = Votes(name)
+        key = label_key(name)
         for code in codes[:MAX_CODES]:
             for variant in upc_variants(code):
                 results = self.beatport.get("/catalog/releases/", upc=variant).get("results", [])
                 if results:
-                    label = results[0].get("label") or {}
-                    if label.get("id"):
-                        votes.add(int(label["id"]), label.get("name"))
+                    found = _matching_label(key, (release.get("label") or {} for release in results))
+                    if found is not None:
+                        return found
                     break
-            if votes.confirmed is not None:
-                break
-        return votes.best()
+        return None
 
     def beatport_by_isrcs(self, name: str, isrcs: Sequence[str]) -> int | None:
-        votes = Votes(name)
+        key = label_key(name)
         for isrc in isrcs[:MAX_CODES]:
             results = self.beatport.get("/catalog/tracks/", isrc=isrc).get("results", [])
-            if results:
-                label = (results[0].get("release") or {}).get("label") or {}
-                if label.get("id"):
-                    votes.add(int(label["id"]), label.get("name"))
-            if votes.confirmed is not None:
-                break
-        return votes.best()
+            # Один ISRC — на оригинальном релизе и на сборниках других лейблов: ищем свой.
+            found = _matching_label(key, ((track.get("release") or {}).get("label") or {} for track in results))
+            if found is not None:
+                return found
+        return None
 
     def beatport_by_name(self, name: str, titles: Sequence[str]) -> int | None:
         for candidate in self.beatport.search(name, "labels", 10):
-            if norm(candidate.get("name")) != norm(name):
+            if label_key(candidate.get("name")) != label_key(name):
                 continue
             theirs: list[str] = []
             for page in range(1, CONFIRM_PAGES + 1):
@@ -134,25 +132,22 @@ class LabelResolver:
     # ---------- Discogs ----------
 
     def discogs_by_barcodes(self, name: str, codes: Sequence[str]) -> int | None:
-        votes = Votes(name)
+        key = label_key(name)
         for code in codes[:MAX_CODES]:
             results = self.discogs.get("/database/search", barcode=code, type="release", per_page=5).get("results", [])
             if not results:
                 continue
             release = self.discogs.get(f"/releases/{results[0]['id']}")
-            labels = [entry for entry in release.get("labels", []) if entry.get("id")]
-            # У релиза бывает несколько лейблов (и дистрибьютор) — берём совпавший, иначе первый.
-            same = [entry for entry in labels if norm(clean_name(entry.get("name"))) == norm(name)]
-            for entry in (same or labels)[:1]:
-                votes.add(int(entry["id"]), entry.get("name"))
-            if votes.confirmed is not None:
-                break
-        return votes.best()
+            # У релиза бывает несколько лейблов (и дистрибьютор) — берём только совпавший по названию.
+            for entry in release.get("labels", []):
+                if entry.get("id") and label_key(entry.get("name")) == key and self._discogs_real(entry["id"]):
+                    return int(entry["id"])
+        return None
 
     def discogs_by_name(self, name: str, titles: Sequence[str]) -> int | None:
         results = self.discogs.get("/database/search", q=name, type="label", per_page=10).get("results", [])
         for candidate in results:
-            if norm(clean_name(candidate.get("title"))) != norm(name):
+            if label_key(candidate.get("title")) != label_key(name) or not self._discogs_real(candidate["id"]):
                 continue
             theirs: list[str] = []
             for page in range(1, CONFIRM_PAGES + 1):
@@ -162,6 +157,22 @@ class LabelResolver:
                     break
             if titles_overlap(titles, theirs):
                 return int(candidate["id"])
+        return None
+
+    def _discogs_real(self, label_id: object) -> bool:
+        return not is_placeholder_label(self.discogs.get(f"/labels/{label_id}"))
+
+    def mismatch(self, name: str, beatport_id: object, discogs_id: object) -> str | None:
+        """Какая из уже сохранённых привязок неверна: служебная запись Discogs или чужое название."""
+        key = label_key(name)
+        if discogs_id:
+            dc = self.discogs.get(f"/labels/{discogs_id}")
+            if dc and (is_placeholder_label(dc) or label_key(dc.get("name")) != key):
+                return "discogs"
+        if beatport_id:
+            bp = self.beatport.label(int(str(beatport_id)))
+            if bp and label_key(bp.get("name")) != key:
+                return "beatport"
         return None
 
     # ---------- описание ----------
@@ -267,6 +278,13 @@ _DISCOGS_NAMED = re.compile(r"\[(a|l)=([^\]]+)\]", re.I)
 _DISCOGS_URL = re.compile(r"\[url=([^\]]+)\](.*?)\[/url\]", re.I | re.S)
 _DISCOGS_BARE_URL = re.compile(r"\[url\](.*?)\[/url\]", re.I | re.S)
 _DISCOGS_TAGS = re.compile(r"\[/?(?:b|i|u|s)\]|\[g[^\]]*\]", re.I)
+
+
+def _matching_label(key: str, labels) -> int | None:
+    for label in labels:
+        if label.get("id") and label_key(label.get("name")) == key:
+            return int(label["id"])
+    return None
 
 
 def _beatport_image_url(label: dict) -> str | None:

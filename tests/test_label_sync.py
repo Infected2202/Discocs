@@ -23,7 +23,13 @@ from app.services.jobs import JobStatus, has_active_job
 from app.services.label_sync.clients import BeatportClient, ServiceAuthError
 from app.services.label_sync.http_cache import HttpCache
 from app.services.label_sync.job import LabelKeys, LabelSyncSummary, labels_to_sync, label_keys, run_label_sync
-from app.services.label_sync.resolver import LabelResolver, LabelResult, titles_overlap
+from app.services.label_sync.resolver import (
+    LabelResolver,
+    LabelResult,
+    is_placeholder_label,
+    label_key,
+    titles_overlap,
+)
 from app.services.label_sync.tags import _tag_values
 from app.state import JOBS, JOBS_LOCK
 from app.store import INITIALIZED_DB_PATHS, Store
@@ -236,6 +242,67 @@ def test_name_search_needs_a_release_from_the_library_and_placeholder_is_not_an_
     assert (result.description, result.description_source) == ("Moscow label of [a=Nina Kraviz].", "discogs")
 
 
+def test_label_names_compare_without_disambiguation_and_suffix_and_bootleg_placeholders_are_recognised():
+    assert label_key("Warner Bros. Records (2)") == label_key("Warner Bros.") == "warner bros"
+    assert label_key("Mute Records Ltd.") == label_key("Mute")
+    assert label_key("Harthouse Digital") != label_key("Harthouse")
+    assert label_key("Records") == "records"  # от названия из одного хвоста что-то остаётся
+    assert is_placeholder_label({"profile": "This is [b][u]NOT[/u][/b] a real label. Use this for all unofficial releases"})
+    assert not is_placeholder_label({"profile": "Texas Drum & Bass label originally established in 2000."})
+
+
+def test_release_label_with_another_name_or_a_bootleg_placeholder_is_not_accepted():
+    beatport = FakeApi({})
+    discogs = FakeApi({
+        # Релиз Warm Communications числится только за дистрибьютором — это не наш лейбл.
+        "/database/search?barcode=111&per_page=5&type=release": {"results": [{"id": 1}]},
+        "/releases/1": {"labels": [{"id": 276637, "name": "PRSPCT Recordings"}]},
+        # Совпало по названию, но это служебная запись для бутлегов — тоже нет.
+        "/database/search?barcode=222&per_page=5&type=release": {"results": [{"id": 2}]},
+        "/releases/2": {"labels": [{"id": 132296, "name": "Warm Communications (2)"}]},
+        "/labels/132296": {"name": "Warm Communications (2)", "profile": "This is [b]NOT[/b] a real label."},
+        "/database/search?per_page=10&q=Warm Communications&type=label": {
+            "results": [{"id": 132296, "title": "Warm Communications (2)"}, {"id": 9672, "title": "Warm Communications"}],
+        },
+        "/labels/9672": {"name": "Warm Communications", "profile": "Texas Drum & Bass label."},
+        "/labels/9672/releases?page=1&per_page=100": {"releases": [{"title": "Shades Of Me & You"}], "pagination": {"pages": 1}},
+    })
+    resolver = LabelResolver(beatport, discogs, FakeWeb({}))
+
+    assert resolver.discogs_by_barcodes("Warm Communications", ["111", "222"]) is None
+    assert resolver.discogs_by_name("Warm Communications", ["Shades Of Me & You"]) == 9672
+    assert "/labels/132296/releases?page=1&per_page=100" not in discogs.calls  # заглушку даже не проверяли по релизам
+
+
+def test_isrc_finds_the_own_label_among_compilations_of_other_labels():
+    beatport = FakeApi({
+        "/catalog/tracks/?isrc=GB0000000001": {"results": [
+            {"release": {"label": {"id": 5, "name": "Hospital Records Compilations"}}},
+            {"release": {"label": {"id": 7, "name": "Warm Communications"}}},
+        ]},
+        "/catalog/tracks/?isrc=GB0000000002": {"results": [{"release": {"label": {"id": 5, "name": "Some Compilation"}}}]},
+    })
+    resolver = LabelResolver(beatport, FakeApi({}), FakeWeb({}))
+
+    assert resolver.beatport_by_isrcs("Warm Communications", ["GB0000000001"]) == 7
+    # Раньше два чужих голоса подтверждали чужой лейбл — теперь чужое название не принимается вовсе.
+    assert resolver.beatport_by_isrcs("Warm Communications", ["GB0000000002", "GB0000000002"]) is None
+
+
+def test_saved_match_is_wrong_for_a_placeholder_or_another_name():
+    discogs = FakeApi({
+        "/labels/132296": {"name": "Warner Bros. Records (2)", "profile": "This is NOT a real label."},
+        "/labels/276637": {"name": "PRSPCT Recordings", "profile": "Rotterdam based record label."},
+        "/labels/9672": {"name": "Warm Communications", "profile": "Texas Drum & Bass label."},
+    })
+    beatport = FakeApi({"/catalog/labels/8559/": {"name": "Warm Communications"}})
+    resolver = LabelResolver(beatport, discogs, FakeWeb({}))
+
+    assert resolver.mismatch("Warner Bros. Records", None, "132296") == "discogs"
+    assert resolver.mismatch("Warm Communications", "8559", "276637") == "discogs"
+    assert resolver.mismatch("Warm Communications", "8559", "9672") is None
+
+
 def test_release_titles_compare_without_brackets_and_ep_suffix():
     assert titles_overlap(["Amiga"], ["Amiga EP"])
     assert titles_overlap(["Hot Steel: Round 2"], ["Hot Steel - Round 2 (Remastered)"])
@@ -251,6 +318,12 @@ class ScriptedResolver:
         self.results = results
         self.web = FakeWeb({"download:https://img/logo.png": png()})
         self.calls: list[str] = []
+        self.wrong: dict[str, str] = {}
+        self.checked: list[tuple[str, object, object]] = []
+
+    def mismatch(self, name, beatport_id, discogs_id):
+        self.checked.append((name, beatport_id, discogs_id))
+        return self.wrong.get(name)
 
     def resolve(self, name, barcodes, isrcs, release_titles):
         self.calls.append(name)
@@ -323,6 +396,64 @@ def test_run_saves_found_labels_remembers_misses_and_skips_them_next_time(tmp_pa
     add_track(store, tmp_path, "B2", 1, label="Missing", isrc="GBNEW0000001")
     run_label_sync(store, settings, resolver, workers=1, read=lambda path: None)
     assert resolver.calls == ["Missing"]
+
+
+def test_recheck_looks_up_again_only_wrong_matches_and_drops_their_old_image(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path, "A", 1, label="Good")
+    add_track(store, tmp_path, "B", 1, label="Warm")
+    from app.config import Settings
+    settings = Settings.from_env()
+    resolver = ScriptedResolver({
+        "Good": LabelResult(image_url="https://img/logo.png", image_source="beatport",
+                            external_ids={"beatport": "1"}),
+        "Warm": LabelResult(image_url="https://img/logo.png", image_source="discogs",
+                            description="Rotterdam based label.", description_source="discogs",
+                            links=[{"url": "https://prspct.nl"}], external_ids={"discogs": "276637"}),
+    })
+    run_label_sync(store, settings, resolver, workers=1, read=lambda path: None)
+    warm_id = store.label_id_by_name("Warm")
+
+    resolver.calls.clear()
+    resolver.wrong = {"Warm": "discogs"}
+    resolver.results["Warm"] = LabelResult(links=[{"url": "https://warmcommunications.bandcamp.com/"}],
+                                           external_ids={"discogs": "9672"})
+    summary = run_label_sync(store, settings, resolver, recheck_found=True, workers=1, read=lambda path: None)
+
+    assert sorted(name for name, *_ in resolver.checked) == ["Good", "Warm"]
+    assert ("Warm", None, "276637") in resolver.checked
+    assert resolver.calls == ["Warm"]  # верную привязку заново не ищем
+    assert (summary.checked, summary.mismatched, summary.found) == (2, 1, 1)
+    assert summary.message().endswith("wrong matches looked up again 1")
+    warm = store.get_label(warm_id)
+    assert warm.external_ids == {"discogs": "9672"}
+    assert [link["url"] for link in warm.links] == ["https://warmcommunications.bandcamp.com/"]
+    assert warm.image_path is None and warm.description is None  # картинка и текст PRSPCT не остались
+    assert label_state(store, "Warm") == ("found", "9672")
+    assert store.get_label(store.label_id_by_name("Good")).image_path is not None
+
+
+def test_recheck_keeps_a_hand_written_description_and_forgets_a_match_that_is_not_found_again(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_track(store, tmp_path, "A", 1, label="Warner")
+    from app.config import Settings
+    settings = Settings.from_env()
+    resolver = ScriptedResolver({"Warner": LabelResult(
+        image_url="https://img/logo.png", image_source="discogs", links=[{"url": "https://bootleg.example"}],
+        external_ids={"discogs": "132296"},
+    )})
+    run_label_sync(store, settings, resolver, workers=1, read=lambda path: None)
+    label_id = store.label_id_by_name("Warner")
+    store.set_label_description(label_id, "Написано вручную.")
+
+    resolver.wrong = {"Warner": "discogs"}
+    resolver.results["Warner"] = LabelResult()
+    run_label_sync(store, settings, resolver, recheck_found=True, workers=1, read=lambda path: None)
+
+    label = store.get_label(label_id)
+    assert (label.description, label.description_source) == ("Написано вручную.", "editorial")
+    assert label.links == [] and label.external_ids == {} and label.image_path is None
+    assert label_state(store, "Warner") == ("not_found", None)
 
 
 def test_expired_beatport_login_stops_the_whole_run(tmp_path, monkeypatch):

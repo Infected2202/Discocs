@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from app.models import utc_now
+from app.store.labels import EDITORIAL_SOURCE
 
 _CHUNK = 500
 
@@ -182,6 +183,42 @@ class LabelSyncStoreMixin:
         for candidate in self.label_sync_candidates():
             counts[candidate.status or "pending"] = counts.get(candidate.status or "pending", 0) + 1
         return counts
+
+    def label_external_ids(self, label_ids: Iterable[int]) -> dict[int, dict[str, str]]:
+        """Сохранённые привязки лейблов к Beatport/Discogs (``labels.external_ids_json``)."""
+        ids = list(dict.fromkeys(int(i) for i in label_ids))
+        out: dict[int, dict[str, str]] = {}
+        with self.connect() as conn:  # type: ignore[attr-defined]
+            for start in range(0, len(ids), _CHUNK):
+                chunk = ids[start:start + _CHUNK]
+                rows = conn.execute(
+                    f"SELECT id, external_ids_json FROM labels WHERE id IN ({','.join('?' * len(chunk))})", chunk,
+                ).fetchall()
+                for label_id, raw in rows:
+                    try:
+                        value = json.loads(raw or "{}")
+                    except ValueError:
+                        value = {}
+                    out[int(label_id)] = {str(k): str(v) for k, v in value.items()} if isinstance(value, dict) else {}
+        return out
+
+    def clear_label_match(self, label_id: int) -> None:
+        """Забыть неверную привязку: ссылки, внешние id, картинку и описание (кроме написанного вручную)."""
+        with self.connect() as conn:  # type: ignore[attr-defined]
+            conn.execute(
+                """
+                UPDATE labels
+                SET links_json = '[]', external_ids_json = '{}', image_path = NULL, image_source = NULL,
+                    description = CASE WHEN description_source = ? THEN description END,
+                    description_source = CASE WHEN description_source = ? THEN description_source END,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (EDITORIAL_SOURCE, EDITORIAL_SOURCE, utc_now(), label_id),
+            )
+            conn.execute(
+                "UPDATE label_sync_state SET beatport_id = NULL, discogs_id = NULL WHERE label_id = ?", (label_id,),
+            )
 
     def label_sync_not_found(self, limit: int = 200) -> list[str]:
         with self.connect() as conn:  # type: ignore[attr-defined]

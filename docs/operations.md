@@ -194,11 +194,20 @@ Operations -> Labels -> Sync labels
   `DISCOCS_SERVICE_TOKEN`; rotating that token means signing in again.
 - **What a run looks up** — new labels, labels that failed, and not-found
   labels whose barcodes/ISRCs changed (new releases). Found labels are
-  skipped. "Retry not found" looks up every not-found label again.
+  skipped. "Retry not found" looks up every not-found label again. "Recheck
+  found" checks the Beatport/Discogs label each found label points to and looks
+  up again only the wrong ones: a Discogs bootleg placeholder ("This is NOT a
+  real label") or a label whose name differs from ours. A wrong match loses its
+  links, ids, image and synced description first, so nothing wrong stays if the
+  label is not found again; hand-written descriptions are kept.
 - **How** — a label is found through its releases, not its name: the
   BARCODE/UPC tag of the files (backend reads them from `/music`, the same
   path Navidrome reports) → release on Beatport/Discogs → its label; the ISRC
-  from Navidrome → track on Beatport → release → label. Only without either
+  from Navidrome → track on Beatport → release → label. A release's label is
+  accepted only when its name matches ours (ignoring "(2)", punctuation and a
+  trailing Records/Recordings/Music/Ltd): a release can also list a distributor
+  or a digital sub-label, and an ISRC also turns up on other labels'
+  compilations. Discogs bootleg placeholders are never accepted. Only without either
   does it search by name, accepting a candidate only if one of its releases is
   in the library. Description: ru Wikipedia → en Wikipedia (Wikidata by the
   Discogs label id) → Discogs profile → Beatport bio. Hand-written
