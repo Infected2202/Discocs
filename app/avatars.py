@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.store import Store
 
-AVATAR_KEYS: tuple[str, ...] = ("a01", "a02", "a03", "a04", "a05", "a06")
+AVATAR_KEYS: tuple[str, ...] = tuple(f"a{index:02d}" for index in range(1, 20))  # a01…a19
 AVATAR_SETTING_KEY = "avatar"
 
 

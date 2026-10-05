@@ -159,7 +159,7 @@ Navidrome, без ссылки. Navidrome недоступен → `now_playing:
 
 ### 2.4 Аватары
 
-- Файлы — `ui/src/assets/avatars/<key>.webp` (Vite-ассеты), ключи `a01…a06`
+- Файлы — `ui/src/assets/avatars/<key>.webp` (Vite-ассеты), ключи `a01…a19`
   (6 картинок от Сани, ужаты до 512×512 WebP, уже лежат в репо).
 - Бэкенд: whitelist ключей в одном модуле (`app/avatars.py`); тест сверяет, что
   у каждого ключа есть файл в `ui/src/assets/avatars/`.
