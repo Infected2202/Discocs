@@ -353,6 +353,7 @@ from app.api import (  # noqa: E402
     map as _api_map,
     shares as _api_shares,
     social as _api_social,
+    telegram as _api_telegram,
     timeline as _api_timeline,
     users as _api_users,
 )
@@ -382,6 +383,7 @@ app.include_router(_api_shares.router)
 app.include_router(_api_timeline.router)
 app.include_router(_api_users.router)
 app.include_router(_api_social.router)
+app.include_router(_api_telegram.router)
 
 
 

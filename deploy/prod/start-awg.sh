@@ -117,6 +117,9 @@ if command -v iptables >/dev/null 2>&1; then
   iptables -A "$CHAIN" -i "$DEV" -s 192.168.1.0/24 -p tcp --dport 8532 -j ACCEPT
   [ -n "$GW" ] && iptables -A "$CHAIN" -i "$DEV" -s "$GW/32" -p tcp --dport 8532 -j ACCEPT
   iptables -A "$CHAIN" -p tcp --dport 8532 -j DROP
+  # Внутренний HTTP бота (BOT_INTERNAL_PORT в docker-compose.yml) — только для
+  # backend'а из compose-сети; со стороны туннеля его не должно быть видно.
+  iptables -A "$CHAIN" -i "$IF" -p tcp --dport 8090 -j DROP
   iptables -A "$CHAIN" -j RETURN
 else
   echo "WARN: iptables not found"

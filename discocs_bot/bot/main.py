@@ -21,6 +21,7 @@ from bot.services.delivery import DeliveryService
 from bot.services.discocs import DiscocsClient
 from bot.services.external_audio import LinkAudioService
 from bot.services.external_delivery import ExternalDeliveryService
+from bot.services.internal_api import InternalApiDeps, InternalApiServer, build_internal_app
 from bot.services.media_cache import MediaCache
 from bot.services.navidrome import NavidromeClient
 from bot.services.transcoder import Transcoder
@@ -160,6 +161,36 @@ def _arm_shutdown_guard(seconds: float = SHUTDOWN_GUARD_SECONDS) -> threading.Ti
     return timer
 
 
+async def _start_internal_api(application: Application) -> InternalApiServer | None:
+    """Поднять внутренний HTTP для backend'а; без service token — не поднимать.
+
+    Ошибка старта (порт занят и т.п.) не валит бота: поиск и отправка из чата
+    важнее, чем «отправить из веба».
+    """
+    settings = application.bot_data["settings"]
+    if not settings.discocs_service_token:
+        logger.warning("DISCOCS_SERVICE_TOKEN is empty: internal API disabled")
+        return None
+    deps = InternalApiDeps(
+        bot=application.bot,
+        navidrome=application.bot_data["navidrome"],
+        delivery=application.bot_data["delivery"],
+        temp_dir=settings.temp_dir,
+        spawn=application.create_task,
+    )
+    server = InternalApiServer(
+        build_internal_app(deps, settings.discocs_service_token),
+        host=settings.internal_api_host,
+        port=settings.internal_api_port,
+    )
+    try:
+        await server.start()
+    except OSError:
+        logger.exception("Internal API failed to start")
+        return None
+    return server
+
+
 async def _run_bot() -> bool:
     """Крутит бота. True — выходим ради перезапуска супервизором."""
     settings = get_settings()
@@ -169,6 +200,7 @@ async def _run_bot() -> bool:
     await _post_init(application)
     await application.start()
     await application.updater.start_polling(drop_pending_updates=True)
+    internal_api = await _start_internal_api(application)
     logger.info("Bot is running. Ctrl+C to stop (or stop.bat if it hangs).")
 
     dead = asyncio.Event()
@@ -189,6 +221,9 @@ async def _run_bot() -> bool:
         watchdog_task.cancel()
         with contextlib.suppress(Exception, asyncio.CancelledError):
             await watchdog_task
+        if internal_api is not None:
+            with contextlib.suppress(Exception):
+                await internal_api.stop()
         await _shutdown(application)
         release(settings.sqlite_path.parent)
         if guard is not None:

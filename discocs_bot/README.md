@@ -69,6 +69,15 @@ run.bat
 бот покажет его карточку вместо скачивания. Подробности и переменные окружения:
 [docs/external-links.md](../docs/external-links.md).
 
+## Привязка к discocs и «Отправить в Telegram»
+
+`/start link_<token>` — вторая половина привязки аккаунта по deep link из
+настроек discocs. Для backend'а бот поднимает внутренний HTTP
+(`bot/services/internal_api.py`, порт `BOT_INTERNAL_PORT`, по умолчанию 8090):
+через него веб отправляет трек или карточку релиза в личный чат. Сервер
+поднимается только при заданном `DISCOCS_SERVICE_TOKEN`. Подробности:
+[docs/telegram.md](../docs/telegram.md).
+
 ## Discocs API
 
 Бот использует тот же контракт, что и Navidrome-плагин Discocs:

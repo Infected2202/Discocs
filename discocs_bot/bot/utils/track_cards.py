@@ -5,10 +5,10 @@ from pathlib import Path
 from telegram import Bot, InputFile, InputMediaPhoto, Message
 from telegram.error import BadRequest, NetworkError, TimedOut
 
-from bot.keyboards.track import track_keyboard
+from bot.keyboards.track import album_card_keyboard, track_keyboard
 from bot.services.navidrome import NavidromeClient
-from bot.storage.models import Track
-from bot.utils.cover import download_track_cover
+from bot.storage.models import Album, Track
+from bot.utils.cover import download_track_cover, placeholder_cover_path
 
 logger = logging.getLogger(__name__)
 
@@ -185,3 +185,56 @@ async def reply_track_card(
         keyboard=keyboard,
         caption_prefix=caption_prefix,
     )
+
+
+def album_card_caption(album: Album) -> str:
+    lines = [f"📀 {album.artist} — {album.title}"]
+    if album.year:
+        lines.append(f"Год: {album.year}")
+    if album.track_count:
+        lines.append(f"Треков: {album.track_count}")
+    return "\n".join(lines)
+
+
+async def send_album_card(
+    bot: Bot,
+    chat_id: int,
+    album: Album,
+    *,
+    navidrome: NavidromeClient,
+    temp_dir: Path,
+    open_url: str | None = None,
+) -> Message:
+    """Карточка релиза: обложка, подпись и кнопки «Отправить все треки» / «Открыть».
+
+    Telegram отказывает URL-кнопкам с адресами, которые считает невалидными
+    (localhost, голый IP без DISCOCS_PUBLIC_URL) — тогда карточка уходит без
+    «Открыть», а не не уходит вовсе.
+    """
+    cover_path = placeholder_cover_path()
+    own_cover = False
+    if album.cover_art_id:
+        candidate = temp_dir / f"card_album_{album.id}.cover.jpg"
+        if await navidrome.download_cover_art(album.cover_art_id, candidate, size=None):
+            cover_path, own_cover = candidate, True
+
+    async def send(keyboard) -> Message:
+        with cover_path.open("rb") as cover_file:
+            return await bot.send_photo(
+                chat_id=chat_id,
+                photo=InputFile(cover_file, filename=COVER_FILENAME),
+                caption=album_card_caption(album),
+                reply_markup=keyboard,
+            )
+
+    try:
+        try:
+            return await send(album_card_keyboard(album.id, open_url))
+        except BadRequest as exc:
+            if not open_url or "url" not in str(exc).lower():
+                raise
+            logger.warning("Telegram rejected open_url %r: %s", open_url, exc)
+            return await send(album_card_keyboard(album.id))
+    finally:
+        if own_cover:
+            cover_path.unlink(missing_ok=True)

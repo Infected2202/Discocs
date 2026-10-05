@@ -58,5 +58,13 @@
       "expired": "Expired",
       "revoked": "Revoked"
     }
+  },
+  "telegram": {
+    "send": "Send to Telegram",
+    "sent": "Sent to Telegram",
+    "sendError": "Could not send to Telegram.",
+    "chatUnavailable": "The bot cannot message you. Open the chat with the bot and press Start.",
+    "botUnavailable": "The Telegram bot is unavailable right now.",
+    "notInNavidrome": "This can't be sent to Telegram: it is not in Navidrome."
   }
 }

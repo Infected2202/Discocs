@@ -14,6 +14,10 @@ sys.modules.pop("bot", None)
 from bot import main as bot_main
 
 
+async def _no_internal_api(_application) -> None:
+    return None
+
+
 async def _never_answers() -> None:
     """Проба сторожа, которая не возвращается — как при мёртвом туннеле."""
     await asyncio.Event().wait()
@@ -64,6 +68,7 @@ def test_run_bot_reraises_cancelled_error_after_cleanup(monkeypatch: pytest.Monk
     monkeypatch.setattr(bot_main, "release", lambda path: events.append(f"release:{path}"))
     monkeypatch.setattr(bot_main, "build_application", lambda: FakeApplication())
     monkeypatch.setattr(bot_main, "_post_init", fake_post_init)
+    monkeypatch.setattr(bot_main, "_start_internal_api", _no_internal_api)
     monkeypatch.setattr(bot_main, "_shutdown", fake_shutdown)
 
     async def run_and_cancel() -> None:
@@ -134,6 +139,7 @@ def test_run_bot_exits_for_restart_when_watchdog_gives_up(monkeypatch: pytest.Mo
     monkeypatch.setattr(bot_main, "release", lambda path: events.append("release"))
     monkeypatch.setattr(bot_main, "build_application", lambda: FakeApplication())
     monkeypatch.setattr(bot_main, "_post_init", fake_post_init)
+    monkeypatch.setattr(bot_main, "_start_internal_api", _no_internal_api)
     monkeypatch.setattr(bot_main, "_shutdown", fake_shutdown)
     monkeypatch.setattr(bot_main, "_arm_shutdown_guard", fake_guard)
 

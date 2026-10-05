@@ -26,6 +26,7 @@ from app.store.sessions import SessionsStoreMixin
 from app.store.users import UsersStoreMixin
 from app.store.settings import SettingsStoreMixin
 from app.store.shares import SharesStoreMixin
+from app.store.telegram import TelegramStoreMixin
 from app.store.timeline import TimelineStoreMixin
 from app.store.listens import ListensStoreMixin, backfill_listens_from_events  # noqa: F401
 from app.store.user_merge import USERNAME_NOCASE_INDEX, merge_case_variant_users  # noqa: F401
@@ -130,6 +131,7 @@ class Store(
     UsersStoreMixin,
     SettingsStoreMixin,
     SharesStoreMixin,
+    TelegramStoreMixin,
     TimelineStoreMixin,
     ListensStoreMixin,
 ):

@@ -134,6 +134,32 @@ class SharingSettings:
 
 
 @dataclass(frozen=True)
+class TelegramSettings:
+    """Telegram bot integration (docs/telegram.md).
+
+    ``bot_url`` is the bot's internal HTTP endpoint, reachable only inside the
+    compose network; empty disables linking and sending. Both directions
+    authenticate with the shared ``DISCOCS_SERVICE_TOKEN``.
+    """
+
+    bot_url: str = ""
+    link_ttl_minutes: int = 10
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.bot_url)
+
+    @classmethod
+    def from_env(cls) -> "TelegramSettings":
+        return cls(
+            bot_url=os.getenv("DISCOCS_BOT_URL", "").strip().rstrip("/"),
+            link_ttl_minutes=_positive_int(
+                os.getenv("DISCOCS_TELEGRAM_LINK_TTL_MINUTES"), 10
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class Settings:
     data_dir: Path
     db_path: Path
@@ -143,6 +169,7 @@ class Settings:
     navidrome: NavidromeSettings = field(default_factory=NavidromeSettings)
     auth: AuthSettings = field(default_factory=AuthSettings)
     sharing: SharingSettings = field(default_factory=SharingSettings)
+    telegram: TelegramSettings = field(default_factory=TelegramSettings)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -160,6 +187,7 @@ class Settings:
             navidrome=NavidromeSettings.from_env(data_dir),
             auth=AuthSettings.from_env(),
             sharing=SharingSettings.from_env(),
+            telegram=TelegramSettings.from_env(),
         )
 
     def model_path(self, model_name: str | None = None) -> Path:

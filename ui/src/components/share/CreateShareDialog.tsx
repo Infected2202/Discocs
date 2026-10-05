@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Check, Copy, Loader2 } from "lucide-react"
+import { Check, Copy, Loader2, Send } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { useVisualViewportFit } from "@/hooks/useVisualViewportFit"
@@ -11,7 +11,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { ApiError } from "@/api/client"
 import { createShare, type ShareSourceType } from "@/api/shares"
+import { sendToTelegram, useTelegramLink } from "@/api/telegram"
 
 interface CreateShareDialogProps {
   readonly open: boolean
@@ -22,6 +24,13 @@ interface CreateShareDialogProps {
 }
 
 const TTL_OPTIONS = [24, 168, 720, 8760] as const
+
+// Backend error codes of POST /api/v1/telegram/send with a message of their own.
+const TELEGRAM_ERROR_KEYS: Record<string, string> = {
+  telegram_chat_unavailable: "telegram.chatUnavailable",
+  telegram_bot_unavailable: "telegram.botUnavailable",
+  not_in_navidrome: "telegram.notInNavidrome",
+}
 
 export default function CreateShareDialog({
   open,
@@ -175,6 +184,7 @@ export default function CreateShareDialog({
         )}
 
         <DialogFooter>
+          <TelegramSendButton sourceType={sourceType} sourceId={sourceId} />
           {!url && (
             <Button onClick={submit} disabled={pending || (ttl === "never" && !confirmNever)}>
               {pending && <Loader2 size={14} className="animate-spin" />}
@@ -184,5 +194,47 @@ export default function CreateShareDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * Sends the source to the user's own chat with the bot, independently of the
+ * public link. Lives inside the dialog content, so the link status is only
+ * queried once the dialog is actually open (TrackMenu keeps it mounted).
+ */
+function TelegramSendButton({ sourceType, sourceId }: { sourceType: ShareSourceType; sourceId: number }) {
+  const { t } = useTranslation("share")
+  const telegram = useTelegramLink()
+  const [state, setState] = useState<"idle" | "pending" | "sent">("idle")
+  const [error, setError] = useState<string | null>(null)
+
+  if (!telegram.data?.linked) return null
+
+  async function send() {
+    setState("pending")
+    setError(null)
+    try {
+      await sendToTelegram({ source_type: sourceType, source_id: sourceId })
+      setState("sent")
+    } catch (err) {
+      const key = err instanceof ApiError ? TELEGRAM_ERROR_KEYS[err.code] : undefined
+      setError(t(key ?? "telegram.sendError"))
+      setState("idle")
+    }
+  }
+
+  const icon = {
+    idle: <Send size={14} />,
+    pending: <Loader2 size={14} className="animate-spin" />,
+    sent: <Check size={14} />,
+  }[state]
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Button type="button" variant="outline" onClick={send} disabled={state !== "idle"}>
+        {icon}
+        {state === "sent" ? t("telegram.sent") : t("telegram.send")}
+      </Button>
+      {error && <p className="max-w-xs text-xs text-destructive">{error}</p>}
+    </div>
   )
 }

@@ -1023,6 +1023,25 @@ class StoreBase:
                 CREATE INDEX IF NOT EXISTS idx_share_items_track
                     ON share_items(track_id);
 
+                -- Telegram bot linking (docs/telegram.md). One Telegram account
+                -- per user and one user per Telegram account. Link tokens are
+                -- one-shot deep-link payloads; only their SHA-256 is stored.
+                CREATE TABLE IF NOT EXISTS telegram_links (
+                    user_id INTEGER PRIMARY KEY,
+                    telegram_user_id INTEGER NOT NULL UNIQUE,
+                    telegram_username TEXT,
+                    linked_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS telegram_link_tokens (
+                    token_hash TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+
                 -- Collection map / embedding atlas. A projection is a persisted
                 -- snapshot of 2D coordinates for one embedding model; multiple
                 -- projections per model are allowed. This is a diagnostic view

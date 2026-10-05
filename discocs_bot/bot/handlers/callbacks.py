@@ -11,6 +11,12 @@ from bot.services.navidrome import NavidromeError
 from bot.services.transcoder import TranscodeError
 from bot.storage.models import utc_now_iso
 from bot.utils.access import deny_if_not_allowed
+from bot.utils.loading_delivery import (
+    ERROR_DETAIL_LIMIT,
+    LOADING_CAPTION,
+    NAVIDROME_UNAVAILABLE,
+    deliver_into_loading_card,
+)
 from bot.utils.telegram_retry import telegram_retry
 from bot.keyboards.track import track_keyboard
 from bot.utils.track_cards import edit_track_card, send_track_loading_card, track_card_caption
@@ -27,10 +33,6 @@ from bot.utils.track_pages import (
 
 logger = logging.getLogger(__name__)
 
-LOADING_CAPTION = "⏳ Готовлю..."
-ERROR_DETAIL_LIMIT = 600
-NAVIDROME_UNAVAILABLE = "Navidrome сейчас недоступен."
-
 
 async def _safe_edit_text(message, text: str) -> None:
     try:
@@ -42,16 +44,6 @@ async def _safe_edit_text(message, text: str) -> None:
         logger.debug("Could not edit status message")
     except (TimedOut, NetworkError):
         logger.warning("Could not edit status message after retries")
-
-
-async def _safe_edit_loading_message(message, text: str) -> None:
-    try:
-        if message.photo:
-            await message.edit_caption(caption=text[:ERROR_DETAIL_LIMIT])
-        else:
-            await message.edit_text(text=text[:ERROR_DETAIL_LIMIT])
-    except BadRequest:
-        logger.debug("Could not edit loading message %s", message.message_id)
 
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -216,30 +208,13 @@ async def _handle_get(update: Update, context: ContextTypes.DEFAULT_TYPE, song_i
         await message.reply_text("Не удалось создать сообщение загрузки.")
         return
 
-    try:
-        await delivery.deliver_track_to_message(
-            context.bot,
-            chat_id=loading.chat_id,
-            message_id=loading.message_id,
-            song_id=song_id,
-            user_id=user.id if user else None,
-        )
-    except NavidromeError:
-        await _safe_edit_loading_message(loading, NAVIDROME_UNAVAILABLE)
-    except TranscodeError as exc:
-        if str(exc) == "file_too_large":
-            await _safe_edit_loading_message(
-                loading,
-                "Файл слишком большой для отправки в Telegram.",
-            )
-        elif str(exc) in ("telegram_replace_failed", "telegram_upload_failed"):
-            await _safe_edit_loading_message(loading, "Не удалось заменить сообщение загрузки на аудио.")
-        else:
-            logger.exception("deliver_track_to_message failed: %s", exc)
-            await _safe_edit_loading_message(loading, "Не удалось подготовить аудио.")
-    except Exception:
-        logger.exception("deliver_track_to_message failed for song_id=%s", song_id)
-        await _safe_edit_loading_message(loading, "Не удалось получить трек.")
+    await deliver_into_loading_card(
+        context.bot,
+        delivery,
+        loading,
+        song_id,
+        user_id=user.id if user else None,
+    )
 
 
 async def _handle_album(update: Update, context: ContextTypes.DEFAULT_TYPE, album_id: str) -> None:

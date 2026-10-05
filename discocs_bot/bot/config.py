@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     # Machine-principal token for the discocs access gate. Only sent when set;
     # empty keeps current behaviour while the gate is off.
     discocs_service_token: str = Field(default="", alias="DISCOCS_SERVICE_TOKEN")
+    # Внутренний HTTP для backend'а («отправить в Telegram», привязка — см.
+    # docs/telegram.md). Без DISCOCS_SERVICE_TOKEN не поднимается.
+    internal_api_host: str = Field(default="0.0.0.0", alias="BOT_INTERNAL_HOST")
+    internal_api_port: int = Field(default=8090, alias="BOT_INTERNAL_PORT")
 
     sqlite_path: Path = Field(default=Path("data/bot.sqlite"), alias="SQLITE_PATH")
     temp_dir: Path = Field(default=Path("data/tmp"), alias="TEMP_DIR")

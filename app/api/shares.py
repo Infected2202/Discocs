@@ -238,7 +238,8 @@ def _management_dict(store: object, share: Share) -> dict[str, object]:
     }
 
 
-def _public_url(request: Request, token: str) -> str:
+def public_origin(request: Request) -> str:
+    """Browser-facing origin for links that leave the app (share, Telegram)."""
     configured = os.getenv("DISCOCS_PUBLIC_URL", "").strip().rstrip("/")
     forwarded_proto = (
         request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
@@ -253,8 +254,11 @@ def _public_url(request: Request, token: str) -> str:
         and re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", forwarded_host)
     ):
         forwarded_origin = f"{forwarded_proto}://{forwarded_host}"
-    base = configured or forwarded_origin or str(request.base_url).rstrip("/")
-    return f"{base}/share/{token}"
+    return configured or forwarded_origin or str(request.base_url).rstrip("/")
+
+
+def _public_url(request: Request, token: str) -> str:
+    return f"{public_origin(request)}/share/{token}"
 
 
 def _public_asset_url(request: Request, token: str, suffix: str) -> str:

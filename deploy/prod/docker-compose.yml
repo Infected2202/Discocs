@@ -48,6 +48,9 @@ services:
       DISCOCS_SHARE_MAX_STREAMS_PER_CLIENT: ${DISCOCS_SHARE_MAX_STREAMS_PER_CLIENT:-3}
       DISCOCS_SHARE_MAX_STREAMS: ${DISCOCS_SHARE_MAX_STREAMS:-16}
       DISCOCS_PUBLIC_URL: ${DISCOCS_PUBLIC_URL:-}
+      # Внутренний HTTP Telegram-бота (docs/telegram.md): бот живёт в неймспейсе
+      # awg, поэтому адрес — awg. Пусто — привязка и «Отправить в Telegram» выключены.
+      DISCOCS_BOT_URL: ${DISCOCS_BOT_URL:-http://awg:8090}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7752/health')"]
       interval: 30s
@@ -120,6 +123,9 @@ services:
       DISCOCS_BASE_URL: ${DISCOCS_BASE_URL:-http://backend:7752}
       # Same token as the backend — lets the bot pass the access gate when on.
       DISCOCS_SERVICE_TOKEN: ${DISCOCS_SERVICE_TOKEN:-}
+      # Внутренний HTTP для backend'а (привязка, «Отправить в Telegram»).
+      # Порт закрыт со стороны туннеля в start-awg.sh — менять вместе.
+      BOT_INTERNAL_PORT: 8090
       SQLITE_PATH: /data/bot.sqlite
       TEMP_DIR: /data/tmp
       # Сторож доступности Telegram: обновляет heartbeat, а после затяжной

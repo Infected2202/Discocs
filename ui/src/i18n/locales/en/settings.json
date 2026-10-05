@@ -31,5 +31,18 @@
     "buildButton": "Build Profile",
     "coldStartHint": "No taste signal yet — Flow is exploring a diverse sample of your library. Like tracks and rebuild to personalise.",
     "emptyHint": "No tracks with embeddings found. Analyze your library and try again."
+  },
+  "telegram": {
+    "heading": "Telegram",
+    "description": "Link your Telegram account to send tracks and releases from Share straight to your chat with the bot.",
+    "connect": "Connect Telegram",
+    "openBot": "Open the bot in Telegram",
+    "openBotHint": "Press Start in the chat with the bot. The link works once and expires in 10 minutes.",
+    "checkLink": "I pressed Start",
+    "linked": "Telegram connected",
+    "linkedAs": "Connected as @{{username}}",
+    "unlink": "Unlink",
+    "connectError": "Could not reach the bot. Try again later.",
+    "unlinkError": "Could not unlink Telegram."
   }
 }

@@ -62,5 +62,13 @@
       "expired": "Истекла",
       "revoked": "Отозвана"
     }
+  },
+  "telegram": {
+    "send": "Отправить в Telegram",
+    "sent": "Отправлено в Telegram",
+    "sendError": "Не удалось отправить в Telegram.",
+    "chatUnavailable": "Бот не может написать вам. Откройте чат с ботом и нажмите «Start».",
+    "botUnavailable": "Telegram-бот сейчас недоступен.",
+    "notInNavidrome": "Это нельзя отправить в Telegram: нет в Navidrome."
   }
 }

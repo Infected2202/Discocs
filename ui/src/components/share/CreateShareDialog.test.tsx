@@ -1,12 +1,21 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { ApiError } from "@/api/client"
 import CreateShareDialog from "./CreateShareDialog"
 
 const createShare = vi.fn()
 const writeText = vi.fn()
 
+const sendToTelegram = vi.fn()
+const telegramLink = { data: undefined as { linked: boolean } | undefined }
+
 vi.mock("@/api/shares", () => ({
   createShare: (...args: unknown[]) => createShare(...args),
+}))
+
+vi.mock("@/api/telegram", () => ({
+  sendToTelegram: (...args: unknown[]) => sendToTelegram(...args),
+  useTelegramLink: () => telegramLink,
 }))
 
 function renderDialog() {
@@ -24,6 +33,8 @@ function renderDialog() {
 describe("CreateShareDialog", () => {
   beforeEach(() => {
     createShare.mockReset()
+    sendToTelegram.mockReset()
+    telegramLink.data = undefined
     writeText.mockReset().mockResolvedValue(undefined)
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText },
@@ -119,5 +130,37 @@ describe("CreateShareDialog", () => {
     expect(screen.getByRole("button", { name: "Create link" })).toBeDisabled()
     fireEvent.click(screen.getByRole("checkbox"))
     expect(screen.getByRole("button", { name: "Create link" })).toBeEnabled()
+  })
+
+  it("offers Telegram only to a linked account", () => {
+    telegramLink.data = { linked: false }
+    renderDialog()
+
+    expect(screen.queryByRole("button", { name: "Send to Telegram" })).not.toBeInTheDocument()
+  })
+
+  it("sends the source to the own Telegram chat without creating a link", async () => {
+    telegramLink.data = { linked: true }
+    sendToTelegram.mockResolvedValueOnce({ status: "sent" })
+    renderDialog()
+
+    fireEvent.click(screen.getByRole("button", { name: "Send to Telegram" }))
+
+    expect(await screen.findByRole("button", { name: "Sent to Telegram" })).toBeDisabled()
+    expect(sendToTelegram).toHaveBeenCalledWith({ source_type: "release", source_id: 42 })
+    expect(createShare).not.toHaveBeenCalled()
+  })
+
+  it("explains a chat the bot cannot write to and lets the user retry", async () => {
+    telegramLink.data = { linked: true }
+    sendToTelegram.mockRejectedValueOnce(
+      new ApiError(409, "telegram_chat_unavailable", "The bot cannot write to this chat"),
+    )
+    renderDialog()
+
+    fireEvent.click(screen.getByRole("button", { name: "Send to Telegram" }))
+
+    expect(await screen.findByText(/cannot message you/i)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Send to Telegram" })).toBeEnabled()
   })
 })

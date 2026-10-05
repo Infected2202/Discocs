@@ -5,6 +5,7 @@ import { apiFetch, apiUrl } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { useUserSettings, useUpdateUserSettings } from "@/api/hooks/useUserSettings"
 import type { TranscodingBitrate } from "@/api/settings"
+import TelegramLinkSection from "@/components/settings/TelegramLinkSection"
 
 const TRANSCODING_BITRATES: TranscodingBitrate[] = [96, 128, 192, 256, 320]
 
@@ -201,6 +202,7 @@ export default function SettingsPage() {
 
       <PlaybackSection />
       <FlowProfileSection />
+      <TelegramLinkSection />
     </div>
   )
 }

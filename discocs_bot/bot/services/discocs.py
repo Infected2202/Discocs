@@ -153,6 +153,36 @@ class DiscocsClient:
                 break
         return tracks
 
+    async def redeem_link(
+        self,
+        token: str,
+        *,
+        telegram_user_id: int,
+        telegram_username: str | None,
+    ) -> str | None:
+        """Вторая половина привязки по deep link: discocs-логин или None.
+
+        None — ссылка неизвестна или истекла; всё остальное — DiscocsError.
+        """
+        try:
+            response = await self._client.post(
+                f"{self._base_url}/api/v1/telegram/link/redeem",
+                json={
+                    "token": token,
+                    "telegram_user_id": telegram_user_id,
+                    "telegram_username": telegram_username,
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise DiscocsError(str(exc)) from exc
+        # 422 — токен не прошёл схему (обрезанная ссылка): для человека это
+        # та же «ссылка не работает», что и неизвестный токен.
+        if response.status_code in (404, 422):
+            return None
+        if response.status_code >= 400:
+            raise self._error_from_response(response)
+        return str(response.json().get("username") or "") or None
+
     def _error_from_audio_response(self, response: httpx.Response) -> DiscocsError:
         detail = response.text
         try:
