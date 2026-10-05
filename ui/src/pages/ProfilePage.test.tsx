@@ -6,6 +6,7 @@ import ProfilePage from "./ProfilePage"
 import { ApiError } from "@/api/client"
 import type { ListenItem, UserProfile } from "@/api/profile"
 import type { Person } from "@/api/social"
+import { AVATAR_KEYS } from "@/lib/avatars"
 import { formatRelativeTime } from "@/lib/relativeTime"
 
 const useUserProfile = vi.fn()
@@ -349,10 +350,13 @@ describe("ProfilePage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Choose avatar" }))
     const dialog = await screen.findByRole("dialog")
-    expect(within(dialog).getByRole("button", { name: "Avatar 3" })).toHaveAttribute("aria-pressed", "true")
-    expect(within(dialog).getByRole("button", { name: "Avatar 1" })).toHaveAttribute("aria-pressed", "false")
+    // Buttons are labelled by grid position; the grid order is AVATAR_KEYS (mixed).
+    const option = (key: string) =>
+      within(dialog).getByRole("button", { name: `Avatar ${AVATAR_KEYS.indexOf(key) + 1}` })
+    expect(option("a03")).toHaveAttribute("aria-pressed", "true")
+    expect(option("a01")).toHaveAttribute("aria-pressed", "false")
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Avatar 5" }))
+    fireEvent.click(option("a05"))
 
     expect(mutate).toHaveBeenCalledWith("a05", expect.anything())
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
