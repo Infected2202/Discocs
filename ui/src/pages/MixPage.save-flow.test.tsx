@@ -10,6 +10,10 @@ import type { GeneratedMixDetail } from "@/api/types"
 const saveMix = vi.fn()
 const useMix = vi.fn()
 
+vi.mock("@/components/common/DownloadMenu", () => ({
+  default: ({ href }: { href: string }) => <a href={href} aria-label="Download" />,
+}))
+
 vi.mock("@/api/mixes", () => ({
   saveMix: (...args: unknown[]) => saveMix(...args),
   playMix: vi.fn(),
