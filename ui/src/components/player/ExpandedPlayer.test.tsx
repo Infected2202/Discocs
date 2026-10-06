@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react"
+import { createPortal } from "react-dom"
 import { MemoryRouter } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import ExpandedPlayer from "./ExpandedPlayer"
@@ -7,6 +8,17 @@ import type { TrackSummary } from "@/api/types"
 
 vi.mock("@/components/player/QueueItem", () => ({
   default: () => <div data-testid="queue-item" />,
+}))
+
+// The real menu is a Radix dropdown: content portaled to <body>, a submenu
+// trigger that is a plain role="menuitem" div. Stand-ins for both shapes.
+vi.mock("@/components/media/TrackMenu", () => ({
+  default: () => (
+    <>
+      <div role="menuitem" data-testid="inline-menuitem" />
+      {createPortal(<div data-testid="portaled-menu-content" />, document.body)}
+    </>
+  ),
 }))
 
 vi.mock("@/api/shares", () => ({
@@ -75,5 +87,22 @@ describe("ExpandedPlayer — большая обложка трека", () => {
     const nextCover = screen.getByRole("img", { name: "Track 2" })
     expect(nextCover).toHaveAttribute("src", expect.stringContaining("/art/2.jpg"))
     expect(nextCover).toHaveAttribute("loading", "eager")
+  })
+
+  it("сворачивается по клику в пустое место панели", () => {
+    renderPlayer()
+
+    fireEvent.click(screen.getByRole("heading", { name: "Track 1" }))
+
+    expect(usePlayerStore.getState().expanded).toBe(false)
+  })
+
+  it("не сворачивается от клика по меню трека: ни по его пункту, ни по порталу", () => {
+    renderPlayer()
+
+    fireEvent.click(screen.getByTestId("inline-menuitem"))
+    fireEvent.click(screen.getByTestId("portaled-menu-content"))
+
+    expect(usePlayerStore.getState().expanded).toBe(true)
   })
 })

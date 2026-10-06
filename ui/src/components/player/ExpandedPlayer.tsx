@@ -132,7 +132,12 @@ export default function ExpandedPlayer() {
           onClick={(e) => {
             // collapse if clicking empty space (not interactive children)
             const target = e.target as HTMLElement
-            if (target.closest("button, a, [role='switch']")) return
+            // React bubbles events up the component tree, through portals: a
+            // click in the track menu (its content is portaled to <body>, and a
+            // submenu trigger is a role="menuitem" div, not a button) would
+            // otherwise reach this handler and collapse the player.
+            if (!e.currentTarget.contains(target)) return
+            if (target.closest("button, a, [role='switch'], [role='menuitem']")) return
             toggleExpanded()
           }}
         >
