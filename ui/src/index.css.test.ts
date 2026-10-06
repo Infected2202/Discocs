@@ -1,5 +1,11 @@
+/// <reference types="node" />
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
-import css from "./index.css?raw"
+
+// Read from disk: vitest swaps the content of imported .css files (also `?raw`)
+// for an empty string. The test runner's cwd is the ui/ package root.
+const css = readFileSync(resolve(process.cwd(), "src/index.css"), "utf8")
 
 // The hover-only hiding of the track menu button is an unlayered rule, so it
 // beats Tailwind utilities. Scoped to a list row it is safe; unscoped it hides
