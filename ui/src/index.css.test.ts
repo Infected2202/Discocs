@@ -1,8 +1,5 @@
-import { readFileSync } from "node:fs"
-import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
-
-const css = readFileSync(fileURLToPath(new URL("./index.css", import.meta.url)), "utf8")
+import css from "./index.css?raw"
 
 // The hover-only hiding of the track menu button is an unlayered rule, so it
 // beats Tailwind utilities. Scoped to a list row it is safe; unscoped it hides
