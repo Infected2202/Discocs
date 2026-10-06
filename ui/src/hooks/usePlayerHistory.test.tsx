@@ -85,7 +85,7 @@ describe("usePlayerHistory", () => {
     expect(router.state.location.pathname).toBe("/artists/1")
     // Entry was replaced, not stacked: back goes to the page under the player.
     await act(() => router.navigate(-1))
-    expect(router.state.location.pathname).toBe("/labels")
+    expect(router.state.location.pathname).toBe("/labels/1")
   })
 
   it("re-expands on forward to the player's entry", async () => {
