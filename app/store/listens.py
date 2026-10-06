@@ -352,7 +352,7 @@ class ListensStoreMixin:
             )
 
     def top_listened_tracks(
-        self, *, since: str | None = None, until: str | None = None, limit: int = 20
+        self, *, since: str | None = None, until: str | None = None, limit: int = 20, offset: int = 0
     ) -> list[ListenCount]:
         self.require_user_id()
         where, params = _window(since, until)
@@ -364,11 +364,23 @@ class ListensStoreMixin:
                 {where}
                 GROUP BY l.track_id
                 ORDER BY listens DESC, last_listened_at DESC, l.track_id ASC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (*params, int(limit)),
+                (*params, int(limit), int(offset)),
             ).fetchall()
         return [ListenCount(int(row["track_id"]), int(row["listens"])) for row in rows]
+
+    def count_listened_tracks(self, *, since: str | None = None, until: str | None = None) -> int:
+        """How many entries ``top_listened_tracks`` has for the window (its full length)."""
+        self.require_user_id()
+        where, params = _window(since, until)
+        with self.connect() as conn:
+            return int(
+                conn.execute(
+                    f"SELECT COUNT(DISTINCT l.track_id) {_LIBRARY_LISTENS} {where}",
+                    params,
+                ).fetchone()[0]
+            )
 
     def listened_prediction_labels(
         self,

@@ -7,9 +7,11 @@ import type { MediaCardProps } from "@/components/media/MediaCard"
 const useUserTopList = vi.fn()
 const useUserLikesList = vi.fn()
 const useUserPlaylistsList = vi.fn()
+const useUserTopTracksList = vi.fn()
 
 vi.mock("@/api/hooks/useProfile", () => ({
   useUserTopList: (...args: unknown[]) => useUserTopList(...args),
+  useUserTopTracksList: (...args: unknown[]) => useUserTopTracksList(...args),
   useUserLikesList: (...args: unknown[]) => useUserLikesList(...args),
   useUserPlaylistsList: (...args: unknown[]) => useUserPlaylistsList(...args),
 }))
@@ -19,7 +21,28 @@ vi.mock("@/store/playerStore", () => ({
     selector({ playSource: vi.fn(), playFromEnvelope: vi.fn() }),
 }))
 
+vi.mock("@/components/media/VirtualTrackList", () => ({
+  default: ({ tracks, sourceLabel }: {
+    tracks: Array<{ id: number; title: string; play_count: number }>
+    sourceLabel?: string
+  }) => (
+    <div data-testid="track-list" data-source-label={sourceLabel}>
+      {tracks.map((track) => (
+        <span key={track.id} data-testid="track-row">{track.title}: {track.play_count}</span>
+      ))}
+    </div>
+  ),
+}))
+
 vi.mock("@/components/media/FullListPage", () => ({
+  FullListHeader: ({ title, subtitle, total }: { title: string; subtitle?: string; total?: number }) => (
+    <div>
+      <h1>{title}</h1>
+      <p data-testid="subtitle">{subtitle}</p>
+      <p data-testid="total">{total}</p>
+    </div>
+  ),
+  useInfiniteScrollSentinel: () => ({ current: null }),
   default: ({ title, subtitle, source, toCard }: {
     title: string
     subtitle?: string
@@ -57,6 +80,7 @@ function renderAt(path: string) {
 
 describe("profile full lists", () => {
   beforeEach(() => {
+    useUserTopTracksList.mockReset()
     useUserTopList.mockReset().mockReturnValue(page([{
       id: "release:4", entity_type: "release", entity_id: 4, title: "LP", subtitle: "Beta",
       artwork, reason: null, play_action: null, listens: 3,
@@ -89,10 +113,33 @@ describe("profile full lists", () => {
     expect(screen.getByRole("heading", { name: "Top artists (30 days)" })).toBeInTheDocument()
   })
 
+  it("lists the period's top tracks as rows with their listens", () => {
+    useUserTopTracksList.mockReturnValue({
+      ...page([
+        { id: 9, title: "Signals", listens: 7 },
+        { id: 4, title: "Drift", listens: 2 },
+      ]),
+      isLoading: false,
+      isFetchingNextPage: false,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+    })
+
+    renderAt("/u/alice/top/tracks?period=90d")
+
+    expect(useUserTopTracksList).toHaveBeenCalledWith("alice", "90d")
+    expect(useUserTopList).not.toHaveBeenCalled()
+    expect(screen.getByRole("heading", { name: "Top tracks (90 days)" })).toBeInTheDocument()
+    expect(screen.getByTestId("subtitle")).toHaveTextContent("alice")
+    expect(screen.getByTestId("total")).toHaveTextContent("2")
+    expect(screen.getAllByTestId("track-row").map((row) => row.textContent)).toEqual(["Signals: 7", "Drift: 2"])
+  })
+
   it("rejects an unknown list kind without requesting anything", () => {
-    renderAt("/u/alice/top/tracks")
+    renderAt("/u/alice/top/labels")
     expect(screen.getByText("No such list.")).toBeInTheDocument()
     expect(useUserTopList).not.toHaveBeenCalled()
+    expect(useUserTopTracksList).not.toHaveBeenCalled()
   })
 
   it("lists one kind of likes", () => {

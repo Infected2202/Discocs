@@ -13,6 +13,7 @@ import {
   useUserPlaylists,
   useUserProfile,
   useUserTopList,
+  useUserTopTracksList,
 } from "./useProfile"
 import type { ProfilePeriod } from "../profile"
 import type { PersonNowPlaying } from "../social"
@@ -20,6 +21,7 @@ import type { PersonNowPlaying } from "../social"
 const fetchUserProfile = vi.fn()
 const fetchUserListens = vi.fn()
 const fetchUserTop = vi.fn()
+const fetchUserTopTracks = vi.fn()
 const fetchUserLikes = vi.fn()
 const fetchUserLikesOfKind = vi.fn()
 const fetchUserPlaylists = vi.fn()
@@ -32,6 +34,7 @@ vi.mock("../profile", async (importOriginal) => {
     fetchUserProfile: (...args: unknown[]) => fetchUserProfile(...args),
     fetchUserListens: (...args: unknown[]) => fetchUserListens(...args),
     fetchUserTop: (...args: unknown[]) => fetchUserTop(...args),
+    fetchUserTopTracks: (...args: unknown[]) => fetchUserTopTracks(...args),
     fetchUserLikes: (...args: unknown[]) => fetchUserLikes(...args),
     fetchUserLikesOfKind: (...args: unknown[]) => fetchUserLikesOfKind(...args),
     fetchUserPlaylists: (...args: unknown[]) => fetchUserPlaylists(...args),
@@ -113,6 +116,7 @@ describe("profile shelves", () => {
 describe("full lists of profile shelves", () => {
   beforeEach(() => {
     fetchUserTop.mockReset()
+    fetchUserTopTracks.mockReset()
     fetchUserLikesOfKind.mockReset()
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   })
@@ -138,6 +142,26 @@ describe("full lists of profile shelves", () => {
       period: "90d", tz: "Europe/Moscow", limit: 48, offset: 48,
     })
     await waitFor(() => expect(result.current.hasNextPage).toBe(false))
+  })
+
+  it("pages the period's top tracks in rows of 50", async () => {
+    fetchUserTopTracks
+      .mockResolvedValueOnce({ items: [], total: 70, next_offset: 50 })
+      .mockResolvedValueOnce({ items: [], total: 70, next_offset: null })
+    const { result } = renderHook(() => useUserTopTracksList("bob", "7d"), { wrapper })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(result.current.hasNextPage).toBe(true)
+    await act(async () => {
+      await result.current.fetchNextPage()
+    })
+
+    expect(fetchUserTopTracks).toHaveBeenNthCalledWith(1, "bob", {
+      period: "7d", tz: "Europe/Moscow", limit: 50, offset: 0,
+    })
+    expect(fetchUserTopTracks).toHaveBeenNthCalledWith(2, "bob", {
+      period: "7d", tz: "Europe/Moscow", limit: 50, offset: 50,
+    })
   })
 
   it("pages one kind of likes", async () => {

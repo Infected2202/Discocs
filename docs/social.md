@@ -162,6 +162,7 @@ preference-score/дизлайки.
   "top_releases": ["элемент шелфа релиза + listens"],
   "top_releases_total": 40,
   "top_tracks":   ["TrackSummary + listens"],
+  "top_tracks_total": 212,
   "recent":       ["прослушивание × 10"]
 }
 ```
@@ -188,8 +189,8 @@ preference-score/дизлайки.
 - `top_artists` (16), `top_releases` (16), `top_tracks` (5) — за период,
   поле `listens` у каждого. 16 — общий размер превью полки
   (`SHELF_PREVIEW_LIMIT`, `app/services/shelves.py`); `top_artists_total` /
-  `top_releases_total` — полная длина топа за период (по ним UI решает,
-  показывать ли «Ещё»; весь топ — `/top/{kind}`). Артисты: прослушивание засчитывается каждому
+  `top_releases_total` / `top_tracks_total` — полная длина топа за период (по
+  ним UI решает, показывать ли «Ещё»; весь топ — `/top/{kind}`). Артисты: прослушивание засчитывается каждому
   артисту трека (один раз, сколько бы ролей ни было). Релиз трека — тот же,
   что в его `release` (наименьшая `release_tracks.position`). Ничьи: больше
   прослушиваний → позже последнее прослушивание → меньший id.
@@ -244,11 +245,12 @@ preference-score/дизлайки.
 
 ### `GET /api/v1/users/{username}/top/{kind}?period=&tz=&limit=&offset=`
 
-Полный топ периода (`kind` ∈ `artists | releases`, другое → 422) — «Ещё» у
-полок топов. `period`/`tz` — как у `/profile` (окно то же), `limit` 1–100
+Полный топ периода (`kind` ∈ `artists | releases | tracks`, другое → 422) —
+«Ещё» у топов профиля. `period`/`tz` — как у `/profile` (окно то же), `limit` 1–100
 (по умолчанию 50), `offset` ≥ 0. Порядок и элементы (с `listens`) — те же,
-что у `top_artists`/`top_releases` профиля, первая страница при `limit=16`
-совпадает с полкой:
+что у `top_artists`/`top_releases`/`top_tracks` профиля, первая страница при
+`limit=16` совпадает с полкой (у треков — при `limit=5` со списком профиля).
+`items` у `tracks` — `TrackSummary + listens`, у остальных — элементы шелфа:
 
 ```json
 {"items": ["элемент шелфа + listens"], "total": 64, "limit": 50, "offset": 0,
@@ -288,6 +290,7 @@ preference-score/дизлайки.
 | `useUserLikes(username)` | `["profile", username, "likes", 16]` | `/likes?limit=16` (превью полок) |
 | `useUserPlaylists(username)` | `["profile", username, "playlists", 16]` | `/playlists?limit=16` (превью полки) |
 | `useUserTopList(username, kind, period)` | `["profile", username, "top", kind, period, tz, 48]` | `/top/{kind}`, infinite по `next_offset` |
+| `useUserTopTracksList(username, period)` | `["profile", username, "top", "tracks", period, tz, 50]` | `/top/tracks`, infinite, строки треков |
 | `useUserLikesList(username, kind)` | `["profile", username, "likes-list", kind, 48]` | `/likes/{kind}`, infinite |
 | `useUserPlaylistsList(username)` | `["profile", username, "playlists-list", 48]` | `/playlists`, infinite |
 | `useSetMyAvatar()` | — | `PUT /me/avatar`; на успех инвалидирует `["profile"]` и `["social","people"]` |
@@ -344,11 +347,13 @@ preference-score/дизлайки.
 **Полные списки** (`ProfileListPages.tsx`) — общий `FullListPage` (сетка +
 бесконечная прокрутка, как `/shelf/:key`, см. docs/web-ui.md «Shelves: preview
 size and «Ещё»»). «Ещё» у полки появляется только когда `total` больше, чем
-полка показывает. Ссылки: `/u/:username/top/artists|releases?period=<период>`,
+полка показывает. Ссылки: `/u/:username/top/artists|releases|tracks?period=<период>`,
 `/u/:username/likes/tracks|releases|artists`, `/u/:username/playlists`.
 Заголовки — как у полки: «Топ артистов (30 дн.)» (период из URL, неизвестный
 → 30д), «Лайкнутые треки/релизы/артисты», «Плейлисты»; подзаголовок — логин.
-Неизвестный `kind` — «Такого списка нет» без запроса к API. Правила доступа те
+Топ треков — не сетка карточек, а строки треков (`VirtualTrackList` с числом
+прослушиваний, как в списке профиля, «Ещё» у него — когда `top_tracks_total`
+больше 5). Неизвестный `kind` — «Такого списка нет» без запроса к API. Правила доступа те
 же, что у полок: чужие приватные плейлисты не попадают и в полный список.
 
 **История** — `useUserListens`, группировка по локальным суткам

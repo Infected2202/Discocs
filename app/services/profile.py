@@ -66,10 +66,11 @@ DEFAULT_PROFILE_PERIOD = "30d"
 # Longer spans (only possible for ``all``) are bucketed by calendar month.
 MAX_DAY_BUCKETS = 366
 # Profile shelves preview the common shelf size; their full lists page
-# through ``/users/{username}/top/{kind}`` and ``/likes/{kind}``.
+# through ``/users/{username}/top/{kind}`` and ``/likes/{kind}``. The top
+# tracks list previews only its first rows, with the same kind of full list.
 TOP_ARTISTS_LIMIT = SHELF_PREVIEW_LIMIT
 TOP_RELEASES_LIMIT = SHELF_PREVIEW_LIMIT
-TOP_KINDS = ("artists", "releases")
+TOP_KINDS = ("artists", "releases", "tracks")
 LIKE_KINDS = ("tracks", "releases", "artists")
 TOP_TRACKS_LIMIT = 5
 RECENT_LISTENS_LIMIT = 10
@@ -316,8 +317,10 @@ def _top_releases(
     return items
 
 
-def _top_tracks(store: Store, window: ProfileWindow) -> list[dict[str, object]]:
-    counts = store.top_listened_tracks(since=window.since, until=window.until, limit=TOP_TRACKS_LIMIT)
+def _top_tracks(
+    store: Store, window: ProfileWindow, *, limit: int = TOP_TRACKS_LIMIT, offset: int = 0
+) -> list[dict[str, object]]:
+    counts = store.top_listened_tracks(since=window.since, until=window.until, limit=limit, offset=offset)
     tracks_by_id = store.get_tracks([int(count.key) for count in counts])
     present = [(count, tracks_by_id[int(count.key)]) for count in counts if int(count.key) in tracks_by_id]
     payloads = _track_payloads(store, [track for _count, track in present])
@@ -382,6 +385,7 @@ def profile_stats(
         "top_releases": _top_releases(store, window),
         "top_releases_total": store.count_listened_releases(since=window.since, until=window.until),
         "top_tracks": _top_tracks(store, window),
+        "top_tracks_total": store.count_listened_tracks(since=window.since, until=window.until),
         "recent": _listen_items(store, store.list_library_listens(limit=RECENT_LISTENS_LIMIT)),
     }
 
@@ -401,9 +405,10 @@ def profile_top(
     offset: int = 0,
     now: datetime | None = None,
 ) -> dict[str, object]:
-    """``GET /users/{username}/top/{kind}`` — the full top artists/releases of a period.
+    """``GET /users/{username}/top/{kind}`` — the full top artists/releases/tracks of a period.
 
-    Same order and items as the profile's top shelves, page by page.
+    Same order and items as the profile's tops, page by page. Artists and
+    releases are shelf items, tracks are track payloads with ``listens``.
     """
     if kind not in TOP_KINDS:
         raise ValueError(f"Unknown top kind: {kind}")
@@ -413,9 +418,12 @@ def profile_top(
     if kind == "artists":
         total = store.count_listened_artists(since=window.since, until=window.until)
         items = _top_artists(store, window, limit=limit, offset=offset)
-    else:
+    elif kind == "releases":
         total = store.count_listened_releases(since=window.since, until=window.until)
         items = _top_releases(store, window, limit=limit, offset=offset)
+    else:
+        total = store.count_listened_tracks(since=window.since, until=window.until)
+        items = _top_tracks(store, window, limit=limit, offset=offset)
     return {"items": items, **page_info(total, limit, offset), "period": _period_payload(window)}
 
 

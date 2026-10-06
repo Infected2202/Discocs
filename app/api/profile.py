@@ -7,7 +7,8 @@ A service principal (no ``user_id``) gets 403, an unknown username 404; the
 username is matched case-insensitively. Contract: docs/social.md.
 
 Horizontal profile shelves (tops, likes, playlists) preview
-``SHELF_PREVIEW_LIMIT`` cards; their full lists page through
+``SHELF_PREVIEW_LIMIT`` cards, the top tracks list its first rows; their full
+lists page through
 ``/users/{username}/top/{kind}``, ``/users/{username}/likes/{kind}`` and
 ``/users/{username}/playlists`` with ``limit``/``offset``.
 
@@ -45,7 +46,7 @@ from app.services.shelves import FULL_LIST_MAX_LIMIT
 router = APIRouter(prefix="/api/v1")
 
 ProfilePeriod = Literal["7d", "30d", "90d", "180d", "365d", "all"]
-TopKind = Literal["artists", "releases"]
+TopKind = Literal["artists", "releases", "tracks"]
 LikeKind = Literal["tracks", "releases", "artists"]
 PageLimit = Annotated[int, Query(ge=1, le=FULL_LIST_MAX_LIMIT)]
 PageOffset = Annotated[int, Query(ge=0)]
@@ -84,7 +85,7 @@ def api_v1_user_top(
     limit: PageLimit = 50,
     offset: PageOffset = 0,
 ) -> dict[str, object] | JSONResponse:
-    """Full top artists/releases of a period — the profile's top shelves, paged."""
+    """Full top artists/releases/tracks of a period — the profile's tops, paged."""
     store, _settings = context()
     return _profile_response(
         lambda: profile_top(store, username, kind, period=period, tz_name=tz, limit=limit, offset=offset)

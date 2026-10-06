@@ -1,18 +1,26 @@
 import { useParams, useSearchParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { apiFetch } from "@/api/client"
-import { useUserLikesList, useUserPlaylistsList, useUserTopList } from "@/api/hooks/useProfile"
+import {
+  useUserLikesList,
+  useUserPlaylistsList,
+  useUserTopList,
+  useUserTopTracksList,
+} from "@/api/hooks/useProfile"
 import {
   DEFAULT_PROFILE_PERIOD,
   PROFILE_LIKE_KINDS,
   PROFILE_TOP_KINDS,
   isProfilePeriod,
   type ProfileLikeKind,
+  type ProfilePeriod,
   type ProfileShelfItem,
   type ProfileTopKind,
 } from "@/api/profile"
 import type { PlaybackEnvelope, PlaylistSummary, ShelfItem } from "@/api/types"
-import FullListPage from "@/components/media/FullListPage"
+import FullListPage, { FullListHeader, useInfiniteScrollSentinel } from "@/components/media/FullListPage"
+import VirtualTrackList from "@/components/media/VirtualTrackList"
+import { Skeleton } from "@/components/ui/skeleton"
 import { shelfItemToCard } from "@/components/media/shelfItemToCard"
 import { profilePlaylistCard, profileTopCard } from "@/components/profile/profileCards"
 import { usePlayShelfItem } from "@/hooks/usePlayShelfItem"
@@ -20,7 +28,8 @@ import { usePlayerStore } from "@/store/playerStore"
 
 // Full lists behind the profile's horizontal shelves (docs/social.md
 // «Полные списки»): `/u/:username/top/:kind?period=`, `/u/:username/likes/:kind`
-// and `/u/:username/playlists`. The username is the subtitle.
+// and `/u/:username/playlists`. The username is the subtitle. Top tracks are
+// track rows with their listens, like the profile's top tracks list.
 
 const TOP_TITLES: Record<ProfileTopKind, string> = {
   artists: "sections.topArtists",
@@ -44,18 +53,59 @@ function NotFound() {
   )
 }
 
-/** `/u/:username/top/:kind?period=` — a period's full top artists/releases. */
+function usePeriodParam(): ProfilePeriod {
+  const [searchParams] = useSearchParams()
+  const periodParam = searchParams.get("period")
+  return isProfilePeriod(periodParam) ? periodParam : DEFAULT_PROFILE_PERIOD
+}
+
+/** `/u/:username/top/:kind?period=` — a period's full top artists/releases/tracks. */
 export function ProfileTopPage() {
   const { username = "", kind = "" } = useParams<{ username: string; kind: string }>()
+  if (kind === "tracks") return <ProfileTopTracksList username={username} />
   const valid = (PROFILE_TOP_KINDS as readonly string[]).includes(kind)
   return valid ? <ProfileTopList username={username} kind={kind as ProfileTopKind} /> : <NotFound />
 }
 
+function ProfileTopTracksList({ username }: { readonly username: string }) {
+  const { t } = useTranslation("user")
+  const period = usePeriodParam()
+  const source = useUserTopTracksList(username, period)
+  const sentinelRef = useInfiniteScrollSentinel(source)
+  // Same title as the profile's list: «Топ треков (30 дн.)».
+  const title = `${t("sections.topTracks")} (${t(`periodSuffix.${period}`)})`
+  // play_count is the row's built-in "N plays" metric, as on the profile.
+  const tracks = source.data?.pages.flatMap((page) => page.items).map((track) => ({ ...track, play_count: track.listens })) ?? []
+
+  return (
+    <div className="py-6 space-y-6">
+      <FullListHeader title={title} subtitle={username} total={source.data?.pages[0]?.total} />
+      {source.isLoading ? (
+        <RowSkeletons />
+      ) : (
+        <div className="px-4 sm:px-6">
+          <VirtualTrackList tracks={tracks} showRelease sourceLabel={title} />
+        </div>
+      )}
+      <div ref={sentinelRef} className="h-4" data-testid="full-list-sentinel" />
+      {source.isFetchingNextPage && <RowSkeletons />}
+    </div>
+  )
+}
+
+function RowSkeletons() {
+  return (
+    <div className="px-4 sm:px-6 space-y-3">
+      {[1, 2, 3, 4, 5, 6].map((i) => (
+        <Skeleton key={i} className="h-12 w-full rounded-md" />
+      ))}
+    </div>
+  )
+}
+
 function ProfileTopList({ username, kind }: { readonly username: string; readonly kind: ProfileTopKind }) {
   const { t, i18n } = useTranslation("user")
-  const [searchParams] = useSearchParams()
-  const periodParam = searchParams.get("period")
-  const period = isProfilePeriod(periodParam) ? periodParam : DEFAULT_PROFILE_PERIOD
+  const period = usePeriodParam()
   const playShelfItem = usePlayShelfItem()
   const source = useUserTopList(username, kind, period)
 

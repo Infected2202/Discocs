@@ -173,7 +173,7 @@ export default function ProfilePage() {
   const profilePath = `/u/${encodeURIComponent(header.username)}`
   const historyHref = `${profilePath}/history`
   // Full lists of the shelves (docs/web-ui.md «Полки»); tops keep the period.
-  const topHref = (kind: "artists" | "releases") => `${profilePath}/top/${kind}?period=${period}`
+  const topHref = (kind: "artists" | "releases" | "tracks") => `${profilePath}/top/${kind}?period=${period}`
 
   const avatar = (
     <ArtworkImage
@@ -298,7 +298,12 @@ export default function ProfilePage() {
             total={profile.top_releases_total}
             moreHref={topHref("releases")}
           />
-          <TopTracks profile={profile} title={forPeriod(t("sections.topTracks"))} />
+          <TopTracks
+            profile={profile}
+            title={forPeriod(t("sections.topTracks"))}
+            moreHref={topHref("tracks")}
+            moreLabel={t("shelf.more", { ns: "media" })}
+          />
         </div>
       ) : (
         <p className="px-4 sm:px-6 text-sm text-muted-foreground">{t("empty.noListens")}</p>
@@ -330,12 +335,19 @@ export default function ProfilePage() {
   )
 }
 
-function TopTracks({ profile, title }: { readonly profile: UserProfile; readonly title: string }) {
+function TopTracks({ profile, title, moreHref, moreLabel }: {
+  readonly profile: UserProfile
+  readonly title: string
+  readonly moreHref: string
+  readonly moreLabel: string
+}) {
   if (profile.top_tracks.length === 0) return null
   // play_count is the row's built-in "N plays" metric (artist top tracks).
   const tracks = profile.top_tracks.map((track) => ({ ...track, play_count: track.listens }))
+  // «Ещё» only when the period's top is longer than the rows shown.
+  const hasMore = profile.top_tracks_total > profile.top_tracks.length
   return (
-    <ProfileSection title={title}>
+    <ProfileSection title={title} moreHref={hasMore ? moreHref : undefined} moreLabel={moreLabel}>
       <div className="px-4 sm:px-6">
         <VirtualTrackList tracks={tracks} virtualized={false} showRelease sourceLabel={title} />
       </div>

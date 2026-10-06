@@ -130,6 +130,7 @@ function makeProfile(overrides: Partial<UserProfile> = {}, header: Partial<UserP
     top_releases: [],
     top_releases_total: 0,
     top_tracks: [{ ...makeListen(0, 9, THREE_HOURS_AGO), listens: 7 }],
+    top_tracks_total: 1,
     // The same track twice: a listening feed, not unique tracks.
     recent: [makeListen(11, 9, THREE_HOURS_AGO), makeListen(10, 9, THREE_HOURS_AGO)],
     ...overrides,
@@ -258,6 +259,23 @@ describe("ProfilePage", () => {
     expect(screen.getByTestId("shelf-Top artists (90 days)")).toHaveAttribute(
       "data-more-href", "/u/alice/top/artists?period=90d",
     )
+  })
+
+  it("links the top tracks to their full list only when the period has more", () => {
+    mockProfile(makeProfile({ top_tracks_total: 12 }, { viewer_is_owner: false }))
+    const { unmount } = renderPage("/u/alice?period=7d")
+
+    const section = screen.getByRole("region", { name: "Top tracks (7 days)" })
+    expect(within(section).getByRole("link", { name: "More" })).toHaveAttribute(
+      "href", "/u/alice/top/tracks?period=7d",
+    )
+    unmount()
+
+    mockProfile(makeProfile({ top_tracks_total: 1 }))
+    renderPage()
+    expect(
+      within(screen.getByRole("region", { name: "Top tracks (30 days)" })).queryByRole("link"),
+    ).not.toBeInTheDocument()
   })
 
   it("takes the period from the URL, so a full list's back link restores it", () => {

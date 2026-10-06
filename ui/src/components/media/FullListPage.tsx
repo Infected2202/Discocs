@@ -45,13 +45,40 @@ function CardSkeletons({ count }: { readonly count: number }) {
  * scroll over any paginated source. Route pages only plug in the source and
  * the item → card mapping.
  */
-export default function FullListPage<T>({ title, subtitle, source, getKey, toCard }: FullListPageProps<T>) {
+/** Back button, title, optional subtitle and the item count of a full list. */
+export function FullListHeader({ title, subtitle, total }: {
+  readonly title: string
+  readonly subtitle?: string | null
+  readonly total?: number
+}) {
   const { t } = useTranslation("media")
   const navigate = useNavigate()
-  const sentinelRef = useRef<HTMLDivElement>(null)
-  const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage } = source
+  return (
+    <div className="px-4 sm:px-6 flex items-center gap-3 min-w-0">
+      <button
+        type="button"
+        onClick={() => navigate(-1)}
+        className="flex items-center justify-center w-8 h-8 rounded-full hover:bg-muted transition-colors shrink-0"
+        aria-label={t("actions.back", { ns: "common" })}
+      >
+        <ChevronLeft size={18} />
+      </button>
+      <div className="min-w-0">
+        <h1 className="text-xl font-semibold truncate">{title}</h1>
+        {subtitle && <p className="text-sm text-muted-foreground truncate">{subtitle}</p>}
+      </div>
+      {total !== undefined && (
+        <span className="text-sm text-muted-foreground shrink-0">{t("itemCount", { count: total })}</span>
+      )}
+    </div>
+  )
+}
 
-  // Infinite scroll sentinel
+/** Calls `fetchNextPage` when the returned sentinel scrolls near the viewport. */
+export function useInfiniteScrollSentinel(
+  { hasNextPage, isFetchingNextPage, fetchNextPage }: Pick<PagedListSource<unknown>, "hasNextPage" | "isFetchingNextPage" | "fetchNextPage">,
+) {
+  const sentinelRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = sentinelRef.current
     if (!el) return
@@ -66,30 +93,20 @@ export default function FullListPage<T>({ title, subtitle, source, getKey, toCar
     observer.observe(el)
     return () => observer.disconnect()
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+  return sentinelRef
+}
+
+export default function FullListPage<T>({ title, subtitle, source, getKey, toCard }: FullListPageProps<T>) {
+  const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage } = source
+
+  const sentinelRef = useInfiniteScrollSentinel({ hasNextPage, isFetchingNextPage, fetchNextPage })
 
   const firstPage = data?.pages[0]
   const allItems = data?.pages.flatMap((page) => page.items) ?? []
 
   return (
     <div className="py-6 space-y-6">
-      {/* Header */}
-      <div className="px-4 sm:px-6 flex items-center gap-3 min-w-0">
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          className="flex items-center justify-center w-8 h-8 rounded-full hover:bg-muted transition-colors shrink-0"
-          aria-label={t("actions.back", { ns: "common" })}
-        >
-          <ChevronLeft size={18} />
-        </button>
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold truncate">{title}</h1>
-          {subtitle && <p className="text-sm text-muted-foreground truncate">{subtitle}</p>}
-        </div>
-        {firstPage && (
-          <span className="text-sm text-muted-foreground shrink-0">{t("itemCount", { count: firstPage.total })}</span>
-        )}
-      </div>
+      <FullListHeader title={title} subtitle={subtitle} total={firstPage?.total} />
 
       {/* Grid — virtualized so only visible cards (and their images) stay in DOM */}
       {isLoading ? (

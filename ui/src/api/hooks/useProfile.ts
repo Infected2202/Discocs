@@ -8,6 +8,7 @@ import {
   fetchUserPlaylists,
   fetchUserProfile,
   fetchUserTop,
+  fetchUserTopTracks,
   setMyAvatar,
   viewerTimeZone,
   type ProfileLikeKind,
@@ -105,6 +106,16 @@ export function useUserTopList(username: string, kind: ProfileTopKind, period: P
     [...PROFILE_QUERY_KEY, username.toLowerCase(), "top", kind, period, tz],
     ({ limit, offset }) => fetchUserTop(username, kind, { period, tz, limit, offset }),
     { staleTime: 30_000, retry: retryUnlessClientError },
+  )
+}
+
+/** Full list of a period's top tracks (`/u/:username/top/tracks`), in track-row pages. */
+export function useUserTopTracksList(username: string, period: ProfilePeriod) {
+  const tz = viewerTimeZone()
+  return usePagedList(
+    [...PROFILE_QUERY_KEY, username.toLowerCase(), "top", "tracks", period, tz],
+    ({ limit, offset }) => fetchUserTopTracks(username, { period, tz, limit, offset }),
+    { pageSize: LISTENS_PAGE_SIZE, staleTime: 30_000, retry: retryUnlessClientError },
   )
 }
 

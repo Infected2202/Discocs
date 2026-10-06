@@ -71,7 +71,9 @@ export interface UserProfile {
   top_artists_total: number
   top_releases: ProfileShelfItem[]
   top_releases_total: number
+  /** The first rows of the period's top tracks (the full list is `/top/tracks`). */
   top_tracks: ProfileTopTrack[]
+  top_tracks_total: number
   recent: ListenItem[]
 }
 
@@ -106,6 +108,7 @@ export const PROFILE_LIKE_KINDS = ["tracks", "releases", "artists"] as const
 export type ProfileLikeKind = (typeof PROFILE_LIKE_KINDS)[number]
 
 export type UserTopPage = PagedList<ProfileShelfItem> & { period: ProfilePeriodWindow }
+export type UserTopTracksPage = PagedList<ProfileTopTrack> & { period: ProfilePeriodWindow }
 export type UserLikesPage = PagedList<ShelfItem>
 
 export function isProfilePeriod(value: string | null | undefined): value is ProfilePeriod {
@@ -145,6 +148,14 @@ export function fetchUserTop(
   params: { period: ProfilePeriod; tz: string; limit: number; offset: number },
 ): Promise<UserTopPage> {
   return apiFetch(apiUrl(userPath(username, `top/${kind}`), params))
+}
+
+/** One page of a period's top tracks (the top tracks list's full page). */
+export function fetchUserTopTracks(
+  username: string,
+  params: { period: ProfilePeriod; tz: string; limit: number; offset: number },
+): Promise<UserTopTracksPage> {
+  return apiFetch(apiUrl(userPath(username, "top/tracks"), params))
 }
 
 /** One page of one kind of likes (a likes shelf's full list). */

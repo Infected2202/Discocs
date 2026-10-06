@@ -357,6 +357,8 @@ def test_top_tracks_are_capped_at_five(tmp_path: Path):
     stats = _stats(alice, period="7d", tz_name="UTC")
 
     assert [item["id"] for item in stats["top_tracks"]] == tracks[:5]
+    # The full length, so the list links to its full page only when there is more.
+    assert stats["top_tracks_total"] == 7
 
 
 def _ranked_artists(root: Store, alice: Store, tmp_path: Path, count: int) -> list[int]:
@@ -413,13 +415,16 @@ def test_profile_top_respects_the_period(tmp_path: Path):
 
     week = profile_top(alice, "alice", "artists", period="7d", tz_name="UTC", limit=10, now=NOW)
     quarter = profile_top(alice, "alice", "releases", period="90d", tz_name="UTC", limit=10, now=NOW)
+    week_tracks = profile_top(alice, "alice", "tracks", period="7d", tz_name="UTC", limit=10, now=NOW)
 
     assert [item["title"] for item in week["items"]] == ["New"]
     assert week["total"] == 1
     assert {item["entity_id"] for item in quarter["items"]} == {_release_of(root, old), _release_of(root, new)}
     assert quarter["total"] == 2
+    assert [(item["id"], item["listens"]) for item in week_tracks["items"]] == [(new, 1)]
+    assert week_tracks["total"] == 1
     with pytest.raises(ValueError):
-        profile_top(alice, "alice", "tracks", limit=10, now=NOW)
+        profile_top(alice, "alice", "labels", limit=10, now=NOW)
 
 
 def test_sound_profile_is_weighted_by_listens(tmp_path: Path):
@@ -625,7 +630,9 @@ def _user_store(store: Store, username: str) -> Store:
     return store.for_user(int(store.get_user_by_username(username)["id"]))
 
 
-_PROFILE_PATHS = ("profile", "listens", "likes", "playlists", "top/artists", "top/releases", "likes/tracks")
+_PROFILE_PATHS = (
+    "profile", "listens", "likes", "playlists", "top/artists", "top/releases", "top/tracks", "likes/tracks",
+)
 
 
 def test_api_profile_contract_and_case_insensitive_username(tmp_path: Path, monkeypatch):
@@ -643,7 +650,7 @@ def test_api_profile_contract_and_case_insensitive_username(tmp_path: Path, monk
     assert set(body) == {
         "header", "period", "summary", "by_day_bucket", "by_day", "by_hour",
         "sound", "top_artists", "top_artists_total", "top_releases", "top_releases_total",
-        "top_tracks", "recent",
+        "top_tracks", "top_tracks_total", "recent",
     }
     assert set(body["header"]) == {"username", "avatar", "created_at", "viewer_is_owner", "totals"}
     assert body["header"]["username"] == "alice"
@@ -680,6 +687,9 @@ def test_api_full_lists_of_profile_shelves(tmp_path: Path, monkeypatch):
         "/api/v1/users/alice/top/releases", params={"period": "365d", "limit": 2, "offset": 2}
     ).json()
     likes = bob.get("/api/v1/users/alice/likes/tracks", params={"limit": 2, "offset": 2}).json()
+    month_tracks = bob.get(
+        "/api/v1/users/alice/top/tracks", params={"period": "30d", "tz": "UTC", "limit": 2, "offset": 1}
+    ).json()
 
     assert [item["title"] for item in month["items"]] == ["Full Artist 0", "Full Artist 1"]
     assert (month["total"], month["limit"], month["offset"], month["next_offset"]) == (3, 2, 0, 2)
@@ -690,7 +700,10 @@ def test_api_full_lists_of_profile_shelves(tmp_path: Path, monkeypatch):
         _release_of(store, old),
     ]
     assert likes["total"] == 3 and len(likes["items"]) == 1 and likes["next_offset"] is None
-    assert bob.get("/api/v1/users/alice/top/tracks").status_code == 422
+    # Tracks rank by listens like the profile's top tracks, with their counts.
+    assert [(item["id"], item["listens"]) for item in month_tracks["items"]] == [(tracks[1], 2), (tracks[2], 1)]
+    assert (month_tracks["total"], month_tracks["next_offset"]) == (3, None)
+    assert bob.get("/api/v1/users/alice/top/labels").status_code == 422
     assert bob.get("/api/v1/users/alice/top/artists", params={"period": "14d"}).status_code == 422
     assert bob.get("/api/v1/users/alice/top/artists", params={"limit": 101}).status_code == 422
     assert bob.get("/api/v1/users/alice/likes/playlists").status_code == 422

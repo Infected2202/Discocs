@@ -21,6 +21,7 @@ import {
   fetchUserPlaylists,
   fetchUserProfile,
   fetchUserTop,
+  fetchUserTopTracks,
   isProfilePeriod,
   setMyAvatar,
   viewerTimeZone,
@@ -59,6 +60,11 @@ describe("profile API", () => {
   it("pages a period's top of one kind", async () => {
     await fetchUserTop("bob", "releases", { period: "7d", tz: "UTC", limit: 48, offset: 96 })
     expect(apiFetch).toHaveBeenCalledWith("/api/v1/users/bob/top/releases?period=7d&tz=UTC&limit=48&offset=96")
+  })
+
+  it("pages a period's top tracks", async () => {
+    await fetchUserTopTracks("bob", { period: "90d", tz: "UTC", limit: 50, offset: 50 })
+    expect(apiFetch).toHaveBeenCalledWith("/api/v1/users/bob/top/tracks?period=90d&tz=UTC&limit=50&offset=50")
   })
 
   it("pages one kind of likes and the playlists", async () => {

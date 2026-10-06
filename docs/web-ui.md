@@ -71,7 +71,7 @@ Defined in `ui/src/router.tsx`:
 /shared-links            -> SharedLinksPage
 /u/:username             -> ProfilePage
 /u/:username/history     -> ListeningHistoryPage
-/u/:username/top/:kind   -> ProfileTopPage   (kind = artists|releases, ?period=)
+/u/:username/top/:kind   -> ProfileTopPage   (kind = artists|releases|tracks, ?period=)
 /u/:username/likes/:kind -> ProfileLikesPage (kind = tracks|releases|artists)
 /u/:username/playlists   -> ProfilePlaylistsPage
 ```
