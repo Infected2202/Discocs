@@ -36,6 +36,24 @@ interface ShelfProps {
 
 const MOBILE_COLS = 2
 const MOBILE_GAP_PX = 8
+const MOBILE_PAD_PX = 12 // px-3 of the slider
+// Share of the next card that peeks out from behind the right edge, so it is
+// obvious the shelf scrolls.
+const MOBILE_PEEK = 0.25
+
+/**
+ * `flex` of a mobile slider card. With more cards than fit, 2 and a quarter are
+ * visible: the visible strip is the content box plus the right padding, and it
+ * holds 2.25 cards and the 2 gaps before the peeking one. With nothing to
+ * scroll to, plain two across.
+ */
+export function mobileCardFlex(itemCount: number): string {
+  if (itemCount <= MOBILE_COLS) {
+    return `0 0 calc((100% - ${(MOBILE_COLS - 1) * MOBILE_GAP_PX}px) / ${MOBILE_COLS})`
+  }
+  const offset = MOBILE_COLS * MOBILE_GAP_PX - MOBILE_PAD_PX
+  return `0 0 calc((100% - ${offset}px) / ${MOBILE_COLS + MOBILE_PEEK})`
+}
 
 export default function Shelf({
   title = "",
@@ -185,7 +203,7 @@ export default function Shelf({
             <div
               key={`${item.type}-${item.id}`}
               style={{
-                flex: `0 0 calc((100% - ${(MOBILE_COLS - 1) * MOBILE_GAP_PX}px) / ${MOBILE_COLS})`,
+                flex: mobileCardFlex(sliced.length),
                 minWidth: 0,
                 scrollSnapAlign: "start",
               }}

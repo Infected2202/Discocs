@@ -637,7 +637,9 @@ for theming (`ui/src/index.css`):
 - **Shelves**: horizontal, paged (not free-scroll) on desktop — `Shelf`
   slices items into `cols`-wide pages and animates between them with
   prev/next arrow buttons; mobile falls back to native horizontal momentum
-  scrolling. Snap points are disabled while the finger and native momentum
+  scrolling, with 2¼ cards visible (a quarter of the third peeks out from the
+  right edge so it is obvious the shelf scrolls; a shelf of ≤2 cards stays
+  plain two across — `mobileCardFlex`). Snap points are disabled while the finger and native momentum
   are moving the shelf. After scroll events become idle, the shelf smoothly
   moves to the nearest card while snap remains disabled; `proximity` is
   restored only after that alignment also settles. This keeps light gestures

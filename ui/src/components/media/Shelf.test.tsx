@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import Shelf from "./Shelf"
+import Shelf, { mobileCardFlex } from "./Shelf"
 
 const navigate = vi.fn()
 
@@ -66,9 +66,20 @@ describe("Shelf", () => {
       "style",
       expect.stringContaining("scroll-snap-type: x proximity")
     )
-    // Two cards across on mobile (jsdom normalizes the calc() to a 0.5
-    // multiplier with the single 8px inter-card gap subtracted).
-    expect(cardWrapper).toHaveAttribute("style", expect.stringContaining("0.5*(100% - 8px)"))
+    // Three cards: two full ones plus a quarter of the next peeking out.
+    // Compared through a probe element so jsdom's calc() normalization applies
+    // to both sides.
+    const probe = document.createElement("div")
+    probe.style.flex = mobileCardFlex(3)
+    expect(probe.style.flex).not.toBe("")
+    expect(cardWrapper?.style.flex).toBe(probe.style.flex)
+  })
+
+  it("sizes mobile cards so a quarter of the third peeks out, and plain halves when there is nothing to scroll", () => {
+    expect(mobileCardFlex(3)).toBe("0 0 calc((100% - 4px) / 2.25)")
+    expect(mobileCardFlex(8)).toBe(mobileCardFlex(3))
+    expect(mobileCardFlex(2)).toBe("0 0 calc((100% - 8px) / 2)")
+    expect(mobileCardFlex(1)).toBe(mobileCardFlex(2))
   })
 
   it("smoothly aligns to the nearest card after native momentum settles", () => {
