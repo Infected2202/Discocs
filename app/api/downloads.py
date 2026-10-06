@@ -28,9 +28,10 @@ from app.navidrome import NavidromeClient
 
 router = APIRouter(prefix="/api/v1")
 
-# "original" hands out the file as stored; "mp3" re-encodes Navidrome-backed
-# tracks to MP3 320 (a local fallback file has no transcoder and stays as is).
-DownloadFormat = Literal["original", "mp3"]
+# "original" hands out the file as stored; "mp3_192"/"mp3_320" re-encode
+# Navidrome-backed tracks to MP3 (a local fallback file has no transcoder and
+# stays as is).
+DownloadFormat = Literal["original", "mp3_192", "mp3_320"]
 FormatQuery = Query("original", alias="format")
 
 

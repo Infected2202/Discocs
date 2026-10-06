@@ -12,8 +12,13 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 }))
 
 describe("DownloadMenu", () => {
-  it("offers the original and an MP3 320 of the same endpoint", () => {
+  it("offers MP3 192, MP3 320 and the original of the same endpoint", () => {
     render(<DownloadMenu href="/api/v1/releases/5/download" />)
+
+    expect(screen.getByRole("link", { name: "MP3 192" })).toHaveAttribute(
+      "href",
+      "/api/v1/releases/5/download?format=mp3_192",
+    )
 
     expect(screen.getByRole("link", { name: "Original" })).toHaveAttribute(
       "href",
@@ -21,7 +26,7 @@ describe("DownloadMenu", () => {
     )
     expect(screen.getByRole("link", { name: "MP3 320" })).toHaveAttribute(
       "href",
-      "/api/v1/releases/5/download?format=mp3",
+      "/api/v1/releases/5/download?format=mp3_320",
     )
   })
 

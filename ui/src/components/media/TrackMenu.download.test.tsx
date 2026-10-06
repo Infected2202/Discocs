@@ -11,6 +11,9 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuItem: ({ children, asChild, onClick }: { children: ReactNode; asChild?: boolean; onClick?: () => void }) =>
     asChild ? children : <div onClick={onClick}>{children}</div>,
   DropdownMenuSeparator: () => <hr />,
+  DropdownMenuSub: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuSubTrigger: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuSubContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
 
@@ -48,17 +51,37 @@ describe("TrackMenu download", () => {
     )
   })
 
-  it("offers the original and an MP3 320 of the attachment endpoint", () => {
+  it("groups the formats under one «Download» item: MP3 192, MP3 320 and the original", () => {
     render(<MemoryRouter><TrackMenu track={track} /></MemoryRouter>)
 
-    expect(screen.getByRole("link", { name: "Download original" })).toHaveAttribute(
+    expect(screen.getByText("Download")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "MP3 192" })).toHaveAttribute(
+      "href",
+      "/api/v1/tracks/42/download?format=mp3_192",
+    )
+    expect(screen.getByRole("link", { name: "MP3 320" })).toHaveAttribute(
+      "href",
+      "/api/v1/tracks/42/download?format=mp3_320",
+    )
+    expect(screen.getByRole("link", { name: "Original" })).toHaveAttribute(
       "href",
       "/api/v1/tracks/42/download",
     )
-    expect(screen.getByRole("link", { name: "Download as MP3 320" })).toHaveAttribute(
-      "href",
-      "/api/v1/tracks/42/download?format=mp3",
+  })
+
+  it("calls the stored file FLAC when it is one, and names any other container", () => {
+    const { unmount } = render(
+      <MemoryRouter><TrackMenu track={{ ...track, audio_format: "flac" }} /></MemoryRouter>,
     )
+    expect(screen.getByRole("link", { name: "FLAC" })).toHaveAttribute(
+      "href",
+      "/api/v1/tracks/42/download",
+    )
+    unmount()
+
+    render(<MemoryRouter><TrackMenu track={{ ...track, audio_format: "m4a" }} /></MemoryRouter>)
+    expect(screen.getByRole("link", { name: "Original (M4A)" })).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "FLAC" })).toBeNull()
   })
 
   it("shows the share action with an icon for authenticated creators", () => {

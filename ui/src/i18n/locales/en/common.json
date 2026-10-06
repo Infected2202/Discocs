@@ -11,8 +11,7 @@
     "back": "Back",
     "viewFullSize": "View full size",
     "download": "Download",
-    "downloadOriginal": "Original",
-    "downloadMp3": "MP3 320"
+    "downloadOriginal": "Original"
   },
   "status": {
     "loading": "Loading…",

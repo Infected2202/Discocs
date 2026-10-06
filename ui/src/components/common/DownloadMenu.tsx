@@ -16,7 +16,7 @@ interface DownloadMenuProps {
 /**
  * Download button of a release / playlist / mix header. It asks which file to
  * hand out instead of hiding the choice in a profile setting: the original
- * (as stored, usually FLAC) or a re-encoded MP3 320 for a phone or a friend.
+ * (as stored, usually FLAC) or a re-encoded MP3 192/320 for a phone or a friend.
  * Plain links, not fetches — the browser owns the progress UI and Save dialog.
  */
 export default function DownloadMenu({ href }: DownloadMenuProps) {
@@ -32,13 +32,14 @@ export default function DownloadMenu({ href }: DownloadMenuProps) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem asChild>
-          <a href={href} download>
-            {t("actions.downloadOriginal")}
-          </a>
+          <a href={`${href}?format=mp3_192`} download>MP3 192</a>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <a href={`${href}?format=mp3`} download>
-            {t("actions.downloadMp3")}
+          <a href={`${href}?format=mp3_320`} download>MP3 320</a>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <a href={href} download>
+            {t("actions.downloadOriginal")}
           </a>
         </DropdownMenuItem>
       </DropdownMenuContent>

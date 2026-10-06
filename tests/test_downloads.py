@@ -204,14 +204,14 @@ def _fake_navidrome(monkeypatch, seen: dict[str, object], content_type: str, bod
     monkeypatch.setattr(downloads_api, "_navidrome_user_client", lambda _settings: (nav, "u"))
 
 
-def test_track_download_as_mp3_goes_through_the_transcoding_stream_endpoint(tmp_path: Path, monkeypatch):
+def test_track_download_as_mp3_320_goes_through_the_transcoding_stream_endpoint(tmp_path: Path, monkeypatch):
     store = init_store(tmp_path, monkeypatch)
     local_id = add_track(store, tmp_path / "music" / "mapped.flac", artist="Remote", title="Song")
     store.upsert_external_track("navidrome", "song-1", local_id)
     seen: dict[str, object] = {}
     _fake_navidrome(monkeypatch, seen, "audio/mpeg", b"mp3-bytes")
 
-    response = TestClient(app).get(f"/api/v1/tracks/{local_id}/download?format=mp3")
+    response = TestClient(app).get(f"/api/v1/tracks/{local_id}/download?format=mp3_320")
 
     assert response.status_code == 200
     assert response.content == b"mp3-bytes"
@@ -220,6 +220,21 @@ def test_track_download_as_mp3_goes_through_the_transcoding_stream_endpoint(tmp_
     assert "format=mp3" in url.query and "maxBitRate=320" in url.query
     # The saved name follows the bytes (mp3), not the indexed .flac path.
     assert "Remote%20-%20Song.mp3" in response.headers["content-disposition"]
+
+
+def test_track_download_as_mp3_192_asks_navidrome_for_192(tmp_path: Path, monkeypatch):
+    store = init_store(tmp_path, monkeypatch)
+    local_id = add_track(store, tmp_path / "music" / "mapped.flac", artist="Remote", title="Song")
+    store.upsert_external_track("navidrome", "song-1", local_id)
+    seen: dict[str, object] = {}
+    _fake_navidrome(monkeypatch, seen, "audio/mpeg", b"mp3-bytes")
+
+    response = TestClient(app).get(f"/api/v1/tracks/{local_id}/download?format=mp3_192")
+
+    assert response.status_code == 200
+    url = urlparse(str(seen["url"]))
+    assert url.path == "/rest/stream.view"
+    assert "maxBitRate=192" in url.query and "maxBitRate=320" not in url.query
 
 
 def test_track_download_with_explicit_original_uses_the_download_endpoint(tmp_path: Path, monkeypatch):
@@ -247,22 +262,35 @@ def test_collection_download_as_mp3_re_encodes_every_member(tmp_path: Path, monk
     _fake_navidrome(monkeypatch, seen, "audio/mpeg", b"mp3-bytes")
     client = TestClient(app)
 
-    with open_zip(client.get(f"/api/v1/playlists/{playlist.id}/download?format=mp3")) as archive:
+    with open_zip(client.get(f"/api/v1/playlists/{playlist.id}/download?format=mp3_320")) as archive:
         assert archive.namelist() == ["Mixed/001 - Alpha - First.mp3"]
         assert archive.read("Mixed/001 - Alpha - First.mp3") == b"mp3-bytes"
     assert urlparse(str(seen["url"])).path == "/rest/stream.view"
 
-    with open_zip(client.get(f"/api/v1/releases/{release_id}/download?format=mp3")) as archive:
+    with open_zip(client.get(f"/api/v1/releases/{release_id}/download?format=mp3_320")) as archive:
         assert archive.namelist() == ["Test Album/01 - First.mp3"]
 
 
 def test_unknown_download_format_is_rejected(tmp_path: Path, monkeypatch):
     store = init_store(tmp_path, monkeypatch)
     track_id = add_track(store, tmp_path / "music" / "a.flac", artist="A", title="T")
+    client = TestClient(app)
 
-    response = TestClient(app).get(f"/api/v1/tracks/{track_id}/download?format=ogg")
+    # "mp3" without a bitrate is not a format: the bitrate is part of the choice.
+    for bad in ("ogg", "mp3"):
+        response = client.get(f"/api/v1/tracks/{track_id}/download?format={bad}")
+        assert response.status_code == 422
 
-    assert response.status_code == 422
+
+def test_track_summary_reports_the_container_of_the_stored_file(tmp_path: Path, monkeypatch):
+    from app.serializers.entities import track_summary_dict
+
+    store = init_store(tmp_path, monkeypatch)
+    flac = store.get_track(add_track(store, tmp_path / "music" / "a.FLAC", artist="A", title="One"))
+    mp3 = store.get_track(add_track(store, tmp_path / "music" / "b.mp3", artist="A", title="Two"))
+
+    assert track_summary_dict(store, flac)["audio_format"] == "flac"
+    assert track_summary_dict(store, mp3)["audio_format"] == "mp3"
 
 
 def test_local_fallback_file_keeps_its_format_even_when_mp3_is_requested(tmp_path: Path, monkeypatch):
@@ -271,7 +299,7 @@ def test_local_fallback_file_keeps_its_format_even_when_mp3_is_requested(tmp_pat
         store, tmp_path / "music" / "local.flac", artist="A", title="T", payload=b"flac-bytes"
     )
 
-    response = TestClient(app).get(f"/api/v1/tracks/{track_id}/download?format=mp3")
+    response = TestClient(app).get(f"/api/v1/tracks/{track_id}/download?format=mp3_320")
 
     assert response.content == b"flac-bytes"
     assert "A%20-%20T.flac" in response.headers["content-disposition"]

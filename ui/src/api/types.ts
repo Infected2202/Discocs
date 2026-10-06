@@ -149,6 +149,7 @@ export interface ReleaseTrackItem {
   duration: number | null
   release: ReleaseLink | null
   artwork: ImageRef
+  audio_format?: string | null
   explicit: boolean
   liked: boolean
   actions: EntityAction[]
@@ -228,6 +229,8 @@ export interface TrackSummary {
   duration: number | null
   release: ReleaseLink | null
   artwork: ImageRef
+  /** Container of the stored file ("flac", "mp3", ...); names "original" in the download menu. */
+  audio_format?: string | null
   explicit: boolean
   liked: boolean
   actions: EntityAction[]

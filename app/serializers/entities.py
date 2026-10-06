@@ -174,6 +174,9 @@ def track_summary_dict(store: Store, track: Track, artists: list[Artist] | None 
         "release": release,
         "artwork": image_ref(f"/api/v1/tracks/{track.id}/cover", "local"),
         "navidrome_item_id": navidrome_item_id,
+        # Container of the stored file ("flac", "mp3", ...), so the UI can say
+        # what "download original" actually is. None when the path has no suffix.
+        "audio_format": Path(track.path).suffix.lstrip(".").lower() or None,
         "explicit": False,
         "liked": False,
         "actions": [],

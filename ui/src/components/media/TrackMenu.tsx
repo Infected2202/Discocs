@@ -7,6 +7,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
@@ -50,6 +53,13 @@ export default function TrackMenu({
   const release = track.release
   const [shareOpen, setShareOpen] = useState(false)
   const { data: shareCapabilities } = useShareCapabilities()
+  // "Original" is whatever is stored: name it, and call FLAC what it is.
+  const audioFormat = track.audio_format?.toUpperCase()
+  const originalLabel = (() => {
+    if (!audioFormat) return t("trackMenu.downloadOriginal")
+    if (audioFormat === "FLAC") return "FLAC"
+    return t("trackMenu.downloadOriginalAs", { format: audioFormat })
+  })()
 
   async function handlePlay() {
     if (onPlayTrack) {
@@ -111,18 +121,23 @@ export default function TrackMenu({
           {t("trackMenu.addToPlaylist")}
         </DropdownMenuItem>
 
-        <DropdownMenuItem asChild>
-          <a href={`/api/v1/tracks/${track.id}/download`} download>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
             <Download size={14} className="mr-2" />
-            {t("trackMenu.downloadOriginal")}
-          </a>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <a href={`/api/v1/tracks/${track.id}/download?format=mp3`} download>
-            <Download size={14} className="mr-2" />
-            {t("trackMenu.downloadMp3")}
-          </a>
-        </DropdownMenuItem>
+            {t("trackMenu.download")}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <DropdownMenuItem asChild>
+              <a href={`/api/v1/tracks/${track.id}/download?format=mp3_192`} download>MP3 192</a>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <a href={`/api/v1/tracks/${track.id}/download?format=mp3_320`} download>MP3 320</a>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <a href={`/api/v1/tracks/${track.id}/download`} download>{originalLabel}</a>
+            </DropdownMenuItem>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
 
         {shareCapabilities?.can_create && (
           <DropdownMenuItem onSelect={() => setShareOpen(true)}>
