@@ -683,10 +683,11 @@ def test_search_finds_labels_by_name_and_old_spelling_exact_match_first(tmp_path
     ]
     assert labels["total"] == 2
     assert labels["items"][0]["artwork"]["placeholder"] is True
-    # По прежнему написанию кириллицей — тот же лейбл, хотя в названии его нет.
+    # Кириллицей — по ключам склейки (латиница), хотя в названиях «трип» нет; прежнее
+    # написание «ТРИП» точно совпадает с Trip Recordings — он первым.
     by_old_name = client.get("/api/v1/search", params={"q": "трип", "type": "label"}).json()["groups"]
     by_old_name = {group["type"]: group for group in by_old_name}
-    assert [item["name"] for item in by_old_name["labels"]["items"]] == ["Trip Recordings"]
+    assert [item["name"] for item in by_old_name["labels"]["items"]] == ["Trip Recordings", "Triptych"]
     assert by_old_name["releases"]["items"] == []
     page = client.get("/api/v1/search", params={"q": "trip", "type": "label", "limit": 1}).json()["groups"]
     page = {group["type"]: group for group in page}["labels"]
