@@ -153,17 +153,18 @@ entity page.
 ### Search (`/search`, `SearchPage.tsx`)
 
 Reactive search backed by `GET /api/v1/search` via `useSearch`. URL keeps the
-query in `?q=`. A `Tabs` component (All / Artists / Releases / Tracks) is
+query in `?q=`. A `Tabs` component (All / Artists / Releases / Labels / Tracks) is
 disabled when a group is empty; the trigger label always shows the group's
 true total (from `search_group.total`, not the capped preview length).
 
 The All tab is a small preview fed by a single `type=all` request (12 items
-per group): a "Top result" `MediaCard` (best single match), an artists row
-and a releases row (each capped to 6 cards), and a track list (capped to 8
-rows). Each section header carries a "Show all" button (only rendered when
+per group): a "Top result" `MediaCard` (best single match), an artists row,
+a releases row and a labels row (each capped to 6 cards; label cards come
+from `labelToCard` — name and release count, no Play button), and a track
+list (capped to 8 rows). Each section header carries a "Show all" button (only rendered when
 the group's total exceeds the preview) that switches to that group's tab.
 
-The Artists / Releases / Tracks tabs are independent — each paginates through
+The Artists / Releases / Labels / Tracks tabs are independent — each paginates through
 *all* of its matches via `useInfiniteSearch` (`GET /api/v1/search?type=...`,
 50 per page, driven by the response's `next_offset`), not the capped `all`
 preview. An `IntersectionObserver` sentinel at the bottom of the list

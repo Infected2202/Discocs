@@ -15,6 +15,7 @@ const GROUP_KEY_BY_TYPE: Record<Exclude<SearchType, "all">, string> = {
   artist: "artists",
   release: "releases",
   track: "tracks",
+  label: "labels",
 }
 
 /** Paginates a single result type (all of its matches, not just a preview page). */

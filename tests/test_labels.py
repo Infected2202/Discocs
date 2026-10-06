@@ -660,6 +660,45 @@ def test_playback_session_from_label_queues_its_tracks(tmp_path, monkeypatch):
     assert sorted(item["track_id"] for item in body["queue"]["items"]) == sorted([first, second])
 
 
+def test_search_finds_labels_by_name_and_old_spelling_exact_match_first(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    add_release(store, tmp_path, "T1", ("Trip Recordings",))
+    add_release(store, tmp_path, "T2", ("ТРИП",))
+    for album in ("X1", "X2", "X3"):
+        add_release(store, tmp_path, album, ("Triptych",))
+    gone_track, _ = add_release(store, tmp_path, "G1", ("Trip Gone",))
+    add_release(store, tmp_path, "U1", ("Ultra Records",))
+    add_release(store, tmp_path, "S1", ("Soul Trader",))
+    with store.connect() as conn:
+        conn.execute("UPDATE tracks SET missing_at = '2026-01-01' WHERE id = ?", (gone_track,))
+    client = TestClient(app)
+
+    groups = {group["type"]: group for group in client.get("/api/v1/search", params={"q": "trip"}).json()["groups"]}
+
+    labels = groups["labels"]
+    # «Trip» — это Trip Recordings (ключ склейки), он выше Triptych с бо́льшим числом релизов;
+    # лейбл без доступных релизов не показывается.
+    assert [(item["name"], item["release_count"]) for item in labels["items"]] == [
+        ("Trip Recordings", 2), ("Triptych", 3),
+    ]
+    assert labels["total"] == 2
+    assert labels["items"][0]["artwork"]["placeholder"] is True
+    # По прежнему написанию кириллицей — тот же лейбл, хотя в названии его нет.
+    by_old_name = client.get("/api/v1/search", params={"q": "трип", "type": "label"}).json()["groups"]
+    by_old_name = {group["type"]: group for group in by_old_name}
+    assert [item["name"] for item in by_old_name["labels"]["items"]] == ["Trip Recordings"]
+    assert by_old_name["releases"]["items"] == []
+    page = client.get("/api/v1/search", params={"q": "trip", "type": "label", "limit": 1}).json()["groups"]
+    page = {group["type"]: group for group in page}["labels"]
+    assert ([item["name"] for item in page["items"]], page["next_offset"]) == (["Trip Recordings"], 1)
+    # Ключ склейки без пробелов: «soultrader» содержит «ultra», но это не Ultra.
+    ultra = client.get("/api/v1/search", params={"q": "ultra", "type": "label"}).json()["groups"]
+    assert [item["name"] for item in {group["type"]: group for group in ultra}["labels"]["items"]] == ["Ultra Records"]
+    # Другой тип поиска лейблы не ищет.
+    only_artists = client.get("/api/v1/search", params={"q": "trip", "type": "artist"}).json()["groups"]
+    assert {group["type"]: group for group in only_artists}["labels"]["total"] == 0
+
+
 def test_playback_session_from_label_without_tracks_is_not_found(tmp_path, monkeypatch):
     init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)

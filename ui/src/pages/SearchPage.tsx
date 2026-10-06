@@ -6,9 +6,10 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import MediaCard from "@/components/media/MediaCard"
 import VirtualTrackList from "@/components/media/VirtualTrackList"
+import { labelToCard } from "@/components/media/labelCard"
 import { usePlayerStore } from "@/store/playerStore"
-import type { ArtistSummary, ReleaseSummary, TrackSummary } from "@/api/types"
-type TabKey = "all" | "artists" | "releases" | "tracks"
+import type { ArtistSummary, LabelSummary, ReleaseSummary, TrackSummary } from "@/api/types"
+type TabKey = "all" | "artists" | "releases" | "labels" | "tracks"
 
 /** Infinite-scroll sentinel: fires fetchNextPage() when it enters the viewport. */
 function useLoadMoreSentinel(hasNextPage: boolean | undefined, isFetchingNextPage: boolean, fetchNextPage: () => void) {
@@ -57,22 +58,26 @@ export default function SearchPage() {
   const artists = (groups["artists"]?.items ?? []) as ArtistSummary[]
   const releases = (groups["releases"]?.items ?? []) as ReleaseSummary[]
   const tracks = (groups["tracks"]?.items ?? []) as TrackSummary[]
+  const labels = (groups["labels"]?.items ?? []) as LabelSummary[]
 
-  const hasResults = artists.length > 0 || releases.length > 0 || tracks.length > 0
+  const hasResults = artists.length > 0 || releases.length > 0 || tracks.length > 0 || labels.length > 0
 
   // Each specific tab paginates through ALL of its matches independently —
   // the "all" query above stays a small fixed-size preview.
   const artistsQuery = useInfiniteSearch(urlQuery, "artist", tab === "artists")
   const releasesQuery = useInfiniteSearch(urlQuery, "release", tab === "releases")
   const tracksQuery = useInfiniteSearch(urlQuery, "track", tab === "tracks")
+  const labelsQuery = useInfiniteSearch(urlQuery, "label", tab === "labels")
 
   const allArtists = artistsQuery.data?.pages.flatMap((p) => p.groups.find((g) => g.type === "artists")?.items ?? []) as ArtistSummary[] | undefined
   const allReleases = releasesQuery.data?.pages.flatMap((p) => p.groups.find((g) => g.type === "releases")?.items ?? []) as ReleaseSummary[] | undefined
   const allTracks = tracksQuery.data?.pages.flatMap((p) => p.groups.find((g) => g.type === "tracks")?.items ?? []) as TrackSummary[] | undefined
+  const allLabels = labelsQuery.data?.pages.flatMap((p) => p.groups.find((g) => g.type === "labels")?.items ?? []) as LabelSummary[] | undefined
 
   const artistsSentinelRef = useLoadMoreSentinel(artistsQuery.hasNextPage, artistsQuery.isFetchingNextPage, artistsQuery.fetchNextPage)
   const releasesSentinelRef = useLoadMoreSentinel(releasesQuery.hasNextPage, releasesQuery.isFetchingNextPage, releasesQuery.fetchNextPage)
   const tracksSentinelRef = useLoadMoreSentinel(tracksQuery.hasNextPage, tracksQuery.isFetchingNextPage, tracksQuery.fetchNextPage)
+  const labelsSentinelRef = useLoadMoreSentinel(labelsQuery.hasNextPage, labelsQuery.isFetchingNextPage, labelsQuery.fetchNextPage)
 
   return (
     <div className="py-4 space-y-6">
@@ -99,6 +104,9 @@ export default function SearchPage() {
             </TabsTrigger>
             <TabsTrigger value="releases" disabled={releases.length === 0}>
               {t("tabs.releases")} {releases.length > 0 && `(${groups["releases"]?.total ?? releases.length})`}
+            </TabsTrigger>
+            <TabsTrigger value="labels" disabled={labels.length === 0}>
+              {t("tabs.labels")} {labels.length > 0 && `(${groups["labels"]?.total ?? labels.length})`}
             </TabsTrigger>
             <TabsTrigger value="tracks" disabled={tracks.length === 0}>
               {t("tabs.tracks")} {tracks.length > 0 && `(${groups["tracks"]?.total ?? tracks.length})`}
@@ -179,6 +187,24 @@ export default function SearchPage() {
                 </div>
               </section>
             )}
+            {labels.length > 0 && (
+              <section className="space-y-3 mt-6">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{t("tabs.labels")}</h2>
+                  {(groups["labels"]?.total ?? labels.length) > 6 && (
+                    <button
+                      onClick={() => setTab("labels")}
+                      className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {t("showAll")}
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {labels.slice(0, 6).map((l) => <MediaCard key={l.id} {...labelToCard(l, t)} />)}
+                </div>
+              </section>
+            )}
             {tracks.length > 0 && (
               <section className="space-y-3 mt-6">
                 <div className="flex items-center justify-between">
@@ -237,6 +263,26 @@ export default function SearchPage() {
                 </div>
                 <div ref={releasesSentinelRef} className="h-4" />
                 {releasesQuery.isFetchingNextPage && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="w-44 h-56" />)}
+                  </div>
+                )}
+              </>
+            )}
+          </TabsContent>
+
+          <TabsContent value="labels">
+            {labelsQuery.isLoading ? (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="w-44 h-56" />)}
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {(allLabels ?? []).map((l) => <MediaCard key={l.id} {...labelToCard(l, t)} />)}
+                </div>
+                <div ref={labelsSentinelRef} className="h-4" />
+                {labelsQuery.isFetchingNextPage && (
                   <div className="flex flex-wrap gap-1 mt-1">
                     {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="w-44 h-56" />)}
                   </div>

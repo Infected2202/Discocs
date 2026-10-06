@@ -245,7 +245,7 @@ export interface SearchTopResult {
 export interface SearchGroup {
   type: string
   title: string
-  items: (ArtistSummary | ReleaseSummary | TrackSummary)[]
+  items: (ArtistSummary | ReleaseSummary | TrackSummary | LabelSummary)[]
   total: number
   next_offset: number | null
 }

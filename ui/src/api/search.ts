@@ -1,7 +1,7 @@
 import { apiFetch, apiUrl } from "./client"
 import type { SearchResponse } from "./types"
 
-export type SearchType = "all" | "artist" | "release" | "track"
+export type SearchType = "all" | "artist" | "release" | "track" | "label"
 
 export function fetchSearch(
   query: string,

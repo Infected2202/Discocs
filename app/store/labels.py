@@ -197,6 +197,59 @@ class LabelsStoreMixin:
         labels = [replace(label, top_genres=tuple(top.get(label.id, ()))) for label in labels]
         return labels, int(total or 0)
 
+    def search_labels(self, query: str, *, limit: int, offset: int) -> tuple[list[Label], int]:
+        """Лейблы с живыми релизами по названию или любому прежнему написанию.
+
+        Кроме подстроки в названии — начало ключа склейки в ``label_aliases``: «трип»
+        находит «Trip Recordings», «Ultra Records» — «Ultra». Ключ без пробелов, поэтому
+        только начало: подстрока нашла бы «Soul Trader» по «ultra». Точное совпадение
+        первым, дальше — как в списке лейблов: лайкнутые, больше релизов.
+        """
+        name = normalize_text(query)
+        if not name:
+            return [], 0
+        key = merge_key(query)
+        hits = """
+            WITH hits(id) AS (
+                SELECT id FROM labels WHERE normalized_name LIKE ?
+                UNION SELECT label_id FROM label_aliases WHERE key LIKE ?
+            ), exact(id) AS (
+                SELECT id FROM labels WHERE normalized_name = ?
+                UNION SELECT label_id FROM label_aliases WHERE key = ?
+            )
+        """
+        hits_args = (f"%{name}%", f"{key}%", name, key)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                {hits}
+                SELECT l.*, COUNT(DISTINCT rl.release_id) AS release_count,
+                    COALESCE(MAX(p.liked), 0) AS liked,
+                    l.id IN exact AS is_exact
+                FROM hits h
+                JOIN labels l ON l.id = h.id
+                JOIN release_labels rl ON rl.label_id = l.id
+                LEFT JOIN user_label_preferences p
+                  ON p.label_id = l.id AND p.user_id = ?
+                WHERE {_AVAILABLE_RELEASE}
+                GROUP BY l.id
+                ORDER BY is_exact DESC, liked DESC, release_count DESC, l.name COLLATE NOCASE, l.id
+                LIMIT ? OFFSET ?
+                """,
+                (*hits_args, self.user_id, limit, offset),
+            ).fetchall()
+            total = conn.execute(
+                f"""
+                {hits}
+                SELECT COUNT(DISTINCT h.id)
+                FROM hits h
+                JOIN release_labels rl ON rl.label_id = h.id
+                WHERE {_AVAILABLE_RELEASE}
+                """,
+                hits_args,
+            ).fetchone()[0]
+        return [row_to_label(row) for row in rows], int(total or 0)
+
     def get_label(self, label_id: int) -> Label | None:
         with self.connect() as conn:
             row = conn.execute(

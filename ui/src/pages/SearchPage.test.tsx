@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import SearchPage from "./SearchPage"
-import type { ArtistSummary, ReleaseSummary, SearchResponse } from "@/api/types"
+import type { ArtistSummary, LabelSummary, ReleaseSummary, SearchResponse } from "@/api/types"
 
 const fetchSearch = vi.fn()
 
@@ -32,6 +32,16 @@ function release(id: number): ReleaseSummary {
     duration: null,
     artwork: { url: null, source: "placeholder", placeholder: true },
   } as unknown as ReleaseSummary
+}
+
+function label(id: number): LabelSummary {
+  return {
+    id,
+    name: `Label ${id}`,
+    release_count: id,
+    liked: false,
+    artwork: { url: null, source: "placeholder", placeholder: true },
+  } as unknown as LabelSummary
 }
 
 const ARTISTS = [artist(1), artist(2)]
@@ -89,6 +99,7 @@ function renderPage() {
       <MemoryRouter initialEntries={["/search?q=fabric"]}>
         <Routes>
           <Route path="/search" element={<SearchPage />} />
+          <Route path="/labels/:id" element={<p>label page</p>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -142,5 +153,37 @@ describe("SearchPage", () => {
     // testTimeout, which ran out under the full parallel run in build #390.
     await waitFor(() => expect(fetchSearch).toHaveBeenCalledWith("fabric", "release", 50, 0))
     expect(await screen.findByText("Release 49")).toBeInTheDocument()
+  })
+
+  it("finds labels: a card with the release count opens the label, the Labels tab pages through all of them", async () => {
+    const labelsGroup = (items: LabelSummary[], nextOffset: number | null) => ({
+      type: "labels", title: "Labels", items, total: 8, next_offset: nextOffset,
+    })
+    fetchSearch.mockImplementation((_query: string, type: string) => Promise.resolve({
+      query: "trip",
+      top_result: null,
+      groups: [
+        emptyGroup("artists", "Artists"),
+        emptyGroup("tracks", "Tracks"),
+        emptyGroup("releases", "Releases"),
+        type === "label"
+          ? labelsGroup(Array.from({ length: 8 }, (_, i) => label(i + 1)), null)
+          : labelsGroup([label(1), label(2)], 12),
+      ],
+    } as unknown as SearchResponse))
+
+    renderPage()
+
+    // Only labels matched — the page shows results instead of «No results».
+    const tab = await screen.findByRole("tab", { name: "Labels (8)" })
+    expect(screen.getByText("2 releases")).toBeInTheDocument()
+    expect(screen.queryByText("Label 8")).toBeNull()
+
+    fireEvent.mouseDown(tab, { button: 0 })
+    await waitFor(() => expect(fetchSearch).toHaveBeenCalledWith("fabric", "label", 50, 0))
+    expect(await screen.findByText("Label 8")).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText("Label 8"))
+    expect(await screen.findByText("label page")).toBeInTheDocument()
   })
 })

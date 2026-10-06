@@ -111,6 +111,15 @@ GET  /api/v1/releases/{release_id}/cover
 
 Implementation notes vs. the original spec:
 
+- `/api/v1/search` answers groups `artists`, `tracks`, `releases` and
+  `labels` (`type=all|artist|release|track|label`). Labels
+  (`Store.search_labels`) are only those with available releases and match
+  by a substring of the name or by the start of a label merge key in
+  `label_aliases` (`app/label_names.py`, `merge_key`): «трип» finds «Trip
+  Recordings», «Ultra Records» finds «Ultra». Keys have no spaces, so only
+  their start is matched — a substring would find «Soul Trader» for «ultra». An exact name/key match comes first, then
+  liked labels and more releases. Labels do not compete for `top_result`.
+
 - `/api/v1/releases/{id}/recommendations` is implemented (spec described it
   as a Phase 8 stub returning `available: false`). It uses a release
   embedding centroid (`app/services/release_similarity.py`,

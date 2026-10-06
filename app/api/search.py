@@ -15,6 +15,7 @@ from app.serializers.entities import (
     release_summary_dict,
     track_summary_dict,
 )
+from app.serializers.labels import label_summary_dict
 from app.serializers.search import (
     _entity_search_score,
     search_group,
@@ -27,7 +28,7 @@ router = APIRouter(prefix="/api/v1")
 @router.get("/search", response_model=SearchResponse)
 def api_v1_search(
     q: str = "",
-    type: Annotated[str, Query(pattern="^(all|artist|release|track)$")] = "all",
+    type: Annotated[str, Query(pattern="^(all|artist|release|track|label)$")] = "all",
     limit: Annotated[int, Query(ge=1, le=50)] = 8,
     offset: Annotated[int, Query(ge=0)] = 0,
     include_debug: bool = False,
@@ -35,6 +36,9 @@ def api_v1_search(
     store, settings = context()
     query = " ".join(q.strip().split())
     results = store.search_entities(query, entity_type=type, limit=limit, offset=offset)
+    label_rows, label_total = (
+        store.search_labels(query, limit=limit, offset=offset) if type in {"all", "label"} else ([], 0)
+    )
     artist_rows = results["artists"]["items"]
     release_rows = results["releases"]["items"]
     track_rows = results["tracks"]["items"]
@@ -49,6 +53,7 @@ def api_v1_search(
         search_group("artists", "Artists", artists, int(results["artists"]["total"]), limit, offset),
         search_group("tracks", "Tracks", tracks, int(results["tracks"]["total"]), limit, offset),
         search_group("releases", "Releases", releases, int(results["releases"]["total"]), limit, offset),
+        search_group("labels", "Labels", [label_summary_dict(row) for row in label_rows], label_total, limit, offset),
     ]
     top_result = search_top_result(query, artists, releases, tracks)
     if include_debug:
