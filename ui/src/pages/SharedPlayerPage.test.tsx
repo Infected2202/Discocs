@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { MemoryRouter, Route, Routes } from "react-router"
+import { MemoryRouter, Route, Routes, useLocation } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@/api/client"
 import SharedPlayerPage from "./SharedPlayerPage"
@@ -23,12 +23,17 @@ vi.mock("@/hooks/useArtworkTheme", () => ({
   useArtworkTheme: (artworkUrl: string | null) => useArtworkTheme(artworkUrl),
 }))
 
+function ReleaseStub() {
+  const { state } = useLocation()
+  return <h1 data-highlight={String((state as { highlightTrackId?: number } | null)?.highlightTrackId ?? "")}>Release page</h1>
+}
+
 function renderPage(entry = "/share/test-token") {
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route path="/share/:token" element={<SharedPlayerPage />} />
-        <Route path="/releases/:id" element={<h1>Release page</h1>} />
+        <Route path="/releases/:id" element={<ReleaseStub />} />
       </Routes>
     </MemoryRouter>,
   )
@@ -247,10 +252,19 @@ describe("SharedPlayerPage for a signed-in user", () => {
     resolveShareForMember.mockResolvedValueOnce(target)
     renderPage()
 
-    expect(await screen.findByRole("heading", { name: "Release page" })).toBeInTheDocument()
+    const landed = await screen.findByRole("heading", { name: "Release page" })
+    // The shared track travels with the navigation so the release page can frame it.
+    expect(landed).toHaveAttribute("data-highlight", "42")
     expect(resolveShareForMember).toHaveBeenCalledWith("test-token")
     expect(stageSharedRelease).toHaveBeenCalledWith(target)
     expect(fetchPublicShare).not.toHaveBeenCalled()
+  })
+
+  it("lands on a whole-release share without framing any track", async () => {
+    resolveShareForMember.mockResolvedValueOnce({ ...target, track_id: null })
+    renderPage()
+
+    expect(await screen.findByRole("heading", { name: "Release page" })).toHaveAttribute("data-highlight", "")
   })
 
   it("still lands on the release when the player could not be staged", async () => {

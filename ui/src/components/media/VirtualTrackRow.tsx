@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router"
 import { useTranslation } from "react-i18next"
 import { Play, Pause, Check } from "lucide-react"
@@ -47,6 +47,12 @@ interface VirtualTrackRowProps {
   readonly selectable?: boolean
   readonly selected?: boolean
   readonly selectionActive?: boolean
+  /**
+   * Draw the glowing frame and bring the row into view — the track a share
+   * link pointed at. Not the "currently playing" marker: that stays the
+   * accent-coloured text.
+   */
+  readonly highlighted?: boolean
   readonly onToggleSelect?: (trackId: number) => void
   /**
    * Play the whole collection starting at this track (playlist, mix…).
@@ -100,6 +106,7 @@ export default function VirtualTrackRow({
   selectable = false,
   selected = false,
   selectionActive = false,
+  highlighted = false,
   onToggleSelect,
   onPlayTrack,
   onRemoveTrack,
@@ -107,6 +114,11 @@ export default function VirtualTrackRow({
 }: VirtualTrackRowProps) {
   const { t, i18n } = useTranslation("media")
   const [hovered, setHovered] = useState(false)
+  const rowRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (highlighted) rowRef.current?.scrollIntoView?.({ block: "center" })
+  }, [highlighted])
 
   const currentTrackId = usePlayerStore((s) => s.currentTrackId)
   const playbackState  = usePlayerStore((s) => s.playbackState)
@@ -133,10 +145,13 @@ export default function VirtualTrackRow({
 
   return (
     <div
+      ref={rowRef}
       data-track-row
+      data-highlighted={highlighted || undefined}
       className={cn(
         "group/row grid items-center border-b border-border/40 last:border-0 transition-colors hover:bg-muted/40 h-[52px] [grid-template-columns:var(--track-grid-mobile)] md:[grid-template-columns:var(--track-grid-desktop)]",
         isActive && "text-primary",
+        highlighted && "track-row-glow",
       )}
       style={{
         "--track-grid-mobile": gridTemplates.mobile,

@@ -52,11 +52,12 @@ function makeTrack(id: number): TrackSummary {
   }
 }
 
-function Wrapper({ tracks, onReorder, onPlayTrack, virtualized }: {
+function Wrapper({ tracks, onReorder, onPlayTrack, virtualized, highlightTrackId }: {
   readonly tracks: TrackSummary[]
   readonly onReorder?: (trackIds: number[]) => void
   readonly onPlayTrack?: (trackId: number) => void
   readonly virtualized?: boolean
+  readonly highlightTrackId?: number | null
 }) {
   const ref = useRef<HTMLElement>(null)
   return (
@@ -69,6 +70,7 @@ function Wrapper({ tracks, onReorder, onPlayTrack, virtualized }: {
             onReorder={onReorder}
             onPlayTrack={onPlayTrack}
             virtualized={virtualized}
+            highlightTrackId={highlightTrackId}
           />
         </div>
       </ScrollContext.Provider>
@@ -77,6 +79,25 @@ function Wrapper({ tracks, onReorder, onPlayTrack, virtualized }: {
 }
 
 describe("VirtualTrackList", () => {
+  it("рамкой подсвечивает только трек из highlightTrackId", () => {
+    for (const virtualized of [true, false]) {
+      const { container, unmount } = render(
+        <Wrapper tracks={[makeTrack(1), makeTrack(2), makeTrack(3)]} virtualized={virtualized} highlightTrackId={2} />,
+      )
+
+      const glowing = [...container.querySelectorAll(".track-row-glow")]
+      expect(glowing).toHaveLength(1)
+      expect(glowing[0]).toHaveTextContent("Track 2")
+      unmount()
+    }
+  })
+
+  it("без highlightTrackId никого не подсвечивает", () => {
+    const { container } = render(<Wrapper tracks={[makeTrack(1), makeTrack(2)]} virtualized={false} />)
+
+    expect(container.querySelector(".track-row-glow")).toBeNull()
+  })
+
   it("рендерит все треки (через mocked virtualizer)", () => {
     const tracks = Array.from({ length: 5 }, (_, i) => makeTrack(i + 1))
     render(<Wrapper tracks={tracks} />)

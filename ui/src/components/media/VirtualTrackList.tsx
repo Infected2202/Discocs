@@ -38,6 +38,8 @@ interface VirtualTrackListProps {
   readonly onRemoveTrack?: (trackId: number) => void
   /** Disable only for short, inline lists which do not use the app scroll container. */
   readonly virtualized?: boolean
+  /** The row to frame with a glow and scroll to (a track a share link pointed at). */
+  readonly highlightTrackId?: number | null
 }
 
 export function moveTrackById<T extends { id: number }>(
@@ -61,6 +63,7 @@ interface RowProps {
   readonly selectable: boolean
   readonly selected: boolean
   readonly selectionActive: boolean
+  readonly highlighted: boolean
   readonly onToggleSelect?: (trackId: number) => void
   readonly onPlayTrack?: (trackId: number) => void
   readonly onRemoveTrack?: (trackId: number) => void
@@ -150,6 +153,7 @@ export default function VirtualTrackList({
   onPlayTrack,
   onRemoveTrack,
   virtualized = true,
+  highlightTrackId = null,
 }: VirtualTrackListProps) {
   const listId = useId()
   const scrollRef = useScrollRef()
@@ -213,6 +217,7 @@ export default function VirtualTrackList({
       selectable,
       selected: selectedIds?.has(track.id) ?? false,
       selectionActive,
+      highlighted: track.id === highlightTrackId,
       onToggleSelect,
       onPlayTrack,
       onRemoveTrack,

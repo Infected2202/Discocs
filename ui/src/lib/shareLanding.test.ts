@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { shareTargetPath, stageSharedRelease } from "./shareLanding"
+import { highlightTrackIdFromState, shareTargetPath, shareTargetState, stageSharedRelease } from "./shareLanding"
 
 const createSession = vi.fn()
 const patchSession = vi.fn()
@@ -32,6 +32,21 @@ describe("shareLanding", () => {
 
   it("lands on the release page of the share", () => {
     expect(shareTargetPath({ release_id: 7, release_title: "Album", track_id: 42 })).toBe("/releases/7")
+  })
+
+  it("asks the release page to frame the shared track, and only a shared track", () => {
+    expect(shareTargetState({ release_id: 7, release_title: "Album", track_id: 42 })).toEqual({ highlightTrackId: 42 })
+    expect(shareTargetState({ release_id: 7, release_title: "Album", track_id: null })).toBeUndefined()
+  })
+
+  it("reads the frame target back from a location state, and from nothing else", () => {
+    expect(highlightTrackIdFromState({ highlightTrackId: 42 })).toBe(42)
+    expect(highlightTrackIdFromState(null)).toBeNull()
+    expect(highlightTrackIdFromState(undefined)).toBeNull()
+    expect(highlightTrackIdFromState({})).toBeNull()
+    expect(highlightTrackIdFromState({ highlightTrackId: "42" })).toBeNull()
+    expect(highlightTrackIdFromState({ highlightTrackId: 4.5 })).toBeNull()
+    expect(highlightTrackIdFromState("42")).toBeNull()
   })
 
   it("queues the whole release in order and points the player at the shared track", async () => {

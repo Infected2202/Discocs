@@ -1,5 +1,5 @@
-import { useState } from "react"
-import { Link, useParams } from "react-router"
+import { useEffect, useState } from "react"
+import { Link, useLocation, useNavigate, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import type { TFunction } from "i18next"
 import { Download, Play, Share2, Shuffle } from "lucide-react"
@@ -18,6 +18,7 @@ import { usePlayerStore } from "@/store/playerStore"
 import type { ReleaseSummary } from "@/api/types"
 import CreateShareDialog from "@/components/share/CreateShareDialog"
 import { useShareCapabilities } from "@/api/shares"
+import { highlightTrackIdFromState } from "@/lib/shareLanding"
 
 function formatDuration(seconds: number | null | undefined, t: TFunction<"release">): string {
   if (!seconds) return ""
@@ -60,9 +61,22 @@ export default function ReleasePage() {
   const { data: relatedData } = useReleaseRelated(releaseId)
   const { data: recsData } = useReleaseRecommendations(releaseId)
   const playSource = usePlayerStore((s) => s.playSource)
+  const playbackState = usePlayerStore((s) => s.playbackState)
   const isLoading = relLoading || tracksLoading
   const [shareOpen, setShareOpen] = useState(false)
   const { data: shareCapabilities } = useShareCapabilities()
+
+  // The track a share link pointed at keeps its frame until playback starts —
+  // that is the one thing the arrival asks for. The state is then dropped from
+  // the history entry too, so a reload does not light the frame again.
+  const location = useLocation()
+  const navigate = useNavigate()
+  const highlightTrackId = highlightTrackIdFromState(location.state)
+  useEffect(() => {
+    if (highlightTrackId !== null && playbackState === "playing") {
+      navigate(location.pathname + location.search, { replace: true, state: null })
+    }
+  }, [highlightTrackId, playbackState, navigate, location.pathname, location.search])
 
   if (isLoading) return <ReleasePageSkeleton />
   if (error || !releaseData) {
@@ -190,6 +204,7 @@ export default function ReleasePage() {
         <VirtualTrackList
           tracks={tracks}
           virtualized={false}
+          highlightTrackId={highlightTrackId}
           showRelease={false}
           sourceLabel={release.title}
           onPlayTrack={(trackId) => playSource("release", releaseId, release.title, trackId)}

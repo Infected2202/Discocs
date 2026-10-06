@@ -104,6 +104,41 @@ describe("VirtualTrackRow", () => {
     expect(playSource).not.toHaveBeenCalled()
   })
 
+  it("frames a highlighted row with the glow and brings it into view", () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+
+    const { container } = renderRow({ highlighted: true })
+
+    const row = container.querySelector("[data-track-row]")
+    expect(row).toHaveClass("track-row-glow")
+    expect(row).toHaveAttribute("data-highlighted", "true")
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" })
+  })
+
+  it("leaves a row without the glow and does not scroll to it unless highlighted", () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+
+    const { container } = renderRow()
+
+    const row = container.querySelector("[data-track-row]")
+    expect(row).not.toHaveClass("track-row-glow")
+    expect(row).not.toHaveAttribute("data-highlighted")
+    expect(scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it("keeps the playing marker apart from the glow: a playing row is accent text only", () => {
+    playerState.currentTrackId = 7
+    playerState.playbackState = "playing"
+
+    const { container } = renderRow()
+
+    const row = container.querySelector("[data-track-row]")
+    expect(row).toHaveClass("text-primary")
+    expect(row).not.toHaveClass("track-row-glow")
+  })
+
   it("renders release + artist links and formatted duration", () => {
     renderRow()
 

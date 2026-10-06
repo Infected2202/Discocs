@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen, within } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import ReleasePage from "./ReleasePage"
@@ -31,9 +31,10 @@ vi.mock("@/api/shares", () => ({
   createShare: vi.fn(),
 }))
 
+const playerState = { playSource: vi.fn(), toggleShuffle: vi.fn(), playbackState: "paused" }
+
 vi.mock("@/store/playerStore", () => ({
-  usePlayerStore: (selector: (s: { playSource: () => void; toggleShuffle: () => void }) => unknown) =>
-    selector({ playSource: vi.fn(), toggleShuffle: vi.fn() }),
+  usePlayerStore: (selector: (s: typeof playerState) => unknown) => selector(playerState),
 }))
 
 vi.mock("@/store/navidromeStore", () => ({
@@ -42,7 +43,9 @@ vi.mock("@/store/navidromeStore", () => ({
 }))
 
 vi.mock("@/components/media/VirtualTrackList", () => ({
-  default: () => <div data-testid="track-list" />,
+  default: ({ highlightTrackId }: { highlightTrackId?: number | null }) => (
+    <div data-testid="track-list" data-highlight={highlightTrackId ?? ""} />
+  ),
 }))
 
 vi.mock("@/components/media/ArtworkImage", () => ({
@@ -97,11 +100,11 @@ function makeRecsData(): ReleaseAvailabilityStub {
   }
 }
 
-function renderPage() {
+function renderPage(entry: string | { pathname: string; state: unknown } = "/releases/5") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/releases/5"]}>
+      <MemoryRouter initialEntries={[entry]}>
         <Routes>
           <Route path="/releases/:id" element={<ReleasePage />} />
           <Route path="/releases/:id/recommendations" element={<p>recommendations list</p>} />
@@ -174,6 +177,44 @@ describe("ReleasePage — шелф рекомендаций без битого 
     expect(shuffle).toHaveAttribute("data-size", "icon-sm")
     expect(shuffle).not.toHaveTextContent("Shuffle")
     expect(screen.queryByText("Album")).toBeNull()
+  })
+})
+
+describe("ReleasePage — трек, на который привела ссылка", () => {
+  beforeEach(() => {
+    playerState.playbackState = "paused"
+    useRelease.mockReturnValue({ data: makeReleaseData(), isLoading: false, error: null })
+    useReleaseTracks.mockReturnValue({ data: makeTracksData(), isLoading: false })
+    useReleaseRelated.mockReturnValue({ data: makeRelatedData() })
+    useReleaseRecommendations.mockReturnValue({ data: makeRecsData() })
+    useShareCapabilities.mockReturnValue({ data: { enabled: true, can_create: true } })
+  })
+
+  it("отдаёт списку трек из состояния перехода, чтобы обвести его рамкой", () => {
+    renderPage({ pathname: "/releases/5", state: { highlightTrackId: 42 } })
+
+    expect(screen.getByTestId("track-list")).toHaveAttribute("data-highlight", "42")
+  })
+
+  it("ничего не подсвечивает при обычном заходе на страницу", () => {
+    renderPage()
+
+    expect(screen.getByTestId("track-list")).toHaveAttribute("data-highlight", "")
+  })
+
+  it("держит рамку, пока воспроизведение не началось", () => {
+    playerState.playbackState = "idle"
+    renderPage({ pathname: "/releases/5", state: { highlightTrackId: 42 } })
+
+    expect(screen.getByTestId("track-list")).toHaveAttribute("data-highlight", "42")
+  })
+
+  it("снимает рамку, как только пошло воспроизведение", async () => {
+    playerState.playbackState = "playing"
+
+    renderPage({ pathname: "/releases/5", state: { highlightTrackId: 42 } })
+
+    await waitFor(() => expect(screen.getByTestId("track-list")).toHaveAttribute("data-highlight", ""))
   })
 })
 

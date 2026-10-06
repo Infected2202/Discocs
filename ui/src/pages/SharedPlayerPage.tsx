@@ -8,7 +8,7 @@ import ArtworkImage from "@/components/media/ArtworkImage"
 import { useDragSlider } from "@/components/player/useDragSlider"
 import ShareDownloadMenu from "@/components/share/ShareDownloadMenu"
 import { useArtworkTheme } from "@/hooks/useArtworkTheme"
-import { shareTargetPath, stageSharedRelease } from "@/lib/shareLanding"
+import { shareTargetPath, shareTargetState, stageSharedRelease } from "@/lib/shareLanding"
 import { cn } from "@/lib/utils"
 
 function formatTime(seconds: number): string {
@@ -81,7 +81,7 @@ export default function SharedPlayerPage() {
       .then(async (target) => {
         // Staging is a convenience; the user still lands on the release if it fails.
         await stageSharedRelease(target).catch(() => undefined)
-        if (!cancelled) navigate(shareTargetPath(target), { replace: true })
+        if (!cancelled) navigate(shareTargetPath(target), { replace: true, state: shareTargetState(target) })
       })
       .catch((error: unknown) => {
         if (!cancelled) setLanding(isDeadLink(error) ? "expired" : "guest")

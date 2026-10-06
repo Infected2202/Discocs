@@ -227,6 +227,38 @@
   }
 }
 
+/* The track a share link pointed at: a thin accent border whose light bleeds
+   outward and fades. Stacked shadows give the fade — a 1px ring, then two
+   progressively wider and fainter halos — and a faint inset keeps the row body
+   from looking cut out. z-index lifts the halo over the neighbouring rows,
+   which would otherwise paint their hover background across it. */
+.track-row-glow {
+  position: relative;
+  z-index: 1;
+  border-radius: 10px;
+  border-color: transparent;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--track-accent) 75%, transparent),
+    0 0 8px 0 color-mix(in srgb, var(--track-accent) 45%, transparent),
+    0 0 20px 2px color-mix(in srgb, var(--track-accent) 18%, transparent),
+    inset 0 0 14px color-mix(in srgb, var(--track-accent) 12%, transparent);
+  animation: track-row-glow-in 700ms ease-out both;
+}
+@keyframes track-row-glow-in {
+  from {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--track-accent) 0%, transparent),
+      0 0 0 0 color-mix(in srgb, var(--track-accent) 0%, transparent),
+      0 0 0 0 color-mix(in srgb, var(--track-accent) 0%, transparent),
+      inset 0 0 0 color-mix(in srgb, var(--track-accent) 0%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .track-row-glow {
+    animation: none;
+  }
+}
+
 /* Touchscreens have no persistent hover state, so row actions must remain
    discoverable. Pointer devices can keep the quieter hover-only treatment. */
 .track-menu-trigger {

@@ -8,6 +8,27 @@ export function shareTargetPath(target: ShareMemberTarget): string {
 }
 
 /**
+ * What the release page needs to frame the shared track. It rides in the
+ * history entry's state, not the URL: the address stays a plain, shareable
+ * release link, and the glow is a one-off arrival cue rather than a permanent
+ * property of the page.
+ */
+export interface ShareLandingState {
+  highlightTrackId: number
+}
+
+export function shareTargetState(target: ShareMemberTarget): ShareLandingState | undefined {
+  return target.track_id === null ? undefined : { highlightTrackId: target.track_id }
+}
+
+/** The track to frame, from a location's state — null for any other arrival. */
+export function highlightTrackIdFromState(state: unknown): number | null {
+  if (typeof state !== "object" || state === null) return null
+  const id = (state as Partial<ShareLandingState>).highlightTrackId
+  return typeof id === "number" && Number.isInteger(id) ? id : null
+}
+
+/**
  * Put the shared release in the player, paused on the shared track (or the
  * first one for a whole-release share), so the user lands with one tap left:
  * play.
