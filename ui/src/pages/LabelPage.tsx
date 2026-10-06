@@ -58,10 +58,17 @@ function LabelDescription({ label }: { readonly label: LabelDetail }) {
 
   if (!description && label.links.length === 0) return null
 
+  const hasLinks = label.links.length > 0
+  // Ссылки лежат под спойлером вместе с остатком текста: кнопка нужна, если текст
+  // обрезан или есть ссылки. Без текста кнопка называется просто «Ссылки».
+  const toggleText = expanded
+    ? t("description.showLess")
+    : description ? t("description.showMore") : t("links")
+
   return (
     <section className="px-4 sm:px-6 pb-6 max-w-3xl space-y-3" aria-label={t("about")}>
-      {description && (
-        <div className="space-y-1">
+      <div className="space-y-1">
+        {description && (
           <p
             ref={textRef}
             data-testid="label-description"
@@ -84,44 +91,46 @@ function LabelDescription({ label }: { readonly label: LabelDetail }) {
               ),
             )}
           </p>
-          <div className="flex items-center gap-3 text-xs text-muted-foreground">
-            {(overflowing || expanded) && (
-              <button
-                type="button"
-                className="font-medium text-foreground/80 hover:text-foreground hover:underline"
-                onClick={() => setExpanded((value) => !value)}
-              >
-                {expanded ? t("description.showLess") : t("description.showMore")}
-              </button>
-            )}
-            {/* Источник показываем только у текста из Википедии/Discogs/Beatport;
-                описание, написанное вручную, идёт без подписи. */}
-            {description.source && description.source !== "editorial" && (
-              <span>
-                {t("description.source", { source: t(`description.sources.${description.source}`) })}
-              </span>
-            )}
-          </div>
-        </div>
-      )}
+        )}
 
-      {label.links.length > 0 && (
-        <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs" aria-label={t("links")}>
-          {label.links.map((link) => (
-            <li key={link.url}>
-              <a
-                href={link.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"
-              >
-                {linkTitle(link)}
-                <ExternalLink size={11} />
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
+        {expanded && hasLinks && (
+          <ul className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-xs" aria-label={t("links")}>
+            {label.links.map((link) => (
+              <li key={link.url}>
+                <a
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"
+                >
+                  {linkTitle(link)}
+                  <ExternalLink size={11} />
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          {(overflowing || hasLinks || expanded) && (
+            <button
+              type="button"
+              aria-expanded={expanded}
+              className="font-medium text-foreground/80 hover:text-foreground hover:underline"
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {toggleText}
+            </button>
+          )}
+          {/* Источник показываем только у текста из Википедии/Discogs/Beatport;
+              описание, написанное вручную, идёт без подписи. */}
+          {description?.source && description.source !== "editorial" && (
+            <span>
+              {t("description.source", { source: t(`description.sources.${description.source}`) })}
+            </span>
+          )}
+        </div>
+      </div>
     </section>
   )
 }

@@ -258,8 +258,11 @@ this controlled mode instead of reading `navidromeStore`. No Play button and
 no release-type filters — by design. Below the header, when present: the description (clamped to four
 lines with "Show more"/"Show less", `[a=Name]` mentions rendered as links to
 artists that exist in the library, plain text otherwise, plus a
-"Source: …" caption — omitted for a hand-written `editorial` description) and the label's external links (new tab,
-`rel="noopener noreferrer"`). The newest/oldest-first sort select sits in
+"Source: …" caption — omitted for a hand-written `editorial` description). The label's external links (new tab,
+`rel="noopener noreferrer"`) sit under the same spoiler: they appear only
+once the description is expanded, so with links the "Show more" button is
+there even when the text fits; a label with links but no text gets a single
+"Links" toggle. The newest/oldest-first sort select sits in
 the header actions next to the heart (no separate "Releases" heading row —
 it read as an empty group above the real ones). Then one grid `Shelf` per
 non-empty release-type group — Albums, EPs, Singles, Compilations, Other releases (soundtracks,

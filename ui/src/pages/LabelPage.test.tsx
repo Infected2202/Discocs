@@ -157,8 +157,32 @@ describe("LabelPage", () => {
     expect(screen.getByText("Source: Discogs")).toBeInTheDocument()
   })
 
+  it("keeps label links under the spoiler: hidden until the description is expanded", () => {
+    renderPage()
+
+    // Text fits (jsdom has no layout), but the links alone are a reason for the button.
+    expect(screen.queryByRole("list", { name: "Links" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "SoundCloud" })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }))
+    expect(screen.getByRole("link", { name: "SoundCloud" })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Show less" }))
+    expect(screen.queryByRole("link", { name: "SoundCloud" })).not.toBeInTheDocument()
+  })
+
+  it("without a description the spoiler button is just «Links»", () => {
+    useLabel.mockReturnValue({ data: makeLabel({ description: null }), isLoading: false, error: null })
+    renderPage()
+
+    expect(screen.queryByTestId("label-description")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Links" }))
+    expect(screen.getByRole("link", { name: "SoundCloud" })).toBeInTheDocument()
+  })
+
   it("renders label links in a new tab, titled by host when no title is given", () => {
     renderPage()
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }))
 
     const bandcamp = screen.getByRole("link", { name: "trip.bandcamp.com" })
     expect(bandcamp).toHaveAttribute("href", "https://www.trip.bandcamp.com/")
