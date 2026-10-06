@@ -100,6 +100,9 @@ logger = logging.getLogger(__name__)
 INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
 _DELETE_RELEASE_ARTISTS = "DELETE FROM release_artists WHERE release_id = ?"
+_VARIOUS_ARTISTS = "various artists"
+# Сколько реальных артистов сборника питают полку «Ещё от этих артистов».
+_VA_CONTEXT_ARTISTS = 8
 
 class LibraryStoreMixin:
     def upsert_track(self, scanned: ScannedTrack) -> tuple[int, bool]:
@@ -1216,7 +1219,8 @@ class LibraryStoreMixin:
             rows = conn.execute(
                 """
                 SELECT DISTINCT a.*,
-                    MIN(COALESCE(ra.position, ta.position, 999999)) AS sort_position
+                    MIN(COALESCE(ra.position, ta.position, 999999)) AS sort_position,
+                    COUNT(DISTINCT ta.track_id) AS track_count
                 FROM artists a
                 LEFT JOIN release_artists ra
                   ON ra.artist_id = a.id AND ra.release_id = ?
@@ -1230,7 +1234,14 @@ class LibraryStoreMixin:
                 """,
                 (release_id, release_id),
             ).fetchall()
-        return [row_to_artist(row) for row in rows]
+        # «Various Artists» — синтетический артист сборника: по нему находятся только
+        # другие сборники. Вместо него берём реальных участников, самых представленных
+        # на релизе первыми, и не больше _VA_CONTEXT_ARTISTS.
+        real = [row for row in rows if row["normalized_name"] != _VARIOUS_ARTISTS]
+        if len(real) != len(rows):
+            real.sort(key=lambda row: (-int(row["track_count"]), int(row["sort_position"]), row["name"]))
+            real = real[:_VA_CONTEXT_ARTISTS]
+        return [row_to_artist(row) for row in real]
 
     def search_entities(
         self,

@@ -522,6 +522,49 @@ def test_api_v1_release_related_discography_uses_track_participants(tmp_path: Pa
     assert (data["total"], data["limit"], data["offset"], data["next_offset"]) == (1, 16, 0, None)
 
 
+def test_related_discography_of_various_artists_release_uses_track_artists(tmp_path: Path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    # Сборник: Alpha на двух треках, Beta на одном, album artist — Various Artists.
+    for name, artist in [("a1", "Alpha"), ("a2", "Alpha"), ("b1", "Beta")]:
+        store.upsert_track(
+            ScannedTrack(
+                path=tmp_path / "va" / f"{name}.flac",
+                artist=artist,
+                title=name,
+                album="Compilation",
+                album_artist="Various Artists",
+                duration=100.0,
+                file_size=100,
+                mtime=1,
+            )
+        )
+    # Другой VA-сборник — не должен попасть на полку через «Various Artists».
+    store.upsert_track(
+        ScannedTrack(
+            path=tmp_path / "va2" / "z1.flac",
+            artist="Zed",
+            title="z1",
+            album="Other Compilation",
+            album_artist="Various Artists",
+            duration=100.0,
+            file_size=100,
+            mtime=1,
+        )
+    )
+    add_track(store, tmp_path / "alpha" / "one.flac", title="Alpha Solo", artist="Alpha", album="Alpha Album")
+    add_track(store, tmp_path / "beta" / "one.flac", title="Beta Solo", artist="Beta", album="Beta Album")
+    release_id = _id_by_name(store, "releases", "title", "Compilation")
+
+    artists = store.participating_artists_for_release(release_id)
+    related = store.related_discography_for_release(release_id, limit=None)
+
+    # Various Artists выброшен, самый представленный на релизе артист — первым.
+    assert [artist.name for artist in artists] == ["Alpha", "Beta"]
+    titles = [row.release.title for row in related]
+    assert sorted(titles) == ["Alpha Album", "Beta Album"]
+    assert "Other Compilation" not in titles
+
+
 def test_api_v1_release_related_discography_pages_past_the_preview(tmp_path: Path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     for year in range(2000, 2006):

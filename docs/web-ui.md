@@ -170,7 +170,9 @@ track count, duration; under that line up to five styles (`GenreTags`,
 like-heart actions. Below the
 header: `TrackTable` for the release's tracks, a "More from these artists"
 `Shelf` built from the related-discography response (filtering out the
-current release), a "Recommended Albums" `Shelf` shown only when the
+current release; for a Various Artists compilation the synthetic "Various
+Artists" is dropped and the top 8 track artists, most-represented first, feed
+the shelf instead), a "Recommended Albums" `Shelf` shown only when the
 recommendations response reports `available: true` with items — both preview
 16 cards and link to their full lists (`/releases/:id/related`,
 `/releases/:id/recommendations`) when the response's `total` is larger — and
