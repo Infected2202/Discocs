@@ -260,15 +260,22 @@
 }
 
 /* Touchscreens have no persistent hover state, so row actions must remain
-   discoverable. Pointer devices can keep the quieter hover-only treatment. */
+   discoverable. Pointer devices can keep the quieter hover-only treatment —
+   but only inside a list row, which is what reveals it on hover. A trigger
+   outside any row (the player's) has nothing to reveal it and stays visible.
+   This rule is unlayered, so it beats Tailwind utilities (`opacity-100`
+   on a trigger would be ignored): keep it scoped, and keep an open or
+   keyboard-focused menu visible here rather than via utilities. */
 .track-menu-trigger {
   opacity: 1;
 }
 @media (hover: hover) and (pointer: fine) {
-  .track-menu-trigger {
+  .group\/row .track-menu-trigger {
     opacity: 0;
   }
-  .group\/row:hover .track-menu-trigger {
+  .group\/row:hover .track-menu-trigger,
+  .group\/row .track-menu-trigger[data-state="open"],
+  .group\/row .track-menu-trigger:focus-visible {
     opacity: 1;
   }
 }
