@@ -16,6 +16,10 @@ const playPlaylist = vi.fn()
 const playLikes = vi.fn()
 const playFromEnvelope = vi.fn()
 
+vi.mock("@/components/common/DownloadMenu", () => ({
+  default: ({ href }: { href: string }) => <a href={href} aria-label="Download" />,
+}))
+
 vi.mock("@/api/playlists", () => ({
   fetchPlaylist: (...args: unknown[]) => fetchPlaylist(...args),
   fetchLikesPlaylist: (...args: unknown[]) => fetchLikesPlaylist(...args),

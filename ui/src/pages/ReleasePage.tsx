@@ -2,10 +2,11 @@ import { useEffect, useState } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import type { TFunction } from "i18next"
-import { Download, Play, Share2, Shuffle } from "lucide-react"
+import { Play, Share2, Shuffle } from "lucide-react"
 import { useRelease, useReleaseTracks, useReleaseRelated, useReleaseRecommendations } from "@/api/hooks/useRelease"
 import { isNetworkError } from "@/lib/apiErrorKind"
 import { Button } from "@/components/ui/button"
+import DownloadMenu from "@/components/common/DownloadMenu"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import CollectionHeader from "@/components/media/CollectionHeader"
@@ -165,16 +166,7 @@ export default function ReleasePage() {
               <Shuffle size={14} />
             </Button>
             {tracks.length > 0 && (
-              <Button size="icon-sm" variant="outline" asChild>
-                <a
-                  href={`/api/v1/releases/${releaseId}/download`}
-                  download
-                  aria-label={t("actions.download", { ns: "common" })}
-                  title={t("actions.download", { ns: "common" })}
-                >
-                  <Download size={14} />
-                </a>
-              </Button>
+              <DownloadMenu href={`/api/v1/releases/${releaseId}/download`} />
             )}
             {shareCapabilities?.can_create && tracks.length > 0 && (
               <Button

@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useParams, useNavigate } from "react-router"
 import { useTranslation } from "react-i18next"
-import { Download, Play, ChevronLeft, ListPlus, Pencil, Shuffle, Trash2, X, FolderInput } from "lucide-react"
+import { Play, ChevronLeft, ListPlus, Pencil, Shuffle, Trash2, X, FolderInput } from "lucide-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   fetchLikesPlaylist,
@@ -16,6 +16,7 @@ import {
 import { ApiError } from "@/api/client"
 import { isNetworkError } from "@/lib/apiErrorKind"
 import { Button } from "@/components/ui/button"
+import DownloadMenu from "@/components/common/DownloadMenu"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import CollectionHeader from "@/components/media/CollectionHeader"
@@ -246,18 +247,11 @@ export default function PlaylistPage() {
                 >
                   <Shuffle size={14} />
                 </Button>
-                <Button size="icon-sm" variant="outline" asChild>
-                  <a
-                    href={isLikes
-                      ? "/api/v1/playlists/likes/download"
-                      : `/api/v1/playlists/${playlistId}/download`}
-                    download
-                    aria-label={t("actions.download", { ns: "common" })}
-                    title={t("actions.download", { ns: "common" })}
-                  >
-                    <Download size={14} />
-                  </a>
-                </Button>
+                <DownloadMenu
+                  href={isLikes
+                    ? "/api/v1/playlists/likes/download"
+                    : `/api/v1/playlists/${playlistId}/download`}
+                />
               </>
             )}
             {editable && (

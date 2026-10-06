@@ -174,6 +174,19 @@ def transcoded_suffix(track: Track, headers: Mapping[str, str] | object) -> str:
     return _CONTENT_TYPE_EXTENSIONS.get(content_type) or source_suffix(track, headers)
 
 
+# What "MP3" means for a download: the same re-encode the public share hands out.
+MP3_DOWNLOAD_PARAMS: Mapping[str, object] = {
+    "format": "mp3",
+    "maxBitRate": 320,
+    "estimateContentLength": "true",
+}
+
+
+def transcoding_params(download_format: str) -> Mapping[str, object] | None:
+    """Stream params for a requested download format; `None` keeps the original file."""
+    return dict(MP3_DOWNLOAD_PARAMS) if download_format == "mp3" else None
+
+
 def open_navidrome_source(
     client: NavidromeClient,
     item_id: str,

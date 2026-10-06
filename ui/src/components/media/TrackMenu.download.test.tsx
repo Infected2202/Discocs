@@ -48,12 +48,16 @@ describe("TrackMenu download", () => {
     )
   })
 
-  it("links the download action to the attachment endpoint", () => {
+  it("offers the original and an MP3 320 of the attachment endpoint", () => {
     render(<MemoryRouter><TrackMenu track={track} /></MemoryRouter>)
 
-    expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Download original" })).toHaveAttribute(
       "href",
       "/api/v1/tracks/42/download",
+    )
+    expect(screen.getByRole("link", { name: "Download as MP3 320" })).toHaveAttribute(
+      "href",
+      "/api/v1/tracks/42/download?format=mp3",
     )
   })
 

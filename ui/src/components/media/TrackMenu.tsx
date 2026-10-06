@@ -114,7 +114,13 @@ export default function TrackMenu({
         <DropdownMenuItem asChild>
           <a href={`/api/v1/tracks/${track.id}/download`} download>
             <Download size={14} className="mr-2" />
-            {t("trackMenu.download")}
+            {t("trackMenu.downloadOriginal")}
+          </a>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <a href={`/api/v1/tracks/${track.id}/download?format=mp3`} download>
+            <Download size={14} className="mr-2" />
+            {t("trackMenu.downloadMp3")}
           </a>
         </DropdownMenuItem>
 

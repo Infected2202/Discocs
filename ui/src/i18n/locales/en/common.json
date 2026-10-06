@@ -10,7 +10,9 @@
     "tryAgain": "Try again",
     "back": "Back",
     "viewFullSize": "View full size",
-    "download": "Download"
+    "download": "Download",
+    "downloadOriginal": "Original",
+    "downloadMp3": "MP3 320"
   },
   "status": {
     "loading": "Loading…",

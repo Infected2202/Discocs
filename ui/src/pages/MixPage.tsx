@@ -1,11 +1,12 @@
 import { useParams } from "react-router"
 import { useTranslation } from "react-i18next"
-import { Download, Play, Bookmark } from "lucide-react"
+import { Play, Bookmark } from "lucide-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useMix } from "@/api/hooks/useMix"
 import { playMix, saveMix } from "@/api/mixes"
 import { useUIStore } from "@/store/uiStore"
 import { Button } from "@/components/ui/button"
+import DownloadMenu from "@/components/common/DownloadMenu"
 import { Skeleton } from "@/components/ui/skeleton"
 import ArtworkImage from "@/components/media/ArtworkImage"
 import CollectionHeader from "@/components/media/CollectionHeader"
@@ -110,16 +111,7 @@ export default function MixPage() {
               {t("play")}
             </Button>
             {tracks.length > 0 && (
-              <Button size="icon-sm" variant="outline" asChild>
-                <a
-                  href={`/api/v1/mixes/${encodeURIComponent(mixId)}/download`}
-                  download
-                  aria-label={t("actions.download", { ns: "common" })}
-                  title={t("actions.download", { ns: "common" })}
-                >
-                  <Download size={14} />
-                </a>
-              </Button>
+              <DownloadMenu href={`/api/v1/mixes/${encodeURIComponent(mixId)}/download`} />
             )}
             {!isSaved && (
               <Button

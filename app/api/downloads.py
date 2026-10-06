@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Literal
 from urllib.error import HTTPError
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.api.deps import _navidrome_user_client, api_error, context
@@ -20,12 +20,18 @@ from app.downloads import (
     safe_filename_component,
     stream_track_archive,
     track_download_basename,
+    transcoding_params,
 )
 from app.models import Track
 from app.navidrome import NavidromeClient
 
 
 router = APIRouter(prefix="/api/v1")
+
+# "original" hands out the file as stored; "mp3" re-encodes Navidrome-backed
+# tracks to MP3 320 (a local fallback file has no transcoder and stays as is).
+DownloadFormat = Literal["original", "mp3"]
+FormatQuery = Query("original", alias="format")
 
 
 def _client_for_tracks(store, settings, tracks: Iterable[Track]) -> NavidromeClient | None:
@@ -35,7 +41,9 @@ def _client_for_tracks(store, settings, tracks: Iterable[Track]) -> NavidromeCli
     return client
 
 
-def _archive_response(store, settings, entries: list[DownloadEntry], title: str):
+def _archive_response(
+    store, settings, entries: list[DownloadEntry], title: str, download_format: DownloadFormat = "original"
+):
     if not entries:
         return api_error(409, "empty_collection", "Collection has no tracks to download")
     try:
@@ -44,7 +52,10 @@ def _archive_response(store, settings, entries: list[DownloadEntry], title: str)
         return api_error(exc.status_code, "navidrome_credentials_required", str(exc.detail))
     archive_title = safe_filename_component(title)
     return StreamingResponse(
-        stream_track_archive(store, client, entries, root=archive_title),
+        stream_track_archive(
+            store, client, entries, root=archive_title,
+            stream_params=transcoding_params(download_format),
+        ),
         media_type="application/zip",
         headers={
             "Content-Disposition": content_disposition(f"{archive_title}.zip"),
@@ -54,7 +65,7 @@ def _archive_response(store, settings, entries: list[DownloadEntry], title: str)
 
 
 @router.get("/tracks/{track_id}/download", response_model=None)
-def download_track(track_id: int):
+def download_track(track_id: int, download_format: DownloadFormat = FormatQuery):
     store, settings = context()
     track = store.get_track(track_id)
     if track is None:
@@ -76,7 +87,9 @@ def download_track(track_id: int):
 
     try:
         client, _username = _navidrome_user_client(settings)
-        source = open_navidrome_source(client, item_id, track)
+        source = open_navidrome_source(
+            client, item_id, track, stream_params=transcoding_params(download_format)
+        )
     except HTTPException as exc:
         return api_error(exc.status_code, "navidrome_credentials_required", str(exc.detail))
     except HTTPError as exc:
@@ -110,7 +123,7 @@ def download_track(track_id: int):
 
 
 @router.get("/releases/{release_id}/download", response_model=None)
-def download_release(release_id: int):
+def download_release(release_id: int, download_format: DownloadFormat = FormatQuery):
     store, settings = context()
     release = store.get_release(release_id)
     if release is None:
@@ -125,11 +138,11 @@ def download_release(release_id: int):
                 basename=f"{prefix} - {row.track.title or f'Track {row.track.id}'}",
             )
         )
-    return _archive_response(store, settings, entries, release.release.title)
+    return _archive_response(store, settings, entries, release.release.title, download_format)
 
 
 @router.get("/playlists/likes/download", response_model=None)
-def download_likes():
+def download_likes(download_format: DownloadFormat = FormatQuery):
     store, settings = context()
     try:
         tracks = _liked_tracks(store, settings)
@@ -139,11 +152,11 @@ def download_likes():
         DownloadEntry(track=track, basename=f"{index:03d} - {track_download_basename(track)}")
         for index, track in enumerate(tracks, start=1)
     ]
-    return _archive_response(store, settings, entries, "Liked Tracks")
+    return _archive_response(store, settings, entries, "Liked Tracks", download_format)
 
 
 @router.get("/playlists/{playlist_id}/download", response_model=None)
-def download_playlist(playlist_id: int):
+def download_playlist(playlist_id: int, download_format: DownloadFormat = FormatQuery):
     store, settings = context()
     playlist = store.get_playlist(playlist_id)
     if playlist is None:
@@ -156,11 +169,11 @@ def download_playlist(playlist_id: int):
         DownloadEntry(track=track, basename=f"{index:03d} - {track_download_basename(track)}")
         for index, track in enumerate(tracks, start=1)
     ]
-    return _archive_response(store, settings, entries, playlist.title)
+    return _archive_response(store, settings, entries, playlist.title, download_format)
 
 
 @router.get("/mixes/{mix_id}/download", response_model=None)
-def download_mix(mix_id: str):
+def download_mix(mix_id: str, download_format: DownloadFormat = FormatQuery):
     store, settings = context()
     mix = store.get_generated_mix(mix_id)
     if mix is None:
@@ -173,4 +186,4 @@ def download_mix(mix_id: str):
         DownloadEntry(track=track, basename=f"{index:03d} - {track_download_basename(track)}")
         for index, track in enumerate(tracks, start=1)
     ]
-    return _archive_response(store, settings, entries, mix.title)
+    return _archive_response(store, settings, entries, mix.title, download_format)

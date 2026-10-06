@@ -180,6 +180,103 @@ def test_navidrome_track_download_uses_original_download_endpoint(tmp_path: Path
     assert seen["closed"] is True
 
 
+def _fake_navidrome(monkeypatch, seen: dict[str, object], content_type: str, body: bytes):
+    class FakeResponse:
+        headers = {"Content-Type": content_type}
+
+        def __init__(self):
+            self.chunks = [body, b""]
+
+        def read(self, _size):
+            return self.chunks.pop(0)
+
+        def close(self):
+            pass
+
+    def opener(request, timeout):
+        seen["url"] = request.full_url
+        return FakeResponse()
+
+    nav = NavidromeClient(
+        NavidromeSettings(url="http://navidrome:4533", user="u", password="p", auth_mode="plain"),
+        opener=opener,
+    )
+    monkeypatch.setattr(downloads_api, "_navidrome_user_client", lambda _settings: (nav, "u"))
+
+
+def test_track_download_as_mp3_goes_through_the_transcoding_stream_endpoint(tmp_path: Path, monkeypatch):
+    store = init_store(tmp_path, monkeypatch)
+    local_id = add_track(store, tmp_path / "music" / "mapped.flac", artist="Remote", title="Song")
+    store.upsert_external_track("navidrome", "song-1", local_id)
+    seen: dict[str, object] = {}
+    _fake_navidrome(monkeypatch, seen, "audio/mpeg", b"mp3-bytes")
+
+    response = TestClient(app).get(f"/api/v1/tracks/{local_id}/download?format=mp3")
+
+    assert response.status_code == 200
+    assert response.content == b"mp3-bytes"
+    url = urlparse(str(seen["url"]))
+    assert url.path == "/rest/stream.view"
+    assert "format=mp3" in url.query and "maxBitRate=320" in url.query
+    # The saved name follows the bytes (mp3), not the indexed .flac path.
+    assert "Remote%20-%20Song.mp3" in response.headers["content-disposition"]
+
+
+def test_track_download_with_explicit_original_uses_the_download_endpoint(tmp_path: Path, monkeypatch):
+    store = init_store(tmp_path, monkeypatch)
+    local_id = add_track(store, tmp_path / "music" / "mapped.flac", artist="Remote", title="Song")
+    store.upsert_external_track("navidrome", "song-1", local_id)
+    seen: dict[str, object] = {}
+    _fake_navidrome(monkeypatch, seen, "audio/flac", b"flac-bytes")
+
+    response = TestClient(app).get(f"/api/v1/tracks/{local_id}/download?format=original")
+
+    assert response.content == b"flac-bytes"
+    url = urlparse(str(seen["url"]))
+    assert url.path == "/rest/download.view"
+    assert "format=mp3" not in url.query
+
+
+def test_collection_download_as_mp3_re_encodes_every_member(tmp_path: Path, monkeypatch):
+    store = init_store(tmp_path, monkeypatch)
+    first = add_track(store, tmp_path / "music" / "01.flac", artist="Alpha", title="First")
+    store.upsert_external_track("navidrome", "song-1", first)
+    release_id = store.release_id_for_track(first)
+    playlist = store.create_playlist(title="Mixed", track_ids=[first])
+    seen: dict[str, object] = {}
+    _fake_navidrome(monkeypatch, seen, "audio/mpeg", b"mp3-bytes")
+    client = TestClient(app)
+
+    with open_zip(client.get(f"/api/v1/playlists/{playlist.id}/download?format=mp3")) as archive:
+        assert archive.namelist() == ["Mixed/001 - Alpha - First.mp3"]
+        assert archive.read("Mixed/001 - Alpha - First.mp3") == b"mp3-bytes"
+    assert urlparse(str(seen["url"])).path == "/rest/stream.view"
+
+    with open_zip(client.get(f"/api/v1/releases/{release_id}/download?format=mp3")) as archive:
+        assert archive.namelist() == ["Test Album/01 - First.mp3"]
+
+
+def test_unknown_download_format_is_rejected(tmp_path: Path, monkeypatch):
+    store = init_store(tmp_path, monkeypatch)
+    track_id = add_track(store, tmp_path / "music" / "a.flac", artist="A", title="T")
+
+    response = TestClient(app).get(f"/api/v1/tracks/{track_id}/download?format=ogg")
+
+    assert response.status_code == 422
+
+
+def test_local_fallback_file_keeps_its_format_even_when_mp3_is_requested(tmp_path: Path, monkeypatch):
+    store = init_store(tmp_path, monkeypatch)
+    track_id = add_track(
+        store, tmp_path / "music" / "local.flac", artist="A", title="T", payload=b"flac-bytes"
+    )
+
+    response = TestClient(app).get(f"/api/v1/tracks/{track_id}/download?format=mp3")
+
+    assert response.content == b"flac-bytes"
+    assert "A%20-%20T.flac" in response.headers["content-disposition"]
+
+
 def test_transcoded_source_forces_the_stream_endpoint_and_its_own_extension():
     # `download` hands back the original file and ignores format parameters, so
     # a request that must be re-encoded can only go to `stream`. The extension

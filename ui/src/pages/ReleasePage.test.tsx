@@ -15,6 +15,10 @@ const useReleaseRecommendations = vi.fn()
 const useShareCapabilities = vi.fn()
 const useLabelReleases = vi.fn()
 
+vi.mock("@/components/common/DownloadMenu", () => ({
+  default: ({ href }: { href: string }) => <a href={href} aria-label="Download" />,
+}))
+
 vi.mock("@/api/hooks/useRelease", () => ({
   useRelease: (...args: unknown[]) => useRelease(...args),
   useReleaseTracks: (...args: unknown[]) => useReleaseTracks(...args),
