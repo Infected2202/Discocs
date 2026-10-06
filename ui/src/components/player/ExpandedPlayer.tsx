@@ -185,14 +185,14 @@ export default function ExpandedPlayer() {
                     {currentTrack?.artists?.map((a, i) => (
                       <span key={a.id}>
                         {i > 0 && <span className="mr-0.5">,</span>}
-                        <Link to={`/artists/${a.id}`} onClick={toggleExpanded}
+                        <Link to={`/artists/${a.id}`} replace
                           className="hover:text-foreground hover:underline">{a.name}</Link>
                       </span>
                     ))}
                     {currentTrack?.release && (
                       <>
                         <span className="text-muted-foreground/50">·</span>
-                        <Link to={`/releases/${currentTrack.release.id}`} onClick={toggleExpanded}
+                        <Link to={`/releases/${currentTrack.release.id}`} replace
                           className="hover:text-foreground hover:underline">{currentTrack.release.title}</Link>
                       </>
                     )}

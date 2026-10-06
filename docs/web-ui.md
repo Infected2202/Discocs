@@ -54,10 +54,21 @@ The page scrolls inside `<main>`, not the window, so the browser's own
 restoration and react-router's `<ScrollRestoration>` don't apply. The hook
 keeps the `<main>` offset per history entry (`location.key`, in memory):
 back/forward (`POP`) returns to where the user was, opening a new page
-(`PUSH` to another path) starts from the top, and `REPLACE` (e.g. search-param
-updates) leaves the scroll alone. Lists render asynchronously, so a restore
+(`PUSH`/`REPLACE` to another path) starts from the top, and a same-path
+navigation (search-param updates, the player entry below) leaves the scroll alone. Lists render asynchronously, so a restore
 retries every frame until the content is tall enough (up to 2 s) and gives up
 as soon as the user wheels/touches the page themselves.
+
+**Back closes the expanded player first** (`hooks/usePlayerHistory.ts`, mounted
+in `AppShell`). Expanding the player pushes a same-URL history entry with
+`location.state.playerOpen`; `playerStore.expanded` stays the source of truth
+for rendering and the hook keeps the two in step by watching transitions:
+browser/system back and the mobile back swipe collapse the player (the page
+beneath is untouched); collapsing by a button pops that entry so history has no
+phantom step; the artist/release links inside the player use `replace`, so
+they swap the player entry for the new page; "forward" onto the entry
+re-expands. After a reload the player is not reopened and the stale entry is
+stepped off. The DJ surface is not covered (it is slated for removal).
 
 ### Routes
 

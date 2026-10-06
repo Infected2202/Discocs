@@ -47,8 +47,9 @@ export function restoreScroll(el: HTMLElement, target: number, onDone: () => voi
  * The app scrolls inside <main>, not the window, so the browser's own scroll
  * restoration and react-router's <ScrollRestoration> never see it. This keeps
  * the offset per history entry: back/forward returns to where the user was,
- * a new page (PUSH to another path) starts from the top, and REPLACE
- * (e.g. search-param updates) leaves the scroll alone.
+ * a new page (PUSH or REPLACE to another path) starts from the top, while
+ * a same-path navigation (search-param updates, the expanded player's history
+ * entry) leaves the scroll alone.
  */
 export function useScrollRestoration(ref: RefObject<HTMLElement | null>) {
   const location = useLocation()
@@ -94,7 +95,7 @@ export function useScrollRestoration(ref: RefObject<HTMLElement | null>) {
         restoring.current = false
         lastTop.current = el.scrollTop
       })
-    } else if (navigationType === "PUSH" && pathChanged) {
+    } else if (pathChanged) {
       el.scrollTop = 0
       lastTop.current = 0
     }

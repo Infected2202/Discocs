@@ -111,7 +111,17 @@ describe("useScrollRestoration", () => {
     expect(main(container).scrollTop).toBe(0)
   })
 
-  it("leaves the scroll alone on a replace navigation", async () => {
+  it("starts from the top when a replace lands on another page", async () => {
+    const router = makeRouter()
+    const { container } = render(<RouterProvider router={router} />)
+    userScrollTo(main(container), 1800)
+
+    await act(() => router.navigate("/labels/1", { replace: true }))
+
+    expect(main(container).scrollTop).toBe(0)
+  })
+
+  it("leaves the scroll alone on a same-path replace navigation", async () => {
     const router = makeRouter()
     const { container } = render(<RouterProvider router={router} />)
     userScrollTo(main(container), 1800)
