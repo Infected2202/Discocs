@@ -8,6 +8,7 @@ import PlaylistDialogs from "@/components/playlists/PlaylistDialogs"
 import ErrorBoundary from "@/components/common/ErrorBoundary"
 import PageTransition from "@/components/common/PageTransition"
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts"
+import { useScrollRestoration } from "@/hooks/useScrollRestoration"
 import { useTrackTitle } from "@/hooks/useTrackTitle"
 import { useArtworkTheme } from "@/hooks/useArtworkTheme"
 import { useNavidromeStore } from "@/store/navidromeStore"
@@ -29,6 +30,7 @@ export default function AppShell() {
   const { data: userSettings } = useUserSettings()
 
   const mainRef = useRef<HTMLElement>(null)
+  useScrollRestoration(mainRef)
 
   const fetchLikedIds = useNavidromeStore((s) => s.fetchLikedIds)
   useEffect(() => {

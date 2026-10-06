@@ -49,6 +49,16 @@ top of the scrollable content (not a separate fixed bar on desktop): the
 `discocs` wordmark, a global search input that navigates to
 `/search?q=...` on submit, and a profile button.
 
+**Scroll restoration** (`hooks/useScrollRestoration.ts`, mounted in `AppShell`).
+The page scrolls inside `<main>`, not the window, so the browser's own
+restoration and react-router's `<ScrollRestoration>` don't apply. The hook
+keeps the `<main>` offset per history entry (`location.key`, in memory):
+back/forward (`POP`) returns to where the user was, opening a new page
+(`PUSH` to another path) starts from the top, and `REPLACE` (e.g. search-param
+updates) leaves the scroll alone. Lists render asynchronously, so a restore
+retries every frame until the content is tall enough (up to 2 s) and gives up
+as soon as the user wheels/touches the page themselves.
+
 ### Routes
 
 Defined in `ui/src/router.tsx`:
