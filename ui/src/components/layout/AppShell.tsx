@@ -32,6 +32,7 @@ export default function AppShell() {
 
   const mainRef = useRef<HTMLElement>(null)
   useScrollRestoration(mainRef)
+  usePlayerHistory()
 
   const fetchLikedIds = useNavidromeStore((s) => s.fetchLikedIds)
   useEffect(() => {
