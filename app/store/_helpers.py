@@ -533,6 +533,13 @@ def playback_event_is_completion(
 # Event types that can count as a listen. Any prior event of these types for the
 # same queue item (or track, without a queue item) blocks a later ``completed``.
 LISTEN_EVENT_TYPES: frozenset[str] = frozenset({"play_threshold_reached", "completed"})
+# A listen is half the track actually played, which only the client can measure
+# (it sends ``play_threshold_reached``; seeks don't count — ui/src/lib/
+# listenProgress.ts). A finished track is not one by itself: seeking to the end
+# would earn it. Before this date the web client sent no threshold and the
+# finished track was the listen; those events keep that rule, so rebuilding
+# ``listens`` from ``playback_events`` reproduces the history.
+COMPLETED_LISTEN_UNTIL = "2026-10-06T00:00:00+00:00"
 
 
 def playback_event_is_listen(
@@ -543,19 +550,23 @@ def playback_event_is_listen(
 
     The single rule behind both the Navidrome scrobble submission and the
     ``listens`` table (live recording and the backfill migration): a
-    ``play_threshold_reached``, or a real ``completed`` (passing
-    ``playback_event_is_completion``) that has no earlier threshold/completed
-    for the same queue item — or, when the event carries no queue item, for the
-    same track — in the same session. ``prior_events`` are the events of that
-    session recorded before this one; events of other types, and ``event``
-    itself, are ignored, so callers may pass a superset. Duplicates (client
-    retries) are never passed here: they are not stored as new events.
+    ``play_threshold_reached`` — the client's report that half the track was
+    actually played. Events from before ``COMPLETED_LISTEN_UNTIL`` also count a
+    real ``completed`` (passing ``playback_event_is_completion``) that has no
+    earlier threshold/completed for the same queue item — or, when the event
+    carries no queue item, for the same track — in the same session.
+    ``prior_events`` are the events of that session recorded before this one;
+    events of other types, and ``event`` itself, are ignored, so callers may
+    pass a superset. Duplicates (client retries) are never passed here: they
+    are not stored as new events.
     """
     if event.track_id is None:
         return False
     if event.event_type == "play_threshold_reached":
         return True
-    if event.event_type != "completed" or not playback_event_is_completion(
+    if event.event_type != "completed" or event.created_at >= COMPLETED_LISTEN_UNTIL:
+        return False
+    if not playback_event_is_completion(
         event.position_seconds,
         event.duration_seconds,
         event.play_fraction,

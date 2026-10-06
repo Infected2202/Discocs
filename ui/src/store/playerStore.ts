@@ -31,6 +31,7 @@ import { ApiError } from "@/api/client"
 import { playerLog } from "@/lib/playerLogger"
 import { cancelAllBackgroundRetries, scheduleBackgroundRetry } from "@/lib/backgroundRetry"
 import { hiresArtworkUrl } from "@/lib/artworkUrl"
+import { ListenProgress } from "@/lib/listenProgress"
 import { throttle } from "@/lib/throttle"
 import type { PlaybackEnvelope, PlaybackSession, PlaybackQueue, QueueItem, TrackSummary } from "@/api/types"
 import type { PlaybackProfile } from "@/api/settings"
@@ -262,13 +263,29 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     persistCurrentPosition(0)
   }
 
+  // Played time of the current play: half the track actually heard is a
+  // listen (play_threshold_reached → listens + Navidrome scrobble), seeks
+  // don't count (lib/listenProgress.ts).
+  const listenProgress = new ListenProgress()
+
   // Wire AudioEngine callbacks once at store creation
   audioEngine.init({
     onTimeUpdate: (currentTime, duration) => {
       throttledSetTime(currentTime, duration)
-      const { session, currentQueueItemId, currentTrackId } = get()
+      const { session, currentQueueItemId, currentTrackId, playbackState } = get()
       if (session?.id && currentQueueItemId && currentTrackId != null && currentTime > 0) {
         throttledPersistPosition(session.id, currentQueueItemId, currentTrackId, currentTime)
+      }
+      if (
+        playbackState === "playing"
+        && currentQueueItemId
+        && listenProgress.sample(currentQueueItemId, currentTime, duration, Date.now())
+      ) {
+        void get().recordEvent("play_threshold_reached", {
+          position_seconds: currentTime,
+          duration_seconds: duration,
+          play_fraction: listenProgress.playedSeconds / duration,
+        })
       }
       // Локскрин/фоновый плеер: точная позиция на системном плеере повышает
       // надёжность фонового воспроизведения и убирает «прыгающий» прогресс.
@@ -806,6 +823,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
       // If more than 3s played, restart current track
       if (audioEngine.currentTime > 3) {
+        listenProgress.start(null)
         audioEngine.seekToSeconds(0)
         resetCurrentPosition()
         return
@@ -985,6 +1003,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     },
 
     async handleTrackEnded() {
+      // Whatever plays next (the next item, or this one on repeat) is a new play.
+      listenProgress.start(null)
       const { session, queue, currentQueueItemId, djEngineActive } = get()
 
       addCurrentToHistory()
@@ -1305,6 +1325,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     },
     _setPlaybackState(state) {
       set({ playbackState: state })
+      // Paused/loading: the next position is no longer continuous playing
+      // (a seek while paused must not count as played time).
+      if (state !== "playing") listenProgress.rebase()
       // Системный медиа-плеер (локскрин/шторка): без явного playbackState
       // некоторые браузеры не удерживают фоновую сессию. "loading" держим как
       // "playing", чтобы статус не мигал в момент автоперехода между треками.

@@ -18,6 +18,7 @@ from app.store import (
     backfill_listens_from_events,
     playback_event_is_listen,
 )
+from app.store._helpers import COMPLETED_LISTEN_UNTIL
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +58,7 @@ def _event(
     queue_item_id: str | None = "q1",
     track_id: int | None = 1,
     play_fraction: float | None = None,
+    created_at: str = "2026-10-01T00:00:00+00:00",
 ) -> PlaybackEvent:
     return PlaybackEvent(
         id=event_id,
@@ -69,7 +71,7 @@ def _event(
         position_seconds=None,
         duration_seconds=None,
         play_fraction=play_fraction,
-        created_at="2026-10-01T00:00:00+00:00",
+        created_at=created_at,
         client_event_id=None,
         source="web",
         payload_json=None,
@@ -96,6 +98,17 @@ def test_predicate_threshold_counts_even_after_prior_threshold():
 
     assert playback_event_is_listen(_event("e2", "play_threshold_reached"), [prior]) is True
 
+
+def test_predicate_completed_is_not_a_listen_any_more():
+    """Seek to the end, let it finish: no listen. Half the track must be played."""
+    finished = _event("e2", "completed", play_fraction=1.0, created_at=COMPLETED_LISTEN_UNTIL)
+
+    assert playback_event_is_listen(finished, []) is False
+    assert playback_event_is_listen(_event("e3", "play_threshold_reached", created_at=COMPLETED_LISTEN_UNTIL), []) is True
+
+
+# The predicate tests below use events from before COMPLETED_LISTEN_UNTIL:
+# the legacy rule a rebuild of ``listens`` must still reproduce.
 
 def test_predicate_completed_without_prior_counts_and_after_threshold_does_not():
     completed = _event("e2", "completed", play_fraction=1.0)
@@ -150,7 +163,8 @@ def test_threshold_event_records_listen(tmp_path: Path):
     assert listens[0].listened_at == result.event.created_at
 
 
-def test_completed_without_threshold_records_listen(tmp_path: Path):
+def test_finished_track_without_threshold_records_no_listen(tmp_path: Path):
+    """The client reports half-played; a finished (maybe sought-through) track is not a listen."""
     store = _store(tmp_path)
     track_id = _track(store, tmp_path, "completed")
     session, queue = store.create_playback_session(source_type="manual", track_ids=[track_id])
@@ -164,11 +178,11 @@ def test_completed_without_threshold_records_listen(tmp_path: Path):
         duration_seconds=200.0,
     )
 
-    assert result.listen is True
-    assert store.count_listens() == 1
+    assert result.listen is False
+    assert store.count_listens() == 0
 
 
-def test_completed_after_threshold_on_same_queue_item_is_not_a_second_listen(tmp_path: Path):
+def test_each_queued_play_reports_its_own_listen(tmp_path: Path):
     store = _store(tmp_path)
     track_id = _track(store, tmp_path, "once")
     session, queue = store.create_playback_session(
@@ -180,9 +194,7 @@ def test_completed_after_threshold_on_same_queue_item_is_not_a_second_listen(tmp
         store, "completed", session_id=session.id, queue_item_id=queue[0].id, play_fraction=1.0
     )
     # Same track queued again is a separate play.
-    replay = _record(
-        store, "completed", session_id=session.id, queue_item_id=queue[1].id, play_fraction=1.0
-    )
+    replay = _record(store, "play_threshold_reached", session_id=session.id, queue_item_id=queue[1].id)
 
     assert (threshold.listen, completed.listen, replay.listen) == (True, False, True)
     assert {listen.event_id for listen in store.list_listens()} == {
@@ -257,10 +269,10 @@ def test_backfill_reproduces_live_listens_and_is_idempotent(tmp_path: Path):
     base = _store(tmp_path)
     alice, bob = _record_mixed_history(base, tmp_path)
     live = _listen_rows(base)
-    # threshold + 3rd queue item + sessionless completed for alice;
-    # completed then threshold (threshold always counts) for bob.
-    assert alice.count_listens() == 3
-    assert bob.count_listens() == 2
+    # Only the thresholds: one per play for alice (the retry is a duplicate)
+    # and bob; finished tracks don't count.
+    assert alice.count_listens() == 1
+    assert bob.count_listens() == 1
 
     with base.connect() as conn:
         conn.execute("DELETE FROM listens")
@@ -282,6 +294,26 @@ def test_startup_backfills_an_empty_listens_table(tmp_path: Path):
     _store(tmp_path)
 
     assert _listen_rows(base) == live
+
+
+def test_backfill_keeps_legacy_finished_tracks_as_listens(tmp_path: Path):
+    """Events from before the threshold was restored keep their listen on a rebuild."""
+    base = _store(tmp_path)
+    track_id = _track(base, tmp_path, "legacy")
+    alice = base.for_user(base.upsert_user("alice", now=utc_now()))
+    with base.connect() as conn:
+        for event_id, created_at in (("legacy", "2026-09-01T12:00:00+00:00"), ("new", COMPLETED_LISTEN_UNTIL)):
+            conn.execute(
+                """
+                INSERT INTO playback_events (id, user_id, track_id, event_type, play_fraction, created_at, source)
+                VALUES (?, ?, ?, 'completed', 1.0, ?, 'web')
+                """,
+                (event_id, alice.user_id, track_id, created_at),
+            )
+
+    base.backfill_listens()
+
+    assert [listen.event_id for listen in alice.list_listens()] == ["legacy"]
 
 
 def test_backfill_skips_events_without_a_known_user(tmp_path: Path):
@@ -400,8 +432,8 @@ def test_api_scrobbles_exactly_the_recorded_listens(tmp_path: Path, monkeypatch)
     threshold_after = post("play_threshold_reached")
     completed_again = post("completed", play_fraction=1.0)
 
-    assert completed_first["mode"] == "submission"
+    assert completed_first == {"status": "skipped", "reason": "event_not_scrobbleable"}
     assert threshold_after["mode"] == "submission"
     assert completed_again == {"status": "skipped", "reason": "event_not_scrobbleable"}
-    assert submissions == [True, True]
-    assert store.count_listens() == 2
+    assert submissions == [True]
+    assert store.count_listens() == 1
