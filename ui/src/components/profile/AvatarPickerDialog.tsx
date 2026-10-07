@@ -32,35 +32,44 @@ export default function AvatarPickerDialog({ open, onOpenChange, current }: Avat
         onOpenChange(next)
       }}
     >
-      <DialogContent aria-describedby={undefined}>
+      {/* The dialog is centred and never scrolls itself, so with all the avatars
+          it was taller than the screen and its top/bottom went off it. Cap the
+          height and scroll only the grid: the header and the close button stay. */}
+      <DialogContent
+        aria-describedby={undefined}
+        className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)]"
+      >
         <DialogHeader>
           <DialogTitle>{t("chooseAvatar")}</DialogTitle>
         </DialogHeader>
-        <div className="grid grid-cols-3 gap-3">
-          {AVATAR_KEYS.map((key, index) => {
-            const selected = key === current
-            return (
-              <button
-                key={key}
-                type="button"
-                aria-label={t("avatarOption", { index: index + 1 })}
-                aria-pressed={selected}
-                disabled={setAvatar.isPending}
-                onClick={() => pick(key)}
-                className={cn(
-                  "aspect-square overflow-hidden rounded-full ring-2 ring-offset-2 ring-offset-popover transition",
-                  selected ? "ring-primary" : "ring-transparent hover:ring-muted-foreground/40",
-                  "disabled:opacity-60",
-                )}
-              >
-                <img src={avatarUrl(key) ?? undefined} alt="" className="h-full w-full object-cover" />
-              </button>
-            )
-          })}
+        {/* p-1/-m-1: room for the selection ring (ring + offset ≈ 4px), which overflow would clip */}
+        <div data-testid="avatar-picker-scroll" className="-m-1 min-h-0 space-y-3 overflow-y-auto p-1">
+          <div className="grid grid-cols-3 gap-3">
+            {AVATAR_KEYS.map((key, index) => {
+              const selected = key === current
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-label={t("avatarOption", { index: index + 1 })}
+                  aria-pressed={selected}
+                  disabled={setAvatar.isPending}
+                  onClick={() => pick(key)}
+                  className={cn(
+                    "aspect-square overflow-hidden rounded-full ring-2 ring-offset-2 ring-offset-popover transition",
+                    selected ? "ring-primary" : "ring-transparent hover:ring-muted-foreground/40",
+                    "disabled:opacity-60",
+                  )}
+                >
+                  <img src={avatarUrl(key) ?? undefined} alt="" className="h-full w-full object-cover" />
+                </button>
+              )
+            })}
+          </div>
+          {setAvatar.isError && (
+            <p role="alert" className="text-sm text-destructive">{t("avatarSaveError")}</p>
+          )}
         </div>
-        {setAvatar.isError && (
-          <p role="alert" className="text-sm text-destructive">{t("avatarSaveError")}</p>
-        )}
       </DialogContent>
     </Dialog>
   )

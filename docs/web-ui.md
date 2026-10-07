@@ -408,7 +408,10 @@ listens (`VirtualTrackRow` with relative time, "All" → history); period stats
 with div bar charts (by day/month, by hour) and the sound profile; top
 artists/releases shelves; top tracks (`VirtualTrackList`); likes shelves;
 playlists shelf. Another user's profile is the same minus private playlists
-and the avatar picker.
+and the avatar picker. The picker (`AvatarPickerDialog`) is a centred dialog
+capped at `100dvh - 2rem`; only the avatar grid scrolls inside it (the title and
+the close button stay put) — the whole set is taller than most screens, and an
+uncapped centred dialog had its top and bottom off-screen.
 
 ### Listening history (`/u/:username/history`, `ListeningHistoryPage.tsx`)
 
