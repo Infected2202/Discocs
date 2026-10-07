@@ -1,11 +1,14 @@
 import { useState } from "react"
-import { useNavigate } from "react-router"
+import { Link, useNavigate } from "react-router"
 import { useQuery } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
 import type { TFunction } from "i18next"
 import { Settings, User, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useNavidromeStatus } from "@/api/hooks/useNavidromeStatus"
+import { usePeople } from "@/api/hooks/usePeople"
+import ArtworkImage from "@/components/media/ArtworkImage"
+import { avatarUrl } from "@/lib/avatars"
 import { Button } from "@/components/ui/button"
 import {
   Popover, PopoverContent, PopoverTrigger,
@@ -34,9 +37,56 @@ function navidromeStatusUi(status: string, isLoading: boolean, t: TFunction<"pro
   }
 }
 
+const IDENTITY_AVATAR_SIZE = 32
+
+/**
+ * Who is signed in: the profile avatar and the login as a link to the profile.
+ * Lives inside the popover content, so the people list (the avatar's source)
+ * is only requested while the popover is open.
+ */
+function PopoverIdentity({ username, onNavigate }: {
+  readonly username: string | null
+  readonly onNavigate: () => void
+}) {
+  const { t } = useTranslation("profile")
+  const { data: people } = usePeople()
+  const avatar = username
+    ? avatarUrl(people?.items.find((person) => person.username === username)?.avatar)
+    : null
+  const name = username ?? t("unknownUser")
+
+  return (
+    <div className="flex items-center gap-2 border-b border-border/50 pb-3">
+      <ArtworkImage
+        src={avatar}
+        alt={name}
+        size={IDENTITY_AVATAR_SIZE}
+        className="rounded-full"
+        fallbackLetter={name[0]?.toUpperCase()}
+      />
+      <div className="min-w-0">
+        {username ? (
+          <Link
+            to={`/u/${encodeURIComponent(username)}`}
+            onClick={onNavigate}
+            title={t("myProfile")}
+            className="block truncate text-sm font-medium hover:underline"
+          >
+            {username}
+          </Link>
+        ) : (
+          <p className="truncate text-sm font-medium">{name}</p>
+        )}
+        <p className="text-xs text-muted-foreground">{t("signedIn")}</p>
+      </div>
+    </div>
+  )
+}
+
 export default function ProfileButton({ mobile = false }: { readonly mobile?: boolean }) {
   const { t } = useTranslation("profile")
   const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
   const [logoutPending, setLogoutPending] = useState(false)
   const [logoutFailed, setLogoutFailed] = useState(false)
   const { status, isLoading } = useNavidromeStatus()
@@ -73,7 +123,7 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
   const activeLanguage = userSettings?.language ?? "en"
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -86,13 +136,7 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
       </PopoverTrigger>
       <PopoverContent align={mobile ? "center" : "end"} className="w-56 p-3">
         <div className="space-y-3">
-          <div className="flex items-center gap-2 border-b border-border/50 pb-3">
-            <User size={16} className="text-muted-foreground" />
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{session?.username ?? t("unknownUser")}</p>
-              <p className="text-xs text-muted-foreground">{t("signedIn")}</p>
-            </div>
-          </div>
+          <PopoverIdentity username={username} onNavigate={() => setOpen(false)} />
           <div className="flex items-center gap-2">
             <span className={cn("h-2 w-2 shrink-0 rounded-full", dotColor)} />
             <span className="text-sm">{statusLabel}</span>
@@ -119,7 +163,10 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
               variant="outline"
               size="sm"
               className="w-full"
-              onClick={() => navigate(`/u/${encodeURIComponent(username)}`)}
+              onClick={() => {
+                setOpen(false)
+                navigate(`/u/${encodeURIComponent(username)}`)
+              }}
             >
               <User size={14} className="mr-2" />
               {t("myProfile")}
@@ -129,7 +176,10 @@ export default function ProfileButton({ mobile = false }: { readonly mobile?: bo
             variant="outline"
             size="sm"
             className="w-full"
-            onClick={() => navigate("/settings")}
+            onClick={() => {
+              setOpen(false)
+              navigate("/settings")
+            }}
           >
             <Settings size={14} className="mr-2" />
             {t("openSettings")}

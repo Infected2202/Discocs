@@ -429,8 +429,13 @@ analysis, models, storage, advanced/debug) are intentionally absent from the
 public UI. They remain in the private legacy admin at `:8711/admin`; the
 public nginx also rejects their API endpoints.
 
-The profile popover shows the active username, a language switcher (see
-Internationalization below), and provides logout. It redirects to `/login`
+The profile popover (the header button itself stays a person icon with the
+Navidrome status dot) opens with the user's profile avatar and the login as a
+link to `/u/<login>`; the avatar comes from the people list (`usePeople`),
+requested only while the popover is open, with the login's first letter as the
+fallback. Below: the Navidrome status, a language switcher (see
+Internationalization below), «My profile» and Settings buttons (the popover
+closes on any navigation), and logout. It redirects to `/login`
 only after the backend confirms that the session was revoked; a failed
 request leaves the user in place and shows a retryable error.
 
