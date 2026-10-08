@@ -1,0 +1,6 @@
+# В git — только код. Результаты, кэши, venv и config.json (адреса, токен discocs) — локальные.
+*
+!.gitignore
+!README.md
+!config.example.json
+!*.py
