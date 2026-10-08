@@ -1,8 +1,9 @@
 """Лейблы для describe из базы discocs — запускать внутри контейнера бэкенда (база открывается только на чтение):
 
-    docker cp export_labels.py discocs-backend-1:/tmp/ && docker exec discocs-backend-1 python /tmp/export_labels.py [N] > labels.json
+    docker cp export_labels.py discocs-backend-1:/tmp/ && docker exec discocs-backend-1 python /tmp/export_labels.py [N] [MIN_RELEASES] > labels.json
 
-Берёт лейблы без описания, у которых в библиотеке хотя бы 3 релиза: самые крупные первыми, N штук (по умолчанию 20).
+Берёт лейблы без описания, у которых в библиотеке хотя бы MIN_RELEASES релизов (по умолчанию 3): самые
+крупные первыми, N штук (по умолчанию 20).
 Временный путь до интеграции describe с API discocs.
 """
 import json
@@ -10,12 +11,13 @@ import sqlite3
 import sys
 
 limit = int(sys.argv[1]) if len(sys.argv) > 1 else 20
+min_releases = int(sys.argv[2]) if len(sys.argv) > 2 else 3
 db = sqlite3.connect("file:/app/data/app.db?mode=ro", uri=True)
 rows = db.execute("""
     select l.id from labels l join release_labels rl on rl.label_id = l.id
     where l.description is null
-    group by l.id having count(distinct rl.release_id) >= 3
-    order by count(distinct rl.release_id) desc limit ?""", (limit,)).fetchall()
+    group by l.id having count(distinct rl.release_id) >= ?
+    order by count(distinct rl.release_id) desc, l.id limit ?""", (min_releases, limit)).fetchall()
 labels = []
 for (label_id,) in rows:
     name, external = db.execute("select name, external_ids_json from labels where id = ?", (label_id,)).fetchone()

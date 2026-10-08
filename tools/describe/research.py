@@ -7,9 +7,11 @@
 from __future__ import annotations
 
 import datetime
+import difflib
 import json
 import re
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 
@@ -23,6 +25,8 @@ ROUND2_PAGES = 6
 MAX_ROUNDS = 2
 MAX_DESCRIPTION = 1600
 SELECT_FACTS = 16
+# Столько фактов с основателями и годом после первого раунда — второй раунд поиска не нужен.
+ENOUGH_FACTS = 80
 
 SYSTEM = (
     "You are a careful music researcher. You build a factual knowledge base about record labels "
@@ -68,6 +72,18 @@ class Subject:
         artists = {_norm(a) for a in self.artists + self.catalog_artists}
         strong = [m for m in found if _norm(m) in artists or len(m.split()) > 1]
         return bool(strong) or len(found) >= 2
+
+    def named_in(self, page: Page) -> bool:
+        """Запасной путь для лейбла без артистов в библиотеке и каталоге (у Terminal M там только сборники
+        Beatport): название — не одно короткое слово — стоит в заголовке или адресе страницы."""
+        if any(not _NOT_AN_ARTIST.search(a) for a in self.artists + self.catalog_artists):
+            return False
+        name = _norm(self.name)
+        if len(name.split()) < 2 and len(name) < 8:
+            return False
+        words = lambda text: f" {' '.join(re.findall(r'\w+', _norm(text.replace('%20', ' '))))} "  # noqa: E731
+        name = words(self.name)
+        return name in words(page.title) or name in words(page.url)
 
     def card(self) -> str:
         lines = [f"Label name: {self.name}"]
@@ -317,6 +333,7 @@ Rules:
   not a sub-label or a parent label.
 - Write natural Russian: short clear sentences, no calques from English, no bureaucratic phrasing.
 - Leave out what is unknown; never write that something is unknown or not found.
+- No court cases, arrests, illnesses or private life of people: the text is about the music.
 - Wrap every artist name (stage name or band) in the form [a=Name], e.g. [a=Nina Kraviz]. If the artist is in our
   library list above, write the name exactly as in that list (it becomes a link), even if the facts spell it in
   another script; otherwise as in the facts. A founder or a person who also works as a DJ, producer or musician
@@ -324,8 +341,10 @@ Rules:
   the stage name in [a=...] and the real name after it. A band or duo is one artist with its members after it:
   «[a=Modeselektor] (Gernot Bronsert и Sebastian Szary)» — never a member «aka» the band.
 - Names of people, bands, companies, clubs and media stay in the original spelling, never transliterated:
-  «Simon Dunmore», «Gernot Bronsert», «Trevor Jackson», «Mixmag»; a Russian name in Cyrillic («Никита Чернат»),
-  without a Latin duplicate. Only well-known cities and countries in Russian (Лондон, Бристоль, Франция).
+  «Simon Dunmore», «Gernot Bronsert», «Trevor Jackson», «Mixmag»; a Russian name in Cyrillic («Никита Чернат»).
+  Each name once — never «Саймоном Dunmore (Simon Dunmore)» or «Wez Saunders (Wez Saunders)». A Latin name is not
+  declined; build the sentence around it: «лейбл основал [a=Simon Dunmore]», «под руководством Wez Saunders».
+  Only well-known cities and countries in Russian (Лондон, Бристоль, Франция).
 - The text is about the label. If the label belongs to an artist or band, say so in the first sentence and use
   the artist's story as context, but keep the label as the subject.
   A real name of the same person goes without brackets, e.g. «[a=Seba] (Sebastian Arenberg)». Other people
@@ -369,7 +388,8 @@ topic:
   chart positions or "played in N DJ sets" from tracklist sites, a track described only by how it sounds.
 
 score: 3 — a striking, characteristic detail; 2 — a solid fact worth telling; 1 — plain but usable;
-0 — not worth telling, or it looks wrong for this label (a release of another label, a different person).
+0 — not worth telling, or it looks wrong for this label (a release of another label, a different person), or a
+court case, an arrest, an illness or the private life of a person.
 Answer an entry for every fact number."""
 
 
@@ -451,6 +471,11 @@ class Researcher:
                 read[page.url] = page
                 facts += self._facts(subject, page)
             self.log(f"  round {round_no + 1}: {len(read)} pages, {len(facts)} facts")
+            kinds = {fact.kind for fact in facts}
+            if len(facts) >= ENOUGH_FACTS and {"founders", "founding_year"} <= kinds:
+                # Крупный лейбл: после первого раунда сотня фактов, второй добавлял ещё сотню и минуты, а текст
+                # не менялся (проверено на 7 лейблах — Defected, Dirtybird, Monkeytown…).
+                break
             if round_no + 1 < MAX_ROUNDS:
                 new_queries = self._gap_queries(subject, facts, queries)
 
@@ -539,8 +564,10 @@ label's own language. If the facts already cover the essentials well, answer an 
 
     def _facts(self, subject: Subject, page: Page, *, trusted: bool = False) -> list[Fact]:
         if not trusted and not subject.identified_by(" ".join((page.title, page.text, page.full))):
-            self.log(f"    none of our artists or releases ← {page.url}")
-            return []
+            if not subject.named_in(page):
+                self.log(f"    none of our artists or releases ← {page.url}")
+                return []
+            self.log(f"    identified by the name only ← {page.url}")
         # Кусками по ~2500 знаков: за один проход по длинной статье модель выписывает несколько главных
         # фактов и останавливается (интервью Bandcamp Daily о Trip: 9 фактов целиком, 21 — кусками).
         items, about = [], False
@@ -574,6 +601,9 @@ label's own language. If the facts already cover the essentials well, answer an 
         # Строки таблиц и дискографий («X выпустил Y», выведено из списка) — не факты для текста. Каталожные
         # факты из статей («I Wanna Go Bang — хит-кроссовер») остаются: метку «catalog» модель ставит и им.
         collected = [f for f in _dedupe_facts(facts) if not (f.kind == "catalog" and f.certainty == "inferred")]
+        if sum(f.kind != "catalog" for f in collected) < 3:
+            # Одни строки каталога (Desagüe: три EP одной артистки) — текст вышел бы пересказом дискографии.
+            return "", "only catalogue facts"
         facts = self._select(subject, collected)
         facts = self._review(subject, facts, [f for f in collected if f not in facts])
         if len(facts) < 3:
@@ -585,15 +615,13 @@ label's own language. If the facts already cover the essentials well, answer an 
             self.log(f"  write: {exc}; again without thinking")
             answer = self.llm.json("write", SYSTEM, write_prompt(subject, facts), WRITE, think=False,
                                    temperature=0.4, max_tokens=3000)
-        description = _fix_typos(answer["description"].strip())
+        description = _fix_typos(answer["description"].strip(), _sources(facts))
         if not description:
             return "", "model: not enough facts"
         if len(description) > MAX_DESCRIPTION:
             description = self._revise(subject, facts, description, "It is too long: shorten it to two paragraphs "
                                        "of 3-5 sentences each, keeping the most concrete and interesting details.")
-        answer = self.llm.json("check", SYSTEM, check_prompt(description, facts), CHECK, think=False, max_tokens=3000)
-        unsupported = answer["unsupported"]
-        style = answer.get("style", []) + _style_flags(description)
+        unsupported, style = self._check(description, facts)
         if unsupported or style:
             self.log(f"  unsupported: {unsupported}; style: {style}")
             request = []
@@ -603,10 +631,27 @@ label's own language. If the facts already cover the essentials well, answer an 
             if style:
                 request.append("Rewrite these sentences by the rules (a list → keep only the names that have a story, "
                                "or drop it; no catalogue numbers; translate English phrases; do not mention "
-                               "sources; give a name once):\n" + "\n".join(f"- {s}" for s in style))
+                               "sources; give a name once; a date relative to today («в прошлом году») → a year "
+                               "or nothing):\n" + "\n".join(f"- {s}" for s in style))
             description = self._revise(subject, facts, description, "\n\n".join(request))
-            return self._proofread(description), "revised: " + " | ".join(unsupported + style)
-        return self._proofread(description), ""
+            # Правка без размышлений иногда оставляет перечень как был (Skint: «в ростер вошли A, B и C»).
+            # Второй раз не переписываем — оставшийся перечень «[a=A], [a=B] и [a=C]» убираем кодом. Пометкам
+            # модели так не верим: «[a=X] (настоящее имя)» она тоже считает «именем дважды», а «Золотую пластинку»
+            # за «TAXI» — перечнем.
+            for sentence in _sentences(description):
+                if _artist_list(sentence):
+                    self.log(f"  dropped: {sentence}")
+                    description = _drop_sentence(description, sentence)
+            return self._proofread(_fix_links(description, subject)), "revised: " + " | ".join(unsupported + style)
+        return self._proofread(_fix_links(description, subject)), ""
+
+    def _check(self, description: str, facts: list[Fact]) -> tuple[list[str], list[str]]:
+        """Неподтверждённое фактами и нарушения правил текста."""
+        answer = self.llm.json("check", SYSTEM, check_prompt(description, facts), CHECK, think=False, max_tokens=3000)
+        # Голое название в «» проверяющий принимает за непереведённый английский («I Like to Move It») — мимо.
+        style = [s for s in answer.get("style", [])
+                 if len(re.sub(r"«[^»]*»|\[a=[^\]]*\]|\W", "", s)) >= 3] + _style_flags(description)
+        return answer["unsupported"], _unique(style)
 
     def _proofread(self, description: str) -> str:
         """Орфография и грамматика без размышлений; правка, задевшая факты или разметку, отбрасывается."""
@@ -723,6 +768,16 @@ Answer with the corrected text (or the same text if it is correct).
                     continue
                 chosen.append(fact)
                 per_topic[topic] = per_topic.get(topic, 0) + 1
+        # Кто, когда, где — обязательны. Оценка их теряет (у Defected два места заняли два пересказа «Данмор —
+        # основатель», а 1999 и Лондон не попали) — добавить самое частое значение каждого.
+        for kind in ("founders", "founding_year", "founding_place"):
+            if chosen and not any(f.kind == kind for f in chosen):
+                candidates = [f for f in facts if f.kind == kind and f.value.strip()]
+                if candidates:
+                    values = Counter(_norm(f.value) for f in candidates)
+                    top = values.most_common(1)[0][0]
+                    chosen.append(next(f for f in candidates if _norm(f.value) == top))
+                    per_topic[kind] = 1
         self.log(f"  selected {len(chosen)} of {len(facts)} facts: {per_topic}")
         return chosen if len(chosen) >= 3 else facts[:SELECT_FACTS]
 
@@ -734,7 +789,7 @@ Answer with the corrected text (or the same text if it is correct).
         except RuntimeError as exc:  # размышления съели весь лимит — без них
             self.log(f"  revise: {exc}; again without thinking")
             revised = self.llm.json("revise", SYSTEM, prompt, WRITE, think=False, temperature=0.3, max_tokens=3000)
-        return _fix_typos(revised["description"].strip())
+        return _fix_typos(revised["description"].strip(), _sources(facts))
 
     # --- известные источники ---------------------------------------------
 
@@ -913,11 +968,82 @@ def _domain(url: str) -> str:
     return host.removeprefix("www.")
 
 
-def _fix_typos(text: str) -> str:
-    """Повторяющиеся ошибки модели: «лейбел», номера фактов «[2, 3]» в тексте."""
+def _fix_typos(text: str, sources: str = "") -> str:
+    """Повторяющиеся ошибки модели: «лейбел», номера фактов «[2, 3]» в тексте, имя дважды.
+
+    sources — тексты фактов и цитат: по ним видно, как имя пишется в оригинале.
+    """
     text = re.sub(r"\s*\[\d+(?:\s*[,–-]\s*\d+)*\]", "", text)
     text = re.sub(r"\s+([.,;:])", r"\1", text)
+    # Имя дважды: «[a=Kacper Krupa] (Kacper Krupa)», «Wez Saunders (Wez Saunders)».
+    text = re.sub(r"(\[a=([^\]]+)\]) \(\2\)", r"\1", text)
+    text = re.sub(r"\b([A-Z][\w'’.&-]*(?: [A-Z&][\w'’.&-]*)*) \(\1\)", r"\1", text)
+    # Транслит и оригинал в скобках, вопреки правилу: «Кристофом Эллингхаусом (Christof Ellinghaus)».
+    text = _NAME_PAIR.sub(lambda m: _one_spelling(m, _norm(sources)), text)
     return re.sub(r"\b([Лл])ейбел", r"\1ейбл", text)
+
+
+def _fix_links(text: str, subject: Subject) -> str:
+    """[a=Eksuche] при артисте «Eskuche» в библиотеке — ссылка не сработает. Близкое написание (опечатка,
+    перестановка букв) заменяется на библиотечное."""
+    names = subject.artists + subject.catalog_artists
+
+    def fix(match: re.Match) -> str:
+        name = match.group(1)
+        if name in names:
+            return match.group(0)
+        close = difflib.get_close_matches(name, names, n=1, cutoff=0.85)
+        return f"[a={close[0]}]" if close else match.group(0)
+
+    return re.sub(r"\[a=([^\]]+)\]", fix, text)
+
+
+def _sources(facts: list[Fact]) -> str:
+    return " ".join(f"{fact.text} {fact.quote}" for fact in facts)
+
+
+def _drop_sentence(text: str, sentence: str) -> str:
+    """Убрать предложение; абзац, оставшийся пустым, — тоже."""
+    text = text.replace(sentence, "")
+    paragraphs = [re.sub(r"\s{2,}", " ", p).strip() for p in text.split("\n\n")]
+    return "\n\n".join(p for p in paragraphs if p)
+
+
+_WORD = r"[А-ЯЁA-Z][\ẃ'’-]*"
+_NAME_PAIR = re.compile(rf"(?<![\w=\]])((?:{_WORD}\s){{0,3}}{_WORD}) \(((?:[A-Z][\w'’.-]*\s){{0,3}}[A-Z][\w'’.-]*)\)")
+# Какими латинскими буквами может начинаться то же имя, записанное кириллицей.
+_SOUNDS = {"А": "A", "Б": "B", "В": "VW", "Г": "GH", "Д": "DJ", "Е": "EYJ", "Ё": "YJE", "Ж": "JZG", "З": "ZS",
+           "И": "IEY", "Й": "JYI", "К": "KCQ", "Л": "L", "М": "M", "Н": "N", "О": "OA", "П": "P", "Р": "R",
+           "С": "SC", "Т": "T", "У": "UOW", "Ф": "FP", "Х": "HKC", "Ц": "CTZ", "Ч": "CT", "Ш": "S", "Щ": "S",
+           "Э": "EA", "Ю": "YJU", "Я": "YJIA"}
+
+
+def _one_spelling(match: re.Match, sources: str) -> str:
+    """«Запись (оригинал)» → одно имя. Только если слева то же имя (столько же слов, первые буквы созвучны), а
+    не «Лейбл Трип (Trip Recordings)». Кириллица остаётся, если так имя пишут источники (русские имена)."""
+    shown, original = match.group(1).split(), match.group(2).split()
+    if len(shown) != len(original) or not any(re.search(r"[А-ЯЁа-яё]", w) for w in shown):
+        return match.group(0)
+    for cyr, lat in zip(shown, original):
+        if re.match(r"[A-Z]", cyr) and cyr != lat or lat[0] not in _SOUNDS.get(cyr[0], cyr[0]):
+            return match.group(0)
+    stem = _norm(shown[-1])[:4]
+    if stem and re.search(rf"(?<!\w){re.escape(stem)}", sources) and re.search(r"[а-яё]", stem):
+        return match.group(1)
+    return match.group(2)
+
+
+def _sentences(text: str) -> list[str]:
+    return [s for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+
+
+_ARTIST_LIST = re.compile(r"\[a=[^\]]+\](?:,\s*\[a=[^\]]+\])+,?\s+и\s+\[a=")
+# Перечень основателей — не перечень ростера: «Его создали [a=Roni Size], [a=DJ Krust], [a=DJ Die] и [a=Suv]».
+_FOUNDERS = re.compile(r"(?i)основа|созда|учреди|основател")
+
+
+def _artist_list(sentence: str) -> bool:
+    return bool(_ARTIST_LIST.search(sentence)) and not _FOUNDERS.search(sentence)
 
 
 def _style_flags(text: str) -> list[str]:
@@ -925,9 +1051,18 @@ def _style_flags(text: str) -> list[str]:
     непереведённая английская фраза — четыре и больше английских слов подряд со служебным словом (of, the…);
     перечень жанров («soulful house, deep house») служебных слов не содержит."""
     flags = []
-    for sentence in re.split(r"(?<=[.!?])\s+", text):
+    for sentence in _sentences(text):
         plain = re.sub(r"\[a=[^\]]+\]", "", sentence)
         if re.search(r"\b[A-Z]{2,6}-?\d{2,4}\b", plain):
+            flags.append(sentence)
+            continue
+        # Дата относительно страницы, которой читатель не видит: «основан в прошлом году» (Freakin909).
+        if re.search(r"(?i)\b(?:в|на) (?:прошлом|этом|следующем|позапрошлом) (?:году|месяце)\b|\bнедавно\b|"
+                     r"\bв ближайшее время\b|\bв настоящее время готовит", plain):
+            flags.append(sentence)
+            continue
+        # Перечень артистов «[a=A], [a=B] и [a=C]» (New Violence: «среди тех, кто выпускал… значатся…»).
+        if _artist_list(sentence):
             flags.append(sentence)
             continue
         for run in re.findall(r"[A-Za-z][A-Za-z'’-]*(?:,?\s+[A-Za-z][A-Za-z'’-]*){3,}", plain):

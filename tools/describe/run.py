@@ -1,8 +1,10 @@
-"""Описания лейблов: python run.py <labels.json> [--rewrite] [--model=…] [--jobs=N] [--write-think] [id ...] → out/<id>.json.
+"""Описания лейблов: python run.py <labels.json> [--rewrite] [--resume] [--out=DIR] [--model=…] [--jobs=N] [--write-think] [id ...]
+→ out/<id>.json (или DIR/<id>.json).
 
 labels.json — список {id, name, artists, releases, external_ids}. --rewrite — только текст заново,
-по фактам из out/<id>.json, без поиска. --jobs — сколько лейблов одновременно: модель в LM Studio
-должна быть загружена с --parallel не меньше этого числа, иначе запросы просто встанут в очередь.
+по фактам из out/<id>.json, без поиска. --resume — пропустить лейблы, у которых уже есть out/<id>.json с фактами
+(без фактов — пробуются снова: ночью поиск мог отвалиться). --jobs — сколько лейблов одновременно: модель
+в LM Studio должна быть загружена с --parallel не меньше этого числа, иначе запросы просто встанут в очередь.
 """
 from __future__ import annotations
 
@@ -64,10 +66,20 @@ def main() -> None:
     write_think = "--write-think" in args
     jobs = int(next((a.split("=", 1)[1] for a in args if a.startswith("--jobs=")), "1"))
     wanted = {int(a) for a in args if not a.startswith("--")}
+    global OUT
+    OUT = HERE / next((a.split("=", 1)[1] for a in args if a.startswith("--out=")), "out")
     OUT.mkdir(exist_ok=True)
     todo = [label for label in labels if not wanted or label["id"] in wanted]
+    if "--resume" in args:
+        todo = [label for label in todo if not _done(label["id"])]
+        say(f"resume: {len(todo)} labels left")
     with ThreadPoolExecutor(jobs) as pool:
         list(pool.map(lambda label: describe(config, model, label, rewrite, write_think), todo))
+
+
+def _done(label_id: int) -> bool:
+    path = OUT / f"{label_id}.json"
+    return path.exists() and bool(json.loads(path.read_text(encoding="utf-8")).get("facts"))
 
 
 if __name__ == "__main__":
