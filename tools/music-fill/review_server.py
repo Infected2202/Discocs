@@ -935,6 +935,23 @@ def snapshot_info() -> dict:
     return {"ts": int(ts), "text": time.strftime("%d.%m %H:%M", time.localtime(ts)) if ts else "нет"}
 
 
+LIBRARY_REFRESH_EVERY = 86400  # снимок старше суток — пересобрать сами, не дожидаясь кнопки
+
+
+def library_refresher() -> None:
+    """Снимок библиотеки — основа «есть в библиотеке» в плане; устаревший пропускает всё скачанное
+    после него (на диск смотрит только дозагрузка лейблов, и то если диск виден)."""
+    while True:
+        try:
+            if time.time() - snapshot_info()["ts"] > LIBRARY_REFRESH_EVERY:
+                with lock:
+                    refresh_library()
+        except Exception as exc:  # Navidrome недоступен — попробуем через час
+            journal.log.exception("library_refresher")
+            event("error", path="library_refresher", error=repr(exc))
+        time.sleep(3600)
+
+
 def refresh_library() -> dict:
     """Свежий снимок Navidrome + пересборка out/. Прежний снимок кладём в raw/navidrome/prev/."""
     global _library, _lib, _events, _songs
@@ -960,7 +977,9 @@ def release_title(label: str) -> str:
     return build.words(re.sub(r"^\d{4}\s+", "", label))
 
 
-def pending_plan(types: set[str], top_up: bool = False) -> list[dict]:
+def pending_plan(types: set[str], top_up: bool = False, warnings: list[str] | None = None) -> list[dict]:
+    """warnings — сюда пишем, чего план проверить не смог (показывается над планом)."""
+    warnings = [] if warnings is None else warnings
     decisions = read_json(DECISIONS, {})
     sent = read_json(DOWNLOADS, {})
     plan, by_artist = [], {}
@@ -1019,10 +1038,16 @@ def pending_plan(types: set[str], top_up: bool = False) -> list[dict]:
             # уже лежит на диске, но снимок библиотеки ещё старый — не качать повторно
             try:
                 keys = disk_index_cached()
-            except RuntimeError:
-                keys = set()
+            except RuntimeError as exc:
+                keys = None
+                if str(exc) not in warnings:
+                    warnings.append(str(exc))
             for r in item["releases"]:
-                if r.get("checked") and keys and on_disk(keys, r["label"], r["url"]):
+                if not r.get("checked"):
+                    continue
+                if keys is None:  # проверить нечем — не отмечаем: скачанное после снимка ушло бы второй раз
+                    r["checked"], r["in_deemix"] = False, "не проверено: диск недоступен"
+                elif on_disk(keys, r["label"], r["url"]):
                     r["checked"], r["in_deemix"] = False, "уже на диске"
             item["urls"] = [{"url": r["url"], "label": r["label"]} for r in item["releases"] if r["checked"]]
             item["top_up"] = len(done)
@@ -1036,9 +1061,13 @@ def pending_plan(types: set[str], top_up: bool = False) -> list[dict]:
 
 
 def plan_response(types: set[str], top_up: bool) -> dict:
-    plan = pending_plan(types, top_up)
+    warnings: list[str] = []
+    plan = pending_plan(types, top_up, warnings)
     add_durations(plan)
-    return {"plan": plan, "rates": size_rates()}
+    if warnings:
+        warnings.append(f"Проверка «уже на диске» не работала: релизы, которых нет в снимке библиотеки от "
+                        f"{snapshot_info()['text']}, не отмечены — отметь вручную, если уверен.")
+    return {"plan": plan, "rates": size_rates(), "warnings": warnings}
 
 
 def mark_in_plan(plan: list[dict], decisions: dict) -> None:
@@ -2303,6 +2332,7 @@ if __name__ == "__main__":
     event("server_start")
     atexit.register(lambda: event("server_stop"))
     threading.Thread(target=watch_queue, daemon=True).start()
+    threading.Thread(target=library_refresher, daemon=True).start()
     threading.Thread(target=autotag_worker, daemon=True).start()
     threading.Thread(target=slsk_syncer, daemon=True).start()
     for _ in range(slsk.PARALLEL):  # по поиску на поток: slskd больше двух сразу не берёт

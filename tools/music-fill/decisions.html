@@ -197,6 +197,8 @@ async function loadPlan() {
   if (r.error) { $("#plantbody").innerHTML = `<tr><td colspan="2" class="err">${esc(r.error)}</td></tr>`; return; }
   plan = r.plan; rates = r.rates || rates;
   renderPlan();
+  if ((r.warnings || []).length) $("#plantbody").insertAdjacentHTML("afterbegin",
+    `<tr><td colspan="2" class="err">${r.warnings.map(esc).join("<br>")}</td></tr>`);
 }
 
 const TYPE_NAME = {album: "Альбомы", ep: "EP", single: "Синглы", compile: "Сборники", featured: "Участие", more: "Ещё", track: "Трек"};
