@@ -1,4 +1,4 @@
-import { Link } from "react-router"
+import { Link, useLocation } from "react-router"
 import type { TrackCredit } from "@/api/types"
 import { splitTitleByCredits } from "@/lib/titleCredits"
 import { cn } from "@/lib/utils"
@@ -6,7 +6,8 @@ import { cn } from "@/lib/utils"
 interface TrackTitleProps {
   readonly title: string
   readonly credits?: readonly TrackCredit[]
-  /** Where the rest of the title leads (the release); none → plain text. */
+  /** Where the rest of the title leads (the release); none — or the page
+   *  already open (a release's own tracklist) → plain text. */
   readonly href?: string
   readonly className?: string
   /** Classes of the links over the plain parts of the title. */
@@ -18,6 +19,8 @@ interface TrackTitleProps {
 /** Track title whose featured artists and remixers ("(ft. X)", "(X Remix)")
  *  are links to their artist pages right where the title names them. */
 export default function TrackTitle({ title, credits, href, className, linkClassName, replace }: TrackTitleProps) {
+  const { pathname } = useLocation()
+  const target = href === pathname ? undefined : href
   const stop = (event: React.MouseEvent) => event.stopPropagation()
   return (
     <span className={className}>
@@ -36,9 +39,9 @@ export default function TrackTitle({ title, credits, href, className, linkClassN
             </Link>
           )
         }
-        if (href) {
+        if (target) {
           return (
-            <Link key={key} to={href} replace={replace} onClick={stop} className={cn(linkClassName)}>
+            <Link key={key} to={target} replace={replace} onClick={stop} className={cn(linkClassName)}>
               {segment.text}
             </Link>
           )

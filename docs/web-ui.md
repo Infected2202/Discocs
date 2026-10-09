@@ -210,7 +210,8 @@ falls back to a letter placeholder inside `ArtworkImage`.
 A featured artist or remixer named in a title (`credits` of the track payload,
 see `docs/data-model.md`, Track Artists) is a link to the artist page right in
 the title text — "Pi Pu Pa (ft. **RLGN**)"; the rest of the title still leads
-to the release, the artist line below shows the main artists only.
+to the release (plain text when that release page is already open — its own
+tracklist), the artist line below shows the main artists only.
 `splitTitleByCredits` (`lib/titleCredits.ts`) matches a name as a whole word,
 case-insensitively, the last occurrence when it repeats. Used in track rows,
 the player bar and the expanded player.

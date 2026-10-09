@@ -209,4 +209,22 @@ describe("VirtualTrackRow", () => {
     expect(screen.queryByRole("link", { name: /Tune/ })).toBeNull()
     expect(screen.getByText("Tune (", { exact: false })).toBeInTheDocument()
   })
+
+  it("keeps the title plain on the release's own page but still links credits", () => {
+    render(
+      <MemoryRouter initialEntries={["/releases/11"]}>
+        <VirtualTrackRow
+          track={makeTrack({
+            title: "Pi Pu Pa (ft. RLGN)",
+            credits: [{ id: 9, name: "RLGN", role: "featured", text: "RLGN" }],
+          })}
+          index={0}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(screen.queryByRole("link", { name: /Pi Pu Pa/ })).toBeNull()
+    expect(screen.getByText("Pi Pu Pa (ft.", { exact: false })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "RLGN" })).toHaveAttribute("href", "/artists/9")
+  })
 })
