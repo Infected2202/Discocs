@@ -29,7 +29,7 @@ import {
 } from "./sessionPersistence"
 import { ApiError } from "@/api/client"
 import { playerLog } from "@/lib/playerLogger"
-import { cancelAllBackgroundRetries, scheduleBackgroundRetry } from "@/lib/backgroundRetry"
+import { cancelAllBackgroundRetries, cancelBackgroundRetry, scheduleBackgroundRetry } from "@/lib/backgroundRetry"
 import { hiresArtworkUrl } from "@/lib/artworkUrl"
 import { ListenProgress } from "@/lib/listenProgress"
 import { throttle } from "@/lib/throttle"
@@ -364,12 +364,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
 
   function applyEnvelope(envelope: PlaybackEnvelope, resetHistory = false, prefetch = true) {
     const { session, queue } = envelope
-    const currentItem = queue.current_item ?? queue.items[0] ?? null
+    const serverItem = queue.current_item ?? queue.items[0] ?? null
+    // An optimistic jump (skip) already switched local playback, but its
+    // background PATCH has not landed yet. Any envelope fetched meanwhile
+    // (e.g. refreshQueue after the skip's autoplay refill) still carries the
+    // server's old pointer — applying it would flip cover/title/queue
+    // highlight back to the previous track until the jump-sync catches up.
+    const jumpItem = pendingQueueJump?.sessionId === session.id && serverItem?.id !== pendingQueueJump.queueItemId
+      ? queue.items.find((item) => item.id === pendingQueueJump?.queueItemId) ?? null
+      : null
+    const currentItem = jumpItem ?? serverItem
     set({
       session,
       queue,
       ...(resetHistory ? { playedHistory: [] } : {}),
-      currentTrackId: session.current_track_id,
+      currentTrackId: jumpItem ? jumpItem.track_id : session.current_track_id,
       currentQueueItemId: currentItem?.id ?? null,
       currentTrack: currentItem?.track ?? null,
     })
@@ -423,7 +432,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     })
   }
 
+  // A canonical pointer move (handover, blocking jump) supersedes an
+  // unacknowledged optimistic jump: its retry must not later drag the server
+  // pointer back, and applyEnvelope must stop pinning the local pointer to it.
+  function abandonPendingQueueJump() {
+    if (!pendingQueueJump) return
+    cancelBackgroundRetry(`player:queue-jump:${pendingQueueJump.sessionId}`)
+    pendingQueueJump = null
+  }
+
   async function handoverToPrepared(next: QueueItem, session: PlaybackSession) {
+    abandonPendingQueueJump()
     const clientHandoverId = createClientHandoverId(session.id, next.id)
     try {
       await postEvent({
@@ -706,6 +725,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       }
 
       // Fallback for a target not locally known — block on the server as before.
+      abandonPendingQueueJump()
       addCurrentToHistory()
       try {
         const envelope = await patchQueue(session.id, {

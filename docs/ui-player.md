@@ -96,6 +96,13 @@ Background reliability is reinforced by:
   target item not yet known locally falls back to blocking on the PATCH. This
   is what previously stalled every track transition behind a throttled
   background request even though the next track's audio was already available.
+  Until that jump is acknowledged, `applyEnvelope` keeps the local pointer on
+  the jumped-to item: any envelope fetched in the meantime (typically
+  `refreshQueue` after the skip's autoplay refill) still carries the server's
+  old pointer and would otherwise flip cover, title and the queue highlight back
+  to the previous track for a few seconds. A canonical pointer move — prepared
+  handover or the blocking fallback jump — abandons the pending jump and
+  cancels its retry, so it can't drag the server pointer back later.
 - A `visibilitychange` → foreground reconcile: if the store believes playback is
   `playing` but the element is actually paused, it resumes it, or drives
   `handleTrackEnded` when the current track ended in the background without the

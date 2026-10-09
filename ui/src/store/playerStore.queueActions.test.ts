@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { playerPlayback as audioEngine } from "@/engine/playback"
-import { patchQueue, patchSession, postEvent } from "@/api/playback"
+import { fetchQueue, patchQueue, patchSession, postEvent } from "@/api/playback"
 import { cancelAllBackgroundRetries } from "@/lib/backgroundRetry"
 import { usePlayerStore } from "./playerStore"
 import { loadPersistedPlaybackPosition } from "./sessionPersistence"
@@ -40,6 +40,7 @@ vi.mock("@/api/playback", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/playback")>()
   return {
     ...actual,
+    fetchQueue: vi.fn(),
     patchQueue: vi.fn(),
     patchSession: vi.fn(),
     postEvent: vi.fn().mockResolvedValue({}),
@@ -595,6 +596,75 @@ describe("jumpToQueueItem optimistic transitions (A.1) / skipNext telemetry (A.3
       // Succeeded on the retry — no further attempts on later ticks.
       await vi.advanceTimersByTimeAsync(60_000)
       expect(patchQueue).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("keeps the jumped-to track when a queue refresh lands before the jump-sync", async () => {
+    const items = [makeItem("current", 10), makeItem("next", 20)]
+    const envelope = makeEnvelope("session", items, "current")
+    usePlayerStore.setState({
+      session: envelope.session,
+      queue: envelope.queue,
+      currentTrackId: 10,
+      currentQueueItemId: "current",
+      currentTrack: items[0].track,
+    })
+    const jumpResponse = createDeferred<PlaybackEnvelope>()
+    vi.mocked(patchQueue).mockReturnValueOnce(jumpResponse.promise)
+    await usePlayerStore.getState().jumpToQueueItem("next")
+
+    // The server has not processed the jump yet — its queue still points at
+    // the old item (what an autoplay refill's refreshQueue fetches after a skip).
+    vi.mocked(fetchQueue).mockResolvedValueOnce(makeEnvelope("session", items, "current"))
+    await usePlayerStore.getState().refreshQueue()
+
+    expect(usePlayerStore.getState().currentQueueItemId).toBe("next")
+    expect(usePlayerStore.getState().currentTrackId).toBe(20)
+    expect(usePlayerStore.getState().currentTrack?.id).toBe(20)
+
+    jumpResponse.resolve(makeEnvelope("session", items, "next"))
+    await vi.waitFor(() => {
+      expect(usePlayerStore.getState().session?.current_queue_item_id).toBe("next")
+    })
+    // Acknowledged: later envelopes follow the server pointer again.
+    vi.mocked(fetchQueue).mockResolvedValueOnce(makeEnvelope("session", items, "current"))
+    await usePlayerStore.getState().refreshQueue()
+    expect(usePlayerStore.getState().currentQueueItemId).toBe("current")
+  })
+
+  it("drops an unacknowledged jump once a prepared handover moves the pointer", async () => {
+    vi.useFakeTimers()
+    try {
+      const items = [makeItem("current", 10), makeItem("next", 20), makeItem("after", 30)]
+      const envelope = makeEnvelope("session", items, "current")
+      usePlayerStore.setState({
+        session: envelope.session,
+        queue: envelope.queue,
+        currentTrackId: 10,
+        currentQueueItemId: "current",
+      })
+      // The jump-sync keeps failing (e.g. VPN drop) — it stays pending.
+      vi.mocked(patchQueue).mockRejectedValueOnce(new Error("network down"))
+      await usePlayerStore.getState().jumpToQueueItem("next")
+      expect(patchQueue).toHaveBeenCalledTimes(1)
+
+      // The next track was prepared on the free deck and hands over canonically.
+      vi.mocked(audioEngine.hasPrepared).mockReturnValue(true)
+      vi.mocked(patchQueue).mockResolvedValueOnce(makeEnvelope("session", items, "after"))
+      await usePlayerStore.getState().skipNext()
+
+      expect(patchQueue).toHaveBeenLastCalledWith("session", expect.objectContaining({
+        operation: "handover", queue_item_id: "after",
+      }))
+      expect(usePlayerStore.getState().currentQueueItemId).toBe("after")
+      expect(usePlayerStore.getState().currentTrackId).toBe(30)
+
+      // The stale jump retry must not resurrect the old pointer on the server.
+      const calls = vi.mocked(patchQueue).mock.calls.length
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(vi.mocked(patchQueue).mock.calls.length).toBe(calls)
     } finally {
       vi.useRealTimers()
     }
