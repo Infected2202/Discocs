@@ -990,6 +990,8 @@ def _fix_typos(text: str, sources: str = "") -> str:
     text = _NAME_PAIR.sub(lambda m: _one_spelling(m, _norm(sources)), text)
     # И наоборот: «[a=Raphaël Ripperton] (Рафаэль Риппертон)» — транслит ссылки в скобках убрать.
     text = _LINK_TRANSLIT.sub(_drop_translit, text)
+    # Транслит перед ссылкой: «Марк [a=Mark Knight]», «Ричи [a=Richie Hawtin]».
+    text = _TRANSLIT_LINK.sub(_drop_leading_translit, text)
     return re.sub(r"\b([Лл])ейбел", r"\1ейбл", text)
 
 
@@ -1039,6 +1041,43 @@ def _drop_translit(match: re.Match) -> str:
     ):
         return match.group(1)
     return match.group(0)
+
+
+_TRANSLIT_LINK = re.compile(r"((?:[А-ЯЁ][а-яё]+ ){1,3})(\[a=([A-Z][^\]]*)\])")
+
+
+def _drop_leading_translit(match: re.Match) -> str:
+    """Слова перед ссылкой — то же имя транслитом, если первое звучит как начало имени («Марк» — Mark,
+    «Марком Найтом» — Mark Knight), а не «Москва [a=Moby]»: остаётся только ссылка."""
+    before, latin = match.group(1).split(), match.group(3).split()
+    for count in range(min(len(before), len(latin)), 0, -1):
+        words = before[-count:]
+        if _sounds_like(words[0], latin[0]) and (count == len(latin) or count == 1):
+            kept = before[:-count]
+            return (" ".join(kept) + " " if kept else "") + match.group(2)
+    return match.group(0)
+
+
+_LATIN = dict(zip("абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
+                  ["a", "b", "v", "g", "d", "e", "e", "zh", "z", "i", "i", "k", "l", "m", "n", "o", "p", "r", "s", "t",
+                   "u", "f", "h", "c", "ch", "sh", "sh", "", "y", "", "e", "ju", "ja"]))
+
+
+def _consonants(word: str) -> str:
+    """Согласные слова латиницей, сведённые к общему написанию: Richie и «Ричи» — rk, James и «Джеймс» — jms."""
+    word = word.lower().replace("дж", "j")
+    word = "".join(_LATIN.get(ch, ch) for ch in word)
+    word = re.sub(r"y(?=[aeiou])", "j", word)
+    for spelling, sound in (("ph", "f"), ("ck", "k"), ("ch", "c"), ("kh", "k"), ("sh", "s"), ("zh", "z"),
+                            ("c", "k"), ("q", "k"), ("w", "v"), ("x", "ks")):
+        word = word.replace(spelling, sound)
+    return re.sub(r"[^a-z]|[aeiouy]", "", word)
+
+
+def _sounds_like(cyrillic: str, latin: str) -> bool:
+    """Первые две согласные совпадают: «Марком» — Mark, «Кристоф» — Christof, но не «Москва» — Moby."""
+    sound = _consonants(cyrillic)[:2]
+    return len(sound) == 2 and sound == _consonants(latin)[:2]
 
 
 def _one_spelling(match: re.Match, sources: str) -> str:

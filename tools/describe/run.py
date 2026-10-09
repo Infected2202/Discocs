@@ -1,10 +1,12 @@
-"""Описания лейблов: python run.py <labels.json> [--rewrite] [--resume] [--out=DIR] [--model=…] [--jobs=N] [--write-think] [id ...]
+"""Описания лейблов: python run.py <labels.json> [--rewrite] [--resume] [--second-pass] [--out=DIR] [--model=…] [--jobs=N] [--write-think] [id ...]
 → out/<id>.json (или DIR/<id>.json).
 
 labels.json — список {id, name, artists, releases, external_ids}. --rewrite — только текст заново,
 по фактам из out/<id>.json, без поиска. --resume — пропустить лейблы, у которых уже есть out/<id>.json с фактами
 (без фактов — пробуются снова: ночью поиск мог отвалиться). --jobs — сколько лейблов одновременно: модель
 в LM Studio должна быть загружена с --parallel не меньше этого числа, иначе запросы просто встанут в очередь.
+--second-pass — второй проход по «не найденным» (rescue.py): лейблы со сборниками узнаются по названию, вместо
+пустоты — короткая справка.
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from llm import LLM
+from rescue import SecondPass
 from research import Researcher, Subject
 from web import Web
 
@@ -35,12 +38,12 @@ def say(line: str) -> None:
         print(line, flush=True)
 
 
-def describe(config: dict, model: str, label: dict, rewrite: bool, write_think: bool) -> None:
+def describe(config: dict, model: str, label: dict, rewrite: bool, write_think: bool, second: bool = False) -> None:
     subject = Subject(label["id"], label["name"], label.get("artists", []), label.get("releases", []),
                       label.get("external_ids", {}))
     # Свой клиент на лейбл: время по шагам считается отдельно, параллельные лейблы его не путают.
     web = Web(config["searxng_url"], config.get("searxng_engines", ""), config.get("flaresolverr_url", ""))
-    researcher = Researcher(LLM(config["lmstudio_url"], model), web, log=lambda line: say(f"[{subject.name}] {line}"),
+    researcher = (SecondPass if second else Researcher)(LLM(config["lmstudio_url"], model), web, log=lambda line: say(f"[{subject.name}] {line}"),
                             write_think=write_think)
     say(f"== {subject.name}")
     try:
@@ -64,6 +67,7 @@ def main() -> None:
     rewrite = "--rewrite" in args
     model = next((a.split("=", 1)[1] for a in args if a.startswith("--model=")), config["model"])
     write_think = "--write-think" in args
+    second = "--second-pass" in args
     jobs = int(next((a.split("=", 1)[1] for a in args if a.startswith("--jobs=")), "1"))
     wanted = {int(a) for a in args if not a.startswith("--")}
     global OUT
@@ -74,7 +78,7 @@ def main() -> None:
         todo = [label for label in todo if not _done(label["id"])]
         say(f"resume: {len(todo)} labels left")
     with ThreadPoolExecutor(jobs) as pool:
-        list(pool.map(lambda label: describe(config, model, label, rewrite, write_think), todo))
+        list(pool.map(lambda label: describe(config, model, label, rewrite, write_think, second), todo))
 
 
 def _done(label_id: int) -> bool:

@@ -5340,16 +5340,22 @@
       const pausedBy = progress.paused_by === "gpu"
         ? "paused: the GPU is busy (a game?), the model is unloaded until it is free"
         : job.status === "paused" ? "paused" : "";
-      const state = job.status === "queued" ? "waiting for the worker" : (pausedBy || job.status);
+      // Статус задачи пишет воркер; воркер не на связи — задача стоит, что бы в статусе ни было.
+      const stalled = job.status !== "queued" && !job.worker_online;
+      const state = job.status === "queued" ? "waiting for the worker"
+        : stalled ? `not running: the worker is offline${job.worker_seen_at ? `, last seen ${ago(job.worker_seen_at)}` : ""}`
+        : job.control === "cancel" ? "cancelling: finishing the labels in progress"
+        : job.control === "pause" && job.status === "running" ? "pausing: finishing the labels in progress"
+        : (pausedBy || job.status);
       const current = (progress.current || [])
         .map(item => `<div class="meta"><strong>${esc(item.name)}</strong> &mdash; ${esc(item.step || "")}</div>`)
         .join("");
       const paused = job.control === "pause";
-      target.innerHTML = `<div class="job status-${esc(job.status)}">
+      target.innerHTML = `<div class="job status-${esc(stalled ? "stalled" : job.status)}">
         <div class="row" style="justify-content:space-between">
           <strong>${done} of ${total} labels &middot; ${esc(state)}</strong>
           <div class="row">
-            <button onclick="describeControl(${job.id}, '${paused ? "run" : "pause"}')">${paused ? "Resume" : "Pause"}</button>
+            ${stalled ? "" : `<button onclick="describeControl(${job.id}, '${paused ? "run" : "pause"}')">${paused ? "Resume" : "Pause"}</button>`}
             <button onclick="describeControl(${job.id}, 'cancel')">Cancel</button>
           </div>
         </div>

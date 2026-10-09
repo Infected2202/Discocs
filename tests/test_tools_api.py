@@ -294,3 +294,25 @@ def test_cancel_closes_a_job_whose_worker_is_gone_and_a_restarted_worker_drops_i
     polled = client.post("/api/v1/tools/workers/pc-2/poll", json={"tools": ["describe"], "wait": 0}).json()["job"]
     assert polled is None
     assert store.tool_job(second)["status"] == "cancelled"
+
+
+def test_describe_overview_says_whether_the_worker_running_the_job_is_online(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    _label(store, tmp_path, "One", 1)
+    client = TestClient(app)
+    client.post("/api/v1/tools/jobs", json={"tool": "describe", "action": "run"})
+    # В очереди — воркера ещё нет.
+    queued = client.get("/api/v1/tools/describe").json()["job"]
+    assert (queued["status"], queued["worker_online"], queued["worker_seen_at"]) == ("queued", False, None)
+
+    client.post("/api/v1/tools/workers/pc-1/poll", json={"tools": ["describe"], "wait": 0})
+    running = client.get("/api/v1/tools/describe").json()["job"]
+    assert (running["status"], running["worker_online"]) == ("running", True)
+
+    # Воркер пропал: статус в базе всё ещё running, но админка должна знать, что задачу никто не выполняет.
+    with store.connect() as conn:
+        conn.execute("UPDATE tool_workers SET seen_at = '2020-01-01T00:00:00+00:00'")
+    stalled = client.get("/api/v1/tools/describe").json()["job"]
+    assert (stalled["status"], stalled["worker_online"]) == ("running", False)
+    assert stalled["worker_seen_at"] == "2020-01-01T00:00:00+00:00"
+    assert "not running: the worker is offline" in client.get("/admin").text

@@ -9,7 +9,10 @@
 2. На сервере — записать их в базу внутри контейнера бэкенда (та же функция, что у API воркера):
 
        docker cp results.json discocs-backend-1:/tmp/ && docker cp import_results.py discocs-backend-1:/tmp/
-       docker exec discocs-backend-1 python /tmp/import_results.py apply /tmp/results.json
+       docker exec discocs-backend-1 python /tmp/import_results.py apply /tmp/results.json [JOB_ID]
+
+   JOB_ID — задача describe из админки, которую прогнали из командной строки: итоги засчитываются ей,
+   прогресс виден в разделе «Инструменты», а воркер потом доделает только оставшееся.
 
 Текст агента сразу становится описанием лейбла (кроме редакционного), прежнее запоминается для отката;
 «ничего не нашлось» прежнее описание не стирает.
@@ -49,7 +52,7 @@ def pack(out_dir: Path, target: Path) -> None:
     print(len(results), "results:", dict(Counter(r["status"] for r in results)))
 
 
-def apply(source: Path) -> None:
+def apply(source: Path, job_id: int | None = None) -> None:
     sys.path.insert(0, "/app")
     from app.config import Settings  # noqa: PLC0415
     from app.store import Store  # noqa: PLC0415
@@ -58,7 +61,7 @@ def apply(source: Path) -> None:
     outcomes: Counter[str] = Counter()
     for item in json.loads(source.read_text(encoding="utf-8")):
         outcome = store.save_agent_description(
-            item["label_id"], job_id=None, status=item["status"], description=item["description"],
+            item["label_id"], job_id=job_id, status=item["status"], description=item["description"],
             sources=item["sources"], model=item["model"], note=item["note"],
         )
         outcomes[str(outcome)] += 1
@@ -70,6 +73,6 @@ if __name__ == "__main__":
     if command == "pack":
         pack(Path(paths[0]), Path(paths[1]))
     elif command == "apply":
-        apply(Path(paths[0]))
+        apply(Path(paths[0]), int(paths[1]) if len(paths) > 1 else None)
     else:
         raise SystemExit(__doc__)

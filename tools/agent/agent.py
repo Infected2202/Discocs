@@ -176,8 +176,11 @@ class DescribeJob:
         job_id = int(self.job["id"])
         sys.path.insert(0, str(DESCRIBE_DIR))
         from llm import LLM  # noqa: PLC0415 — код describe живёт рядом, а не в пакете
+        from rescue import SecondPass  # noqa: PLC0415
         from research import Researcher, Subject  # noqa: PLC0415
         from web import Web  # noqa: PLC0415
+
+        params = self.job.get("params") if isinstance(self.job.get("params"), dict) else {}
 
         def describe(label: dict) -> None:
             label_id = int(label["id"])
@@ -191,7 +194,9 @@ class DescribeJob:
                               label.get("external_ids", {}))
             web = Web(self.config["searxng_url"], self.config.get("searxng_engines", ""),
                       self.config.get("flaresolverr_url", ""))
-            researcher = Researcher(LLM(self.config["lmstudio_url"], self.model.name), web, log=step)
+            # Перебор «не найденных» — второй проход: узнавание по названию и короткая справка (rescue.py).
+            kind = SecondPass if params.get("scope") == "not_found" else Researcher
+            researcher = kind(LLM(self.config["lmstudio_url"], self.model.name), web, log=step)
             try:
                 result = researcher.run(subject)
                 status = "written" if result.description else "not_found"

@@ -42,6 +42,16 @@ def _online(seen_at: str) -> bool:
     return (datetime.now(UTC) - seen).total_seconds() <= WORKER_ONLINE_SECONDS
 
 
+def _job_worker(store, job: dict[str, object]) -> tuple[bool, str | None]:
+    """На связи ли воркер, который ведёт задачу, и когда его видели. Без воркера — не на связи: задачу никто
+    не выполняет, что бы ни было записано в её статусе."""
+    if job["worker_id"] is None:
+        return False, None
+    seen = {str(worker["id"]): str(worker["seen_at"]) for worker in store.tool_workers()}
+    seen_at = seen.get(str(job["worker_id"]))
+    return (seen_at is not None and _online(seen_at)), seen_at
+
+
 # --- воркер ------------------------------------------------------------------
 
 
@@ -138,9 +148,7 @@ def api_v1_tool_job_control(job_id: int, request: ToolJobControlRequest) -> dict
     current = store.tool_job(job_id)
     if current is None:
         return api_error(404, "not_found", _JOB_NOT_FOUND)
-    seen = {str(worker["id"]): str(worker["seen_at"]) for worker in store.tool_workers()}
-    worker_id = current["worker_id"]
-    worker_online = worker_id is None or (str(worker_id) in seen and _online(seen[str(worker_id)]))
+    worker_online = current["worker_id"] is None or _job_worker(store, current)[0]
     job = store.set_tool_job_control(job_id, request.control, worker_online=worker_online)
     if job is None:
         return api_error(404, "not_found", _JOB_NOT_FOUND)
@@ -157,7 +165,9 @@ def api_v1_describe_overview(limit: int = 30, offset: int = 0) -> dict[str, obje
     if job is not None:
         params = dict(job["params"]) if isinstance(job["params"], dict) else {}
         params.pop("label_ids", None)
-        job = {**job, "params": params, "counts": store.describe_job_counts(int(job["id"]))}
+        online, seen_at = _job_worker(store, job)
+        job = {**job, "params": params, "counts": store.describe_job_counts(int(job["id"])),
+               "worker_online": online, "worker_seen_at": seen_at}
     return {
         "stats": store.describe_stats(),
         "job": job,
