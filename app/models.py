@@ -52,6 +52,11 @@ class Artist:
     normalized_name: str
     image_url: str | None = None
     bio: str | None = None
+    # Роль на конкретном треке (заполняется только в artists_for_tracks):
+    # primary — из тега артиста, featured/remixer — из названия трека.
+    role: str = "primary"
+    # Как имя написано в названии трека — для ссылки прямо в тексте названия.
+    credit_text: str | None = None
 
 
 @dataclass(frozen=True)

@@ -209,6 +209,36 @@ role (e.g. primary + remixer). These support featured-in pages, artist
 pages, and distinguishing "primary release artist" from "artist appears on a
 track only."
 
+Track roles:
+
+- `primary` — from the artist tag (`parse_artist_credit`, split on `;`, `•`,
+  spaced `&`, `feat.`/`ft.`/`featuring`); `credit_text` is the whole tag.
+- `featured` / `remixer` — from the track title (`parse_title_credits` in
+  `app/library.py`, written by `_insert_title_credits` on every normalization
+  pass, so a Navidrome sync or `backfill_library_normalization` applies it to
+  the existing library): `(ft. X)`, `[feat. X]`, `(featuring X)`, `Song feat. X`;
+  `(X Remix)`, `(Remix by X)`, `- X Remix`, also Rmx/Rework/Bootleg/Refix/Flip;
+  plus the REMIXER tag (OpenSubsonic `contributors` with role `remixer`).
+  `confidence = 'title'`, `credit_text` is the name exactly as written in the
+  title (the UI links it in place). Guards against version descriptions:
+  version qualifiers are stripped (`Solomun Extended Remix` → Solomun), names
+  made only of noise words or digits are dropped (`2008 Remix`, `Sped Up
+  Version`), and `Edit`/`Version`/`Dub`/`VIP`/`Mix`/`(with X)` count only for
+  an artist the library already has (on any track or release) — `(Coyu Edit)`
+  yes, `(Break Version)` no. A credit with several names (`A & B`, `A, B`,
+  `A x B`, `A vs B`) stays whole if such an artist exists, else splits. A name
+  from a title never renames an existing artist; an artist already primary on
+  the track is not credited again. Positions continue after the primary
+  artists, so "first artist by position" stays the main one.
+
+Who reads which roles: release artists (dominant-artist derivation), artist
+playback queue (`source_type=artist`) and listening stats (top artists,
+artist counts) use `primary` only. Artist discography lists releases where the
+artist has any role; without a release-artist row they land in `featured_in`
+("Участие"). Artist top tracks, artist radio seeds (primary first), per-artist
+caps in autoplay/mixes and track search use every role. Track payloads split
+them: `artists` = primary, `credits` = `{id, name, role, text}` of the rest.
+
 ## External ID Mapping
 
 Two mapping tables exist, at different points in the schema's history:
@@ -310,7 +340,11 @@ separate `release_user_stats` table.
 
 `artist_aggregates` stores the release count, ready release count, centroid
 model, medoid release, status, and update timestamp used by artist-similarity
-recommendations. It is shared audio-derived state, not a personal preference
+recommendations. The centroid averages equally weighted units: every owned
+ready release, plus one unit per foreign release the artist remixed (mean of
+their `remixer` tracks' embeddings there), so a remix-only artist gets a
+profile too; `available_release_count` counts all units, the medoid is an
+owned release when there is one. It is shared audio-derived state, not a personal preference
 row. `artist_user_stats` remains unimplemented; artist-page playback summaries
 are computed live.
 

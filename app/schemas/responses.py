@@ -33,6 +33,15 @@ class ArtistLinkResponse(BaseModel):
     name: str
 
 
+class TrackCreditResponse(BaseModel):
+    """Фит/ремиксер из названия трека; ``text`` — как имя написано в названии."""
+
+    id: int
+    name: str
+    role: str
+    text: str
+
+
 class LibraryStatsResponse(BaseModel):
     tracks: int
     releases: int
@@ -70,6 +79,7 @@ class TrackSummaryResponse(BaseModel):
     id: int
     title: str
     artists: list[ArtistLinkResponse]
+    credits: list[TrackCreditResponse] = []
     duration: float | None
     release: TrackReleaseLinkResponse | None
     artwork: ImageRefResponse

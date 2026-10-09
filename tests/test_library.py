@@ -7,7 +7,9 @@ from app.library import (
     TrackMetadataEnvelope,
     normalize_text,
     parse_artist_credit,
+    parse_title_credits,
     release_identity_key,
+    remixers_from_raw,
 )
 
 
@@ -90,3 +92,92 @@ def test_release_identity_uses_path_aware_local_fallback(tmp_path):
     assert "local-folder:" in key
     assert "title:album" in key
     assert confidence == "derived"
+
+
+def _title_credits(title):
+    return [(credit.role, credit.text, credit.parts, credit.needs_known) for credit in parse_title_credits(title)]
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("Pi Pu Pa (ft. RLGN)", [("featured", "RLGN", ("RLGN",), False)]),
+        ("Track [feat. A & B]", [("featured", "A & B", ("A", "B"), False)]),
+        ("Track (featuring Robyn)", [("featured", "Robyn", ("Robyn",), False)]),
+        ("Noise feat. Lelah (Original Mix)", [("featured", "Lelah", ("Lelah",), False)]),
+        ("Track (with Love)", [("featured", "Love", ("Love",), True)]),
+        ("Track (Solomun Remix)", [("remixer", "Solomun", ("Solomun",), False)]),
+        ("Track (Solomun Extended Remix)", [("remixer", "Solomun", ("Solomun",), False)]),
+        ("Track (Solomun's Remix)", [("remixer", "Solomun", ("Solomun",), False)]),
+        ("Track [Ray Keith & Nookie Remix]", [("remixer", "Ray Keith & Nookie", ("Ray Keith", "Nookie"), False)]),
+        ("Track (M.A.X, Paolo Francesco Remix)", [("remixer", "M.A.X, Paolo Francesco", ("M.A.X", "Paolo Francesco"), False)]),
+        ("Track (A x B Rework)", [("remixer", "A x B", ("A", "B"), False)]),
+        ("Track (Remix by Coyu)", [("remixer", "Coyu", ("Coyu",), False)]),
+        ("Track (Coyu Edit)", [("remixer", "Coyu", ("Coyu",), True)]),
+        ("Track (Break Version)", [("remixer", "Break", ("Break",), True)]),
+        ("Track - Coyu Remix", [("remixer", "Coyu", ("Coyu",), False)]),
+        ("Track (Sorza’s Combined Remix)", [("remixer", "Sorza", ("Sorza",), False)]),
+        (
+            "Track (Two Armadillos “Rhythm of Life” Remix)",
+            [("remixer", "Two Armadillos", ("Two Armadillos",), False)],
+        ),
+        (
+            "Sadism (ft. Any Act) [Locked Club Remix]",
+            [("featured", "Any Act", ("Any Act",), False), ("remixer", "Locked Club", ("Locked Club",), False)],
+        ),
+    ],
+)
+def test_title_credits_find_featured_artists_and_remixers(title, expected):
+    assert _title_credits(title) == expected
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Track (Original Mix)",
+        "Track (Extended Mix)",
+        "Track (Radio Edit)",
+        "Track (Club Mix)",
+        "Track (2008 Remix)",
+        "Track (Original Short)",
+        "Track (Unedited Version)",
+        "Track (Sped Up Version)",
+        "Track (Live)",
+        "Track (Remix)",
+        "Track (Deluxe Edition)",
+        "Track - Radio Edit",
+        "Defeat. Victory",
+        "",
+        None,
+    ],
+)
+def test_title_credits_ignore_version_descriptions(title):
+    assert parse_title_credits(title) == []
+
+
+def test_title_credit_text_is_a_substring_of_the_title():
+    title = "Tune (feat. MC Det) [Ray Keith & Nookie Remix]"
+    for credit in parse_title_credits(title):
+        assert credit.text in title
+        assert all(part in title for part in credit.parts)
+
+
+def test_title_credit_regexes_handle_whitespace_flood_without_hanging():
+    pathological = "Track (" + " " * 50_000 + "Remix"
+    started = time.perf_counter()
+    parse_title_credits(pathological)
+    parse_title_credits("Track feat." + " " * 50_000)
+    assert time.perf_counter() - started < 1.0
+
+
+def test_remixers_from_raw_reads_navidrome_contributors():
+    raw = {
+        "contributors": [
+            {"role": "composer", "artist": {"name": "Locked Club"}},
+            {"role": "remixer", "artist": {"name": "Coyu"}},
+            {"role": "Remixer", "artist": {"name": "Coyu"}},
+            {"role": "remixer"},
+        ]
+    }
+    assert remixers_from_raw(raw) == ("Coyu",)
+    assert remixers_from_raw({}) == ()

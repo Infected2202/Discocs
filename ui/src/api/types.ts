@@ -146,6 +146,7 @@ export interface ReleaseTrackItem {
   id: number
   title: string
   artists: ArtistLink[]
+  credits?: TrackCredit[]
   duration: number | null
   release: ReleaseLink | null
   artwork: ImageRef
@@ -222,10 +223,21 @@ export interface LabelReleasesResponse {
 // Track (shared summary used in search / queue)
 // ----------------------------------------------------------------------------
 
+/** Featured artist or remixer named in the track title ("(ft. X)", "(X Remix)").
+ *  `text` is how the name is written there — the title links it in place. */
+export interface TrackCredit {
+  id: number
+  name: string
+  role: "featured" | "remixer" | (string & {})
+  text: string
+}
+
 export interface TrackSummary {
   id: number
   title: string
+  /** Main artists only; featured artists and remixers come in `credits`. */
   artists: ArtistLink[]
+  credits?: TrackCredit[]
   duration: number | null
   release: ReleaseLink | null
   artwork: ImageRef

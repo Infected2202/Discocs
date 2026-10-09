@@ -1,6 +1,9 @@
+from pathlib import Path
+
 import numpy as np
 
 from app.models import ReleaseAggregate, utc_now
+from app.scanner import ScannedTrack
 from app.services.artist_aggregates import compute_artist_aggregate
 from app.services.artist_similarity import catalog_similarity, find_similar_artists
 from app.store import Store
@@ -126,3 +129,56 @@ def test_artist_similarity_uses_symmetric_catalog_coverage(tmp_path):
     assert results[0].score == (
         0.6 * results[0].centroid_similarity + 0.4 * results[0].catalog_similarity
     )
+
+
+def _add_remix(store: Store, *, remixer: str, vector: list[float], name: str = "tune") -> int:
+    track_id, _changed = store.upsert_track(ScannedTrack(
+        path=Path(f"/music/Candidate/Remixes/{name}.flac"),
+        artist="Candidate",
+        title=f"{name} ({remixer} Remix)",
+        album="Remixes",
+        duration=200.0,
+        file_size=1,
+        mtime=1,
+    ))
+    store.save_embedding(track_id, "discogs_multi", np.array(vector, dtype=np.float32))
+    return track_id
+
+
+def test_remix_only_artist_gets_a_profile_from_remixes_on_foreign_releases(tmp_path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    _insert_artist_release_fixture(store)
+    _add_remix(store, remixer="Remixer", vector=[0.0, 1.0])
+    remixer_id = store.artist_ids_by_names(["Remixer"])["remixer"]
+
+    assert remixer_id in store.list_artist_ids_for_aggregation(model_name="discogs_multi")
+    aggregate = compute_artist_aggregate(store, remixer_id, "discogs_multi")
+
+    assert aggregate.embedding_status == "ready"
+    assert aggregate.release_count == 0
+    assert aggregate.available_release_count == 1
+    assert np.allclose(store.load_artist_embedding(remixer_id, "discogs_multi"), [0.0, 1.0])
+    # Пересчитан — больше не устаревший; каталог для похожих включает ремикс.
+    assert remixer_id not in store.list_artist_ids_for_aggregation(model_name="discogs_multi")
+    assert store.load_release_embeddings_for_artists([remixer_id], "discogs_multi")[remixer_id].shape == (1, 2)
+
+
+def test_artist_profile_blends_own_releases_with_remix_units(tmp_path):
+    store = Store(tmp_path / "app.db")
+    store.init()
+    _insert_artist_release_fixture(store)
+    # «Source» (свои релизы [1,0] и [0,1]) сделал два ремикса на одном чужом релизе.
+    _add_remix(store, remixer="Source", vector=[1.0, 0.0], name="one")
+    _add_remix(store, remixer="Source", vector=[0.0, 1.0], name="two")
+
+    aggregate = compute_artist_aggregate(store, 1, "discogs_multi")
+
+    # Чужой релиз — один юнит (среднее ремиксов), наравне со своими двумя.
+    assert aggregate.available_release_count == 3
+    assert aggregate.release_count == 2
+    expected = np.array([1.0, 1.0], dtype=np.float32) / np.sqrt(2.0)
+    assert np.allclose(store.load_artist_embedding(1, "discogs_multi"), expected, atol=1e-6)
+    # Медоид — свой релиз, не чужой с ремиксом.
+    assert aggregate.medoid_release_id in {1, 2}
+    assert store.load_release_embeddings_for_artists([1], "discogs_multi")[1].shape == (3, 2)

@@ -8,6 +8,40 @@ import numpy as np
 from app.models import ArtistAggregate, utc_now
 
 
+# Ремиксы артиста на чужих релизах: один «юнит» каталога на релиз (как свой
+# релиз в центроиде), вектор — среднее эмбеддингов его ремиксов там. Свои
+# релизы исключены — они уже входят целиком. Параметр — model_name.
+_REMIX_UNITS_SQL = """
+    SELECT ta.artist_id, rt.release_id, e.dim, e.vector
+    FROM track_artists ta
+    JOIN release_tracks rt ON rt.track_id = ta.track_id
+    JOIN embeddings e ON e.track_id = ta.track_id AND e.model_name = ?
+    WHERE ta.role = 'remixer'
+      AND NOT EXISTS (
+        SELECT 1 FROM release_artists own
+        WHERE own.release_id = rt.release_id
+          AND own.artist_id = ta.artist_id
+          AND own.role = 'primary'
+      )
+"""
+
+
+def _group_remix_units(rows: list[sqlite3.Row]) -> dict[int, dict[int, np.ndarray]]:
+    """artist_id → release_id → нормализованное среднее эмбеддингов ремиксов."""
+    vectors: dict[int, dict[int, list[np.ndarray]]] = {}
+    for row in rows:
+        vectors.setdefault(int(row["artist_id"]), {}).setdefault(int(row["release_id"]), []).append(
+            np.frombuffer(row["vector"], dtype=np.float32, count=int(row["dim"]))
+        )
+    units: dict[int, dict[int, np.ndarray]] = {}
+    for artist_id, by_release in vectors.items():
+        for release_id, items in by_release.items():
+            mean = np.vstack(items).mean(axis=0).astype(np.float32)
+            norm = float(np.linalg.norm(mean))
+            units.setdefault(artist_id, {})[release_id] = mean / norm if norm > 0 else mean
+    return units
+
+
 def _row_to_artist_aggregate(row: sqlite3.Row) -> ArtistAggregate:
     return ArtistAggregate(
         artist_id=int(row["artist_id"]),
@@ -55,12 +89,18 @@ class ArtistAggregatesStoreMixin:
     def _artists_needing_aggregation_sql(*, count_only: bool) -> str:
         select = "COUNT(*)" if count_only else "s.artist_id"
         return f"""
-            WITH candidates AS (
+            WITH remix_units AS (
+                SELECT artist_id, COUNT(DISTINCT release_id) AS unit_count
+                FROM ({_REMIX_UNITS_SQL})
+                GROUP BY artist_id
+            ), candidates AS (
                 SELECT DISTINCT ra.artist_id
                 FROM release_artists ra
                 JOIN artists a ON a.id = ra.artist_id
                 WHERE ra.role = 'primary'
                   AND a.normalized_name != 'various artists'
+                UNION
+                SELECT artist_id FROM remix_units
                 UNION
                 SELECT aa.artist_id
                 FROM artist_aggregates aa
@@ -90,19 +130,25 @@ class ArtistAggregatesStoreMixin:
                 GROUP BY candidates.artist_id
             )
             SELECT {select}
-            FROM source s
+            FROM (
+                SELECT source.artist_id,
+                    source.release_count + COALESCE(ru.unit_count, 0) AS unit_count,
+                    source.newest_release_update
+                FROM source
+                LEFT JOIN remix_units ru ON ru.artist_id = source.artist_id
+            ) s
             LEFT JOIN artist_aggregates aa ON aa.artist_id = s.artist_id
             WHERE aa.artist_id IS NULL
                OR aa.centroid_model != ?
-               OR aa.available_release_count != s.release_count
-               OR (s.release_count > 0 AND aa.embedding_status != 'ready')
-               OR (s.release_count = 0 AND aa.embedding_status != 'unavailable')
+               OR aa.available_release_count != s.unit_count
+               OR (s.unit_count > 0 AND aa.embedding_status != 'ready')
+               OR (s.unit_count = 0 AND aa.embedding_status != 'unavailable')
                OR (s.newest_release_update IS NOT NULL AND aa.updated_at < s.newest_release_update)
         """
 
     def list_artist_ids_for_aggregation(self, *, model_name: str, limit: int = 0) -> list[int]:
         sql = self._artists_needing_aggregation_sql(count_only=False) + " ORDER BY s.artist_id"
-        params: list[object] = [model_name, model_name, model_name, model_name]
+        params: list[object] = [model_name] * 5
         if limit > 0:
             sql += " LIMIT ?"
             params.append(limit)
@@ -113,9 +159,7 @@ class ArtistAggregatesStoreMixin:
     def count_artists_needing_aggregation(self, model_name: str) -> int:
         sql = self._artists_needing_aggregation_sql(count_only=True)
         with self.connect() as conn:  # type: ignore[attr-defined]
-            row = conn.execute(
-                sql, (model_name, model_name, model_name, model_name)
-            ).fetchone()
+            row = conn.execute(sql, [model_name] * 5).fetchone()
         return int(row[0])
 
     def count_artist_aggregates(self, model_name: str | None = None) -> int:
@@ -153,6 +197,22 @@ class ArtistAggregatesStoreMixin:
         ]).astype(np.float32)
         return ids, matrix
 
+    def list_artist_remix_embeddings(
+        self, artist_id: int, model_name: str
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Юниты ремиксов артиста (release_id, матрица) — см. ``_REMIX_UNITS_SQL``."""
+        with self.connect() as conn:  # type: ignore[attr-defined]
+            rows = conn.execute(
+                f"SELECT * FROM ({_REMIX_UNITS_SQL}) WHERE artist_id = ?",
+                (model_name, artist_id),
+            ).fetchall()
+        units = _group_remix_units(rows).get(artist_id, {})
+        if not units:
+            return np.array([], dtype=np.int64), np.empty((0, 0), dtype=np.float32)
+        release_ids = sorted(units)
+        matrix = np.vstack([units[release_id] for release_id in release_ids]).astype(np.float32)
+        return np.array(release_ids, dtype=np.int64), matrix
+
     def load_release_embeddings_for_artists(
         self, artist_ids: list[int], model_name: str
     ) -> dict[int, np.ndarray]:
@@ -173,11 +233,18 @@ class ArtistAggregatesStoreMixin:
                 """,
                 (*artist_ids, model_name, model_name),
             ).fetchall()
+            remix_rows = conn.execute(
+                f"SELECT * FROM ({_REMIX_UNITS_SQL}) WHERE artist_id IN ({placeholders})",
+                (model_name, *artist_ids),
+            ).fetchall()
         grouped: dict[int, list[np.ndarray]] = {}
         for row in rows:
             grouped.setdefault(int(row["artist_id"]), []).append(
                 np.frombuffer(row["vector"], dtype=np.float32, count=int(row["dim"]))
             )
+        # Каталог ремиксера включает и его ремиксы на чужих релизах.
+        for artist_id, units in _group_remix_units(remix_rows).items():
+            grouped.setdefault(artist_id, []).extend(units[release_id] for release_id in sorted(units))
         return {artist_id: np.vstack(vectors).astype(np.float32) for artist_id, vectors in grouped.items()}
 
     def save_artist_embedding(self, artist_id: int, model_name: str, vector: np.ndarray) -> None:

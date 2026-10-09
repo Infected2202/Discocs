@@ -58,9 +58,10 @@ _LIBRARY_LISTENS = """
     FROM listens l
     JOIN tracks t ON t.id = l.track_id
 """
-# Top artists: every credited artist of the listened track (alias ``a``).
+# Top artists: every main artist of the listened track (alias ``a``); featured
+# artists and remixers from the title do not count towards listening stats.
 _LISTENED_ARTISTS_JOIN = """
-    JOIN track_artists ta ON ta.track_id = l.track_id
+    JOIN track_artists ta ON ta.track_id = l.track_id AND ta.role = 'primary'
     JOIN artists a ON a.id = ta.artist_id
 """
 # Top releases: the release the track payload shows (alias ``r``).
@@ -258,7 +259,7 @@ class ListensStoreMixin:
                 f"""
                 SELECT COUNT(DISTINCT ta.artist_id)
                 {_LIBRARY_LISTENS}
-                JOIN track_artists ta ON ta.track_id = l.track_id
+                JOIN track_artists ta ON ta.track_id = l.track_id AND ta.role = 'primary'
                 {where}
                 """,
                 params,

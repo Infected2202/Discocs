@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import json
+import re
 import sqlite3
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -33,13 +34,16 @@ from app.store._helpers import (
     row_to_track,
 )
 from app.library import (
+    REMIXER_ROLE,
     ArtistCredit,
+    TitleCredit,
     TrackMetadataEnvelope,
     clean_display_text,
     envelope_from_scanned_track,
     envelope_from_track_row,
     normalize_text,
     parse_artist_credit,
+    parse_title_credits,
     release_identity_key,
     release_title_for_envelope,
 )
@@ -100,6 +104,7 @@ logger = logging.getLogger(__name__)
 INIT_LOCK = Lock()
 INITIALIZED_DB_PATHS: set[Path] = set()
 _DELETE_RELEASE_ARTISTS = "DELETE FROM release_artists WHERE release_id = ?"
+_NAME_WORD_RE = re.compile(r"\S+")
 _VARIOUS_ARTISTS = "various artists"
 # Сколько реальных артистов сборника питают полку «Ещё от этих артистов».
 _VA_CONTEXT_ARTISTS = 8
@@ -254,6 +259,7 @@ class LibraryStoreMixin:
             artist_id = self._upsert_artist(conn, credit.name, now)
             track_artist_ids.append(artist_id)
             self._insert_track_artist(conn, track_id, artist_id, credit, now)
+        self._insert_title_credits(conn, track_id, envelope, track_artist_ids, now)
 
         self._refresh_release_artists(
             conn,
@@ -299,13 +305,104 @@ class LibraryStoreMixin:
                 self._refresh_release_after_track_removal(conn, previous_release_id, now)
         return release_id
 
-    def _upsert_artist(self, conn: sqlite3.Connection, name: str, now: str) -> int:
+    def _insert_title_credits(
+        self,
+        conn: sqlite3.Connection,
+        track_id: int,
+        envelope: TrackMetadataEnvelope,
+        primary_artist_ids: list[int],
+        now: str,
+    ) -> None:
+        """Фиты и ремиксеры из названия (и тега REMIXER) — роли featured/remixer.
+
+        Позиции продолжают основных артистов: «первый артист трека» по
+        position остаётся основным.
+        """
+        credits = parse_title_credits(envelope.title) + [
+            TitleCredit(text=name, parts=(name,), role=REMIXER_ROLE) for name in envelope.remixers
+        ]
+        seen = set(primary_artist_ids)
+        position = len(primary_artist_ids)
+        for credit in credits:
+            for name in self._title_credit_names(conn, credit):
+                artist_id = self._upsert_artist(conn, name, now, rename=False)
+                if artist_id in seen:
+                    continue
+                seen.add(artist_id)
+                self._insert_track_artist(
+                    conn,
+                    track_id,
+                    artist_id,
+                    ArtistCredit(
+                        name=name,
+                        role=credit.role,
+                        position=position,
+                        credit_text=name,
+                        confidence="title",
+                    ),
+                    now,
+                )
+                position += 1
+
+    def _title_credit_names(self, conn: sqlite3.Connection, credit: TitleCredit) -> list[str]:
+        """Имена артистов упоминания: целиком, если такой артист есть, иначе по частям.
+
+        Неизвестное имя, начинающееся с известного артиста, — это он плюс
+        название версии («Hot Since 82 Future Remix»): берём известного.
+        """
+        if len(credit.parts) > 1 and self._artist_is_known(conn, credit.text):
+            return [credit.text]
+        names: list[str] = []
+        for part in credit.parts:
+            if self._artist_is_known(conn, part):
+                names.append(part)
+                continue
+            prefix = self._known_artist_prefix(conn, part)
+            if prefix is not None:
+                names.append(prefix)
+            elif not credit.needs_known:
+                names.append(part)
+        return names
+
+    def _known_artist_prefix(self, conn: sqlite3.Connection, name: str) -> str | None:
+        """Самое длинное известное имя артиста из первых слов ``name`` (не всё имя)."""
+        word_ends = [match.end() for match in _NAME_WORD_RE.finditer(name)]
+        for end in reversed(word_ends[:-1]):
+            prefix = name[:end]
+            if self._artist_is_known(conn, prefix):
+                return prefix
+        return None
+
+    @staticmethod
+    def _artist_is_known(conn: sqlite3.Connection, name: str) -> bool:
+        """Артист есть в библиотеке — числится хотя бы на одном треке или релизе."""
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM artists a
+            WHERE a.normalized_name = ?
+              AND (
+                EXISTS (SELECT 1 FROM track_artists ta WHERE ta.artist_id = a.id)
+                OR EXISTS (SELECT 1 FROM release_artists ra WHERE ra.artist_id = a.id)
+              )
+            """,
+            (normalize_text(name),),
+        ).fetchone()
+        return row is not None
+
+    def _upsert_artist(
+        self, conn: sqlite3.Connection, name: str, now: str, *, rename: bool = True
+    ) -> int:
+        """id артиста по имени; ``rename=False`` — не переписывать написание
+        существующего (имя из названия трека не главнее тега артиста)."""
         display_name = clean_display_text(name) or "Unknown Artist"
         normalized_name = normalize_text(display_name)
         row = conn.execute(
             "SELECT id FROM artists WHERE normalized_name = ?",
             (normalized_name,),
         ).fetchone()
+        if row is not None and not rename:
+            return int(row["id"])
         if row is not None:
             conn.execute(
                 "UPDATE artists SET name = ?, sort_name = ?, updated_at = ? WHERE id = ?",
@@ -1381,7 +1478,7 @@ class LibraryStoreMixin:
         placeholders = ",".join("?" for _id in track_ids)
         rows = conn.execute(
             f"""
-            SELECT ta.track_id, a.*
+            SELECT ta.track_id, ta.role AS credit_role, ta.credit_text AS credit_text, a.*
             FROM track_artists ta
             JOIN artists a ON a.id = ta.artist_id
             WHERE ta.track_id IN ({placeholders})
@@ -1391,7 +1488,10 @@ class LibraryStoreMixin:
         ).fetchall()
         grouped: dict[int, list[Artist]] = {}
         for row in rows:
-            grouped.setdefault(int(row["track_id"]), []).append(row_to_artist(row))
+            artist = replace(
+                row_to_artist(row), role=str(row["credit_role"]), credit_text=row["credit_text"]
+            )
+            grouped.setdefault(int(row["track_id"]), []).append(artist)
         return grouped
 
     def _artists_for_releases(

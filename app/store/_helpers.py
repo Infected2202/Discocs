@@ -35,6 +35,7 @@ from app.library import (
     release_date_from_raw,
     release_identity_key,
     release_title_for_envelope,
+    remixers_from_raw,
 )
 from app.models import (
     AnalysisJob,
@@ -383,6 +384,7 @@ def _envelope_from_track_with_external(
         provider_artist_id=_raw_value(raw, "artistId", "artist_id"),
         raw_json=raw_json,
         record_labels=record_labels_from_raw(raw),
+        remixers=remixers_from_raw(raw),
     )
 
 

@@ -216,7 +216,7 @@ def _now_playing_dict(store: Store, entry: NowPlayingEntry) -> dict[str, object]
             "track": None,
         }
     artists = store.artists_for_tracks([track.id]).get(track.id, [])
-    names = [artist.name for artist in artists]
+    names = [artist.name for artist in artists if artist.role == "primary"]
     return {
         "track_id": track.id,
         "title": track.title or entry.title or "",

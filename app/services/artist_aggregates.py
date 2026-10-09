@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 def compute_artist_aggregate(store: Store, artist_id: int, model_name: str) -> ArtistAggregate:
-    """Build one artist profile from owned, ready releases with equal weights."""
+    """Build one artist profile from owned, ready releases with equal weights
+    plus one unit per foreign release the artist remixed."""
     with store.connect() as conn:
         release_count = int(conn.execute(
             """
@@ -26,7 +27,11 @@ def compute_artist_aggregate(store: Store, artist_id: int, model_name: str) -> A
             (artist_id,),
         ).fetchone()[0])
 
-    release_ids, matrix = store.list_artist_release_embeddings(artist_id, model_name)
+    release_ids, own_matrix = store.list_artist_release_embeddings(artist_id, model_name)
+    remix_release_ids, remix_matrix = store.list_artist_remix_embeddings(artist_id, model_name)
+    # Ремиксы на чужих релизах — тоже звук артиста: по юниту на релиз, наравне со своими.
+    parts = [part for part in (own_matrix, remix_matrix) if part.shape[0] > 0]
+    matrix = np.vstack(parts).astype(np.float32) if parts else own_matrix
     available = int(matrix.shape[0])
     now = utc_now()
     if available == 0:
@@ -47,8 +52,12 @@ def compute_artist_aggregate(store: Store, artist_id: int, model_name: str) -> A
     norm = float(np.linalg.norm(centroid))
     if norm > 0:
         centroid = centroid / norm
-    similarities = matrix @ centroid
-    medoid_release_id = int(release_ids[int(np.argmax(similarities))])
+    # Медоид — свой релиз, если он есть: чужой релиз с ремиксом артиста не представляет.
+    medoid_ids, medoid_matrix = (
+        (release_ids, own_matrix) if own_matrix.shape[0] > 0 else (remix_release_ids, remix_matrix)
+    )
+    similarities = medoid_matrix @ centroid
+    medoid_release_id = int(medoid_ids[int(np.argmax(similarities))])
 
     store.save_artist_embedding(artist_id, model_name, centroid)
     aggregate = ArtistAggregate(

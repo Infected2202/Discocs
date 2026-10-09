@@ -181,4 +181,32 @@ describe("VirtualTrackRow", () => {
     expect(templates.mobile).not.toContain("80px")
     expect(templates.desktop).toContain("80px 32px 32px")
   })
+
+  it("links a featured artist inside the title and keeps the rest of the title on the release", () => {
+    renderRow({
+      track: makeTrack({
+        title: "Pi Pu Pa (ft. RLGN)",
+        credits: [{ id: 9, name: "RLGN", role: "featured", text: "RLGN" }],
+      }),
+    })
+
+    expect(screen.getByRole("link", { name: "RLGN" })).toHaveAttribute("href", "/artists/9")
+    expect(screen.getByRole("link", { name: "Pi Pu Pa (ft." })).toHaveAttribute("href", "/releases/11")
+    // The artist line under the title stays the main artists only.
+    expect(screen.getByRole("link", { name: "Synth Unit" })).toHaveAttribute("href", "/artists/4")
+  })
+
+  it("renders the title as plain text without a release and still links credits", () => {
+    renderRow({
+      track: makeTrack({
+        title: "Tune (Coyu Remix)",
+        release: null,
+        credits: [{ id: 3, name: "Coyu", role: "remixer", text: "Coyu" }],
+      }),
+    })
+
+    expect(screen.getByRole("link", { name: "Coyu" })).toHaveAttribute("href", "/artists/3")
+    expect(screen.queryByRole("link", { name: /Tune/ })).toBeNull()
+    expect(screen.getByText("Tune (", { exact: false })).toBeInTheDocument()
+  })
 })

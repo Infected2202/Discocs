@@ -54,6 +54,8 @@ class TrackMetadataEnvelope:
     # None — источник про лейблы ничего не сказал (сохранённые не трогать);
     # пустой кортеж — сказал, что лейблов нет.
     record_labels: tuple[str, ...] | None = None
+    # Тег REMIXER (OpenSubsonic ``contributors`` с ролью remixer).
+    remixers: tuple[str, ...] = ()
 
 
 def normalize_text(value: str | None) -> str:
@@ -94,6 +96,176 @@ def parse_artist_credit(credit: str | None) -> list[ArtistCredit]:
             )
         )
     return artists or [ArtistCredit(name=display, credit_text=display)]
+
+
+FEATURED_ROLE = "featured"
+REMIXER_ROLE = "remixer"
+
+
+@dataclass(frozen=True)
+class TitleCredit:
+    """Артист, упомянутый в названии трека: «(ft. X)», «(X Remix)», «- X Edit»."""
+
+    text: str  # как написан в названии — подстрока title («Ray Keith & Nookie»)
+    parts: tuple[str, ...]  # он же по «&», «,», « x », « vs » — если целиком такого артиста нет
+    role: str
+    # Засчитывать, только если такой артист в библиотеке уже есть: «(Break Version)»,
+    # «(with Love)» — не артисты, а «(Coyu Edit)» — артист.
+    needs_known: bool = False
+
+
+# Скобочная группа без вложенных скобок; оба квантификатора ограничены
+# классом символов, поэтому без полиномиального перебора (S5852).
+_TITLE_GROUP_RE = re.compile(r"[(\[]([^()\[\]]*)[)\]]")
+# «Song feat. X» без скобок.
+_TITLE_FEAT_RE = re.compile(r"\s(?:feat\.?|ft\.?|featuring)\s", re.IGNORECASE)
+# Внутри одного упоминания — несколько артистов. «&» и «x» только с пробелами
+# вокруг («AT&T», «Malcolm X» — целиком); «x» строчная, как пишут коллаборации.
+_TITLE_NAMES_SPLIT_RE = re.compile(r"[,;]|(?<=\s)(?:&|x|(?i:vs\.?|feat\.?|ft\.?))(?=\s)")
+_WORD_RE = re.compile(r"\S+")
+_POSSESSIVE_SUFFIXES = ("'s", "’s")
+_QUOTE_CHARS = "\"'‘’“”«"
+
+# Префиксы «участия» в скобках → нужен ли уже известный артист.
+_FEAT_PREFIXES = (
+    ("featuring ", False),
+    ("feat. ", False),
+    ("feat ", False),
+    ("ft. ", False),
+    ("ft ", False),
+    ("with ", True),
+)
+# Последнее слово скобки → нужен ли уже известный артист. Remix и родня почти
+# всегда идут с именем; Edit/Version/Dub/VIP/Mix — часто с описанием версии.
+_REMIX_KEYWORDS = {
+    "remix": False,
+    "rmx": False,
+    "rework": False,
+    "bootleg": False,
+    "refix": False,
+    "flip": False,
+    "edit": True,
+    "re-edit": True,
+    "reedit": True,
+    "version": True,
+    "dub": True,
+    "vip": True,
+    "mix": True,
+}
+# «Remix by X», «Edited by X».
+_REMIX_BY_KEYWORDS = {
+    "remix": False,
+    "remixed": False,
+    "rework": False,
+    "reworked": False,
+    "edit": True,
+    "edited": True,
+    "mixed": True,
+}
+# Описание версии между именем и ключевым словом: «Solomun Extended Remix».
+_VERSION_QUALIFIERS = {
+    "extended", "original", "radio", "club", "vocal", "instrumental", "dub", "vip",
+    "short", "long", "full", "special", "official", "main", "alternative", "alternate",
+    "remix", "mix", "edit", "version", "rework",
+}
+# Слова, из которых не бывает имени ремиксера: «(2008 Remix)», «(Sped Up Version)».
+_NOISE_WORDS = _VERSION_QUALIFIERS | {
+    "the", "a", "an", "my", "own", "new", "sped", "up", "slowed", "reverb", "live",
+    "acoustic", "mono", "stereo", "remaster", "remastered", "unedited", "censored",
+    "clean", "explicit", "bonus", "album", "single", "demo", "unreleased", "acapella",
+    "edition", "deluxe", "inch",
+}
+
+
+def parse_title_credits(title: str | None) -> list[TitleCredit]:
+    """Артисты из названия трека: фиты и ремиксеры (сам title не меняется)."""
+    if not title:
+        return []
+    credits: list[TitleCredit] = []
+    for match in _TITLE_GROUP_RE.finditer(title):
+        credit = _bracket_credit(match.group(1).strip())
+        if credit is not None:
+            credits.append(credit)
+    head = _TITLE_GROUP_RE.sub(" ", title)
+    feat = _TITLE_FEAT_RE.search(head)
+    if feat is not None:
+        credit = _names_credit(head[feat.end():].split(" - ")[0], FEATURED_ROLE, needs_known=False)
+        if credit is not None:
+            credits.append(credit)
+    if " - " in head:
+        credit = _remix_credit(head.rsplit(" - ", 1)[1].strip())
+        if credit is not None:
+            credits.append(credit)
+    unique: dict[tuple[str, str], TitleCredit] = {}
+    for credit in credits:
+        unique.setdefault((credit.role, normalize_text(credit.text)), credit)
+    return list(unique.values())
+
+
+def _bracket_credit(content: str) -> TitleCredit | None:
+    for prefix, needs_known in _FEAT_PREFIXES:
+        if content[: len(prefix)].casefold() == prefix:
+            return _names_credit(content[len(prefix):], FEATURED_ROLE, needs_known=needs_known)
+    return _remix_credit(content)
+
+
+def _remix_credit(content: str) -> TitleCredit | None:
+    words = list(_WORD_RE.finditer(content))
+    if len(words) < 2:
+        return None
+    lowered = [word.group().casefold() for word in words]
+    if len(words) >= 3 and lowered[1] == "by" and lowered[0] in _REMIX_BY_KEYWORDS:
+        return _names_credit(
+            content[words[2].start():], REMIXER_ROLE, needs_known=_REMIX_BY_KEYWORDS[lowered[0]]
+        )
+    needs_known = _REMIX_KEYWORDS.get(lowered[-1])
+    if needs_known is None:
+        return None
+    name_words = words[:-1]
+    name_words = _cut_version_name(name_words)
+    while name_words and name_words[-1].group().casefold() in _VERSION_QUALIFIERS:
+        name_words.pop()
+    if not name_words:
+        return None
+    name = content[name_words[0].start(): name_words[-1].end()]
+    for suffix in _POSSESSIVE_SUFFIXES:  # «Solomun's Remix»
+        if name.casefold().endswith(suffix):
+            name = name[: -len(suffix)]
+    return _names_credit(name, REMIXER_ROLE, needs_known=needs_known)
+
+
+def _cut_version_name(words: list[re.Match[str]]) -> list[re.Match[str]]:
+    """Имя без названия версии после него: «Sorza's Combined Remix» → Sorza's,
+    «Two Armadillos “Rhythm of Life” Remix» → Two Armadillos."""
+    for index, word in enumerate(words):
+        text = word.group()
+        if index > 0 and text[0] in _QUOTE_CHARS:
+            return words[:index]
+        if text.casefold().endswith(_POSSESSIVE_SUFFIXES):
+            return words[: index + 1]
+    return words
+
+
+def _names_credit(text: str, role: str, *, needs_known: bool) -> TitleCredit | None:
+    text = text.strip()
+    if not text or _is_noise_name(text):
+        return None
+    parts = tuple(
+        part
+        for part in (piece.strip() for piece in _TITLE_NAMES_SPLIT_RE.split(text))
+        if part and not _is_noise_name(part)
+    )
+    if not parts:
+        return None
+    return TitleCredit(text=text, parts=parts, role=role, needs_known=needs_known)
+
+
+def _is_noise_name(text: str) -> bool:
+    words = text.split()
+    return all(
+        word.casefold() in _NOISE_WORDS or not any(char.isalpha() for char in word)
+        for word in words
+    )
 
 
 def release_identity_key(envelope: TrackMetadataEnvelope) -> tuple[str, str]:
@@ -185,7 +357,25 @@ def envelope_from_navidrome_song(song: Any, raw_json: str | None = None) -> Trac
         provider_artist_id=getattr(song, "artist_id", None) or _first_raw_value(raw, "artistId", "artist_id"),
         raw_json=raw_json,
         record_labels=record_labels_from_raw(raw),
+        remixers=remixers_from_raw(raw),
     )
+
+
+def remixers_from_raw(raw: dict[str, Any]) -> tuple[str, ...]:
+    """Ремиксеры из OpenSubsonic ``contributors`` (Navidrome кладёт туда тег REMIXER)."""
+    contributors = raw.get("contributors")
+    if not isinstance(contributors, list):
+        return ()
+    names: list[str] = []
+    for item in contributors:
+        if not isinstance(item, dict) or str(item.get("role") or "").casefold() != REMIXER_ROLE:
+            continue
+        artist = item.get("artist")
+        name = artist.get("name") if isinstance(artist, dict) else None
+        text = clean_display_text(str(name)) if name is not None else None
+        if text and text not in names:
+            names.append(text)
+    return tuple(names)
 
 
 # Спецзначение MusicBrainz/Picard «релиз вышел без лейбла» — не лейбл.

@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils"
 import { usePlayerStore } from "@/store/playerStore"
 import { useUIStore } from "@/store/uiStore"
 import ArtworkImage from "@/components/media/ArtworkImage"
+import TrackTitle from "@/components/media/TrackTitle"
 import LikeButton from "@/components/media/LikeButton"
 import TrackMenu from "@/components/media/TrackMenu"
 import QueueItem from "@/components/player/QueueItem"
@@ -184,7 +185,9 @@ export default function ExpandedPlayer() {
               <div className="flex items-start gap-3">
                 <div className="flex-1 min-w-0">
                   <h2 className="text-xl font-bold truncate leading-tight">
-                    {currentTrack?.title ?? "—"}
+                    {currentTrack ? (
+                      <TrackTitle title={currentTrack.title} credits={currentTrack.credits} replace />
+                    ) : "—"}
                   </h2>
                   <div className="flex flex-wrap items-center gap-x-1 text-sm text-muted-foreground mt-0.5">
                     {currentTrack?.artists?.map((a, i) => (

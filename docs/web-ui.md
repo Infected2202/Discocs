@@ -205,6 +205,16 @@ when nothing is left, e.g. the artist's own label; «Ещё» leads to
 `/labels/:id`). Missing cover
 falls back to a letter placeholder inside `ArtworkImage`.
 
+### Track titles with credits (`TrackTitle.tsx`)
+
+A featured artist or remixer named in a title (`credits` of the track payload,
+see `docs/data-model.md`, Track Artists) is a link to the artist page right in
+the title text — "Pi Pu Pa (ft. **RLGN**)"; the rest of the title still leads
+to the release, the artist line below shows the main artists only.
+`splitTitleByCredits` (`lib/titleCredits.ts`) matches a name as a whole word,
+case-insensitively, the last occurrence when it repeats. Used in track rows,
+the player bar and the expanded player.
+
 ### Artist page (`/artists/:id`, `ArtistPage.tsx`)
 
 Backend calls: `useArtist`, `useArtistDiscography`, `useArtistSimilar` (`GET
@@ -222,7 +232,9 @@ already orders by plays, then rank); falls back to the first 5 tracks when
 none has either signal — i.e. it does not hide the section when popularity
 data is genuinely absent, unlike the original "omit if unavailable" spec), then
 one grid `Shelf` per non-empty discography group returned by the API (e.g.
-Albums, EPs, Singles, Featured In — grouping logic lives server-side). A
+Albums, EPs, Singles, Featured In — grouping logic lives server-side; the
+shelf title is translated by group `key` via `artist:groups.*`, Featured In
+is «Участие», falling back to the API `title`). A
 regular 16-item "Similar artists" shelf follows when artist
 aggregates are available, with «Ещё» to the full ranked list (up to 200
 artists) when there are more. Last comes the "Artist's labels" slider `Shelf`

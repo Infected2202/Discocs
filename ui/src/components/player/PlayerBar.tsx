@@ -10,6 +10,7 @@ import type { TrackSummary } from "@/api/types"
 import { cn } from "@/lib/utils"
 import { usePlayerStore } from "@/store/playerStore"
 import ArtworkImage from "@/components/media/ArtworkImage"
+import TrackTitle from "@/components/media/TrackTitle"
 import LikeButton from "@/components/media/LikeButton"
 import TrackMenu from "@/components/media/TrackMenu"
 import PlayerBackdrop from "@/components/player/PlayerBackdrop.tsx"
@@ -430,16 +431,12 @@ function TrackDetails({
         {track ? (
           <>
             <p className="text-sm font-medium truncate leading-tight">
-              {track.release ? (
-                <Link
-                  to={`/releases/${track.release.id}`}
-                  className="hover:underline"
-                >
-                  {track.title}
-                </Link>
-              ) : (
-                track.title
-              )}
+              <TrackTitle
+                title={track.title}
+                credits={track.credits}
+                href={track.release ? `/releases/${track.release.id}` : undefined}
+                linkClassName="hover:underline"
+              />
             </p>
             <p className="text-xs text-muted-foreground truncate leading-tight mt-0.5">
               {track.artists?.map((artist, index) => (

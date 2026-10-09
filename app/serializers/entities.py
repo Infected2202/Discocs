@@ -161,15 +161,28 @@ def _track_release_summary(store: Store, track_id: int) -> dict[str, object] | N
     return {"id": int(row["id"]), "title": str(row["title"])}
 
 
+def track_credit_dict(artist: Artist) -> dict[str, object]:
+    """Фит/ремиксер трека: ``text`` — как имя написано в названии (там оно и ссылка)."""
+    return {
+        "id": artist.id,
+        "name": artist.name,
+        "role": artist.role,
+        "text": artist.credit_text or artist.name,
+    }
+
+
 def track_summary_dict(store: Store, track: Track, artists: list[Artist] | None = None) -> dict[str, object]:
     release = _track_release_summary(store, track.id)
     navidrome_item_id = store.external_id_for_track("navidrome", track.id)
+    credited = artists or []
     return {
         "id": track.id,
         "title": track.title or Path(track.path).stem,
         "artist": track.artist,
         "album": track.album,
-        "artists": [artist_link_dict(artist) for artist in (artists or [])],
+        # Строка артистов — только основные; фиты и ремиксеры уже есть в названии.
+        "artists": [artist_link_dict(artist) for artist in credited if artist.role == "primary"],
+        "credits": [track_credit_dict(artist) for artist in credited if artist.role != "primary"],
         "duration": track.duration,
         "release": release,
         "artwork": image_ref(f"/api/v1/tracks/{track.id}/cover", "local"),

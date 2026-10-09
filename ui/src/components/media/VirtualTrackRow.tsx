@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils"
 import ArtworkImage from "./ArtworkImage"
 import LikeButton from "./LikeButton"
 import TrackMenu from "./TrackMenu"
+import TrackTitle from "./TrackTitle"
 import { usePlayerStore } from "@/store/playerStore"
 import type { TrackSummary, ReleaseTrackItem, ArtistTopTrack } from "@/api/types"
 
@@ -198,19 +199,13 @@ export default function VirtualTrackRow({
       {/* Title + artists */}
       <div className="min-w-0 py-2 pr-2 md:pr-4">
         <div className="min-w-0">
-          {track.release ? (
-            <Link
-              to={`/releases/${track.release.id}`}
-              className={cn("truncate text-sm font-medium hover:underline block", isActive ? "text-primary" : "")}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {track.title}
-            </Link>
-          ) : (
-            <p className={cn("truncate text-sm font-medium", isActive && "text-primary")}>
-              {track.title}
-            </p>
-          )}
+          <TrackTitle
+            title={track.title}
+            credits={track.credits}
+            href={track.release ? `/releases/${track.release.id}` : undefined}
+            className={cn("truncate text-sm font-medium block", isActive && "text-primary")}
+            linkClassName="hover:underline"
+          />
           {track.artists.length > 0 && (
             <p className="truncate text-xs text-muted-foreground">
               {track.artists.map((a, i) => (

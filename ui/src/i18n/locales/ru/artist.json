@@ -15,5 +15,13 @@
   "playCount_many": "{{formatted}} прослушиваний",
   "playCount_other": "{{formatted}} прослушивания",
   "similarArtists": "Похожие артисты",
-  "labels": "Лейблы артиста"
+  "labels": "Лейблы артиста",
+  "groups": {
+    "albums": "Альбомы",
+    "eps": "EP",
+    "singles": "Синглы",
+    "compilations": "Сборники",
+    "releases": "Релизы",
+    "featured_in": "Участие"
+  }
 }

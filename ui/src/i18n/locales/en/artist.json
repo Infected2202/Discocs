@@ -9,5 +9,13 @@
   "playCount_one": "{{formatted}} play",
   "playCount_other": "{{formatted}} plays",
   "similarArtists": "Similar artists",
-  "labels": "Artist's labels"
+  "labels": "Artist's labels",
+  "groups": {
+    "albums": "Albums",
+    "eps": "EPs",
+    "singles": "Singles",
+    "compilations": "Compilations",
+    "releases": "Releases",
+    "featured_in": "Featured In"
+  }
 }

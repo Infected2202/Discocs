@@ -136,9 +136,10 @@ Implementation notes vs. the original spec:
   popularity).
 - `/api/v1/artists/{id}/similar` uses a release-derived artist centroid to
   select candidates, then reranks them by symmetric release-catalog coverage.
-  Artist aggregates give every owned release (including singles) equal weight;
-  featured appearances and the synthetic `Various Artists` identity are not
-  included. The default response contains 16 artists.
+  Artist aggregates give every owned release (including singles) equal weight,
+  and so does every foreign release the artist remixed (one unit per release,
+  from the remix tracks); featured appearances and the synthetic `Various
+  Artists` identity are not included. The default response contains 16 artists.
 - Shelf-backing lists page with `limit`/`offset` and answer `total`, `limit`,
   `offset`, `next_offset` (`app/services/shelves.py`): `/artists/{id}/similar`
   (the ranked candidate pool, up to 200), `/releases/{id}/related-discography`

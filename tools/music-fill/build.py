@@ -65,6 +65,26 @@ def primary_artist(s: str | None) -> str:
     return re.split(r"\s*[,;/]\s*", s)[0].strip()
 
 
+TITLE_GROUP_RE = re.compile(r"[(\[]([^()\[\]]*)[)\]]")
+TITLE_FEAT_RE = re.compile(r"^(?:feat\.?|ft\.?|featuring|with)\s+(.+)$", re.I)
+TITLE_REMIX_RE = re.compile(r"^(\S.*?)\s+(?:remix|rmx|rework|bootleg|refix|flip|edit|re-edit|version|dub|vip|mix)$", re.I)
+TITLE_NAMES_SPLIT_RE = re.compile(r"\s*[,;]\s*|\s+(?:&|x|vs\.?|feat\.?|ft\.?)\s+", re.I)
+
+
+def title_artists(title: str | None) -> set[str]:
+    """Артисты из названия трека: '(ft. RLGN)', '(Solomun Remix)', '[A & B Edit]' — и целиком,
+    и по частям. Для «участия» хватает: там ещё и название альбома должно совпасть точно."""
+    names = set()
+    for group in TITLE_GROUP_RE.findall(title or ""):
+        group = group.strip()
+        m = TITLE_FEAT_RE.match(group) or TITLE_REMIX_RE.match(group)
+        if m:
+            whole = m.group(1).strip()
+            names.add(whole)
+            names.update(p.strip() for p in TITLE_NAMES_SPLIT_RE.split(whole) if p.strip())
+    return names
+
+
 MOJIBAKE_RE = re.compile(r"[À-ÿ¨¸]{3,}")
 
 
@@ -229,6 +249,12 @@ def library_index():
         for n in artist_names(s, "artist", "artists", "albumArtists", "displayArtist"):
             lib_artist_songs[n] += 1
             lib_artist_appears[n].add(exact)
+        # фит/ремикс в названии ('Pi Pu Pa (ft. RLGN)') и тег REMIXER — тоже участие в альбоме
+        credited = title_artists(fix_mojibake(s.get("title")))
+        credited.update(c["artist"]["name"] for c in s.get("contributors") or []
+                        if c.get("role") == "remixer" and (c.get("artist") or {}).get("name"))
+        for name in credited:
+            lib_artist_appears[norm(fix_mojibake(name))].add(exact)
     for a in load("navidrome/artists.json"):
         lib_artist_albums.setdefault(norm(fix_mojibake(a["name"])), set())
     return lib_artist_albums, lib_artist_songs, lib_album_titles, lib_artist_appears
