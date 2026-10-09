@@ -13,9 +13,17 @@ import GenreTags from "@/components/media/GenreTags"
 import LikeButton from "@/components/media/LikeButton"
 import Shelf from "@/components/media/Shelf"
 import { usePlayerStore } from "@/store/playerStore"
-import type { LabelDescriptionSegment, LabelDetail, LabelReleaseSort, ReleaseSummary } from "@/api/types"
+import type {
+  LabelDescriptionSegment,
+  LabelDescriptionSource,
+  LabelDetail,
+  LabelReleaseSort,
+  ReleaseSummary,
+} from "@/api/types"
 
 const SORTS: LabelReleaseSort[] = ["release_date_desc", "release_date_asc", "popularity"]
+// Описание без подписи «Источник»: написанное вручную и написанное агентом (tools/describe).
+const UNSIGNED_SOURCES = new Set<LabelDescriptionSource>(["editorial", "agent"])
 
 function releaseSubtitle(release: ReleaseSummary): string | null {
   const artists = release.artists.map((artist) => artist.name).join(", ")
@@ -123,8 +131,8 @@ function LabelDescription({ label }: { readonly label: LabelDetail }) {
             </button>
           )}
           {/* Источник показываем только у текста из Википедии/Discogs/Beatport;
-              описание, написанное вручную, идёт без подписи. */}
-          {description?.source && description.source !== "editorial" && (
+              описание, написанное вручную или агентом (tools/describe), идёт без подписи. */}
+          {description?.source && !UNSIGNED_SOURCES.has(description.source) && (
             <span>
               {t("description.source", { source: t(`description.sources.${description.source}`) })}
             </span>

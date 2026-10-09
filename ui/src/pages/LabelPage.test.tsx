@@ -206,6 +206,21 @@ describe("LabelPage", () => {
     expect(screen.queryByText(/Source:/)).not.toBeInTheDocument()
   })
 
+  it("shows an agent-written description without any source caption", () => {
+    useLabel.mockReturnValue({
+      data: makeLabel({
+        description: { source: "agent", segments: [{ type: "text", text: "Лейбл основан в 2014 году." }] },
+      }),
+      isLoading: false,
+      error: null,
+    })
+
+    renderPage()
+
+    expect(screen.getByTestId("label-description")).toHaveTextContent("Лейбл основан в 2014 году.")
+    expect(screen.queryByText(/Source:/)).not.toBeInTheDocument()
+  })
+
   it("does not repeat the word Label above the label name", () => {
     renderPage()
 

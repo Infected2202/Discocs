@@ -123,8 +123,8 @@ label's name on Beatport, else Discogs; NULL until found), `image_path`
 `app/assets/label-placeholder.jpg` is served), `image_source`
 (`beatport`/`discogs`), `description` (plain text; `[a=Name]` marks an
 artist mention), `description_source`
-(`wikipedia_ru`/`wikipedia_en`/`discogs`/`beatport`, or `editorial` for a
-hand-written text), `links_json`,
+(`wikipedia_ru`/`wikipedia_en`/`discogs`/`beatport`, `editorial` for a
+hand-written text, `agent` for a text written by `tools/describe`), `links_json`,
 `external_ids_json` (`beatport`, `discogs`, `wikidata` ids),
 `metadata_synced_at`.
 
@@ -159,7 +159,18 @@ description/links/ids replaced, image only replaced when sent).
 A hand-written description goes through `PUT /api/v1/labels/{id}/description`
 (`{"description": "..."}`, source `editorial`); the sync then keeps
 updating the image and links but leaves that description alone. An empty
-description clears it and hands the field back to the sync.
+description clears it and hands the field back to the sync. An `agent`
+description is protected from the sync the same way; when labels merge the
+weightier description wins (`editorial` > `agent` > found by the sync).
+
+`label_agent_descriptions` (`label_id` PK, cascade; `status`
+written/not_found/failed/skipped/reverted, `description`, `sources_json`,
+`model`, `note`, `job_id`, `previous_description`, `previous_source`,
+`updated_at`) is what the description agent reported for a label: a written
+text with the pages its facts came from, or "nothing found". `previous_*` is
+the description before the agent, restored by a revert. `tool_jobs` and
+`tool_workers` are the queue and the heartbeat of the workstation tools — see
+`docs/tools.md`.
 
 `label_sync_state` (`label_id` PK, `status` found/not_found/self_released/error,
 `keys_hash` — the barcodes and ISRCs the label was looked up with,

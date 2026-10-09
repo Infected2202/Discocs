@@ -495,6 +495,76 @@ class LabelDescriptionRequest(BaseModel):
     description: str | None = Field(default=None, max_length=20000)
 
 
+# --- Инструменты рабочей машины (docs/tools.md) ------------------------------
+
+ToolName = Literal["describe", "music-fill"]
+
+
+class ToolPollRequest(BaseModel):
+    """Воркер на ПК: что он умеет, его состояние; wait — сколько секунд ждать задачу (долгий опрос)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tools: list[ToolName] = Field(default_factory=list, max_length=10)
+    state: dict[str, object] = Field(default_factory=dict)
+    wait: int = Field(default=0, ge=0, le=60)
+
+
+class ToolJobCreateRequest(BaseModel):
+    """Задача из админки. describe/run: scope — какие лейблы (см. app/store/tools.describe_label_ids);
+    music-fill: start/stop сервера."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool: ToolName
+    action: Literal["run", "start", "stop"]
+    scope: Literal["missing", "replace", "not_found", "ids"] = "missing"
+    min_releases: int = Field(default=1, ge=1, le=1000)
+    label_ids: list[int] = Field(default_factory=list, max_length=5000)
+
+
+class ToolJobControlRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    control: Literal["run", "pause", "cancel"]
+
+
+class ToolJobProgressRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["running", "paused", "done", "failed", "cancelled"] | None = None
+    progress: dict[str, object] | None = None
+    message: str | None = Field(default=None, max_length=2000)
+
+
+class DescribeNextRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = Field(default=3, ge=1, le=50)
+    exclude: list[int] = Field(default_factory=list, max_length=50)
+
+
+class DescribeSource(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    url: str = Field(max_length=2000)
+    title: str | None = Field(default=None, max_length=500)
+
+
+class DescribeResultRequest(BaseModel):
+    """Итог агента по лейблу: текст и откуда факты, или «ничего не нашлось»/ошибка."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: int | None = None
+    label_id: int
+    status: Literal["written", "not_found", "failed"]
+    description: str | None = Field(default=None, max_length=20000)
+    sources: list[DescribeSource] = Field(default_factory=list, max_length=100)
+    model: str | None = Field(default=None, max_length=200)
+    note: str | None = Field(default=None, max_length=2000)
+
+
 class PlaybackPresenceRequest(BaseModel):
     """What the player is doing right now (social presence, docs/social.md).
 

@@ -21,6 +21,8 @@ from app.store.label_merge import LabelMergeSummary, merge_labels
 LABEL_RELEASE_GROUPS = ("albums", "eps", "singles", "compilations", "releases")
 # Описание, написанное вручную (PUT /labels/{id}/description), — tools/label-sync его не перезаписывает.
 EDITORIAL_SOURCE = "editorial"
+# Описание, написанное агентом (tools/describe, docs/tools.md), — синхронизация его тоже не перезаписывает.
+AGENT_SOURCE = "agent"
 
 # Релиз «живой», если у него есть хоть один доступный трек — как в полках дашборда.
 _AVAILABLE_RELEASE = """
@@ -395,7 +397,7 @@ class LabelsStoreMixin:
 
         Описание, ссылки и внешние id заменяются целиком: скрипт присылает
         запись полностью. Картинка — отдельно (``set_label_image``).
-        Описание, написанное вручную (``EDITORIAL_SOURCE``), скрипт не трогает.
+        Описание, написанное вручную (``EDITORIAL_SOURCE``) или агентом (``AGENT_SOURCE``), скрипт не трогает.
         """
         now = utc_now()
         description = clean_description(metadata.description)
@@ -404,8 +406,8 @@ class LabelsStoreMixin:
             conn.execute(
                 """
                 UPDATE labels
-                SET description = CASE WHEN description_source = ? THEN description ELSE ? END,
-                    description_source = CASE WHEN description_source = ? THEN description_source ELSE ? END,
+                SET description = CASE WHEN description_source IN (?, ?) THEN description ELSE ? END,
+                    description_source = CASE WHEN description_source IN (?, ?) THEN description_source ELSE ? END,
                     links_json = ?, external_ids_json = ?,
                     official_name = COALESCE(?, official_name),
                     metadata_synced_at = ?, updated_at = ?
@@ -413,8 +415,10 @@ class LabelsStoreMixin:
                 """,
                 (
                     EDITORIAL_SOURCE,
+                    AGENT_SOURCE,
                     description,
                     EDITORIAL_SOURCE,
+                    AGENT_SOURCE,
                     metadata.description_source if description else None,
                     json.dumps(metadata.links or [], ensure_ascii=False),
                     json.dumps(metadata.external_ids or {}, ensure_ascii=False, sort_keys=True),

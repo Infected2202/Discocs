@@ -194,7 +194,7 @@ export type LabelDescriptionSegment =
   | { type: "text"; text: string }
   | { type: "artist"; text: string; artist_id: number | null }
 
-export type LabelDescriptionSource = "wikipedia_ru" | "wikipedia_en" | "discogs" | "beatport" | "editorial"
+export type LabelDescriptionSource = "wikipedia_ru" | "wikipedia_en" | "discogs" | "beatport" | "editorial" | "agent"
 
 export interface LabelDetail extends LabelSummary {
   genres?: GenreCount[]

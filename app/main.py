@@ -355,6 +355,7 @@ from app.api import (  # noqa: E402
     social as _api_social,
     telegram as _api_telegram,
     timeline as _api_timeline,
+    tools as _api_tools,
     users as _api_users,
 )
 
@@ -384,6 +385,7 @@ app.include_router(_api_timeline.router)
 app.include_router(_api_users.router)
 app.include_router(_api_social.router)
 app.include_router(_api_telegram.router)
+app.include_router(_api_tools.router)
 
 
 

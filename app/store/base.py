@@ -414,6 +414,47 @@ class StoreBase:
                     finished_at TEXT
                 );
 
+                -- Инструменты рабочей машины (tools/agent, docs/tools.md): воркер на ПК сам ходит
+                -- сюда — сообщает состояние, берёт задачи, присылает прогресс и результаты.
+                CREATE TABLE IF NOT EXISTS tool_workers (
+                    id TEXT PRIMARY KEY,
+                    state_json TEXT,
+                    seen_at TEXT NOT NULL
+                );
+
+                -- Задача инструмента из админки: describe (описания лейблов), music-fill (сервер).
+                -- control — чего хочет админка (run/pause/cancel), status — что делает воркер.
+                CREATE TABLE IF NOT EXISTS tool_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tool TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    params_json TEXT,
+                    status TEXT NOT NULL,
+                    control TEXT NOT NULL DEFAULT 'run',
+                    progress_json TEXT,
+                    message TEXT,
+                    worker_id TEXT,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    finished_at TEXT
+                );
+
+                -- Итог агента по лейблу (tools/describe): написанный текст с источниками фактов или
+                -- «ничего не нашлось». previous_* — описание до агента: им можно откатить.
+                CREATE TABLE IF NOT EXISTS label_agent_descriptions (
+                    label_id INTEGER PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    description TEXT,
+                    sources_json TEXT,
+                    model TEXT,
+                    note TEXT,
+                    job_id INTEGER,
+                    previous_description TEXT,
+                    previous_source TEXT,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (label_id) REFERENCES labels(id) ON DELETE CASCADE
+                );
+
                 -- Штрихкод из тегов файла; перечитывается, когда меняются размер/время файла.
                 CREATE TABLE IF NOT EXISTS track_barcodes (
                     track_id INTEGER PRIMARY KEY,

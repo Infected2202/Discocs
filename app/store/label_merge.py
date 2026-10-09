@@ -186,8 +186,8 @@ def _fold(conn: sqlite3.Connection, main: int, other: int, *, take_metadata: boo
     if not take_metadata:
         conn.execute("DELETE FROM labels WHERE id = ?", (other,))
         return
-    # Своё у основного остаётся; чужое берётся, только если своего нет (описание, написанное
-    # вручную, важнее найденного синхронизацией).
+    # Своё у основного остаётся; чужое берётся, только если своего нет или чужое описание весомее:
+    # написанное вручную важнее написанного агентом, а то — найденного синхронизацией.
     conn.execute(
         """
         UPDATE labels SET
@@ -204,12 +204,21 @@ def _fold(conn: sqlite3.Connection, main: int, other: int, *, take_metadata: boo
             official_name = COALESCE(m.official_name, o.official_name),
             metadata_synced_at = COALESCE(m.metadata_synced_at, o.metadata_synced_at)
         FROM (SELECT * FROM labels WHERE id = ?) AS o,
-             (SELECT *, (description_source IS NOT 'editorial'
-                         AND (SELECT description_source FROM labels WHERE id = ?) = 'editorial') AS take_description
+             (SELECT *, (CASE description_source WHEN 'editorial' THEN 2 WHEN 'agent' THEN 1 ELSE 0 END
+                         < (SELECT CASE description_source WHEN 'editorial' THEN 2 WHEN 'agent' THEN 1 ELSE 0 END
+                            FROM labels WHERE id = ?)) AS take_description
               FROM labels WHERE id = ?) AS m
         WHERE labels.id = m.id
         """,
         (other, other, main),
+    )
+    # Взяли текст агента у склеиваемого — его запись (источники, прежнее описание для отката) переезжает.
+    conn.execute(
+        """
+        UPDATE OR REPLACE label_agent_descriptions SET label_id = ?
+        WHERE label_id = ? AND description = (SELECT description FROM labels WHERE id = ?)
+        """,
+        (main, other, main),
     )
     conn.execute("DELETE FROM labels WHERE id = ?", (other,))
 
