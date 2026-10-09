@@ -8,16 +8,20 @@ discocs — [docs/tools.md](../../docs/tools.md).
 
 - Окружение `tools/describe/.venv` (воркер запускает describe в своём процессе) — см.
   [../describe/README.md](../describe/README.md): LM Studio с моделью, SearXNG, FlareSolverr.
-- `config.json` — копия `config.example.json` с сервисным токеном discocs (`service_token`, тот же
-  `DISCOCS_SERVICE_TOKEN`, что у бэкенда и воркеров анализа). В git не попадает.
+- `config.json` — копия `config.example.json` (адреса LM Studio, SearXNG и т.п.). В git не попадает.
+- Доступ к discocs — свой ключ воркера (`device.key`, придумывается при первом запуске, в git не попадает).
+  Первый запуск — в админке discocs, раздел **Access**, появится запрос «… · Tools worker»: сверить отпечаток
+  с журналом (`device … (fingerprint …)`) и нажать Approve. Перезапуск не нужен. `service_token` в `config.json`
+  не нужен; если задан и не подходит — воркер его забывает и просит доступ ключом (см. docs/auth.md, «Устройства»).
 - Для music-fill — Python с его зависимостями (`music_fill_python`, по умолчанию `python` из PATH).
 
 ## Запуск
 
     ..\describe\.venv\Scripts\pythonw.exe agent.py
 
-`pythonw` — без окна; журнал — `logs/agent.log`. Автозапуск при входе в Windows — задача в Планировщике
-заданий «При входе в систему» с этой командой и рабочей папкой `tools/agent`.
+`pythonw` — без окна; журнал — `logs/agent.log`. Автозапуск при входе в Windows — задача «discocs tools
+agent» в Планировщике заданий («При входе в систему», эта команда, рабочая папка `tools/agent`; упал —
+перезапуск до 3 раз через минуту).
 
 ## Как ведёт себя
 

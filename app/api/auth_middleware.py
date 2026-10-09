@@ -8,6 +8,8 @@ A request is authorized if ANY of:
   * the path is public (health + the auth endpoints themselves), or
   * it carries a valid ``X-Discocs-Service-Token`` (machine principal:
     workers/bot/plugin), or
+  * it carries the key of a device approved in the admin
+    (``X-Discocs-Device-Key``, see "Устройства" in docs/auth.md), or
   * it carries a valid session cookie.
 
 Otherwise it is rejected with 401. See docs/auth.md.
@@ -22,6 +24,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 
 from app import auth
+from app.api.devices import client_ip, device_key
 from app.config import Settings
 from app.store import Store
 from app.user_context import (
@@ -51,6 +54,8 @@ PUBLIC_PATHS = frozenset(
         "/api/v1/auth/login",
         "/api/v1/auth/logout",
         "/api/v1/auth/session",
+        # Устройство просит доступ — без входа; запрос только ставит его в очередь админки.
+        "/api/v1/devices/requests",
     }
 )
 
@@ -107,6 +112,20 @@ def _service_token_ok(request: Request, service_token: str) -> bool:
     return bool(presented) and auth.constant_time_eq(presented, service_token)
 
 
+def _resolve_device(settings: Settings, key: str, ip: str) -> dict[str, object] | None:
+    store = Store(settings.db_path)
+    store.init()
+    return store.device_for_key(auth.hash_token(key), ip=ip)
+
+
+# Ответ неподключённому устройству — чтобы инструмент написал в журнал, что делать, а не «401».
+_DEVICE_REFUSALS = {
+    "pending": ("device_pending", "The device is waiting for approval in the discocs admin (Access)."),
+    "rejected": ("device_rejected", "The device was rejected in the discocs admin (Access)."),
+    "revoked": ("device_revoked", "The device access was revoked in the discocs admin (Access)."),
+}
+
+
 def _resolve_session(settings: Settings, token: str | None) -> auth.ResolvedSession | None:
     store = Store(settings.db_path)
     store.init()
@@ -161,6 +180,24 @@ async def auth_gate(request: Request, call_next):
         finally:
             reset_current_navidrome_credentials(nav_context)
             reset_current_user_id(token_context)
+
+    key = device_key(request)
+    if key is not None:
+        device = await run_in_threadpool(_resolve_device, settings, key, client_ip(request))
+        if device is not None and device["status"] == "approved":
+            request.state.principal = f"device:{device['id']}"
+            token_context = set_current_user_id(None)
+            nav_context = set_current_navidrome_credentials(None)
+            try:
+                return await call_next(request)
+            finally:
+                reset_current_navidrome_credentials(nav_context)
+                reset_current_user_id(token_context)
+        code, message = _DEVICE_REFUSALS.get(
+            str(device["status"]) if device else "",
+            ("device_unknown", "Unknown device key: request access first (POST /api/v1/devices/requests)."),
+        )
+        return JSONResponse(status_code=401, content={"error": {"code": code, "message": message}})
 
     token = request.cookies.get(settings.auth.session_cookie_name)
     resolved = await run_in_threadpool(_resolve_session, settings, token)

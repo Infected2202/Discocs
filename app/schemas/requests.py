@@ -580,3 +580,20 @@ class PlaybackPresenceRequest(BaseModel):
     queue_item_id: str | None = Field(default=None, min_length=1, max_length=64)
 
     model_config = ConfigDict(extra="forbid")
+
+
+class DeviceAccessRequest(BaseModel):
+    """Запрос доступа от устройства (ключ — в заголовке X-Discocs-Device-Key, docs/auth.md)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=80)
+    kind: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,31}$")
+    info: dict[str, str | int | float | bool | None] = Field(default_factory=dict, max_length=20)
+
+    @field_validator("info")
+    @classmethod
+    def _short_info(cls, value: dict[str, object]) -> dict[str, object]:
+        if any(len(str(key)) > 40 or len(str(item)) > 200 for key, item in value.items()):
+            raise ValueError("info keys must be up to 40 and values up to 200 characters")
+        return value

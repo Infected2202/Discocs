@@ -422,6 +422,23 @@ class StoreBase:
                     seen_at TEXT NOT NULL
                 );
 
+                -- Устройства с собственным ключом (docs/auth.md, «Устройства»): инструмент на ПК сам
+                -- придумывает ключ и просит доступ, админка подключает. Хранится только SHA-256 ключа.
+                CREATE TABLE IF NOT EXISTS device_keys (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    key_hash TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    info_json TEXT,
+                    status TEXT NOT NULL,
+                    requested_ip TEXT,
+                    created_at TEXT NOT NULL,
+                    decided_at TEXT,
+                    decided_by TEXT,
+                    last_seen_at TEXT,
+                    last_ip TEXT
+                );
+
                 -- Задача инструмента из админки: describe (описания лейблов), music-fill (сервер).
                 -- control — чего хочет админка (run/pause/cancel), status — что делает воркер.
                 CREATE TABLE IF NOT EXISTS tool_jobs (

@@ -15,6 +15,7 @@ import json
 import logging
 import logging.handlers
 import os
+import secrets
 import socket
 import subprocess
 import sys
@@ -48,6 +49,17 @@ def load_config() -> dict:
     config = json.loads(path.read_text(encoding="utf-8"))
     config.setdefault("worker_id", socket.gethostname().lower())
     return config
+
+
+def device_key() -> str:
+    """Свой ключ воркера для discocs: придумывается при первом запуске и лежит рядом (в git не попадает).
+    Доступ по нему включают в админке discocs, раздел Access, — общий токен в config.json не нужен."""
+    path = HERE / "device.key"
+    if path.exists():
+        return path.read_text(encoding="utf-8").strip()
+    key = secrets.token_hex(32)
+    path.write_text(key, encoding="utf-8")
+    return key
 
 
 def setup_logging() -> None:
@@ -91,8 +103,25 @@ class Discocs:
         self.url = config["discocs_url"].rstrip("/")
         self.worker_id = config["worker_id"]
         self.http = requests.Session()
-        if config.get("service_token"):
+        self.http.headers["X-Discocs-Device-Key"] = device_key()
+        if config.get("service_token"):  # по-старому: общий токен, если он задан, — без подключения в админке
             self.http.headers["X-Discocs-Service-Token"] = config["service_token"]
+        self.access: str | None = None
+
+    def request_access(self) -> None:
+        """Попросить доступ (или узнать, что решили). Пишет в журнал, только когда статус меняется."""
+        host = socket.gethostname()
+        body = {"name": f"{host} · Tools worker", "kind": "tools-agent",
+                "info": {"host": host, "worker_id": self.worker_id, "python": sys.version.split()[0]}}
+        answer = self._post("/devices/requests", body)
+        status = answer["status"]
+        if status != self.access:
+            hint = {"pending": "ждёт подтверждения в админке discocs → Access",
+                    "approved": "подключён",
+                    "rejected": "отклонён в админке; чтобы попросить снова — удалить его там (Delete)",
+                    "revoked": "доступ отозван в админке; включить — Approve again"}.get(status, status)
+            log.info("device %s (fingerprint %s): %s", answer["id"], answer["fingerprint"], hint)
+            self.access = status
 
     def _post(self, path: str, body: dict, timeout: float = 30) -> dict:
         response = self.http.post(f"{self.url}/api/v1{path}", json=body, timeout=timeout)
@@ -351,6 +380,21 @@ def main() -> None:
             except Exception as exc:  # noqa: BLE001 — воркер не падает из-за одной задачи
                 log.exception("job %s failed", job["id"])
                 api.progress(int(job["id"]), status="failed", message=repr(exc)[:2000])
+        except requests.HTTPError as exc:
+            if exc.response is None or exc.response.status_code != 401:
+                log.warning("discocs unreachable: %s", exc)
+                time.sleep(15)
+                continue
+            # Не пустили: просим доступ своим ключом и ждём решения в админке (Access).
+            if config.pop("service_token", None):
+                log.warning("discocs: service_token из config.json не подходит — дальше воркер ходит своим "
+                            "ключом, подключи его в админке (Access)")
+                api.http.headers.pop("X-Discocs-Service-Token", None)
+            try:
+                api.request_access()
+            except requests.RequestException as again:
+                log.warning("discocs: запрос доступа не прошёл: %s", again)
+            time.sleep(30)
         except requests.RequestException as exc:
             log.warning("discocs unreachable: %s", exc)
             time.sleep(15)

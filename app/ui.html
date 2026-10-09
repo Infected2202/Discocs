@@ -632,6 +632,7 @@
         <button data-nav="jobs" onclick="showSection('jobsPage')">Jobs</button>
         <button data-nav="workers" onclick="showSection('workersPage')">Workers</button>
         <button data-nav="tools" onclick="showSection('tools')">Tools</button>
+        <button data-nav="access" onclick="showSection('access')">Access <span id="accessBadge" class="pill bad-pill" hidden></span></button>
         <button data-nav="settings" onclick="showSection('settings')">Settings</button>
       </nav>
     </aside>
@@ -982,6 +983,21 @@
           <h2>Recent agent descriptions</h2>
           <div class="meta">Spot check: the latest texts written by the agent. Revert brings back the description the label had before the agent.</div>
           <div id="describeRecent" class="jobs" style="margin-top:8px"></div>
+        </div>
+      </section>
+      <section id="access" class="section">
+        <div class="panel">
+          <h2>Access</h2>
+          <div class="meta">Tools on your computers (the Tools worker, the GPU analysis worker) make up a key of their own and ask for access here, so no shared token has to be copied into their configs. Approve a request only if you know the device: the fingerprint is also written to the tool's log. Revoking cuts the device off at once; a deleted device asks again on its next start. See docs/auth.md.</div>
+        </div>
+        <div class="panel">
+          <h2>Waiting for approval</h2>
+          <div id="accessPending" class="jobs"></div>
+        </div>
+        <div class="panel">
+          <h2>Devices</h2>
+          <div id="accessDevices" class="jobs"></div>
+          <div class="meta" id="accessStatus"></div>
         </div>
       </section>
       <section id="settings" class="section">
@@ -1664,6 +1680,7 @@
       jobs: "jobsPage",
       workers: "workersPage",
       tools: "tools",
+      access: "access",
       settings: "settings",
     };
     const BROWSE_FACET_KEYS = ["folder", "genre", "year", "artist", "album"];
@@ -1807,6 +1824,8 @@
           await refreshWorkers();
         } else if (sectionId === "tools") {
           await refreshTools();
+        } else if (sectionId === "access") {
+          await refreshDevices();
         } else if (sectionId === "atlas") {
           await atlasInit(params);
         } else if (sectionId === "settings") {
@@ -5289,7 +5308,7 @@
       const target = document.getElementById("toolsWorker");
       const musicFill = document.getElementById("musicFillState");
       if (!worker) {
-        target.textContent = "No worker has connected yet: start tools/agent on the workstation.";
+        target.innerHTML = `No worker has connected yet: start tools/agent on the workstation and approve it in <a href="#" onclick="showSection('access'); return false">Access</a>.`;
         musicFill.textContent = "Unknown until the worker connects.";
         return;
       }
@@ -5298,7 +5317,7 @@
       const model = state.model_loaded ? ", model loaded" : ", model not loaded";
       target.innerHTML = worker.online
         ? `<span class="pill">online</span> ${esc(worker.id)}${esc(model)}${esc(vram)}`
-        : `<span class="pill bad-pill">offline</span> ${esc(worker.id)}, last seen ${esc(ago(worker.seen_at))}`;
+        : `<span class="pill bad-pill">offline</span> ${esc(worker.id)}, last seen ${esc(ago(worker.seen_at))}. Not connecting? Look for its request in <a href="#" onclick="showSection('access'); return false">Access</a>.`;
       const mf = state.music_fill || {};
       if (mf.url) document.getElementById("musicFillLink").href = mf.url;
       musicFill.textContent = !worker.online
@@ -5389,6 +5408,76 @@
           ${sources ? `<details><summary class="meta">Sources (${(item.sources || []).length})</summary><div class="meta">${sources}</div></details>` : ""}
         </div>`;
       }).join("");
+    }
+    // ---------------------------------------------------------------------
+    // Access: devices with their own key instead of the shared service token (docs/auth.md)
+    // ---------------------------------------------------------------------
+    const DEVICE_KINDS = {"tools-agent": "Tools worker (tools/agent)", "analysis-worker": "GPU analysis worker"};
+    let devicesInFlight = false;
+    async function refreshDevices() {
+      if (devicesInFlight) return;
+      devicesInFlight = true;
+      try {
+        const devices = (await toolsApi("/api/v1/devices")).devices || [];
+        const pending = devices.filter(device => device.status === "pending");
+        const badge = document.getElementById("accessBadge");
+        badge.hidden = !pending.length;
+        badge.textContent = pending.length;
+        if (!document.getElementById("access").classList.contains("active")) return;
+        document.getElementById("accessPending").innerHTML = pending.length
+          ? pending.map(deviceCard).join("")
+          : `<div class="meta">No requests.</div>`;
+        const rest = devices.filter(device => device.status !== "pending");
+        document.getElementById("accessDevices").innerHTML = rest.length
+          ? rest.map(deviceCard).join("")
+          : `<div class="meta">No devices yet.</div>`;
+      } catch (err) {
+        toolsMessage("accessStatus", `Devices unavailable: ${err.message}`, true);
+      } finally {
+        devicesInFlight = false;
+      }
+    }
+    function deviceCard(device) {
+      const info = Object.entries(device.info || {})
+        .map(([key, value]) => `${esc(key)}: ${esc(value)}`).join(" &middot; ");
+      const seen = device.last_seen_at ? `last seen ${esc(ago(device.last_seen_at))}${device.last_ip ? ` from ${esc(device.last_ip)}` : ""}` : "never seen";
+      const decided = device.decided_at
+        ? ` &middot; ${esc(device.status)} ${esc(ago(device.decided_at))}${device.decided_by ? ` by ${esc(device.decided_by)}` : ""}`
+        : "";
+      const actions = {
+        pending: [["approve", "Approve", "primary"], ["reject", "Reject", ""]],
+        approved: [["revoke", "Revoke", ""]],
+        rejected: [["approve", "Approve", ""], ["delete", "Delete", ""]],
+        revoked: [["approve", "Approve again", ""], ["delete", "Delete", ""]],
+      }[device.status] || [];
+      const pill = device.status === "approved" ? `<span class="pill">approved</span>`
+        : device.status === "pending" ? `<span class="pill bad-pill">waiting</span>`
+        : `<span class="pill">${esc(device.status)}</span>`;
+      return `<div class="job">
+        <div class="row" style="justify-content:space-between">
+          <strong>${esc(device.name)} ${pill}</strong>
+          <div class="row">${actions.map(([action, label, cls]) =>
+            `<button class="${cls}" onclick="deviceAction(${device.id}, '${action}')">${label}</button>`).join("")}</div>
+        </div>
+        <div class="meta">${esc(DEVICE_KINDS[device.kind] || device.kind)} &middot; fingerprint <code>${esc(device.fingerprint)}</code></div>
+        ${info ? `<div class="meta">${info}</div>` : ""}
+        <div class="meta">asked ${esc(ago(device.created_at))}${device.requested_ip ? ` from ${esc(device.requested_ip)}` : ""} &middot; ${seen}${decided}</div>
+      </div>`;
+    }
+    async function deviceAction(deviceId, action) {
+      if (action === "revoke" && !confirm("Cut this device off? It stops working at once.")) return;
+      try {
+        if (action === "delete") {
+          const response = await fetch(`/api/v1/devices/${deviceId}`, {method: "DELETE"});
+          if (!response.ok) throw new Error(response.statusText);
+        } else {
+          await toolsApi(`/api/v1/devices/${deviceId}/${action}`, {});
+        }
+        toolsMessage("accessStatus", "");
+        await refreshDevices();
+      } catch (err) {
+        toolsMessage("accessStatus", err.message, true);
+      }
     }
     async function toolJob(tool, action, extra = {}) {
       const statusId = tool === "describe" ? "describeStatus" : "musicFillStatus";
@@ -5629,6 +5718,7 @@
       refreshStats();
       refreshJobs();
       if (document.getElementById("tools").classList.contains("active")) refreshTools();
+      refreshDevices();
     }, 5000);
   </script>
 </body>

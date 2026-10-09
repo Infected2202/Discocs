@@ -333,6 +333,7 @@ from app.api import (  # noqa: E402
     artists as _api_artists,
     auth as _api_auth,
     dashboard as _api_dashboard,
+    devices as _api_devices,
     downloads as _api_downloads,
     external as _api_external,
     label_sync as _api_label_sync,
@@ -386,6 +387,7 @@ app.include_router(_api_users.router)
 app.include_router(_api_social.router)
 app.include_router(_api_telegram.router)
 app.include_router(_api_tools.router)
+app.include_router(_api_devices.router)
 
 
 

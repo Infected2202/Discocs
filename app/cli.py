@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 import json
 import logging
 import os
 from pathlib import Path
 import random
+import secrets
 import signal
 import socket
 import sqlite3
@@ -702,14 +704,49 @@ def analyze(
     typer.echo(f"analyzed={done} failed={failed} embeddings={store.count_embeddings(model)}")
 
 
+# Свой ключ воркера (docs/auth.md, «Устройства»): без DISCOCS_SERVICE_TOKEN воркер ходит с ним, а доступ
+# включают в админке (Access). Загружается в worker() из data dir — там же, где локальная база воркера.
+_DEVICE_KEY: str | None = None
+DEVICE_KEY_FILE = "device.key"
+
+
+def load_worker_device_key(data_dir: Path) -> str:
+    global _DEVICE_KEY
+    path = data_dir / DEVICE_KEY_FILE
+    if path.exists():
+        _DEVICE_KEY = path.read_text(encoding="utf-8").strip()
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _DEVICE_KEY = secrets.token_hex(32)
+        path.write_text(_DEVICE_KEY, encoding="utf-8")
+    return _DEVICE_KEY
+
+
 def _service_headers() -> dict[str, str]:
     """Machine-principal header for the backend access gate.
 
-    Only sent when DISCOCS_SERVICE_TOKEN is configured, so behaviour is
-    unchanged while the gate is off (DISCOCS_AUTH_ENABLED unset).
+    The shared DISCOCS_SERVICE_TOKEN when configured; otherwise the worker's own
+    device key (approved in the admin, Access). Nothing while neither is set, so
+    behaviour is unchanged while the gate is off (DISCOCS_AUTH_ENABLED unset).
     """
     token = os.getenv("DISCOCS_SERVICE_TOKEN", "").strip()
-    return {"X-Discocs-Service-Token": token} if token else {}
+    if token:
+        return {"X-Discocs-Service-Token": token}
+    return {"X-Discocs-Device-Key": _DEVICE_KEY} if _DEVICE_KEY else {}
+
+
+def request_worker_device_access(server: str, worker_id: str) -> dict[str, object]:
+    """Попросить доступ своим ключом (или узнать решение): запрос висит в админке, раздел Access."""
+    host = socket.gethostname()
+    return post_json(
+        server,
+        "/api/v1/devices/requests",
+        {
+            "name": f"{worker_id} · GPU analysis worker",
+            "kind": "analysis-worker",
+            "info": {"worker_id": worker_id, "host": host},
+        },
+    )
 
 
 _WORKER_HTTP_CLIENT: httpx.Client | None = None
@@ -804,10 +841,29 @@ def register_worker_with_retry(
     poll_seconds: float,
     once: bool,
 ) -> None:
+    access_status: object = None
     while True:
         try:
             post_json(server, "/api/v1/workers/register", {"worker_id": worker_id, "models": models})
             return
+        except HTTPError as exc:
+            if exc.code != 401 or not _DEVICE_KEY:
+                raise
+            # Гейт не пустил ключ воркера: просим доступ и ждём, пока его подключат в админке.
+            try:
+                answer = request_worker_device_access(server, worker_id)
+            except (URLError, TimeoutError, ConnectionError) as again:
+                answer = {"status": f"request failed: {again}"}
+            if answer.get("status") != access_status:
+                access_status = answer.get("status")
+                typer.echo(
+                    f"device access: {access_status} (fingerprint {answer.get('fingerprint', '?')}): "
+                    "approve this worker in the discocs admin, Access; retrying",
+                    err=True,
+                )
+            if once:
+                raise typer.Exit(1) from exc
+            time.sleep(max(poll_seconds, 30))
         except (URLError, TimeoutError, ConnectionError) as exc:
             typer.echo(
                 f"server unavailable during register: {server} ({exc}); retrying in {poll_seconds}s",
@@ -2036,6 +2092,9 @@ def worker(
         f"embedding_backend={embedding_backend} cpu_workers={resolved_cpu_workers} {cpu_workers_source} "
         f"startup_jitter_seconds={startup_jitter_seconds}"
     )
+    if not os.getenv("DISCOCS_SERVICE_TOKEN", "").strip():
+        key = load_worker_device_key(settings.data_dir)
+        typer.echo(f"device key: {settings.data_dir / DEVICE_KEY_FILE} (fingerprint {hashlib.sha256(key.encode()).hexdigest()[:8]})")
     open_worker_http_client(
         server,
         max_connections=max(download_concurrency + 2, max_inflight_tasks),
