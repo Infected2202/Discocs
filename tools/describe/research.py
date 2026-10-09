@@ -1065,6 +1065,10 @@ _ARTIST_LIST = re.compile(r"\[a=[^\]]+\](?:,\s*\[a=[^\]]+\])+,?\s+и\s+\[a=")
 _FOUNDERS = re.compile(r"(?i)основа|созда|учреди|основател")
 
 
+# Похоже на каталожный номер, но это техника и названия: TR-909, TB-303, COVID-19, клуб DC-10.
+_NOT_CATALOG = re.compile(r"\b(?:COVID-19|TR-\d{3}|TB-\d{3}|DC-?10|MS-\d{2}|SH-\d{3}|MPC-?\d{2,4}|CDJ-?\d{3,4})\b")
+
+
 def _artist_list(sentence: str) -> bool:
     return bool(_ARTIST_LIST.search(sentence)) and not _FOUNDERS.search(sentence)
 
@@ -1076,7 +1080,7 @@ def _style_flags(text: str) -> list[str]:
     flags = []
     for sentence in _sentences(text):
         plain = re.sub(r"\[a=[^\]]+\]", "", sentence)
-        if re.search(r"\b[A-Z]{2,6}-?\d{2,4}\b", plain):
+        if re.search(r"\b[A-Z]{2,6}-?\d{2,4}\b", _NOT_CATALOG.sub("", plain)):
             flags.append(sentence)
             continue
         # Дата относительно страницы, которой читатель не видит: «основан в прошлом году» (Freakin909).
