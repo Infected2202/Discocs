@@ -1048,6 +1048,7 @@ def refresh_library() -> dict:
     _library = _lib = _events = _songs = None
     globals()["_songs_by_title"] = None
     start_matching()  # новые треки после пересборки — досопоставить
+    threading.Thread(target=warm_up, daemon=True).start()  # индекс библиотеки сброшен — прогреть заново
     event("library_refresh", songs=len(read_json(SNAPSHOT, [])))
     return snapshot_info()
 
@@ -1553,22 +1554,52 @@ def disk_index() -> set:
             continue
         for x in os.scandir(a.path):
             if x.is_dir():
-                if has_audio(x.path):
+                # папка, где аудио уже находили, — не перечитываем: на сетевом диске это ~8000 scandir
+                if x.path in _audio_dirs or has_audio(x.path):
+                    _audio_dirs.add(x.path)
                     add(x.name)
             elif x.name.lower().endswith(audio):
                 add(os.path.splitext(x.name)[0])
     return keys
 
 
-_disk_cache: list = [0.0, None]
+_audio_dirs: set[str] = set()
+_disk_cache: list = [None]  # последний обход: set ключей или RuntimeError (диск недоступен)
+_disk_lock = threading.Lock()
+
+
+def _scan_disk() -> None:
+    try:
+        _disk_cache[0] = disk_index()
+    except RuntimeError as exc:
+        _disk_cache[0] = exc
 
 
 def disk_index_cached() -> set:
-    """disk_index раз в минуту: обход 3000+ папок на сетевом диске — секунды."""
-    if time.time() - _disk_cache[0] > 60 or _disk_cache[1] is None:
-        _disk_cache[1] = disk_index()
-        _disk_cache[0] = time.time()
-    return _disk_cache[1]
+    """Последний обход папки загрузок — его держит disk_watcher, план не ждёт сетевой диск
+    (обход 3000+ папок — десятки секунд). Ждём только самый первый обход после запуска."""
+    if _disk_cache[0] is None:
+        with _disk_lock:
+            if _disk_cache[0] is None:
+                _scan_disk()
+    if isinstance(_disk_cache[0], RuntimeError):
+        raise _disk_cache[0]
+    return _disk_cache[0]
+
+
+def disk_watcher() -> None:
+    while True:
+        with _disk_lock:
+            _scan_disk()
+        time.sleep(60)
+
+
+def warm_up() -> None:
+    """Первый план после запуска — индекс библиотеки и сравнение названий (секунды): считаем заранее."""
+    try:
+        plan_response(set(DEFAULT_TYPES), False)
+    except Exception:
+        journal.log.exception("warm_up")
 
 
 def sent_title(label: str) -> str:
@@ -2415,6 +2446,8 @@ if __name__ == "__main__":
     threading.Thread(target=library_refresher, daemon=True).start()
     threading.Thread(target=discography_loader, daemon=True).start()
     threading.Thread(target=nightly_refresher, daemon=True).start()
+    threading.Thread(target=disk_watcher, daemon=True).start()
+    threading.Thread(target=warm_up, daemon=True).start()
     threading.Thread(target=autotag_worker, daemon=True).start()
     threading.Thread(target=slsk_syncer, daemon=True).start()
     for _ in range(slsk.PARALLEL):  # по поиску на поток: slskd больше двух сразу не берёт
