@@ -13,6 +13,8 @@ Navidrome: отчёты плеера и `GET /social/people`; **Ф3 (API про�
 «Люди», относительное время на полке «История», пункт «Мой профиль»;
 **Ф5 (UI профиля)** — страница `/u/:username` и полная история
 `/u/:username/history` ([ниже](#ui-профиля-ф5)). Все фазы спеки реализованы.
+Сверх спеки — персональные рекомендации в профиле: миксы и «Альбомы для вас»
+([ниже](#рекомендации-пользователя)).
 
 ## Что такое прослушивание
 
@@ -92,7 +94,10 @@ Default-deny `Store.for_user` не ослабляется. `app/services/profile
 
 - `profile_header` — `username`, `avatar`, `created_at`, `viewer_is_owner`;
 - `profile_playlists` — собственные плейлисты цели; приватные — только если
-  зритель и есть владелец (`can_view_private_playlists`).
+  зритель и есть владелец (`can_view_private_playlists`);
+- `profile_mixes_payload` / `profile_mix_detail` / `profile_albums_for_you_payload` —
+  сгенерированные миксы и «Альбомы для вас» цели, только поля полки/списка
+  треков (см. [«Рекомендации пользователя»](#рекомендации-пользователя)).
 
 Неизвестный username → `ProfileNotFoundError` (404), service-принципал
 → `ProfileViewerRequiredError` (403). Никогда не отдаются: flow-профиль,
@@ -283,14 +288,41 @@ preference-score/дизлайки.
 необязателен: без него отдаются все плейлисты (`limit` в ответе = их число);
 `offset` ≥ 0. Новые (по `updated_at`) первыми.
 
+### Рекомендации пользователя
+
+Миксы и «Альбомы для вас» цели видны всем залогиненным — те же полки, что на
+главной у владельца. Только чтение: для цели здесь ничего не генерируется,
+отдаётся то, что уже лежит у неё в store. Чего на чужом профиле нет: якоря,
+настроек и скоров микса, скоров и `score_breakdown`/`reason` треков микса,
+причин у альбомов («You liked 5 tracks» обращено к владельцу — у чужих
+`reason: null`).
+
+| Эндпоинт | Что |
+|---|---|
+| `GET /users/{username}/mixes?limit=&offset=` | миксы со статусом `active`/`saved` (как «Mixes For You» на главной), карточки полки (`generated_mix_shelf_item`), `limit` по умолчанию 16 |
+| `GET /users/{username}/mixes/{id}` | `id`, `title`, `status`, `subtitle`, `track_count`, `artwork`, `created_at` и `items[]` — `position`, `track_id`, `track`; микс не того пользователя или в другом статусе → 404 |
+| `GET /users/{username}/mixes/{id}/cover` | сгенерированная обложка (`image/jpeg`); нет обложки → 404 |
+| `POST /users/{username}/mixes/{id}/play` | запускает микс в сессии **зрителя**; ответ — как у `POST /mixes/{id}/play` |
+| `GET /users/{username}/albums-for-you?limit=&offset=` | кэш «Альбомов для вас» цели (`get_albums_for_you_cache` по модели по умолчанию), в его порядке — стабильном, в отличие от главной, поэтому страницы не повторяются и не теряются |
+
+Ссылки в карточках чужого микса ведут через профиль владельца:
+`action.target` = `/u/{username}/mixes/{id}`, `play_action` и обложка —
+`/api/v1/users/{username}/mixes/{id}/…` (собственные `/mixes/{id}` зрителя
+чужой микс не видят). На своём профиле карточки обычные — `/mixes/{id}`.
+Сессия из чужого микса не ссылается на него (`source_mix_id` нет — store
+зрителя его не видит, авто-продолжение идёт от очереди) и не несёт скоров
+владельца (`start_generated_mix_playback(..., own=False)` в
+`app/api/mixes.py`).
+
 ## UI профиля (Ф5)
 
 Роуты (внутри `AppShell`, под `RequireAuth`): `/u/:username` →
 `ui/src/pages/ProfilePage.tsx`, `/u/:username/history` →
 `ui/src/pages/ListeningHistoryPage.tsx`, полные списки полок —
 `/u/:username/top/:kind?period=`, `/u/:username/likes/:kind`,
-`/u/:username/playlists` → `ui/src/pages/ProfileListPages.tsx` (см. «Полные
-списки» ниже). i18n — namespace `user`.
+`/u/:username/playlists`, `/u/:username/mixes`, `/u/:username/albums-for-you`
+→ `ui/src/pages/ProfileListPages.tsx` (см. «Полные списки» ниже), чужой микс —
+`/u/:username/mixes/:id` → `ui/src/pages/MixPage.tsx`. i18n — namespace `user`.
 
 **Данные.** Обёртки API — `ui/src/api/profile.ts` (типы по контракту выше),
 хуки — `ui/src/api/hooks/useProfile.ts`:
@@ -305,6 +337,9 @@ preference-score/дизлайки.
 | `useUserTopTracksList(username, period)` | `["profile", username, "top", "tracks", period, tz, 50]` | `/top/tracks`, infinite, строки треков |
 | `useUserLikesList(username, kind)` | `["profile", username, "likes-list", kind, 48]` | `/likes/{kind}`, infinite |
 | `useUserPlaylistsList(username)` | `["profile", username, "playlists-list", 48]` | `/playlists`, infinite |
+| `useUserMixes(username)` / `useUserAlbumsForYou(username)` | `["profile", username, "mixes" \| "albums-for-you", 16]` | превью полок рекомендаций |
+| `useUserMixesList(username)` / `useUserAlbumsForYouList(username)` | `["profile", username, "mixes-list" \| "albums-for-you-list", …]` | полные списки, infinite |
+| `useMix(id, username)` | `["profile", username, "mix", id]` | `/mixes/{id}` чужого профиля (без `username` — свой `/mixes/{id}`) |
 | `useSetMyAvatar()` | — | `PUT /me/avatar`; на успех инвалидирует `["profile"]` и `["social","people"]` |
 
 4xx (неизвестный пользователь) не ретраится.
@@ -350,6 +385,11 @@ preference-score/дизлайки.
 7. Лайки — шелфы треков/релизов/артистов (пустые скрыты), «Ещё» → полный
    список этого вида.
 8. Плейлисты — шелф (приватные API отдаёт только владельцу), «Ещё» → все.
+9. «Миксы для <логин>» и «Альбомы для <логин>» — шелфы рекомендаций (пустые
+   скрыты), «Ещё» → полный список. Чужой микс открывается на
+   `/u/:username/mixes/:id`: `MixPage` с подписью «Микс для <логин>», без
+   «Сохранить» и скачивания (это действия владельца); Play и клик по строке
+   запускают его через `POST /users/{username}/mixes/{id}/play`.
 
 Пустые состояния: нет прослушиваний вообще — «Пока нет прослушиваний» вместо
 блоков 2–6 (лайки и плейлисты остаются); пустой период — сообщение в блоке
@@ -360,9 +400,11 @@ preference-score/дизлайки.
 бесконечная прокрутка, как `/shelf/:key`, см. docs/web-ui.md «Shelves: preview
 size and «Ещё»»). «Ещё» у полки появляется только когда `total` больше, чем
 полка показывает. Ссылки: `/u/:username/top/artists|releases|tracks?period=<период>`,
-`/u/:username/likes/tracks|releases|artists`, `/u/:username/playlists`.
+`/u/:username/likes/tracks|releases|artists`, `/u/:username/playlists`,
+`/u/:username/mixes`, `/u/:username/albums-for-you`.
 Заголовки — как у полки: «Топ артистов (30 дн.)» (период из URL, неизвестный
-→ 30д), «Лайкнутые треки/релизы/артисты», «Плейлисты»; подзаголовок — логин.
+→ 30д), «Лайкнутые треки/релизы/артисты», «Плейлисты», «Миксы для <логин>»,
+«Альбомы для <логин>»; подзаголовок — логин.
 Топ треков — не сетка карточек, а строки треков (`VirtualTrackList` с числом
 прослушиваний, как в списке профиля, «Ещё» у него — когда `top_tracks_total`
 больше 5). Неизвестный `kind` — «Такого списка нет» без запроса к API. Правила доступа те

@@ -349,8 +349,9 @@ export interface MixTrackItem {
   track_id: number
   track: TrackSummary | null
   position: number
-  score: number | null
-  reason: string | null
+  /** Absent in a mix read on someone else's profile (no scores are exposed). */
+  score?: number | null
+  reason?: string | null
 }
 
 // ----------------------------------------------------------------------------

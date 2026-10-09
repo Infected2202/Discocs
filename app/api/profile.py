@@ -12,18 +12,26 @@ lists page through
 ``/users/{username}/top/{kind}``, ``/users/{username}/likes/{kind}`` and
 ``/users/{username}/playlists`` with ``limit``/``offset``.
 
+The personal recommendations — ``/users/{username}/mixes`` (+ ``/{id}``,
+``/{id}/cover``, ``/{id}/play``) and ``/users/{username}/albums-for-you`` — are
+visible to every signed-in user too; read-only, whitelisted fields (see
+app/services/profile.py). Playing a mix starts a session of the *viewer*.
+
 ``POST /users/{username}/listen-along`` (Ф6) starts the viewer's own session
 from what that user plays right now — see app/services/listen_along.py.
 """
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.api.deps import api_error, context, playback_session_settings
+from app.api.mixes import start_generated_mix_playback
+from app.schemas.responses import PlaybackSessionEnvelopeResponse
 from app.serializers.playback import playback_session_response
 from app.services.listen_along import (
     ListenAlongSelfError,
@@ -35,13 +43,18 @@ from app.services.profile import (
     ProfileNotFoundError,
     ProfileViewerRequiredError,
     profile_likes,
+    profile_albums_for_you_payload,
     profile_likes_of_kind,
     profile_listens,
+    profile_mix_cover_path,
+    profile_mix_detail,
+    profile_mix_for_playback,
+    profile_mixes_payload,
     profile_playlists_payload,
     profile_stats,
     profile_top,
 )
-from app.services.shelves import FULL_LIST_MAX_LIMIT
+from app.services.shelves import FULL_LIST_MAX_LIMIT, SHELF_PREVIEW_LIMIT
 
 router = APIRouter(prefix="/api/v1")
 
@@ -135,6 +148,68 @@ def api_v1_user_playlists(
     store, _settings = context()
     return _profile_response(
         lambda: profile_playlists_payload(store, username, limit=limit, offset=offset)
+    )
+
+
+@router.get("/users/{username}/mixes", response_model=None, responses=_ERROR_RESPONSES)
+def api_v1_user_mixes(
+    username: str,
+    limit: PageLimit = SHELF_PREVIEW_LIMIT,
+    offset: PageOffset = 0,
+) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    return _profile_response(lambda: profile_mixes_payload(store, username, limit=limit, offset=offset))
+
+
+@router.get("/users/{username}/mixes/{mix_id}", response_model=None, responses=_ERROR_RESPONSES)
+def api_v1_user_mix(username: str, mix_id: str) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    return _profile_response(lambda: profile_mix_detail(store, username, mix_id))
+
+
+@router.get("/users/{username}/mixes/{mix_id}/cover", response_model=None, responses=_ERROR_RESPONSES)
+def api_v1_user_mix_cover(username: str, mix_id: str) -> FileResponse | JSONResponse:
+    store, _settings = context()
+    try:
+        cover = profile_mix_cover_path(store, username, mix_id)
+    except ProfileViewerRequiredError as exc:
+        return api_error(403, "forbidden", str(exc))
+    except ProfileNotFoundError as exc:
+        return api_error(404, "not_found", str(exc))
+    path = Path(cover) if cover else None
+    if path is None or not path.is_file():
+        return api_error(404, "not_found", "Generated mix has no cover")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.post(
+    "/users/{username}/mixes/{mix_id}/play",
+    response_model=PlaybackSessionEnvelopeResponse,
+    responses=_ERROR_RESPONSES,
+)
+def api_v1_user_mix_play(username: str, mix_id: str) -> dict[str, object] | JSONResponse:
+    """Play someone's mix in the viewer's own playback session."""
+    store, _settings = context()
+    try:
+        mix, items, own = profile_mix_for_playback(store, username, mix_id)
+    except ProfileViewerRequiredError as exc:
+        return api_error(403, "forbidden", str(exc))
+    except ProfileNotFoundError as exc:
+        return api_error(404, "not_found", str(exc))
+    return start_generated_mix_playback(store, mix, items, own=own)
+
+
+@router.get("/users/{username}/albums-for-you", response_model=None, responses=_ERROR_RESPONSES)
+def api_v1_user_albums_for_you(
+    username: str,
+    limit: PageLimit = SHELF_PREVIEW_LIMIT,
+    offset: PageOffset = 0,
+) -> dict[str, object] | JSONResponse:
+    store, settings = context()
+    return _profile_response(
+        lambda: profile_albums_for_you_payload(
+            store, username, model_name=settings.default_model, limit=limit, offset=offset
+        )
     )
 
 

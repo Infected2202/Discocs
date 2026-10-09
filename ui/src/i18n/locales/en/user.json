@@ -31,7 +31,9 @@
     "likedTracks": "Tracks",
     "likedReleases": "Releases",
     "likedArtists": "Artists",
-    "playlists": "Playlists"
+    "playlists": "Playlists",
+    "mixesFor": "Mixes for {{username}}",
+    "albumsFor": "Albums for {{username}}"
   },
   "lists": {
     "likedTracks": "Liked tracks",

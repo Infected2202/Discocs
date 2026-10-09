@@ -18,7 +18,13 @@ import ListeningHistoryPage from "@/pages/ListeningHistoryPage"
 import ArtistSimilarPage from "@/pages/ArtistSimilarPage"
 import ArtistLabelsPage from "@/pages/ArtistLabelsPage"
 import { ReleaseRecommendationsPage, ReleaseRelatedPage } from "@/pages/ReleaseListPages"
-import { ProfileLikesPage, ProfilePlaylistsPage, ProfileTopPage } from "@/pages/ProfileListPages"
+import {
+  ProfileAlbumsForYouPage,
+  ProfileLikesPage,
+  ProfileMixesPage,
+  ProfilePlaylistsPage,
+  ProfileTopPage,
+} from "@/pages/ProfileListPages"
 
 export const router = createBrowserRouter([
   { path: "/login", Component: LoginPage },
@@ -48,6 +54,9 @@ export const router = createBrowserRouter([
           { path: "u/:username/top/:kind", Component: ProfileTopPage },
           { path: "u/:username/likes/:kind", Component: ProfileLikesPage },
           { path: "u/:username/playlists", Component: ProfilePlaylistsPage },
+          { path: "u/:username/mixes", Component: ProfileMixesPage },
+          { path: "u/:username/mixes/:id", Component: MixPage },
+          { path: "u/:username/albums-for-you", Component: ProfileAlbumsForYouPage },
         ],
       },
     ],

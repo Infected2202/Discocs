@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { fetchMix, fetchMixes } from "../mixes"
+import { fetchUserMix } from "../profile"
 
 export function useMixes(limit = 50, offset = 0) {
   return useQuery({
@@ -9,9 +10,10 @@ export function useMixes(limit = 50, offset = 0) {
   })
 }
 
-export function useMix(id: string) {
+/** A mix; with `username` it is read on that user's profile (someone else's mix). */
+export function useMix(id: string, username?: string) {
   return useQuery({
-    queryKey: ["mix", id],
-    queryFn: () => fetchMix(id),
+    queryKey: username ? ["profile", username.toLowerCase(), "mix", id] : ["mix", id],
+    queryFn: () => (username ? fetchUserMix(username, id) : fetchMix(id)),
   })
 }

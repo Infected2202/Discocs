@@ -2,9 +2,11 @@ import { useEffect, useRef } from "react"
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ApiError } from "../client"
 import {
+  fetchUserAlbumsForYou,
   fetchUserLikes,
   fetchUserLikesOfKind,
   fetchUserListens,
+  fetchUserMixes,
   fetchUserPlaylists,
   fetchUserProfile,
   fetchUserTop,
@@ -27,6 +29,7 @@ export const LISTENS_PAGE_SIZE = 50
 // preview SHELF_PREVIEW_LIMIT cards; the rest is on their full lists.
 const LIKES_LIMIT = SHELF_PREVIEW_LIMIT
 const PLAYLISTS_LIMIT = SHELF_PREVIEW_LIMIT
+const RECOMMENDATIONS_LIMIT = SHELF_PREVIEW_LIMIT
 
 /** 404 (unknown user) and 403 won't change on retry; otherwise the app default (one retry). */
 export function retryUnlessClientError(failureCount: number, error: Error) {
@@ -99,6 +102,26 @@ export function useUserPlaylists(username: string) {
   })
 }
 
+/** The user's generated mixes (the profile's "Mixes for <user>" shelf). */
+export function useUserMixes(username: string) {
+  return useQuery({
+    queryKey: [...PROFILE_QUERY_KEY, username.toLowerCase(), "mixes", RECOMMENDATIONS_LIMIT],
+    queryFn: () => fetchUserMixes(username, { limit: RECOMMENDATIONS_LIMIT }),
+    staleTime: 60_000,
+    retry: retryUnlessClientError,
+  })
+}
+
+/** The user's "Albums For You" (the profile's "Albums for <user>" shelf). */
+export function useUserAlbumsForYou(username: string) {
+  return useQuery({
+    queryKey: [...PROFILE_QUERY_KEY, username.toLowerCase(), "albums-for-you", RECOMMENDATIONS_LIMIT],
+    queryFn: () => fetchUserAlbumsForYou(username, { limit: RECOMMENDATIONS_LIMIT }),
+    staleTime: 60_000,
+    retry: retryUnlessClientError,
+  })
+}
+
 /** Full list of a period's top artists/releases (`/u/:username/top/:kind`). */
 export function useUserTopList(username: string, kind: ProfileTopKind, period: ProfilePeriod) {
   const tz = viewerTimeZone()
@@ -133,6 +156,24 @@ export function useUserPlaylistsList(username: string) {
   return usePagedList(
     [...PROFILE_QUERY_KEY, username.toLowerCase(), "playlists-list"],
     ({ limit, offset }) => fetchUserPlaylists(username, { limit, offset }),
+    { retry: retryUnlessClientError },
+  )
+}
+
+/** Full list of the user's mixes (`/u/:username/mixes`). */
+export function useUserMixesList(username: string) {
+  return usePagedList(
+    [...PROFILE_QUERY_KEY, username.toLowerCase(), "mixes-list"],
+    ({ limit, offset }) => fetchUserMixes(username, { limit, offset }),
+    { retry: retryUnlessClientError },
+  )
+}
+
+/** Full list of the user's Albums For You (`/u/:username/albums-for-you`). */
+export function useUserAlbumsForYouList(username: string) {
+  return usePagedList(
+    [...PROFILE_QUERY_KEY, username.toLowerCase(), "albums-for-you-list"],
+    ({ limit, offset }) => fetchUserAlbumsForYou(username, { limit, offset }),
     { retry: retryUnlessClientError },
   )
 }

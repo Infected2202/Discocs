@@ -2,7 +2,9 @@ import { useParams, useSearchParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { apiFetch } from "@/api/client"
 import {
+  useUserAlbumsForYouList,
   useUserLikesList,
+  useUserMixesList,
   useUserPlaylistsList,
   useUserTopList,
   useUserTopTracksList,
@@ -28,7 +30,9 @@ import { usePlayerStore } from "@/store/playerStore"
 
 // Full lists behind the profile's horizontal shelves (docs/social.md
 // «Полные списки»): `/u/:username/top/:kind?period=`, `/u/:username/likes/:kind`
-// and `/u/:username/playlists`. The username is the subtitle. Top tracks are
+// and `/u/:username/playlists`, plus the personal recommendations
+// `/u/:username/mixes` and `/u/:username/albums-for-you` (their titles name the
+// user). The username is the subtitle. Top tracks are
 // track rows with their listens, like the profile's top tracks list.
 
 const TOP_TITLES: Record<ProfileTopKind, string> = {
@@ -164,6 +168,40 @@ export function ProfilePlaylistsPage() {
       source={source}
       getKey={(playlist) => `playlist-${playlist.id}`}
       toCard={(playlist) => profilePlaylistCard(playlist, playEndpoint, t)}
+    />
+  )
+}
+
+/** `/u/:username/mixes` — all the user's generated mixes. */
+export function ProfileMixesPage() {
+  const { t, i18n } = useTranslation("user")
+  const { username = "" } = useParams<{ username: string }>()
+  const playShelfItem = usePlayShelfItem()
+  const source = useUserMixesList(username)
+
+  return (
+    <FullListPage<ShelfItem>
+      title={t("sections.mixesFor", { username })}
+      source={source}
+      getKey={shelfItemKey}
+      toCard={(item) => shelfItemToCard(item, playShelfItem, t, i18n.language)}
+    />
+  )
+}
+
+/** `/u/:username/albums-for-you` — all the user's recommended albums. */
+export function ProfileAlbumsForYouPage() {
+  const { t, i18n } = useTranslation("user")
+  const { username = "" } = useParams<{ username: string }>()
+  const playShelfItem = usePlayShelfItem()
+  const source = useUserAlbumsForYouList(username)
+
+  return (
+    <FullListPage<ShelfItem>
+      title={t("sections.albumsFor", { username })}
+      source={source}
+      getKey={shelfItemKey}
+      toCard={(item) => shelfItemToCard(item, playShelfItem, t, i18n.language)}
     />
   )
 }

@@ -1,6 +1,6 @@
 // User profile API (social features Ф3, docs/social.md "API профиля").
 import { apiFetch, apiUrl } from "./client"
-import type { PlaybackEnvelope, PlaylistSummary, ShelfItem, TrackSummary } from "./types"
+import type { GeneratedMixDetail, PlaybackEnvelope, PlaylistSummary, ShelfItem, TrackSummary } from "./types"
 import type { PagedList } from "@/lib/shelves"
 
 export const PROFILE_PERIODS = ["7d", "30d", "90d", "180d", "365d", "all"] as const
@@ -101,6 +101,9 @@ export interface UserPlaylists {
   next_offset: number | null
 }
 
+/** Mixes and Albums For You of a profile: shelf cards, paged. */
+export type UserRecommendationsPage = PagedList<ShelfItem>
+
 /** Profile shelves with a full list (`/u/:username/top/:kind`, `/likes/:kind`). */
 export const PROFILE_TOP_KINDS = ["artists", "releases"] as const
 export type ProfileTopKind = (typeof PROFILE_TOP_KINDS)[number]
@@ -165,6 +168,36 @@ export function fetchUserLikesOfKind(
   params: { limit: number; offset: number },
 ): Promise<UserLikesPage> {
   return apiFetch(apiUrl(userPath(username, `likes/${kind}`), params))
+}
+
+/**
+ * The user's current generated mixes. The cards of another user's mixes open
+ * the read-only page under their profile and play through the profile
+ * endpoints; on one's own profile they are the ordinary ones.
+ */
+export function fetchUserMixes(
+  username: string,
+  params: { limit?: number; offset?: number } = {},
+): Promise<UserRecommendationsPage> {
+  return apiFetch(apiUrl(userPath(username, "mixes"), { limit: params.limit, offset: params.offset }))
+}
+
+/** The user's "Albums For You": their cached recommendations, best first. */
+export function fetchUserAlbumsForYou(
+  username: string,
+  params: { limit?: number; offset?: number } = {},
+): Promise<UserRecommendationsPage> {
+  return apiFetch(apiUrl(userPath(username, "albums-for-you"), { limit: params.limit, offset: params.offset }))
+}
+
+/** One of the user's mixes with its tracks (no scores or generation settings). */
+export function fetchUserMix(username: string, mixId: string): Promise<GeneratedMixDetail> {
+  return apiFetch(userPath(username, `mixes/${encodeURIComponent(mixId)}`))
+}
+
+/** Play the user's mix in the viewer's own playback session. */
+export function playUserMix(username: string, mixId: string): Promise<PlaybackEnvelope> {
+  return apiFetch(userPath(username, `mixes/${encodeURIComponent(mixId)}/play`), { method: "POST" })
 }
 
 /** How the listen-along queue was built (docs/social.md "Слушать вместе"). */

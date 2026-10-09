@@ -15,14 +15,18 @@ vi.mock("./client", () => ({
 }))
 
 import {
+  fetchUserAlbumsForYou,
   fetchUserLikes,
   fetchUserLikesOfKind,
   fetchUserListens,
+  fetchUserMix,
+  fetchUserMixes,
   fetchUserPlaylists,
   fetchUserProfile,
   fetchUserTop,
   fetchUserTopTracks,
   isProfilePeriod,
+  playUserMix,
   setMyAvatar,
   viewerTimeZone,
 } from "./profile"
@@ -72,6 +76,20 @@ describe("profile API", () => {
     expect(apiFetch).toHaveBeenCalledWith("/api/v1/users/bob/likes/artists?limit=48&offset=0")
     await fetchUserPlaylists("bob", { limit: 16 })
     expect(apiFetch).toHaveBeenLastCalledWith("/api/v1/users/bob/playlists?limit=16")
+  })
+
+  it("pages the user's mixes and Albums For You", async () => {
+    await fetchUserMixes("bob", { limit: 16 })
+    expect(apiFetch).toHaveBeenLastCalledWith("/api/v1/users/bob/mixes?limit=16")
+    await fetchUserAlbumsForYou("bob", { limit: 48, offset: 48 })
+    expect(apiFetch).toHaveBeenLastCalledWith("/api/v1/users/bob/albums-for-you?limit=48&offset=48")
+  })
+
+  it("reads and plays another user's mix through their profile, escaping both ids", async () => {
+    await fetchUserMix("a b", "mix/1")
+    expect(apiFetch).toHaveBeenLastCalledWith("/api/v1/users/a%20b/mixes/mix%2F1")
+    await playUserMix("bob", "mix-1")
+    expect(apiFetch).toHaveBeenLastCalledWith("/api/v1/users/bob/mixes/mix-1/play", { method: "POST" })
   })
 
   it("accepts only known periods from the URL", () => {

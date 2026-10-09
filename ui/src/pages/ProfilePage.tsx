@@ -3,7 +3,9 @@ import { useParams, useSearchParams } from "react-router"
 import { useTranslation } from "react-i18next"
 import { Pencil } from "lucide-react"
 import {
+  useUserAlbumsForYou,
   useUserLikes,
+  useUserMixes,
   useUserPlaylists,
   useRefreshListensOnPlayChange,
   useUserProfile,
@@ -97,6 +99,8 @@ export default function ProfilePage() {
   const { data: profile, isLoading, isPlaceholderData, error } = useUserProfile(username, period)
   const { data: likes } = useUserLikes(username)
   const { data: playlists } = useUserPlaylists(username)
+  const { data: mixes } = useUserMixes(username)
+  const { data: albumsForYou } = useUserAlbumsForYou(username)
   const { data: people } = usePeople()
   // The people list includes the viewer, so this covers one's own profile too.
   const nowPlaying = people
@@ -329,6 +333,24 @@ export default function ProfilePage() {
           items={(playlists?.items ?? []).map(playlistCard)}
           total={playlists?.total}
           moreHref={`${profilePath}/playlists`}
+        />
+      )}
+
+      {/* Personal recommendations are public: the same shelves as on the home page. */}
+      {(mixes?.items.length ?? 0) > 0 && (
+        <Shelf
+          title={t("sections.mixesFor", { username: header.username })}
+          items={(mixes?.items ?? []).map((item) => shelfItemToCard(item, playShelfItem, t, locale))}
+          total={mixes?.total}
+          moreHref={`${profilePath}/mixes`}
+        />
+      )}
+      {(albumsForYou?.items.length ?? 0) > 0 && (
+        <Shelf
+          title={t("sections.albumsFor", { username: header.username })}
+          items={(albumsForYou?.items ?? []).map((item) => shelfItemToCard(item, playShelfItem, t, locale))}
+          total={albumsForYou?.total}
+          moreHref={`${profilePath}/albums-for-you`}
         />
       )}
     </div>

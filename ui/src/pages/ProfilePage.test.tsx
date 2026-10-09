@@ -12,6 +12,8 @@ import { formatRelativeTime } from "@/lib/relativeTime"
 const useUserProfile = vi.fn()
 const useUserLikes = vi.fn()
 const useUserPlaylists = vi.fn()
+const useUserMixes = vi.fn()
+const useUserAlbumsForYou = vi.fn()
 const mutate = vi.fn()
 const reset = vi.fn()
 const usePeople = vi.fn()
@@ -22,6 +24,8 @@ vi.mock("@/api/hooks/useProfile", () => ({
   useUserProfile: (...args: unknown[]) => useUserProfile(...args),
   useUserLikes: (...args: unknown[]) => useUserLikes(...args),
   useUserPlaylists: (...args: unknown[]) => useUserPlaylists(...args),
+  useUserMixes: (...args: unknown[]) => useUserMixes(...args),
+  useUserAlbumsForYou: (...args: unknown[]) => useUserAlbumsForYou(...args),
   useSetMyAvatar: () => ({ mutate, reset, isPending: false, isError: false }),
 }))
 
@@ -164,6 +168,8 @@ describe("ProfilePage", () => {
     mockProfile(makeProfile())
     useUserLikes.mockReturnValue({ data: undefined })
     useUserPlaylists.mockReturnValue({ data: undefined })
+    useUserMixes.mockReturnValue({ data: undefined })
+    useUserAlbumsForYou.mockReturnValue({ data: undefined })
     usePeople.mockReturnValue({ data: { items: [] } })
   })
 
@@ -483,6 +489,97 @@ describe("ProfilePage", () => {
     expect(screen.getByTestId("shelf-Releases")).toHaveAttribute("data-total", "30")
     expect(screen.getByTestId("shelf-Playlists")).toHaveAttribute("data-more-href", "/u/alice/playlists")
     expect(screen.getByTestId("shelf-Playlists")).toHaveAttribute("data-total", "20")
+  })
+
+  describe("personal recommendations", () => {
+    const artwork = { url: null, source: "none" as const, placeholder: true }
+    const mixItem = {
+      id: "generated_mix:m1", entity_type: "generated_mix", entity_id: "m1", title: "Night mix",
+      subtitle: "Anchor", artwork, reason: null,
+      action: { type: "open", target: "/u/alice/mixes/m1" },
+      play_action: { type: "post", endpoint: "/api/v1/users/alice/mixes/m1/play" },
+    }
+    const albumItem = {
+      id: "release:7", entity_type: "release", entity_id: 7, title: "Dub LP", subtitle: "Beta",
+      artwork, reason: null, play_action: null,
+    }
+    const page = (item: unknown, total: number) => ({
+      data: { items: [item], total, limit: 16, offset: 0, next_offset: null },
+    })
+
+    it("asks for the viewed user's mixes and albums", () => {
+      renderPage()
+
+      expect(useUserMixes).toHaveBeenCalledWith("alice")
+      expect(useUserAlbumsForYou).toHaveBeenCalledWith("alice")
+    })
+
+    it("shows Mixes for and Albums for <user> shelves linking to their full lists", () => {
+      useUserMixes.mockReturnValue(page(mixItem, 30))
+      useUserAlbumsForYou.mockReturnValue(page(albumItem, 90))
+      renderPage()
+
+      const mixes = screen.getByTestId("shelf-Mixes for alice")
+      const albums = screen.getByTestId("shelf-Albums for alice")
+      expect(mixes).toHaveTextContent("Night mix / Anchor")
+      expect(albums).toHaveTextContent("Dub LP / Beta")
+      expect(mixes).toHaveAttribute("data-more-href", "/u/alice/mixes")
+      expect(mixes).toHaveAttribute("data-total", "30")
+      expect(albums).toHaveAttribute("data-more-href", "/u/alice/albums-for-you")
+      expect(albums).toHaveAttribute("data-total", "90")
+    })
+
+    it("puts them at the very bottom, after the likes and the playlists", () => {
+      useUserLikes.mockReturnValue({
+        data: {
+          tracks: { items: [], total: 0 },
+          releases: { items: [albumItem], total: 1 },
+          artists: { items: [], total: 0 },
+          limit: 16,
+          offset: 0,
+        },
+      })
+      useUserPlaylists.mockReturnValue({
+        data: {
+          items: [{
+            id: 8, title: "Night drive", kind: "manual", description: null, track_count: 3, artwork,
+            source: null, visibility: "public", editable: false, created_at: "", updated_at: "",
+            action: { type: "open", target: "/playlists/8" },
+            play_action: { type: "post", endpoint: "/api/v1/playlists/8/play" },
+          }],
+          total: 1, limit: 16, offset: 0, next_offset: null,
+        },
+      })
+      useUserMixes.mockReturnValue(page(mixItem, 1))
+      useUserAlbumsForYou.mockReturnValue(page(albumItem, 1))
+      renderPage()
+
+      const order = [
+        screen.getByRole("region", { name: "Likes" }),
+        screen.getByTestId("shelf-Playlists"),
+        screen.getByTestId("shelf-Mixes for alice"),
+        screen.getByTestId("shelf-Albums for alice"),
+      ]
+      for (let i = 1; i < order.length; i += 1) {
+        expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      }
+    })
+
+    it("hides a shelf that has nothing", () => {
+      useUserMixes.mockReturnValue(page(mixItem, 1))
+      renderPage()
+
+      expect(screen.getByTestId("shelf-Mixes for alice")).toBeInTheDocument()
+      expect(screen.queryByText("Albums for alice")).not.toBeInTheDocument()
+    })
+
+    it("names the shelves after the profile's own spelling of the login", () => {
+      mockProfile(makeProfile({}, { username: "Alice" }))
+      useUserAlbumsForYou.mockReturnValue(page(albumItem, 1))
+      renderPage("/u/alice")
+
+      expect(screen.getByTestId("shelf-Albums for Alice")).toBeInTheDocument()
+    })
   })
 
   describe("listen along", () => {

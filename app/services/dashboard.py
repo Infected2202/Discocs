@@ -14,7 +14,7 @@ from app.mixes import (
     dashboard_mix_generation_plan,
     ensure_dashboard_mixes,
 )
-from app.serializers.mixes import generated_mix_summary_dict
+from app.serializers.mixes import generated_mix_shelf_item
 from app.serializers.search import (
     _discover_track_shelf_item,
     _release_shelf_item,
@@ -37,27 +37,7 @@ def _dashboard_generated_mixes(
     include_debug: bool = False,
 ) -> tuple[list[dict[str, object]], int]:
     mixes = store.list_generated_mixes(statuses=["active", "saved"], limit=limit, offset=offset)
-    items: list[dict[str, object]] = []
-    for mix in mixes:
-        summary = generated_mix_summary_dict(store, mix)
-        item: dict[str, object] = {
-            "id": f"generated_mix:{mix.id}",
-            "entity_type": "generated_mix",
-            "entity_id": mix.id,
-            "title": summary["title"],
-            "subtitle": summary["subtitle"],
-            "artwork": summary["artwork"],
-            "action": summary["action"],
-            "play_action": summary["play_action"],
-            "badges": [str(summary["track_count"]) + " tracks", str(mix.status)],
-        }
-        if include_debug:
-            item["debug"] = {
-                "anchor": summary["anchor"],
-                "score_summary": summary["score_summary"],
-                "settings": summary["settings"],
-            }
-        items.append(item)
+    items = [generated_mix_shelf_item(store, mix, include_debug=include_debug) for mix in mixes]
     return items, store.count_generated_mixes(statuses=["active", "saved"])
 
 

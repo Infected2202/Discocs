@@ -4,6 +4,7 @@ import { Play, Bookmark } from "lucide-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useMix } from "@/api/hooks/useMix"
 import { playMix, saveMix } from "@/api/mixes"
+import { playUserMix } from "@/api/profile"
 import { useUIStore } from "@/store/uiStore"
 import { Button } from "@/components/ui/button"
 import DownloadMenu from "@/components/common/DownloadMenu"
@@ -39,17 +40,21 @@ function MixPageSkeleton() {
 
 export default function MixPage() {
   const { t, i18n } = useTranslation("mix")
-  const { id } = useParams<{ id: string }>()
+  // `/mixes/:id` is the viewer's own mix; `/u/:username/mixes/:id` is a mix read
+  // on someone's profile: the viewer's own mix endpoints do not see it, and it is
+  // read-only (no save, no download — those are the owner's).
+  const { id, username } = useParams<{ id: string; username?: string }>()
   const mixId = id!
   const queryClient = useQueryClient()
-  const { data: mix, isLoading, error } = useMix(mixId)
+  const { data: mix, isLoading, error } = useMix(mixId, username)
   const playFromEnvelope = usePlayerStore((s) => s.playFromEnvelope)
   const openCreatePlaylist = useUIStore((s) => s.openCreatePlaylist)
 
   // Starts the whole mix. With a trackId, playback begins at that track (row
   // click); without one, at the top (the header Play button).
   function playMixFrom(trackId?: number) {
-    playMix(mixId).then((envelope) => playFromEnvelope(envelope, trackId)).catch(() => {})
+    const started = username ? playUserMix(username, mixId) : playMix(mixId)
+    started.then((envelope) => playFromEnvelope(envelope, trackId)).catch(() => {})
   }
 
   function handleSave() {
@@ -81,6 +86,7 @@ export default function MixPage() {
     .filter(Boolean) as TrackSummary[]
 
   const isSaved = mix.status === "saved"
+  const readOnly = username !== undefined
 
   return (
     <div className="space-y-8 pb-8">
@@ -96,7 +102,7 @@ export default function MixPage() {
             expandable
           />
         }
-        kicker={t("generatedMix")}
+        kicker={username ? t("mixFor", { username }) : t("generatedMix")}
         title={mix.title}
         meta={
           <>
@@ -110,10 +116,10 @@ export default function MixPage() {
               <Play size={14} fill="currentColor" strokeWidth={0} />
               {t("play")}
             </Button>
-            {tracks.length > 0 && (
+            {tracks.length > 0 && !readOnly && (
               <DownloadMenu href={`/api/v1/mixes/${encodeURIComponent(mixId)}/download`} />
             )}
-            {!isSaved && (
+            {!isSaved && !readOnly && (
               <Button
                 size="icon-sm"
                 variant="outline"

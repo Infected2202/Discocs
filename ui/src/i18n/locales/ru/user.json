@@ -37,7 +37,9 @@
     "likedTracks": "Треки",
     "likedReleases": "Релизы",
     "likedArtists": "Артисты",
-    "playlists": "Плейлисты"
+    "playlists": "Плейлисты",
+    "mixesFor": "Миксы для {{username}}",
+    "albumsFor": "Альбомы для {{username}}"
   },
   "lists": {
     "likedTracks": "Лайкнутые треки",

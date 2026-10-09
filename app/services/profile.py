@@ -13,6 +13,9 @@ Rules:
 * private playlists are visible only when viewer == target;
 * never exposed: flow profile, playback sessions/queue, ``user_settings``
   (except the avatar key), Navidrome credentials, preference scores/dislikes.
+  The target's generated mixes and "Albums For You" are shown (the user chose to
+  publish their recommendations) but only as whitelisted shelf fields: no mix
+  anchor/settings/scores, no per-item reasons ("You liked 5 tracks").
 
 Ф3 adds the payload builders behind ``/api/v1/users/{username}/…``
 (app/api/profile.py): statistics for a period in the viewer's timezone, the
@@ -21,14 +24,16 @@ in docs/social.md.
 """
 from __future__ import annotations
 
+import json
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.avatars import ensure_user_avatar
-from app.models import Listen, Playlist, Track
+from app.models import GeneratedMix, GeneratedMixItem, Listen, Playlist, Track
 from app.serializers.entities import track_summary_dict
+from app.serializers.mixes import generated_mix_shelf_item, generated_mix_summary_dict
 from app.serializers.playlists import playlist_summary_dict
 from app.serializers.search import _release_shelf_item, _track_shelf_item, artist_shelf_item
 from app.services.shelves import SHELF_PREVIEW_LIMIT, page_info, page_of
@@ -37,6 +42,10 @@ from app.store import Store
 
 class ProfileNotFoundError(LookupError):
     """No discocs user with that username."""
+
+
+class ProfileMixNotFoundError(ProfileNotFoundError):
+    """The user has no such (visible) generated mix."""
 
 
 class ProfileViewerRequiredError(PermissionError):
@@ -515,3 +524,98 @@ def profile_playlists_payload(
         item["editable"] = viewer_id == target.user_id
         items.append(item)
     return {"items": items, **paging}
+
+
+# ---------------------------------------------------------------------------
+# Personal recommendations: mixes and "Albums For You" (visible to everyone)
+# ---------------------------------------------------------------------------
+
+# The same statuses the dashboard's "Mixes For You" shows.
+VISIBLE_MIX_STATUSES = ["active", "saved"]
+
+
+def profile_mixes_payload(
+    viewer_store: Store, username: str, *, limit: int, offset: int = 0
+) -> dict[str, object]:
+    """``GET /users/{username}/mixes`` — the target's current generated mixes as shelf cards.
+
+    Cards of another user's mixes link to the read-only page under their
+    profile and play through the profile endpoints (the viewer's own mix
+    endpoints only see the viewer's mixes); on one's own profile they are the
+    ordinary ones. Read-only: nothing is generated for the target here.
+    """
+    viewer_id = viewer_user_id(viewer_store)
+    target = resolve_profile_target(viewer_store, username)
+    owner = None if viewer_id == target.user_id else target.username
+    mixes = target.store.list_generated_mixes(statuses=VISIBLE_MIX_STATUSES, limit=limit, offset=offset)
+    return {
+        "items": [generated_mix_shelf_item(target.store, mix, owner=owner) for mix in mixes],
+        **page_info(target.store.count_generated_mixes(statuses=VISIBLE_MIX_STATUSES), limit, offset),
+    }
+
+
+def profile_albums_for_you_payload(
+    viewer_store: Store, username: str, *, model_name: str, limit: int, offset: int = 0
+) -> dict[str, object]:
+    """``GET /users/{username}/albums-for-you`` — the target's cached recommendations.
+
+    Releases are shared by everyone, so the cards work for any viewer. Unlike
+    the dashboard the order is the cache's (best first) and stable, so pages
+    do not repeat or skip. The reasons ("You liked 5 tracks") speak to the
+    owner: others do not get them.
+    """
+    viewer_id = viewer_user_id(viewer_store)
+    target = resolve_profile_target(viewer_store, username)
+    cached = target.store.get_albums_for_you_cache(model_name)
+    items: list[dict[str, object]] = json.loads(cached) if cached else []
+    if viewer_id != target.user_id:
+        items = [{**item, "reason": None} for item in items]
+    page, paging = page_of(items, limit, offset)
+    return {"items": page, **paging}
+
+
+def _visible_mix(viewer_store: Store, username: str, mix_id: str) -> tuple[ProfileTarget, GeneratedMix, str | None]:
+    viewer_id = viewer_user_id(viewer_store)
+    target = resolve_profile_target(viewer_store, username)
+    mix = target.store.get_generated_mix(mix_id)
+    if mix is None or mix.status not in VISIBLE_MIX_STATUSES:
+        raise ProfileMixNotFoundError(f"Mix not found: {mix_id}")
+    return target, mix, (None if viewer_id == target.user_id else target.username)
+
+
+def profile_mix_detail(viewer_store: Store, username: str, mix_id: str) -> dict[str, object]:
+    """``GET /users/{username}/mixes/{id}`` — a mix with its tracks, whitelisted fields only."""
+    target, mix, owner = _visible_mix(viewer_store, username, mix_id)
+    store = target.store
+    rows = store.list_generated_mix_items(mix.id)
+    track_ids = [row.track_id for row in rows]
+    tracks = store.get_tracks(track_ids)
+    artists_by_track = store.artists_for_tracks(track_ids)
+    summary = generated_mix_summary_dict(store, mix, owner)
+    return {
+        **{key: summary[key] for key in ("id", "title", "status", "subtitle", "track_count", "artwork", "created_at")},
+        "items": [
+            {
+                "position": row.position,
+                "track_id": row.track_id,
+                "track": track_summary_dict(store, tracks[row.track_id], artists_by_track.get(row.track_id, []))
+                if row.track_id in tracks
+                else None,
+            }
+            for row in rows
+        ],
+    }
+
+
+def profile_mix_cover_path(viewer_store: Store, username: str, mix_id: str) -> str | None:
+    """Path of the mix's generated cover image, if it has one."""
+    _target, mix, _owner = _visible_mix(viewer_store, username, mix_id)
+    return mix.cover_path or None
+
+
+def profile_mix_for_playback(
+    viewer_store: Store, username: str, mix_id: str
+) -> tuple[GeneratedMix, list[GeneratedMixItem], bool]:
+    """The mix, its items (read on the owner's store) and whether it is the viewer's own."""
+    target, mix, owner = _visible_mix(viewer_store, username, mix_id)
+    return mix, target.store.list_generated_mix_items(mix.id), owner is None

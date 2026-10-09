@@ -27,7 +27,7 @@ from app.api.deps import (
 from app.config import load_runtime_settings, save_runtime_settings
 from app.mix_covers import refresh_playlist_cover
 from app.mixes import dashboard_mix_generation_plan, generate_mixes
-from app.models import InstantMixRequestParams, InstantMixRequestRecord, utc_now
+from app.models import GeneratedMix, GeneratedMixItem, InstantMixRequestParams, InstantMixRequestRecord, utc_now
 from app.recommender import Recommender
 from app.schemas.requests import GeneratedMixSaveRequest, GeneratedMixSettingsRequest, MixGenerateRequest
 from app.schemas.responses import (
@@ -180,13 +180,21 @@ def api_v1_save_mix(
     return generated_mix_summary_dict(store, mix)
 
 
-@router.post("/mixes/{mix_id}/play", response_model=PlaybackSessionEnvelopeResponse)
-def api_v1_play_mix(mix_id: str) -> dict[str, object] | JSONResponse:
-    store, _settings = context()
-    mix = store.get_generated_mix(mix_id)
-    if mix is None:
-        return api_error(404, "not_found", _GENERATED_MIX_NOT_FOUND)
-    track_ids = [item.track_id for item in store.list_generated_mix_items(mix_id)]
+def start_generated_mix_playback(
+    store,
+    mix: GeneratedMix,
+    mix_items: list[GeneratedMixItem],
+    *,
+    own: bool = True,
+) -> dict[str, object] | JSONResponse:
+    """A playback session of ``store``'s user over ``mix_items`` of ``mix``.
+
+    ``own=False``: the mix is another user's (read on their profile; the caller
+    lists its items on the owner's store). The session then neither points at
+    the mix id — the viewer's store cannot see it, so autoplay falls back to the
+    queue — nor carries the owner's scores and reasons.
+    """
+    track_ids = [item.track_id for item in mix_items]
     if not track_ids:
         return api_error(409, "empty_mix", "Generated mix has no playable tracks")
     session, _queue = store.create_playback_session(
@@ -195,7 +203,7 @@ def api_v1_play_mix(mix_id: str) -> dict[str, object] | JSONResponse:
         mode="linear",
         track_ids=track_ids,
         autoplay_enabled=True,
-        settings=playback_session_settings({"source_mix_id": mix.id}),
+        settings=playback_session_settings({"source_mix_id": mix.id} if own else {}),
     )
     items = [
         {
@@ -203,21 +211,30 @@ def api_v1_play_mix(mix_id: str) -> dict[str, object] | JSONResponse:
             "origin": "generated_mix",
             "source_type": "generated_mix",
             "reason": "Generated mix item",
-            "score": item.score,
+            "score": item.score if own else None,
             "debug": {
                 "mix_id": mix.id,
                 "position": item.position,
-                "score_breakdown": _json_object(item.score_breakdown_json),
-                "reason": _json_object(item.reason_json),
+                "score_breakdown": _json_object(item.score_breakdown_json) if own else {},
+                "reason": _json_object(item.reason_json) if own else {},
             },
         }
-        for item in store.list_generated_mix_items(mix_id)
+        for item in mix_items
     ]
     store.replace_queue_items(session.id, items)
     refreshed = store.get_playback_session(session.id)
     if refreshed is None:
         return api_error(500, "internal_error", "Playback session disappeared after creation")
     return playback_session_response(store, refreshed)
+
+
+@router.post("/mixes/{mix_id}/play", response_model=PlaybackSessionEnvelopeResponse)
+def api_v1_play_mix(mix_id: str) -> dict[str, object] | JSONResponse:
+    store, _settings = context()
+    mix = store.get_generated_mix(mix_id)
+    if mix is None:
+        return api_error(404, "not_found", _GENERATED_MIX_NOT_FOUND)
+    return start_generated_mix_playback(store, mix, store.list_generated_mix_items(mix_id))
 
 
 # ---------------------------------------------------------------------------

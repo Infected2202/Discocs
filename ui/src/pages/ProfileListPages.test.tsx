@@ -1,19 +1,29 @@
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { ProfileLikesPage, ProfilePlaylistsPage, ProfileTopPage } from "./ProfileListPages"
+import {
+  ProfileAlbumsForYouPage,
+  ProfileLikesPage,
+  ProfileMixesPage,
+  ProfilePlaylistsPage,
+  ProfileTopPage,
+} from "./ProfileListPages"
 import type { MediaCardProps } from "@/components/media/MediaCard"
 
 const useUserTopList = vi.fn()
 const useUserLikesList = vi.fn()
 const useUserPlaylistsList = vi.fn()
 const useUserTopTracksList = vi.fn()
+const useUserMixesList = vi.fn()
+const useUserAlbumsForYouList = vi.fn()
 
 vi.mock("@/api/hooks/useProfile", () => ({
   useUserTopList: (...args: unknown[]) => useUserTopList(...args),
   useUserTopTracksList: (...args: unknown[]) => useUserTopTracksList(...args),
   useUserLikesList: (...args: unknown[]) => useUserLikesList(...args),
   useUserPlaylistsList: (...args: unknown[]) => useUserPlaylistsList(...args),
+  useUserMixesList: (...args: unknown[]) => useUserMixesList(...args),
+  useUserAlbumsForYouList: (...args: unknown[]) => useUserAlbumsForYouList(...args),
 }))
 
 vi.mock("@/store/playerStore", () => ({
@@ -73,6 +83,8 @@ function renderAt(path: string) {
         <Route path="/u/:username/top/:kind" element={<ProfileTopPage />} />
         <Route path="/u/:username/likes/:kind" element={<ProfileLikesPage />} />
         <Route path="/u/:username/playlists" element={<ProfilePlaylistsPage />} />
+        <Route path="/u/:username/mixes" element={<ProfileMixesPage />} />
+        <Route path="/u/:username/albums-for-you" element={<ProfileAlbumsForYouPage />} />
       </Routes>
     </MemoryRouter>,
   )
@@ -81,6 +93,8 @@ function renderAt(path: string) {
 describe("profile full lists", () => {
   beforeEach(() => {
     useUserTopTracksList.mockReset()
+    useUserMixesList.mockReset()
+    useUserAlbumsForYouList.mockReset()
     useUserTopList.mockReset().mockReturnValue(page([{
       id: "release:4", entity_type: "release", entity_id: 4, title: "LP", subtitle: "Beta",
       artwork, reason: null, play_action: null, listens: 3,
@@ -95,6 +109,36 @@ describe("profile full lists", () => {
       action: { type: "open", target: "/playlists/8" },
       play_action: { type: "post", endpoint: "/api/v1/playlists/8/play" },
     }]))
+  })
+
+  it("lists the user's mixes, titled with their login", () => {
+    useUserMixesList.mockReturnValue(page([{
+      id: "generated_mix:m1", entity_type: "generated_mix", entity_id: "m1", title: "Night mix",
+      subtitle: "Anchor", artwork, reason: null,
+      action: { type: "open", target: "/u/alice/mixes/m1" },
+      play_action: { type: "post", endpoint: "/api/v1/users/alice/mixes/m1/play" },
+    }]))
+
+    renderAt("/u/alice/mixes")
+
+    expect(useUserMixesList).toHaveBeenCalledWith("alice")
+    expect(useUserAlbumsForYouList).not.toHaveBeenCalled()
+    expect(screen.getByRole("heading", { name: "Mixes for alice" })).toBeInTheDocument()
+    expect(screen.getByTestId("card")).toHaveTextContent("Night mix / Anchor")
+  })
+
+  it("lists the user's recommended albums, titled with their login", () => {
+    useUserAlbumsForYouList.mockReturnValue(page([{
+      id: "release:7", entity_type: "release", entity_id: 7, title: "Dub LP", subtitle: "Beta",
+      artwork, reason: null, play_action: null,
+    }]))
+
+    renderAt("/u/alice/albums-for-you")
+
+    expect(useUserAlbumsForYouList).toHaveBeenCalledWith("alice")
+    expect(useUserMixesList).not.toHaveBeenCalled()
+    expect(screen.getByRole("heading", { name: "Albums for alice" })).toBeInTheDocument()
+    expect(screen.getByTestId("card")).toHaveTextContent("Dub LP / Beta")
   })
 
   it("lists a top for the period from the URL, titled like its shelf", () => {

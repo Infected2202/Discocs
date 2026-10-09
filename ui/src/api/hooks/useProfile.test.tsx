@@ -7,9 +7,13 @@ import {
   PROFILE_QUERY_KEY,
   useRefreshListensOnPlayChange,
   useSetMyAvatar,
+  useUserAlbumsForYou,
+  useUserAlbumsForYouList,
   useUserLikes,
   useUserLikesList,
   useUserListens,
+  useUserMixes,
+  useUserMixesList,
   useUserPlaylists,
   useUserProfile,
   useUserTopList,
@@ -25,6 +29,8 @@ const fetchUserTopTracks = vi.fn()
 const fetchUserLikes = vi.fn()
 const fetchUserLikesOfKind = vi.fn()
 const fetchUserPlaylists = vi.fn()
+const fetchUserMixes = vi.fn()
+const fetchUserAlbumsForYou = vi.fn()
 const setMyAvatar = vi.fn()
 
 vi.mock("../profile", async (importOriginal) => {
@@ -38,6 +44,8 @@ vi.mock("../profile", async (importOriginal) => {
     fetchUserLikes: (...args: unknown[]) => fetchUserLikes(...args),
     fetchUserLikesOfKind: (...args: unknown[]) => fetchUserLikesOfKind(...args),
     fetchUserPlaylists: (...args: unknown[]) => fetchUserPlaylists(...args),
+    fetchUserMixes: (...args: unknown[]) => fetchUserMixes(...args),
+    fetchUserAlbumsForYou: (...args: unknown[]) => fetchUserAlbumsForYou(...args),
     setMyAvatar: (...args: unknown[]) => setMyAvatar(...args),
     viewerTimeZone: () => "Europe/Moscow",
   }
@@ -171,6 +179,47 @@ describe("full lists of profile shelves", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(fetchUserLikesOfKind).toHaveBeenCalledWith("bob", "releases", { limit: 48, offset: 0 })
     expect(result.current.hasNextPage).toBe(false)
+  })
+})
+
+describe("personal recommendations of a profile", () => {
+  beforeEach(() => {
+    fetchUserMixes.mockReset().mockResolvedValue({ items: [], total: 40, next_offset: 16 })
+    fetchUserAlbumsForYou.mockReset().mockResolvedValue({ items: [], total: 40, next_offset: 16 })
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  })
+
+  it("preview mixes and albums with the common shelf size", async () => {
+    renderHook(() => useUserMixes("bob"), { wrapper })
+    renderHook(() => useUserAlbumsForYou("bob"), { wrapper })
+
+    await waitFor(() => expect(fetchUserAlbumsForYou).toHaveBeenCalled())
+    expect(fetchUserMixes).toHaveBeenCalledWith("bob", { limit: 16 })
+    expect(fetchUserAlbumsForYou).toHaveBeenCalledWith("bob", { limit: 16 })
+  })
+
+  it("keeps the two shelves and each user's cache apart", async () => {
+    renderHook(() => useUserMixes("Bob"), { wrapper })
+    renderHook(() => useUserAlbumsForYou("Bob"), { wrapper })
+    renderHook(() => useUserMixes("carol"), { wrapper })
+
+    await waitFor(() => expect(fetchUserMixes).toHaveBeenCalledTimes(2))
+    expect(fetchUserAlbumsForYou).toHaveBeenCalledTimes(1)
+    // The username is case-insensitive in the key, like the other profile queries.
+    const keys = queryClient.getQueryCache().getAll().map((query) => query.queryKey)
+    expect(keys).toContainEqual([...PROFILE_QUERY_KEY, "bob", "mixes", 16])
+    expect(keys).toContainEqual([...PROFILE_QUERY_KEY, "bob", "albums-for-you", 16])
+  })
+
+  it("pages the full lists", async () => {
+    const mixes = renderHook(() => useUserMixesList("bob"), { wrapper })
+    const albums = renderHook(() => useUserAlbumsForYouList("bob"), { wrapper })
+
+    await waitFor(() => expect(mixes.result.current.isSuccess).toBe(true))
+    await waitFor(() => expect(albums.result.current.isSuccess).toBe(true))
+    expect(fetchUserMixes).toHaveBeenCalledWith("bob", { limit: 48, offset: 0 })
+    expect(fetchUserAlbumsForYou).toHaveBeenCalledWith("bob", { limit: 48, offset: 0 })
+    expect(mixes.result.current.hasNextPage).toBe(true)
   })
 })
 
