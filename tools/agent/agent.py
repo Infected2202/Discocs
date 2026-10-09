@@ -236,7 +236,7 @@ class DescribeJob:
                 log.exception("describe %s failed", label["name"])
                 status = "failed"
                 body = {"job_id": job_id, "label_id": label_id, "status": status, "note": repr(exc)[:2000]}
-            self.api.result(body)
+            self._call(self.api.result, body)  # итог — минуты работы модели, не терять
             with self.lock:
                 self.counts[status] += 1
                 self.current.pop(label_id, None)
@@ -258,12 +258,13 @@ class DescribeJob:
                 if time.time() - last_report >= PROGRESS_EVERY:
                     status = "paused" if (control == "pause" or busy) and not running else "running"
                     paused_by = "gpu" if busy else ("admin" if control == "pause" else "")
-                    control = self.api.progress(job_id, status=status, progress=self._progress(paused_by),
-                                                message="GPU is busy" if paused_by == "gpu" else None)
+                    control = self._call(self.api.progress, job_id, status=status,
+                                         progress=self._progress(paused_by),
+                                         message="GPU is busy" if paused_by == "gpu" else None)
                     last_report = time.time()
                 if control == "cancel":
                     if not running:
-                        self.api.progress(job_id, status="cancelled", progress=self._progress(""))
+                        self._call(self.api.progress, job_id, status="cancelled", progress=self._progress(""))
                         return
                 elif control == "pause" or busy:
                     # Пауза: новых лейблов не брать; когда разобранные доделаны — освободить видеокарту.
@@ -271,7 +272,8 @@ class DescribeJob:
                         self.model.unload()
                 elif not exhausted and len(running) < int(self.config["jobs"]):
                     self.model.load()
-                    labels = self.api.next_labels(job_id, int(self.config["jobs"]) - len(running), list(running))
+                    labels = self._call(self.api.next_labels, job_id, int(self.config["jobs"]) - len(running),
+                                        list(running))
                     if not labels and not running:
                         exhausted = True
                     for label in labels:
@@ -280,14 +282,32 @@ class DescribeJob:
                         running[int(label["id"])] = pool.submit(describe, label)
                 if exhausted and not running:
                     # Ещё раз: перезапущенный воркер мог оставить недоделанные — сервер вернёт их.
-                    if not self.api.next_labels(job_id, 1, []):
-                        self.api.progress(job_id, status="done", progress=self._progress(""))
+                    if not self._call(self.api.next_labels, job_id, 1, []):
+                        self._call(self.api.progress, job_id, status="done", progress=self._progress(""))
                         return
                     exhausted = False
                 time.sleep(1)
         finally:
             pool.shutdown(wait=True)
             self.model.unload()
+
+    def _call(self, fn, *args, **kwargs):
+        """discocs перезапускается при каждом деплое — секунды без связи. Ждём и повторяем: задачу, модель
+        и начатые лейблы не бросаем (иначе — выгрузка, загрузка модели заново и потерянные минуты работы)."""
+        warned = False
+        while True:
+            try:
+                return fn(*args, **kwargs)
+            except requests.HTTPError as exc:
+                if exc.response is not None and exc.response.status_code < 500:
+                    raise  # не пустили (401) или ошибка запроса — повтор не поможет
+                error: Exception = exc
+            except (requests.ConnectionError, requests.Timeout) as exc:
+                error = exc
+            if not warned:
+                log.warning("discocs unreachable, retrying: %s", error)
+                warned = True
+            time.sleep(10)
 
     def _progress(self, paused_by: str) -> dict:
         with self.lock:
