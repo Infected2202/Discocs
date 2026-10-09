@@ -43,7 +43,7 @@ push в Gitea ──webhook──> Jenkins
 (`GIT_PREVIOUS_SUCCESSFUL_COMMIT`) или `git diff` не смог — собирается как обычно.
 `tools/` также нет в контексте образов (`.dockerignore`), в `sonar.sources` и в `testpaths`.
 
-Все параллельные ветки делят один воркспейс агента (`agent any` наследуется, отдельных
+Все параллельные ветки делят один воркспейс агента (агент пайплайна наследуется, отдельных
 `node` нет) — поэтому `coverage.xml`/`lcov.info`, извлечённые в ветках `Checks`, видны
 сканеру в следующей стадии ровно как раньше. `failFast` нигде не включён: упавшая
 ветка не обрывает соседние, иначе почти доехавшие junit/coverage снова терялись бы.
@@ -91,10 +91,28 @@ push в Gitea ──webhook──> Jenkins
 прямо на хосте (`192.168.1.41`). Дальше CI его не трогает — правишь на месте, когда нужно
 поменять переменную (профиль бота, токен, URL Navidrome и т.п.), без пересборки/редеплоя.
 
-### 2. Агент Jenkins (контейнер)
+### 2. Агенты Jenkins
 
-- смонтирован `/var/run/docker.sock` (нужен только для сборки/пуша образов);
-- внутри есть `docker` CLI;
+Пайплайн выбирает ноду до старта (top-level код над `pipeline {}` в `Jenkinsfile`):
+`pc`, если она онлайн (`nodesByLabel` из плагина **Pipeline Utility Steps** — без
+него `Jenkinsfile` не запустится), иначе `jenkins-agent-01`. Обычный `label 'a || b'` не
+годится: балансировщик Jenkins выбирает ноду по хешу имени джобы, то есть всегда одну и
+ту же из двух, без учёта того, какая мощнее. Нода видна в логе `Prepare` (`node=...`).
+
+| нода | где | executors | заметки |
+|---|---|---|---|
+| `pc` | WSL-дистрибутив `jenkins-agent` на рабочем ПК (16 потоков, 64 ГБ), свой Docker Engine | 3 | основная; Usage — только джобы с явной меткой; ставится [tools/jenkins-agent](../tools/jenkins-agent/README.md) |
+| `jenkins-agent-01` | LXC на `192.168.1.41`, `limits.memory: 6GB` | 6 | запасная, пока ПК offline (не вошли в Windows после перезагрузки и т.п.) |
+
+У ПК в дистрибутиве отключены диски Windows и interop (`/etc/wsl.conf`): джоба видит
+только свой dockerd, а не `C:\` и не Docker Desktop. Потолки RAM тестов
+(`TEST_MEM_*`) применяются только на LXC, см. «Память агента» ниже.
+
+Требования к любому агенту:
+
+- Docker-демон, доступный агенту (на LXC — `/var/run/docker.sock`, на ПК — местный dockerd);
+  нужен только для сборки/пуша образов;
+- `docker` CLI + buildx, `sonar-scanner`, `ssh`/`scp`;
 - деплой не требует docker socket в агенте — идёт по SSH на `TARGET_SERVER`
   (см. env-блок `Jenkinsfile`: `TARGET_SERVER`, `TARGET_USER`, `TARGET_PORT`, `TARGET_DIR`);
   на целевом хосте должен быть настроен `insecure-registries` для `192.168.1.41:5000` (см. выше)
@@ -296,10 +314,11 @@ Java-агент живут в одной cgroup на 6 ГБ, а `nproc` внут
 Сейчас:
 
 - backend — `pytest -n 4`, фронт — `vitest --maxWorkers=4`;
-- каждый тестовый контейнер создаётся с потолком RAM из `environment` в
-  `Jenkinsfile` (`TEST_MEM_BACKEND` / `TEST_MEM_UI` по 1200m, `TEST_MEM_BOT`
-  600m, `--memory-swap` вдвое). Сумма 3 ГБ оставляет ~3 ГБ dockerd и агенту; при
-  нехватке OOM срабатывает внутри тестового контейнера, а не убивает агента.
+- на LXC каждый тестовый контейнер создаётся с потолком RAM (`testMem` над
+  `pipeline {}` в `Jenkinsfile` → `TEST_MEM_BACKEND` / `TEST_MEM_UI` по 1200m,
+  `TEST_MEM_BOT` 600m, `--memory-swap` вдвое). Сумма 3 ГБ оставляет ~3 ГБ dockerd и
+  агенту; при нехватке OOM срабатывает внутри тестового контейнера, а не убивает агента.
+  На `pc` переменные пустые — потолков нет.
 
 Диагностика, если снова появятся «странные» падения: на хосте
 `journalctl -k | grep -i oom` (ищи `oom_memcg=/lxc.payload.jenkins-agent-01`) и
@@ -345,7 +364,7 @@ lock-файла.
 ## Очистка образов на агенте
 
 `post/always` в `Jenkinsfile` гоняет `docker image prune -a -f --filter "until=48h"`.
-Агент — постоянный LXC-контейнер, а не эфемерный воркер: без этого шага тестовые/scan-образы
+Оба агента постоянные (LXC и WSL на ПК), а не эфемерные воркеры: без этого шага тестовые/scan-образы
 (`discocs-test`, `discocs-bot-test`, `discocs-ui-test`, `discocs-trivy-fs`) и прод-теги
 по `GIT_SHA` копились бы на диске бесконечно (раньше чистка была только на
 `TARGET_SERVER`, агента не касалась). `until=48h` — компромисс: свежие билды

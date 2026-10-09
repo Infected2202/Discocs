@@ -1,0 +1,6 @@
+# В git — только код. secret (секрет ноды из Jenkins) — локальный.
+*
+!.gitignore
+!README.md
+!setup.ps1
+!provision.sh

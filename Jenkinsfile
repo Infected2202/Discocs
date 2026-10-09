@@ -14,10 +14,11 @@
 // пайплайн пересобрал бы frontend с пустым deploy/nginx/downloads/ (не в
 // гите) и тихо стёр бы опубликованный APK/OTA с прода.
 //
-// Требования к Jenkins-агенту (контейнер):
-//   - смонтирован /var/run/docker.sock (сборка/пуш идут через хостовый демон)
-//   - установлены docker CLI
-//   - на хосте в /etc/docker/daemon.json уже прописан insecure-registries: ["192.168.1.41:5000"]
+// Агенты (см. «Агенты» в docs/cicd.md):
+//   - pc — WSL-дистрибутив на рабочем ПК (tools/jenkins-agent/), основной;
+//   - jenkins-agent-01 — LXC на 192.168.1.41, запасной, пока ПК offline.
+// Требования к агенту: docker CLI + демон с insecure-registries ["192.168.1.41:5000"]
+// (сборка — docker-outside-of-docker, воркспейс демону не виден), sonar-scanner, ssh/scp.
 //
 // Credentials в Jenkins:
 //   - tank_nexus_user_pass (Username/Password)         — логин в Nexus для push (общий для всех джоб)
@@ -27,8 +28,27 @@
 // .env на TARGET_SERVER (TARGET_DIR/.env) — заводится и правится вручную на хосте,
 // CI его не трогает и не деплоит (см. deploy/prod/.env.example для списка переменных).
 
+// Нода выбирается до пайплайна: ПК, если он онлайн, иначе LXC. Встроенного «предпочитать
+// ноду» в Jenkins нет — при label 'a || b' балансировщик берёт ноду по хешу имени джобы,
+// то есть для discocs всегда одну и ту же из двух, а не ту, что мощнее. nodesByLabel
+// (плагин Pipeline Utility Steps) по умолчанию возвращает только онлайн-ноды.
+def PC_NODE = 'pc'
+def onPc = !nodesByLabel(label: PC_NODE).isEmpty()
+def buildNode = onPc ? PC_NODE : 'jenkins-agent-01'
+// Потолки RAM тестовых контейнеров нужны только в LXC: все они живут в cgroup
+// агента (limits.memory 6GB, до 2026-10 было 4GB) вместе с dockerd и самим агентом,
+// и без потолков пик тестов упирался в лимит — OOM-killer убивал dockerd/java
+// агента, а не тесты (билды #400–#402). Сумма 3 ГБ оставляет запас агенту;
+// --memory-swap вдвое — под пик тест уходит в своп, а не в OOM. На ПК (64 ГБ)
+// тесты идут без потолков.
+def testMem = onPc ? [backend: '', ui: '', bot: ''] : [
+  backend: '--memory=1200m --memory-swap=2400m',
+  ui:      '--memory=1200m --memory-swap=2400m',
+  bot:     '--memory=600m --memory-swap=1200m',
+]
+
 pipeline {
-  agent any
+  agent { label "${buildNode}" }
 
   options {
     timestamps()
@@ -43,14 +63,10 @@ pipeline {
     TARGET_USER   = 'infected2202'
     TARGET_PORT   = '2252'
     TARGET_DIR    = '/home/infected2202/docker/discocs'
-    // Потолок RAM для трёх параллельных тестовых контейнеров. Все они живут в
-    // cgroup LXC-агента (limits.memory 6GB, до 2026-10 было 4GB) вместе с dockerd
-    // и самим агентом: без потолков пик тестов упирался в лимит, и OOM-killer убивал
-    // dockerd/java агента, а не тесты (билды #400–#402). Сумма 3 ГБ оставляет запас агенту;
-    // --memory-swap вдвое — под пик тест уходит в своп, а не в OOM.
-    TEST_MEM_BACKEND = '--memory=1200m --memory-swap=2400m'
-    TEST_MEM_UI      = '--memory=1200m --memory-swap=2400m'
-    TEST_MEM_BOT     = '--memory=600m --memory-swap=1200m'
+    // Потолки RAM тестовых контейнеров — зависят от ноды, см. testMem над pipeline.
+    TEST_MEM_BACKEND = "${testMem.backend}"
+    TEST_MEM_UI      = "${testMem.ui}"
+    TEST_MEM_BOT     = "${testMem.bot}"
     // Python + TS + Docker analysis can exceed the scanner JRE default heap.
     SONAR_SCANNER_JAVA_OPTS = '-Xmx2g'
     // Публичный домен приложения — не секрет (виден в браузере), но не
@@ -86,7 +102,7 @@ pipeline {
             env.IS_MAIN = 'false'
             currentBuild.description = 'только tools/ — сборка и деплой пропущены'
           }
-          echo "commit=${env.GIT_SHA} branch=${env.BRANCH_NAME ?: 'n/a'} deploy=${env.IS_MAIN} only_tools=${env.ONLY_TOOLS} security_refresh=${env.SECURITY_REFRESH}"
+          echo "node=${env.NODE_NAME} commit=${env.GIT_SHA} branch=${env.BRANCH_NAME ?: 'n/a'} deploy=${env.IS_MAIN} only_tools=${env.ONLY_TOOLS} security_refresh=${env.SECURITY_REFRESH}"
         }
       }
     }
@@ -419,7 +435,7 @@ pipeline {
       echo 'Сборка упала — прод не тронут'
     }
     always {
-      // Агент — постоянный LXC, не эфемерный воркер: без чистки образы
+      // Агенты постоянные (LXC и WSL на ПК), не эфемерные воркеры: без чистки образы
       // (тестовые, security-scan, прод-теги по GIT_SHA) копятся бесконечно
       // и рано или поздно забьют диск. until=48h — оставляет свежие билды
       // под рукой для дебага, но не даёт расти без ограничения.
