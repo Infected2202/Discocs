@@ -162,9 +162,13 @@ class ToolsStoreMixin:
     ) -> str | None:
         """Прогресс от воркера; ответ — чего хочет админка (run/pause/cancel), None — задачи нет."""
         with self.connect() as conn:  # type: ignore[attr-defined]
-            row = conn.execute("SELECT control, status FROM tool_jobs WHERE id = ?", (job_id,)).fetchone()
+            row = conn.execute("SELECT control, status, worker_id FROM tool_jobs WHERE id = ?", (job_id,)).fetchone()
             if row is None:
                 return None
+            # Занятый задачей воркер не опрашивает — на связи он по прогрессу; иначе через 90 с работы
+            # админка сочла бы его пропавшим, а отмена закрыла бы задачу из-под живого воркера.
+            if row["worker_id"]:
+                conn.execute("UPDATE tool_workers SET seen_at = ? WHERE id = ?", (utc_now(), row["worker_id"]))
             if row["status"] in TOOL_JOB_FINISHED:
                 return "cancel" if row["status"] == "cancelled" else row["control"]
             conn.execute(

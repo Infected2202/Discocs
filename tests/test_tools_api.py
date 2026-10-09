@@ -296,6 +296,24 @@ def test_cancel_closes_a_job_whose_worker_is_gone_and_a_restarted_worker_drops_i
     assert store.tool_job(second)["status"] == "cancelled"
 
 
+def test_a_worker_busy_with_a_job_stays_online_through_its_progress(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    _label(store, tmp_path, "One", 1)
+    client = TestClient(app)
+    job_id = client.post("/api/v1/tools/jobs", json={"tool": "describe", "action": "run"}).json()["job"]["id"]
+    client.post("/api/v1/tools/workers/pc-1/poll", json={"tools": ["describe"], "wait": 0})
+    # Задача идёт дольше 90 с: воркер не опрашивает, а шлёт прогресс.
+    with store.connect() as conn:
+        conn.execute("UPDATE tool_workers SET seen_at = '2020-01-01T00:00:00+00:00'")
+
+    client.post(f"/api/v1/tools/jobs/{job_id}/progress", json={"status": "running"})
+
+    assert client.get("/api/v1/tools/describe").json()["job"]["worker_online"] is True
+    # Отмена живому воркеру — просьба: задачу он закроет сам, доделав начатое.
+    client.post(f"/api/v1/tools/jobs/{job_id}/control", json={"control": "cancel"})
+    assert store.tool_job(job_id)["status"] == "running"
+
+
 def test_cancel_closes_a_running_job_that_no_worker_ever_took(tmp_path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     _label(store, tmp_path, "One", 1)
