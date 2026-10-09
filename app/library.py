@@ -163,13 +163,16 @@ _REMIX_BY_KEYWORDS = {
     "mixed": True,
 }
 # Описание версии между именем и ключевым словом: «Solomun Extended Remix».
+# Club/Dub/Main сюда не входят — ими кончаются имена («Locked Club Remix»);
+# «Solomun Club Remix» сводит к Solomun правило известного артиста в store.
 _VERSION_QUALIFIERS = {
-    "extended", "original", "radio", "club", "vocal", "instrumental", "dub", "vip",
-    "short", "long", "full", "special", "official", "main", "alternative", "alternate",
+    "extended", "original", "radio", "vocal", "instrumental", "vip",
+    "short", "long", "full", "special", "official", "alternative", "alternate",
     "remix", "mix", "edit", "version", "rework",
 }
-# Слова, из которых не бывает имени ремиксера: «(2008 Remix)», «(Sped Up Version)».
+# Слова, из которых не бывает имени ремиксера: «(2008 Remix)», «(Club Mix)», «(Sped Up Version)».
 _NOISE_WORDS = _VERSION_QUALIFIERS | {
+    "club", "dub", "main",
     "the", "a", "an", "my", "own", "new", "sped", "up", "slowed", "reverb", "live",
     "acoustic", "mono", "stereo", "remaster", "remastered", "unedited", "censored",
     "clean", "explicit", "bonus", "album", "single", "demo", "unreleased", "acapella",

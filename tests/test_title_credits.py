@@ -185,9 +185,11 @@ def test_known_artist_followed_by_a_version_name_credits_the_artist(tmp_path):
 
     remix = _add(store, "03", artist="Main", title="Tune (Hot Since 82 Future Remix)")
     mix = _add(store, "04", artist="Main", title="Tune 2 (Carl Craig Late Island Mix)")
+    club = _add(store, "06", artist="Main", title="Tune 4 (Carl Craig Club Remix)")
     unknown = _add(store, "05", artist="Main", title="Tune 3 (Bombay Dub Orchestra Remix)")
 
     assert _roles(store, remix)[1] == ("Hot Since 82", "remixer", "Hot Since 82")
     assert _roles(store, mix)[1] == ("Carl Craig", "remixer", "Carl Craig")
+    assert _roles(store, club)[1] == ("Carl Craig", "remixer", "Carl Craig")
     # Ни одно начало имени не известно — новый артист целиком.
     assert _roles(store, unknown)[1] == ("Bombay Dub Orchestra", "remixer", "Bombay Dub Orchestra")
