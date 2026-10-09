@@ -5,7 +5,7 @@ Deezer склеивает тёзок в одного артиста (чужие 
 Здесь же — общие правила сравнения названий релизов (title_keys), их использует и beatport.py.
 
 Авторизация — ключ/секрет приложения из config.json (discogs_key / discogs_secret):
-60 запросов в минуту. Ответы кэшируются на диске (cache/discogs.json)."""
+60 запросов в минуту. Ответы кэшируются в cache/cache.db (kvcache)."""
 from __future__ import annotations
 
 import json
@@ -17,9 +17,10 @@ from pathlib import Path
 import requests
 
 import build
+import kvcache
 
 ROOT = Path(__file__).parent
-CACHE = ROOT / "cache" / "discogs.json"
+CACHE = ROOT / "cache" / "discogs.json"  # прежний кэш — переносится в cache.db
 ARTISTS = ROOT / "cache" / "discogs_artists.json"  # Deezer-артист → выбранный Discogs-артист
 TTL = 7 * 86400
 API = "https://api.discogs.com"
@@ -43,8 +44,7 @@ def _write(path: Path, data) -> None:
     tmp.replace(path)
 
 
-_cache: dict = _read(CACHE, {})
-_dirty = [0]
+_cache = kvcache.Store("discogs", CACHE)
 _session = requests.Session()
 
 
@@ -58,10 +58,9 @@ def _auth() -> dict:
 
 def get(path: str, **params) -> dict:
     url = f"{API}{path}?" + "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-    with _io:
-        hit = _cache.get(url)
-    if hit and time.time() - hit["ts"] < TTL:
-        return hit["data"]
+    hit = _cache.get(url)
+    if hit and time.time() - hit[0] < TTL:
+        return hit[1]
     with _lock:
         for attempt in range(6):
             r = _session.get(f"{API}{path}", params=params, headers=_auth(), timeout=30)
@@ -76,20 +75,8 @@ def get(path: str, **params) -> dict:
         else:
             r.raise_for_status()
             data = r.json()
-    with _io:
-        _cache[url] = {"ts": time.time(), "data": data}
-        _dirty[0] += 1
-        if _dirty[0] >= 10:
-            _write(CACHE, _cache)
-            _dirty[0] = 0
+    _cache.put(url, data)
     return data
-
-
-def flush() -> None:
-    with _io:
-        if _dirty[0]:
-            _write(CACHE, _cache)
-            _dirty[0] = 0
 
 
 def paged(path: str, key: str) -> list[dict]:
@@ -216,5 +203,4 @@ def match_artist(deezer_id, name: str, titles: list[str]) -> dict | None:
         data = _read(ARTISTS, {})
         data[str(deezer_id)] = {"ts": time.time(), "artist": artist}
         _write(ARTISTS, data)
-    flush()
     return artist

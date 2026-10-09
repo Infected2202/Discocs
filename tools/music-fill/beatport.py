@@ -1,7 +1,7 @@
 """Beatport API v4: полные каталоги лейблов и артистов электроники, у каждого релиза — UPC.
 
 Вход — своим аккаунтом (python beatport_login.py), в config.json лежат только токены;
-access продлевается здесь refresh-токеном. Ответы кэшируются в cache/beatport.json.
+access продлевается здесь refresh-токеном. Ответы кэшируются в cache/cache.db (kvcache).
 UPC Beatport = UPC Deezer (album/upc:…) — релиз сопоставляется точно, без поиска по названию."""
 from __future__ import annotations
 
@@ -15,10 +15,11 @@ import requests
 
 import build
 import discogs  # title_keys / same_artist — общие правила сравнения названий
+import kvcache
 
 ROOT = Path(__file__).parent
 CONFIG = ROOT / "config.json"
-CACHE = ROOT / "cache" / "beatport.json"
+CACHE = ROOT / "cache" / "beatport.json"  # прежний кэш — переносится в cache.db
 ARTISTS = ROOT / "cache" / "beatport_artists.json"  # Deezer-артист → выбранный Beatport-артист
 TTL = 7 * 86400
 API = "https://api.beatport.com/v4"
@@ -46,8 +47,7 @@ def _write(path: Path, data) -> None:
     tmp.replace(path)
 
 
-_cache: dict = _read(CACHE, {})
-_dirty = [0]
+_cache = kvcache.Store("beatport", CACHE)
 
 
 # ---------- токен ----------
@@ -74,10 +74,9 @@ def _token(force_refresh: bool = False) -> str:
 
 def get(path: str, **params) -> dict:
     url = f"{path}?" + "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-    with _io:
-        hit = _cache.get(url)
-    if hit and time.time() - hit["ts"] < TTL:
-        return hit["data"]
+    hit = _cache.get(url)
+    if hit and time.time() - hit[0] < TTL:
+        return hit[1]
     with _lock:  # по одному запросу: лимитов Beatport не публикует — не наглеем
         refreshed = False
         for attempt in range(6):
@@ -96,20 +95,8 @@ def get(path: str, **params) -> dict:
         else:
             r.raise_for_status()
             data = r.json()
-    with _io:
-        _cache[url] = {"ts": time.time(), "data": data}
-        _dirty[0] += 1
-        if _dirty[0] >= 10:
-            _write(CACHE, _cache)
-            _dirty[0] = 0
+    _cache.put(url, data)
     return data
-
-
-def flush() -> None:
-    with _io:
-        if _dirty[0]:
-            _write(CACHE, _cache)
-            _dirty[0] = 0
 
 
 def paged(path: str, **params) -> list[dict]:
@@ -176,7 +163,6 @@ def match_artist(deezer_id, name: str, deezer_releases: list[dict]) -> dict | No
         data = _read(ARTISTS, {})
         data[str(deezer_id)] = {"ts": time.time(), "artist": artist}
         _write(ARTISTS, data)
-    flush()
     return artist
 
 

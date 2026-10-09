@@ -5,11 +5,13 @@
 
 Читает out/* (пересобираются build.py). Решения — decisions.json, отправленное в deemix —
 downloads.json; оба лежат отдельно от out/, пересборка их не трогает.
-Ответы Deezer API кэшируются в cache/deezer.json, Discogs — в cache/discogs.json,
-Beatport — в cache/beatport.json (вход: python beatport_login.py).
+Ответы Deezer, Discogs, Beatport, дискографии и каталоги лейблов кэшируются в cache/cache.db
+(kvcache; вход в Beatport: python beatport_login.py). Дискографии и каталоги лейблов старше недели
+днём берутся как есть, обновляются ночью (nightly_refresh) — план не ждёт сети.
 """
 
 import csv
+import datetime
 import os
 import json
 import queue
@@ -25,6 +27,7 @@ import requests
 
 import build
 import beatport
+import kvcache
 import discogs
 import journal
 import slsk
@@ -35,7 +38,6 @@ ROOT = Path(__file__).parent
 OUT = ROOT / "out"
 DECISIONS = ROOT / "decisions.json"
 DOWNLOADS = ROOT / "downloads.json"
-CACHE = ROOT / "cache" / "deezer.json"
 PORT = 8765
 DEEMIX = "http://127.0.0.1:6595"
 DEFAULT_TYPES = ("album", "ep", "single")  # типы релизов для «дискографии»; меняются на странице плана
@@ -91,7 +93,7 @@ def load_data() -> dict:
 
 # ---------- Deezer ----------
 
-cache = read_json(CACHE, {})
+DEEZER = kvcache.Store("deezer", ROOT / "cache" / "deezer.json", field=None)  # бессрочно
 
 
 _dz_local = threading.local()
@@ -106,9 +108,9 @@ def _dz_session() -> requests.Session:
 
 def deezer(path: str, **params) -> dict:
     url = f"https://api.deezer.com/{path}?{urllib.parse.urlencode(params)}"
-    with lock:
-        if url in cache:
-            return cache[url]
+    hit = DEEZER.get(url)
+    if hit:
+        return hit[1]
     for attempt in range(6):
         data = _dz_session().get(url, timeout=20).json()
         if data.get("error", {}).get("code") == 4:  # quota: 50 запросов / 5 с
@@ -117,23 +119,8 @@ def deezer(path: str, **params) -> dict:
         break
     if "error" in data:  # «не найдено» не запоминаем — релиз может появиться на Deezer позже
         return data
-    with lock:
-        cache[url] = data
-        _cache_dirty[0] += 1
-        if _cache_dirty[0] >= 25:  # файл большой — пишем пачками, а не на каждый запрос
-            write_json(CACHE, cache)
-            _cache_dirty[0] = 0
+    DEEZER.put(url, data)
     return data
-
-
-_cache_dirty = [0]
-
-
-def flush_cache() -> None:
-    with lock:
-        if _cache_dirty[0]:
-            write_json(CACHE, cache)
-            _cache_dirty[0] = 0
 
 
 def search_artists(name: str) -> list[dict]:
@@ -201,7 +188,9 @@ def library():
     global _library
     if _library is None:
         artist_albums, _, _, appears = build.library_index()
-        _library = {"albums": artist_albums, "appears": appears}
+        # memo — ответы in_library: нечёткое сравнение названий дорогое (секунды на план), а снимок
+        # библиотеки меняется только при пересборке (тогда _library сбрасывается вместе с ним)
+        _library = {"albums": artist_albums, "appears": appears, "memo": {}}
     return _library
 
 
@@ -209,26 +198,43 @@ def in_library(artist: str, album: str, strict: bool = False) -> bool:
     """Свои релизы — нестрогое сопоставление названий (издания, скобки, обрезки last.fm).
     strict — для участия и сборников: точное название (без учёта регистра и пунктуации)
     и артист есть на этом альбоме хотя бы одним треком: сборник записан на Various Artists."""
-    if strict:
-        return build.words(album) in library()["appears"].get(build.norm(artist), ())
-    alb = build.norm_album(album)
-    return any(build.album_matches(alb, la) for la in library()["albums"].get(build.norm(artist), ()))
+    lib = library()
+    key = (artist, album, strict)
+    if key not in lib["memo"]:
+        if strict:
+            lib["memo"][key] = build.words(album) in lib["appears"].get(build.norm(artist), ())
+        else:
+            alb = build.norm_album(album)
+            lib["memo"][key] = any(build.album_matches(alb, la) for la in lib["albums"].get(build.norm(artist), ()))
+    return lib["memo"][key]
 
 
-DISCO_CACHE = ROOT / "cache" / "discography.json"
-DISCO_TTL = 7 * 86400  # новые релизы — отдельная задача; для плана недельной давности хватает
-_disco_cache: dict[str, dict] = read_json(DISCO_CACHE, {})
+DISCO = kvcache.Store("discography", ROOT / "cache" / "discography.json")
+# дискографии и каталоги лейблов старше недели обновляет nightly_refresh в NIGHTLY_HOUR; днём — как есть
+STALE_AFTER = 7 * 86400
 
 
-def discography_tabs(artist_id: int) -> dict:
+class Loading(Exception):
+    """Данных ещё нет, они загружаются фоном: план показывает задачу как «загружается», а не ждёт."""
+
+
+def discography_tabs(artist_id: int, wait: bool = True) -> dict:
     """Дискография как на сайте Deezer (и как её видит сам deemix): вкладки album/ep/single/
     compile/featured. Публичный api.deezer.com отдаёт урезанный список, поэтому берём у deemix.
-    Хранится на диске: план не должен заново опрашивать deemix при каждом открытии страницы."""
-    key = str(artist_id)
-    with lock:
-        hit = _disco_cache.get(key)
-    if hit and time.time() - hit["ts"] < DISCO_TTL:
-        return hit["data"]
+    Сохранённую берём в любом возрасте — свежесть держит nightly_refresh. Нет сохранённой:
+    wait — запросить сейчас; иначе (план) — в фоновую загрузку и Loading."""
+    hit = DISCO.get(str(artist_id))
+    if hit:
+        return hit[1]
+    if wait:
+        return fetch_discography(artist_id)
+    error = load_later(artist_id)
+    if error:
+        raise RuntimeError(error)
+    raise Loading("дискография загружается через deemix…")
+
+
+def fetch_discography(artist_id: int) -> dict:
     try:
         deemix.login()
         r = deemix.s.get(f"{DEEMIX}/api/getTracklist", params={"type": "artist", "id": artist_id}, timeout=120)
@@ -237,12 +243,44 @@ def discography_tabs(artist_id: int) -> dict:
                            "(уже открытые раньше дискографии лежат в кэше и работают без него)") from None
     r.raise_for_status()
     data = r.json()
-    if "releases" not in data:  # ошибку не кэшируем
-        return data
-    with lock:
-        _disco_cache[key] = {"ts": time.time(), "data": data}
-        write_json(DISCO_CACHE, _disco_cache)
+    if "releases" in data:  # ошибку не кэшируем
+        DISCO.put(str(artist_id), data)
     return data
+
+
+_disco_queue: queue.Queue = queue.Queue()
+_disco_pending: dict[int, str | None] = {}  # артист → None (в очереди) или текст ошибки загрузки
+_disco_lock = threading.Lock()
+
+
+def load_later(artist_id: int) -> str | None:
+    """Поставить дискографию в фоновую загрузку. Если прошлая попытка упала — вернуть её ошибку
+    (один раз: при следующем открытии плана — новая попытка)."""
+    with _disco_lock:
+        if artist_id in _disco_pending:
+            error = _disco_pending[artist_id]
+            if error:
+                del _disco_pending[artist_id]
+            return error
+        _disco_pending[artist_id] = None
+    _disco_queue.put(artist_id)
+    return None
+
+
+def discography_loader() -> None:
+    """Дискографии новых для плана артистов — по одной, фоном."""
+    while True:
+        artist_id = _disco_queue.get()
+        try:
+            data = fetch_discography(artist_id)
+            error = None if "releases" in data else f"deemix не отдал дискографию: {str(data)[:200]}"
+        except Exception as exc:
+            error = str(exc) if isinstance(exc, RuntimeError) else repr(exc)
+        with _disco_lock:
+            if error:
+                _disco_pending[artist_id] = error
+            else:
+                _disco_pending.pop(artist_id, None)
 
 
 TYPE_LABEL = {"album": "альбом", "ep": "EP", "single": "сингл", "compile": "сборник", "featured": "участие", "more": "ещё"}
@@ -251,10 +289,10 @@ TYPE_LABEL = {"album": "альбом", "ep": "EP", "single": "сингл", "comp
 TYPE_ORDER = ["album", "ep", "single", "compile", "featured", "more"]
 
 
-def discography(artist_id: int) -> list[dict]:
+def discography(artist_id: int, wait: bool = True) -> list[dict]:
     """Все релизы артиста (как на сайте Deezer) с пометками:
     have — уже есть в Navidrome; dup — повтор уже встреченного названия (другое издание)."""
-    data = discography_tabs(artist_id)
+    data = discography_tabs(artist_id, wait)
     name = data.get("name", "")
     out, seen, ids = [], {}, set()
     for rtype in TYPE_ORDER:
@@ -298,14 +336,25 @@ def plan_item(key: str, d: dict, types: set[str]) -> dict:
 
     if artist_id:
         item["artist_link"] = f"https://www.deezer.com/artist/{artist_id}"
+    try:
+        _plan_item_releases(item, d, types, kind, act, artist_id, album_id, track_id, artist_name)
+    except Loading as exc:  # дискография / каталог лейбла ещё грузятся фоном — задача без релизов
+        item.update(loading=str(exc), releases=[], urls=[], skipped=[])
+    except RuntimeError as exc:  # deemix не запущен и т.п. — проблема этой задачи, а не всего плана
+        item.update(problem=str(exc), releases=[], urls=[], skipped=[])
+    return item
+
+
+def _plan_item_releases(item: dict, d: dict, types: set[str], kind, act, artist_id, album_id, track_id,
+                        artist_name) -> None:
     if act == "label":
         label_plan_item(item, d, types)
     elif act == "discography":
         if not artist_id:
             item["problem"] = f"артист «{artist_name}» на Deezer не найден"
-            return item
+            return
         # releases — весь список для галочек; urls — то, что отмечено по умолчанию
-        for a in discography(artist_id):
+        for a in discography(artist_id, wait=False):
             a["label"] = f"{a['year']} {a['title']} · {TYPE_LABEL.get(a['type'], a['type'])}"
             a["checked"] = a["type"] in types and not a["have"] and not a["dup"]
             item["releases"].append(a)
@@ -331,14 +380,13 @@ def plan_item(key: str, d: dict, types: set[str]) -> dict:
         with_discography(item, artist_id, None, None)
     else:
         item["problem"] = "на Deezer не нашлось"
-    return item
 
 
 def with_discography(item: dict, artist_id, album_id, album_title) -> None:
     """Альбом/трек показываем на фоне всей дискографии артиста: выбранный релиз отмечен,
     остальное — нет (можно доотметить). Выбранный альбом ищем в дискографии по id или названию;
     если его там нет (другое издание) — добавляем отдельной строкой."""
-    releases = discography(artist_id) if artist_id else []
+    releases = discography(artist_id, wait=False) if artist_id else []
     target = None
     if album_id:
         target = next((r for r in releases if str(r["id"]) == str(album_id)), None) or \
@@ -560,7 +608,6 @@ def discogs_confirm(artist_id: int) -> dict:
         hit = next((idx[k] for k in discogs.title_keys(r["title"]) if k in idx), None)
         if hit:
             confirmed[str(r["id"])] = discogs.release_url(hit)
-    discogs.flush()
     return {"artist": artist, "confirmed": confirmed, "total": len(rels)}
 
 
@@ -651,7 +698,6 @@ def deezer_releases_with_upc(artist_id: int) -> list[dict]:
     out = []
     for r in discography(artist_id):
         out.append({"id": r["id"], "title": r["title"], "upc": deezer(f"album/{r['id']}").get("upc")})
-    flush_cache()
     return out
 
 
@@ -663,13 +709,13 @@ def beatport_confirm(artist_id: int) -> dict:
     if not artist:
         return {"artist": None, "confirmed": {}}
     confirmed = beatport.confirm(rels, beatport.artist_releases(artist["id"]))
-    beatport.flush()
     return {"artist": artist, "confirmed": confirmed, "total": len(rels)}
 
 
 # ---------- лейблы: каталог Beatport → Deezer по UPC ----------
 
-LABELS = ROOT / "cache" / "labels.json"  # готовые каталоги лейблов (Beatport + найденное на Deezer)
+# готовые каталоги лейблов (Beatport + найденное на Deezer); старше недели — пересборка ночью
+LABELS = kvcache.Store("labels", ROOT / "cache" / "labels.json")
 label_jobs: dict[str, dict] = {}
 
 
@@ -711,8 +757,6 @@ def build_label(label_id: int, progress: dict) -> dict:
                     # у сборников названия шаблонные — «есть в библиотеке» только строго
                     "have": in_library(lib_artist, a["title"] if a else r.get("name", ""), strict=va)})
         progress["done"] += 1
-    flush_cache()
-    beatport.flush()
     return {"id": label_id, "name": info.get("name", ""), "releases": merge_editions(out),
             "url": f"https://www.beatport.com/label/{info.get('slug') or 'x'}/{label_id}"}
 
@@ -742,45 +786,34 @@ def merge_editions(releases: list[dict]) -> list[dict]:
     return out
 
 
-def label_view(label_id: int, wait: bool = False) -> dict:
-    """Каталог лейбла. Первый раз — фоном (сотни запросов), страница опрашивает прогресс."""
+def label_view(label_id: int) -> dict:
+    """Каталог лейбла. Первый раз — фоном (сотни запросов), страница опрашивает прогресс.
+    Собранный берём в любом возрасте — пересобирает его nightly_refresh."""
     key = f"bp:{label_id}"
-    with lock:
-        done = read_json(LABELS, {}).get(key)
-    if done and time.time() - done["ts"] < DISCO_TTL:
-        data = done["data"]
+    done = LABELS.get(key)
+    if done:
+        ts, data = done
         missing = [r for r in data["releases"] if r["deezer"] and "duration" not in r["deezer"]]
         for r in missing:  # каталоги, собранные до подсчёта объёма: длительность — из кэша Deezer
             src = deezer(f"album/upc:{r['upc']}") if r["deezer"]["how"] == "upc" else {"id": r["deezer"]["id"]}
             r["deezer"].update(album_length(src))
         if missing:
-            flush_cache()
-            with lock:
-                labels = read_json(LABELS, {})
-                labels[key] = {"ts": done["ts"], "data": data}
-                write_json(LABELS, labels)
+            LABELS.put(key, data, ts)
         return {"status": "done", "rates": size_rates()} | data
     with lock:
         job = label_jobs.get(key)
-        # сюда доходим, только когда готового свежего каталога нет: завершённая раньше сборка —
-        # значит, он устарел или удалён; собираем заново (иначе — бесконечный label_view → label_view)
+        # сюда доходим, только когда готового каталога нет: завершённая раньше сборка —
+        # значит, он удалён; собираем заново (иначе — бесконечный label_view → label_view)
         if not job or job.get("error") or job.get("finished"):
             job = label_jobs[key] = {"done": 0, "total": 0}
 
             def run():
                 try:
-                    data = build_label(label_id, job)
-                    with lock:
-                        labels = read_json(LABELS, {})
-                        labels[key] = {"ts": time.time(), "data": data}
-                        write_json(LABELS, labels)
+                    store_label(label_id, job)
                     job["finished"] = True
                 except Exception as exc:
                     job["error"] = repr(exc)
-            job["thread"] = threading.Thread(target=run, daemon=True)
-            job["thread"].start()
-    if wait:
-        job["thread"].join()
+            threading.Thread(target=run, daemon=True).start()
     if job.get("error"):
         return {"status": "error", "error": job["error"]}
     if job.get("finished"):
@@ -788,8 +821,14 @@ def label_view(label_id: int, wait: bool = False) -> dict:
     return {"status": "running", "done": job["done"], "total": job["total"]}
 
 
+def store_label(label_id: int, progress: dict) -> None:
+    LABELS.put(f"bp:{label_id}", build_label(label_id, progress))
+
+
 def label_plan_item(item: dict, d: dict, types: set[str]) -> None:
-    lab = label_view(int(d["label_id"]), wait=True)
+    lab = label_view(int(d["label_id"]))
+    if lab.get("status") == "running":
+        raise Loading(f"каталог лейбла собирается: {lab['done']} из {lab['total'] or '?'} релизов…")
     if lab.get("status") != "done":
         item["problem"] = f"каталог лейбла не собрался: {lab.get('error')}"
         return
@@ -824,7 +863,6 @@ match_state = {"running": False, "done": 0, "total": 0}
 def save_matches() -> None:
     with lock:
         write_json(MATCHES, matches)
-    flush_cache()
 
 
 def tracks_to_match() -> list[dict]:
@@ -935,6 +973,49 @@ def snapshot_info() -> dict:
     return {"ts": int(ts), "text": time.strftime("%d.%m %H:%M", time.localtime(ts)) if ts else "нет"}
 
 
+NIGHTLY_HOUR = 5  # когда обновлять устаревшие (старше STALE_AFTER) дискографии и каталоги лейблов
+
+
+def nightly_refresher() -> None:
+    while True:
+        now = datetime.datetime.now()
+        target = now.replace(hour=NIGHTLY_HOUR, minute=0, second=0, microsecond=0)
+        if target <= now:
+            target += datetime.timedelta(days=1)
+        while datetime.datetime.now() < target:  # шагами: проспал компьютер ночь — обновит, проснувшись
+            time.sleep(60)
+        try:
+            nightly_refresh()
+        except Exception as exc:
+            journal.log.exception("nightly_refresh")
+            event("error", path="nightly_refresh", error=repr(exc))
+
+
+def nightly_refresh() -> None:
+    """По одному, от самых старых: сначала дискографии (сборка каталога лейбла сверяется с ними),
+    потом каталоги лейблов. Днём всё это берётся как есть, план сеть не ждёт."""
+    t0 = time.time()
+    discos, labels = DISCO.older_than(STALE_AFTER), LABELS.older_than(STALE_AFTER)
+    done_d = done_l = 0
+    errors: list[str] = []
+    for k in discos:
+        try:
+            done_d += "releases" in fetch_discography(int(k))
+        except RuntimeError as exc:  # deemix не запущен — остальные дискографии тоже не обновить
+            errors.append(str(exc))
+            break
+        except Exception as exc:
+            errors.append(f"артист {k}: {exc!r}")
+    for k in labels:
+        try:
+            store_label(int(k.split(":", 1)[1]), {"done": 0, "total": 0})
+            done_l += 1
+        except Exception as exc:
+            errors.append(f"лейбл {k}: {exc!r}")
+    event("nightly_refresh", discographies=f"{done_d}/{len(discos)}", labels=f"{done_l}/{len(labels)}",
+          sec=round(time.time() - t0), errors=errors[:20])
+
+
 LIBRARY_REFRESH_EVERY = 86400  # снимок старше суток — пересобрать сами, не дожидаясь кнопки
 
 
@@ -1024,7 +1105,7 @@ def pending_plan(types: set[str], top_up: bool = False, warnings: list[str] | No
                 exclude_unsent(item, sent_meta.get(item["artist_link"], []))
                 item["urls"] = [{"url": r["url"], "label": r["label"]} for r in item["releases"] if r["checked"]]
                 item["top_up"] = len(done)
-                if not item["urls"]:
+                if not item["urls"] and not item.get("loading"):
                     continue  # в дозагрузке показываем только тех, у кого есть что докачать
         elif d["decision"] == "label" and s:  # дозагрузка лейбла: отправленное — серым
             done = {u["url"] for u in s["urls"]}
@@ -1051,7 +1132,7 @@ def pending_plan(types: set[str], top_up: bool = False, warnings: list[str] | No
                     r["checked"], r["in_deemix"] = False, "уже на диске"
             item["urls"] = [{"url": r["url"], "label": r["label"]} for r in item["releases"] if r["checked"]]
             item["top_up"] = len(done)
-            if not item["urls"]:
+            if not item["urls"] and not item.get("loading"):
                 continue
         plan.append(item)
     apply_checks(plan)
@@ -1067,7 +1148,9 @@ def plan_response(types: set[str], top_up: bool) -> dict:
     if warnings:
         warnings.append(f"Проверка «уже на диске» не работала: релизы, которых нет в снимке библиотеки от "
                         f"{snapshot_info()['text']}, не отмечены — отметь вручную, если уверен.")
-    return {"plan": plan, "rates": size_rates(), "warnings": warnings}
+    # loading — задачи, чьи дискографии/каталоги ещё грузятся фоном: страница переспросит план
+    return {"plan": plan, "rates": size_rates(), "warnings": warnings,
+            "loading": sum(1 for p in plan if p.get("loading"))}
 
 
 def mark_in_plan(plan: list[dict], decisions: dict) -> None:
@@ -1112,7 +1195,7 @@ def prefetch_albums(urls: list[str]) -> None:
     """Карточки Deezer для многих релизов разом — параллельно (лимит Deezer ~10 запросов/с,
     по одному выходит ~1 запрос/с: у Eminem 345 релизов — минуты вместо секунд)."""
     from concurrent.futures import ThreadPoolExecutor
-    todo = [u for u in urls if f"https://api.deezer.com/{'/'.join(u.rstrip('/').split('/')[-2:])}?" not in cache]
+    todo = [u for u in urls if not DEEZER.has(f"https://api.deezer.com/{'/'.join(u.rstrip('/').split('/')[-2:])}?")]
     if todo:
         with ThreadPoolExecutor(8) as ex:
             list(ex.map(release_duration, todo))
@@ -1133,7 +1216,6 @@ def add_durations(plan: list[dict]) -> None:
         for r in item["releases"]:
             if "duration" not in r:
                 r["duration"], r["nb_tracks"] = release_duration(r["url"])
-    flush_cache()
 
 
 def discography_sizes(artist_id: int) -> dict:
@@ -1145,7 +1227,6 @@ def discography_sizes(artist_id: int) -> dict:
     for r in rels:
         dur, n = release_duration(r["url"])
         out[str(r["id"])] = {"duration": dur, "nb_tracks": n}
-    flush_cache()
     return {"releases": out, "rates": size_rates()}
 
 
@@ -1758,11 +1839,10 @@ def slsk_sources() -> int:
     """Собрать очередь из источников. Ничего не ищет и не ждёт: каталог лейбла берётся только готовый."""
     added = 0
     decisions = read_json(DECISIONS, {})
-    labels = read_json(LABELS, {})
     for key, d in decisions.items():
         if d.get("decision") != "label" or not d.get("label_id"):
             continue
-        lab = (labels.get(f"bp:{d['label_id']}") or {}).get("data")
+        lab = (LABELS.get(f"bp:{d['label_id']}") or (0, None))[1]
         if not lab:
             continue
         src = {"kind": "label", "key": key, "name": d.get("name") or lab.get("name")}
@@ -2333,6 +2413,8 @@ if __name__ == "__main__":
     atexit.register(lambda: event("server_stop"))
     threading.Thread(target=watch_queue, daemon=True).start()
     threading.Thread(target=library_refresher, daemon=True).start()
+    threading.Thread(target=discography_loader, daemon=True).start()
+    threading.Thread(target=nightly_refresher, daemon=True).start()
     threading.Thread(target=autotag_worker, daemon=True).start()
     threading.Thread(target=slsk_syncer, daemon=True).start()
     for _ in range(slsk.PARALLEL):  # по поиску на поток: slskd больше двух сразу не берёт

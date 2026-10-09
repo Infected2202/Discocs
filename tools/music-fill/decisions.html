@@ -188,17 +188,29 @@ const sizeLine = (sec, n) => sec ? `${n ? `${n} тр. · ` : ""}${fmtDur(sec)} �
 
 // ---------- план ----------
 const types = () => [...document.querySelectorAll(".rtype:checked")].map(c => c.value);
-document.querySelectorAll(".rtype").forEach(c => c.onchange = loadPlan);
+document.querySelectorAll(".rtype").forEach(c => c.onchange = () => loadPlan());
 document.getElementById("topup").onchange = () => loadPlan();
-async function loadPlan() {
-  $("#plantbody").innerHTML = `<tr><td colspan="2" class="muted">Считаю план… (новых артистов дискография запрашивается через deemix, остальное из кэша)</td></tr>`;
-  $("#send").disabled = true;
+// план считается из сохранённого; дискографии новых артистов и новые каталоги лейблов грузятся
+// фоном (задача «загружается…») — тогда план тихо переспрашивается, пока всё не догрузится
+let planTimer = null, planSeq = 0;
+async function loadPlan(quiet = false) {
+  clearTimeout(planTimer);
+  const seq = ++planSeq;
+  if (!quiet) {
+    $("#plantbody").innerHTML = `<tr><td colspan="2" class="muted">Считаю план…</td></tr>`;
+    $("#send").disabled = true;
+  }
   const r = await fetch(`/api/plan?types=${types().join(",")}&topup=${$("#topup").checked ? 1 : 0}`).then(x => x.json());
+  if (seq !== planSeq) return;  // пока считалось, план запросили заново
   if (r.error) { $("#plantbody").innerHTML = `<tr><td colspan="2" class="err">${esc(r.error)}</td></tr>`; return; }
+  const grpId = d => { const c = d.querySelector(".grp-pick"); return `${c.dataset.key}|${c.dataset.type}`; };
+  const open = new Set([...document.querySelectorAll("details.grp[open]")].map(grpId));
   plan = r.plan; rates = r.rates || rates;
   renderPlan();
+  document.querySelectorAll("details.grp").forEach(d => { if (open.has(grpId(d))) d.open = true; });
   if ((r.warnings || []).length) $("#plantbody").insertAdjacentHTML("afterbegin",
     `<tr><td colspan="2" class="err">${r.warnings.map(esc).join("<br>")}</td></tr>`);
+  if (r.loading) planTimer = setTimeout(() => loadPlan(true), 3000);
 }
 
 const TYPE_NAME = {album: "Альбомы", ep: "EP", single: "Синглы", compile: "Сборники", featured: "Участие", more: "Ещё", track: "Трек"};
@@ -246,7 +258,7 @@ function renderPlan() {
         <br><span class="muted tsize" data-size-key="${esc(p.key)}" style="font-size:12px"></span>
         <br><button class="btn primary" data-send-key="${esc(p.key)}" title="отправить в deemix только отмеченное в этой задаче">отправить в deemix</button>
         <button class="btn dismiss" data-dismiss="${esc(p.keys.join("\n"))}" title="убрать из плана, ничего не отправляя">убрать из плана</button></td>
-      <td>${p.resolved ? `<div class="muted" style="font-size:12px">${esc(p.resolved)}</div>` : ""}${p.problem ? problemHtml(p) : releasesHtml(p)}</td>
+      <td>${p.resolved ? `<div class="muted" style="font-size:12px">${esc(p.resolved)}</div>` : ""}${p.problem ? problemHtml(p) : p.loading ? `<div class="muted">${esc(p.loading)}</div>` : releasesHtml(p)}</td>
     </tr>`).join("") || `<tr><td colspan="2" class="muted">Нечего качать — всё отправлено или решений «качать» ещё нет.</td></tr>`;
   updateSum();
   confirmSources();
@@ -354,7 +366,7 @@ $("#resetmarks").onclick = async () => {
   await fetch("/api/plan/reset", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({keys: plan.map(p => p.key)})});
   loadPlan();
 };
-$("#reload").onclick = loadPlan;
+$("#reload").onclick = () => loadPlan();
 $("#send").onclick = () => sendSelection(selection());
 $("#plantbody").addEventListener("click", e => {
   const b = e.target.closest("[data-send-key]"); if (!b) return;

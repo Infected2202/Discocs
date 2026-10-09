@@ -22,9 +22,10 @@ from pathlib import Path
 import requests
 
 import build
+import kvcache
 
 ROOT = Path(__file__).parent
-CACHE = ROOT / "cache" / "slsk.json"
+CACHE = ROOT / "cache" / "slsk.json"  # прежний кэш — переносится в cache.db
 TTL_HIT = 3 * 86400      # у пиров всё меняется: найденное держим 3 дня
 TTL_MISS = 6 * 3600     # не найденное — 6 часов (пустой ответ бывает и случайным)
 SEARCH_TIMEOUT = 15000   # мс, сколько slskd собирает ответы
@@ -39,7 +40,6 @@ LOSSLESS = {"flac", "wav", "aif", "aiff", "alac", "ape", "wv"}
 Q_FLAC, Q_LOSSLESS, Q_320, Q_LOW = 4, 3, 2, 1
 Q_NAME = {Q_FLAC: "FLAC", Q_LOSSLESS: "lossless", Q_320: "MP3 320", Q_LOW: "lossy"}
 
-_io = threading.Lock()
 _rate_lock = threading.Lock()
 _sem = threading.Semaphore(PARALLEL)
 _stamps: collections.deque = collections.deque()
@@ -53,14 +53,7 @@ def _read(path: Path, default):
         return default
 
 
-def _write(path: Path, data) -> None:
-    path.parent.mkdir(exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
-
-
-_cache: dict = _read(CACHE, {})
+_cache = kvcache.Store("slsk", CACHE, field="files")
 
 
 def _cfg() -> tuple[str, dict]:
@@ -118,14 +111,11 @@ def search(text: str) -> list[dict]:
     text = query_text(text)
     if not text:
         return []
-    with _io:
-        hit = _cache.get(text)
-    if hit and time.time() - hit["ts"] < (TTL_HIT if hit["files"] else TTL_MISS):
-        return hit["files"]
+    hit = _cache.get(text)
+    if hit and time.time() - hit[0] < (TTL_HIT if hit[1] else TTL_MISS):
+        return hit[1]
     files = _search_once(text) or _search_once(text, pause=10)
-    with _io:
-        _cache[text] = {"ts": time.time(), "files": files}
-        _write(CACHE, _cache)
+    _cache.put(text, files)
     return files
 
 
