@@ -135,7 +135,13 @@ def api_v1_tool_job_create(request: ToolJobCreateRequest) -> dict[str, object] |
 @router.post("/tools/jobs/{job_id}/control", response_model=None)
 def api_v1_tool_job_control(job_id: int, request: ToolJobControlRequest) -> dict[str, object] | JSONResponse:
     store, _settings = context()
-    job = store.set_tool_job_control(job_id, request.control)
+    current = store.tool_job(job_id)
+    if current is None:
+        return api_error(404, "not_found", _JOB_NOT_FOUND)
+    seen = {str(worker["id"]): str(worker["seen_at"]) for worker in store.tool_workers()}
+    worker_id = current["worker_id"]
+    worker_online = worker_id is None or (str(worker_id) in seen and _online(seen[str(worker_id)]))
+    job = store.set_tool_job_control(job_id, request.control, worker_online=worker_online)
     if job is None:
         return api_error(404, "not_found", _JOB_NOT_FOUND)
     params = dict(job["params"]) if isinstance(job["params"], dict) else {}

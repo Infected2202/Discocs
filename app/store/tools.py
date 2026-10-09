@@ -122,6 +122,14 @@ class ToolsStoreMixin:
         marks = ",".join("?" for _ in tools)
         now = utc_now()
         with self.connect() as conn:  # type: ignore[attr-defined]
+            # Свою задачу, отменённую, пока воркер был выключен, он уже не доделает — закрыть.
+            conn.execute(
+                """
+                UPDATE tool_jobs SET status = 'cancelled', finished_at = ?
+                WHERE worker_id = ? AND control = 'cancel' AND status IN ('running', 'paused')
+                """,
+                (now, worker_id),
+            )
             row = conn.execute(
                 f"""
                 SELECT * FROM tool_jobs
@@ -177,15 +185,16 @@ class ToolsStoreMixin:
             )
             return str(row["control"])
 
-    def set_tool_job_control(self, job_id: int, control: str) -> dict[str, object] | None:
-        """Пауза/продолжение/отмена из админки. Задачу, которую ещё никто не взял, отмена закрывает сразу."""
+    def set_tool_job_control(self, job_id: int, control: str, *, worker_online: bool = True) -> dict[str, object] | None:
+        """Пауза/продолжение/отмена из админки. Отмена закрывает сразу задачу, которую ещё никто не взял или
+        чей воркер не на связи: подтвердить её некому, а висящая задача не даёт поставить новую."""
         with self.connect() as conn:  # type: ignore[attr-defined]
             row = conn.execute("SELECT status FROM tool_jobs WHERE id = ?", (job_id,)).fetchone()
             if row is None:
                 return None
             if row["status"] not in TOOL_JOB_FINISHED:
                 conn.execute("UPDATE tool_jobs SET control = ? WHERE id = ?", (control, job_id))
-                if control == "cancel" and row["status"] == "queued":
+                if control == "cancel" and (row["status"] == "queued" or not worker_online):
                     conn.execute(
                         "UPDATE tool_jobs SET status = 'cancelled', finished_at = ? WHERE id = ?",
                         (utc_now(), job_id),

@@ -268,3 +268,29 @@ def test_admin_has_a_tools_section_wired_to_the_tools_api():
     assert "/api/v1/tools/jobs/${jobId}/control" in page
     assert "/api/v1/tools/describe/${labelId}/revert" in page
     assert "toolJob('music-fill', 'start')" in page
+
+
+def test_cancel_closes_a_job_whose_worker_is_gone_and_a_restarted_worker_drops_its_cancelled_job(
+    tmp_path, monkeypatch
+):
+    store = init_api_store(tmp_path, monkeypatch)
+    _label(store, tmp_path, "One", 1)
+    client = TestClient(app)
+    first = client.post("/api/v1/tools/jobs", json={"tool": "describe", "action": "run"}).json()["job"]["id"]
+    client.post("/api/v1/tools/workers/pc-1/poll", json={"tools": ["describe"], "wait": 0})
+    # Воркер давно не на связи — отмену подтвердить некому, задача закрывается сразу и не мешает новой.
+    with store.connect() as conn:
+        conn.execute("UPDATE tool_workers SET seen_at = '2020-01-01T00:00:00+00:00'")
+
+    cancelled = client.post(f"/api/v1/tools/jobs/{first}/control", json={"control": "cancel"}).json()["job"]
+
+    assert cancelled["status"] == "cancelled"
+    second = client.post("/api/v1/tools/jobs", json={"tool": "describe", "action": "run"}).json()["job"]["id"]
+    client.post("/api/v1/tools/workers/pc-2/poll", json={"tools": ["describe"], "wait": 0})
+    # Воркер на связи — отмену он подтверждает сам; но если он перезапустится раньше, свою отменённую
+    # задачу закроет при первом же опросе, а не повиснет на ней.
+    client.post(f"/api/v1/tools/jobs/{second}/control", json={"control": "cancel"})
+    assert store.tool_job(second)["status"] == "running"
+    polled = client.post("/api/v1/tools/workers/pc-2/poll", json={"tools": ["describe"], "wait": 0}).json()["job"]
+    assert polled is None
+    assert store.tool_job(second)["status"] == "cancelled"

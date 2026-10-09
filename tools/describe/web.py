@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import threading
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
@@ -81,25 +82,48 @@ class Web:
     def read(self, url: str) -> Page | None:
         """Текст страницы без меню и рекламы; None — не открылась, не HTML или пустая.
 
-        Не открылась напрямую или вместо текста заглушка защиты от ботов — ещё раз через FlareSolverr.
+        Через FlareSolverr — только если сайт закрылся защитой от ботов: ответил 403/429/503 или прислал
+        страницу-проверку («Just a moment», «Enable JavaScript»). На 404, обрыв, PDF или короткую страницу
+        браузер не поднимается: каждый вызов — это Chrome на сервере, и за ночной прогон такие «запасные»
+        вызовы (5.7 тыс.) съели память homelab вместе с соседями.
         """
         try:
-            page = _page(*self._get(url))
+            html, final_url = self._get(url)
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            return self._via_flaresolverr(url) if status in _BOT_WALL_STATUSES else None
         except (requests.RequestException, ValueError):
-            page = None
-        if page is None and self.flaresolverr_url:
-            try:
-                page = _page(*self._get_via_flaresolverr(url))
-            except (requests.RequestException, ValueError, KeyError):
-                page = None
+            return None
+        page = _page(html, final_url)
+        if page is None and _bot_wall(html):
+            return self._via_flaresolverr(url)
         return page
+
+    def _via_flaresolverr(self, url: str) -> Page | None:
+        """Один запрос к FlareSolverr за раз на весь процесс (лейблы идут параллельно, а Chrome на сервере —
+        дорогой); сайт, где FlareSolverr не помог, больше через него не открывается."""
+        domain = urlparse(url).hostname or ""
+        path = urlparse(url).path.casefold()
+        if not self.flaresolverr_url or domain in _FLARESOLVERR_FAILED or path.endswith(_NOT_PAGES):
+            return None
+        with _FLARESOLVERR_LOCK:
+            try:
+                html, final_url = self._get_via_flaresolverr(url)
+            except (requests.RequestException, ValueError, KeyError):
+                html, final_url = "", url
+        # Сайт плохой для FlareSolverr, только если тот упал или сам упёрся в проверку; пустая или
+        # несуществующая статья — не повод больше не ходить на сайт.
+        if not html or _bot_wall(html):
+            _FLARESOLVERR_FAILED.add(domain)
+            return None
+        return _page(html, final_url)
 
     def _get_via_flaresolverr(self, url: str) -> tuple[str, str]:
         _check_public(url)
         response = requests.post(
             f"{self.flaresolverr_url}/v1",
-            json={"cmd": "request.get", "url": url, "maxTimeout": 60000},
-            timeout=90,
+            json={"cmd": "request.get", "url": url, "maxTimeout": 30000},
+            timeout=60,
         )
         response.raise_for_status()
         solution = response.json()["solution"]
@@ -132,6 +156,18 @@ class Web:
 
 _CHALLENGE = ("enable javascript", "javascript is disabled", "checking your browser", "just a moment",
               "verify you are human", "client challenge")
+# Ответы защиты от ботов (Cloudflare и т.п.) — только их стоит пробовать через FlareSolverr.
+_BOT_WALL_STATUSES = {403, 429, 503}
+_FLARESOLVERR_LOCK = threading.Lock()
+_FLARESOLVERR_FAILED: set[str] = set()
+# Не страницы — через браузер не открываются.
+_NOT_PAGES = (".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".zip", ".mp3", ".flac", ".wav", ".mp4")
+
+
+def _bot_wall(html: str) -> bool:
+    """Страница-проверка вместо содержимого: короткая и с её маркерами."""
+    head = html[:20000].casefold()
+    return len(html) < 60000 and any(marker in head for marker in _CHALLENGE + ("cf-chl", "challenge-platform"))
 
 
 def _page(html: str, final_url: str) -> Page | None:

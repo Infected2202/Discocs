@@ -15,7 +15,11 @@
 - **SearXNG** в Docker на `127.0.0.1:8888` — поиск. В `settings.yml` обязательно `search.formats: [html, json]`
   (иначе JSON API отвечает 403), `server.limiter: false`; brave и duckduckgo выключены — банят быстро. Движки
   задаются в `config.json` (`searxng_engines`): yandex, yahoo, google cse.
-- **FlareSolverr** (homelab, `192.168.1.41:8191`) — запасной путь для страниц за JS-проверкой (Bandcamp Daily и т.п.).
+- **FlareSolverr** (homelab, `192.168.1.41:8191`, общий с Prowlarr) — для страниц за защитой от ботов (Bandcamp
+  Daily и т.п.). Каждый вызов — Chrome на сервере, поэтому только когда сайт ответил 403/429/503 или прислал
+  страницу-проверку; не на 404, обрыв, PDF. Один вызов за раз на процесс; сайт, где он не помог, больше через него
+  не открывается. Раньше он был запасным путём на любую неудачу — 5.7 тыс. вызовов за ночь, и homelab упёрся
+  в память (chromium убит OOM).
 - Python 3.11+ с `requests` и `trafilatura` в `.venv`:
 
       python -m venv .venv && .venv/Scripts/pip install requests trafilatura
