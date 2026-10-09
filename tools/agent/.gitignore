@@ -1,0 +1,6 @@
+# В git — только код. config.json (токен discocs) и logs/ — локальные.
+*
+!.gitignore
+!README.md
+!config.example.json
+!*.py

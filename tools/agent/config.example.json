@@ -1,0 +1,16 @@
+{
+  "discocs_url": "http://192.168.1.41:8711",
+  "service_token": "",
+  "lmstudio_url": "http://127.0.0.1:1234/v1",
+  "lmstudio_api": "http://127.0.0.1:1234",
+  "model": "google/gemma-4-26b-a4b-qat",
+  "model_context": 65536,
+  "model_vram_mb": 17500,
+  "vram_limit_mb": 24200,
+  "jobs": 3,
+  "searxng_url": "http://127.0.0.1:8888",
+  "searxng_engines": "yandex,yahoo,google cse",
+  "flaresolverr_url": "http://192.168.1.41:8191",
+  "music_fill_python": "python",
+  "music_fill_url": "http://127.0.0.1:8765"
+}

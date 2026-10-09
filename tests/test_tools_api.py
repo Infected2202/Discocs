@@ -57,7 +57,6 @@ def test_describe_job_runs_from_admin_to_worker_results(tmp_path, monkeypatch):
     job = created.json()["job"]
     # Только лейблы без описания, крупные первыми; прогресс знает, сколько всего.
     assert job["params"]["label_ids"] == [big, small]
-    assert job["progress"] == {"total": 2, "done": 0}
     assert client.post("/api/v1/tools/jobs", json={"tool": "describe", "action": "run"}).status_code == 409
 
     # Воркер, который умеет только music-fill, задачу describe не получает.
@@ -82,6 +81,10 @@ def test_describe_job_runs_from_admin_to_worker_results(tmp_path, monkeypatch):
     })
     assert written.json() == {"outcome": "written"}
     assert _description(client, big) == ("Лейбл Nina Kraviz.", "agent")
+    # Сколько сделано, считает сервер по итогам — счётчики воркера обнуляются при его перезапуске.
+    running = client.get("/api/v1/tools/describe").json()["job"]
+    assert running["counts"] == {"total": 2, "done": 1, "written": 1, "not_found": 0, "failed": 0, "skipped": 0}
+    assert "label_ids" not in running["params"]
     nothing = client.post("/api/v1/tools/describe/results",
                           json={"job_id": job["id"], "label_id": small, "status": "not_found"})
     assert nothing.json() == {"outcome": "not_found"}
@@ -250,3 +253,18 @@ def test_music_fill_jobs_are_start_and_stop_only(tmp_path, monkeypatch):
     assert nothing.status_code == 400
     job = client.post("/api/v1/tools/workers/pc-1/poll", json={"tools": ["music-fill"], "wait": 0}).json()["job"]
     assert (job["tool"], job["action"]) == ("music-fill", "start")
+
+
+def test_admin_has_a_tools_section_wired_to_the_tools_api():
+    response = TestClient(app).get("/admin")
+
+    assert response.status_code == 200
+    page = response.text
+    assert """data-nav="tools" onclick="showSection('tools')\"""" in page
+    assert '<section id="tools" class="section">' in page
+    # Статистика и текущая задача, запуск, пауза/отмена, перегенерация и откат — через API инструментов.
+    assert '"/api/v1/tools/describe?limit=30"' in page
+    assert 'toolsApi("/api/v1/tools/jobs"' in page
+    assert "/api/v1/tools/jobs/${jobId}/control" in page
+    assert "/api/v1/tools/describe/${labelId}/revert" in page
+    assert "toolJob('music-fill', 'start')" in page

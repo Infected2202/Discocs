@@ -125,7 +125,6 @@ def api_v1_tool_job_create(request: ToolJobCreateRequest) -> dict[str, object] |
         params: dict[str, object] = {"scope": request.scope, "min_releases": request.min_releases,
                                      "label_ids": label_ids}
         job_id = store.create_tool_job("describe", "run", params)
-        store.update_tool_job(job_id, progress={"total": len(label_ids), "done": 0})
     else:
         if request.action not in ("start", "stop"):
             return api_error(400, "invalid_action", "music-fill supports 'start' and 'stop'")
@@ -152,7 +151,7 @@ def api_v1_describe_overview(limit: int = 30, offset: int = 0) -> dict[str, obje
     if job is not None:
         params = dict(job["params"]) if isinstance(job["params"], dict) else {}
         params.pop("label_ids", None)
-        job = {**job, "params": params}
+        job = {**job, "params": params, "counts": store.describe_job_counts(int(job["id"]))}
     return {
         "stats": store.describe_stats(),
         "job": job,

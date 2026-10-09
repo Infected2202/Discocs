@@ -121,6 +121,8 @@ class Result:
     llm_seconds: dict[str, float]
     note: str = ""
     checks: list[dict] = field(default_factory=list)
+    # Страницы, факты с которых пошли в текст (для админки discocs).
+    sources: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict:
         return asdict(self)
@@ -447,6 +449,7 @@ class Researcher:
     def run(self, subject: Subject) -> Result:
         started = time.time()
         self.checks = []
+        self.used: list[Fact] = []
         llm_before = dict(self.llm.usage.by_step)
         queries: list[str] = []
         read: dict[str, Page] = {}
@@ -487,13 +490,14 @@ class Researcher:
         }
         return Result(
             subject.id, subject.name, description, facts, queries, list(read),
-            round(time.time() - started, 1), llm_seconds, note, self.checks,
+            round(time.time() - started, 1), llm_seconds, note, self.checks, self._sources(description),
         )
 
     def rewrite(self, subject: Subject, saved: dict) -> Result:
         """Только текст и сверка — по фактам прошлого прогона."""
         started = time.time()
         self.checks = []
+        self.used: list[Fact] = []
         llm_before = dict(self.llm.usage.by_step)
         facts = [Fact(**{k: v for k, v in f.items() if k in Fact.__dataclass_fields__}) for f in saved["facts"]]
         subject.catalog_artists = _catalog_artists(self.web, subject.external_ids)
@@ -504,7 +508,10 @@ class Researcher:
             if seconds - llm_before.get(step, 0.0) > 0
         }
         return Result(subject.id, subject.name, description, facts, saved["queries"], saved["pages"],
-                      round(time.time() - started, 1), llm_seconds, note, self.checks)
+                      round(time.time() - started, 1), llm_seconds, note, self.checks, self._sources(description))
+
+    def _sources(self, description: str) -> list[str]:
+        return _unique([fact.url for fact in self.used]) if description else []
 
     # --- шаги -------------------------------------------------------------
 
@@ -606,6 +613,7 @@ label's own language. If the facts already cover the essentials well, answer an 
             return "", "only catalogue facts"
         facts = self._select(subject, collected)
         facts = self._review(subject, facts, [f for f in collected if f not in facts])
+        self.used = facts
         if len(facts) < 3:
             return "", f"only {len(facts)} facts after review"
         try:
@@ -980,6 +988,8 @@ def _fix_typos(text: str, sources: str = "") -> str:
     text = re.sub(r"\b([A-Z][\w'’.&-]*(?: [A-Z&][\w'’.&-]*)*) \(\1\)", r"\1", text)
     # Транслит и оригинал в скобках, вопреки правилу: «Кристофом Эллингхаусом (Christof Ellinghaus)».
     text = _NAME_PAIR.sub(lambda m: _one_spelling(m, _norm(sources)), text)
+    # И наоборот: «[a=Raphaël Ripperton] (Рафаэль Риппертон)» — транслит ссылки в скобках убрать.
+    text = _LINK_TRANSLIT.sub(_drop_translit, text)
     return re.sub(r"\b([Лл])ейбел", r"\1ейбл", text)
 
 
@@ -1016,6 +1026,19 @@ _SOUNDS = {"А": "A", "Б": "B", "В": "VW", "Г": "GH", "Д": "DJ", "Е": "EYJ"
            "И": "IEY", "Й": "JYI", "К": "KCQ", "Л": "L", "М": "M", "Н": "N", "О": "OA", "П": "P", "Р": "R",
            "С": "SC", "Т": "T", "У": "UOW", "Ф": "FP", "Х": "HKC", "Ц": "CTZ", "Ч": "CT", "Ш": "S", "Щ": "S",
            "Э": "EA", "Ю": "YJU", "Я": "YJIA"}
+
+
+_LINK_TRANSLIT = re.compile(r"(\[a=([^\]]+)\]) \(([А-ЯЁ][А-ЯЁа-яё́'’ -]*)\)")
+
+
+def _drop_translit(match: re.Match) -> str:
+    """Скобки после ссылки — транслит того же имени (столько же слов, первые буквы созвучны), а не настоящее имя."""
+    latin, cyrillic = match.group(2).split(), match.group(3).split()
+    if len(latin) == len(cyrillic) and all(
+        lat[:1].upper() in _SOUNDS.get(cyr[:1].upper(), cyr[:1].upper()) for lat, cyr in zip(latin, cyrillic)
+    ):
+        return match.group(1)
+    return match.group(0)
 
 
 def _one_spelling(match: re.Match, sources: str) -> str:

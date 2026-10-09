@@ -289,6 +289,19 @@ class ToolsStoreMixin:
         todo = [int(i) for i in params.get("label_ids", []) if int(i) not in done and int(i) not in skip]
         return self.describe_inputs(todo[: max(0, limit)])
 
+    def describe_job_counts(self, job_id: int) -> dict[str, int]:
+        """Сколько лейблов задачи уже с итогом — по итогам на сервере, а не по счётчикам воркера: они
+        обнуляются, когда воркер перезапускается."""
+        job = self.tool_job(job_id)
+        params = job["params"] if job and isinstance(job["params"], dict) else {}
+        with self.connect() as conn:  # type: ignore[attr-defined]
+            rows = conn.execute(
+                "SELECT status, COUNT(*) FROM label_agent_descriptions WHERE job_id = ? GROUP BY status", (job_id,)
+            ).fetchall()
+        counts = {status: 0 for status in (AGENT_WRITTEN, AGENT_NOT_FOUND, AGENT_FAILED, AGENT_SKIPPED)}
+        counts.update({row[0]: int(row[1]) for row in rows if row[0] in counts})
+        return {"total": len(params.get("label_ids", [])), "done": sum(counts.values()), **counts}
+
     # --- describe: итоги агента ----------------------------------------------
 
     def save_agent_description(

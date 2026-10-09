@@ -631,6 +631,7 @@
         <button data-nav="atlas" onclick="showSection('atlas')">Atlas</button>
         <button data-nav="jobs" onclick="showSection('jobsPage')">Jobs</button>
         <button data-nav="workers" onclick="showSection('workersPage')">Workers</button>
+        <button data-nav="tools" onclick="showSection('tools')">Tools</button>
         <button data-nav="settings" onclick="showSection('settings')">Settings</button>
       </nav>
     </aside>
@@ -943,6 +944,44 @@
           <h2>Workers</h2>
           <div id="workersSummary" class="stats"></div>
           <div id="workersList" class="jobs"></div>
+        </div>
+      </section>
+      <section id="tools" class="section">
+        <div class="panel">
+          <h2>Tools</h2>
+          <div class="meta">Tools that run on the workstation with the GPU. A worker there (tools/agent) takes jobs from this page by itself; see docs/tools.md.</div>
+          <div class="meta" id="toolsWorker">Worker status not loaded yet.</div>
+        </div>
+        <div class="panel">
+          <h2>music-fill</h2>
+          <div class="meta" id="musicFillState">Status not loaded yet.</div>
+          <div class="actions" style="margin-top:8px">
+            <button class="primary" id="musicFillStart" onclick="toolJob('music-fill', 'start')">Start server</button>
+            <button id="musicFillStop" onclick="toolJob('music-fill', 'stop')">Stop server</button>
+            <a id="musicFillLink" href="http://127.0.0.1:8765" target="_blank" rel="noopener noreferrer">Open music-fill</a>
+          </div>
+          <div class="meta" id="musicFillStatus"></div>
+        </div>
+        <div class="panel">
+          <h2>Label descriptions</h2>
+          <div class="meta">The agent (tools/describe) researches each label on the web and writes a Russian description. Its text replaces descriptions found by the label sync (Wikipedia, Discogs, Beatport) right away and is never written over a hand-written one; when nothing is found the old description stays.</div>
+          <div class="stats" id="describeStats" style="margin-top:10px"></div>
+          <div class="actions" style="margin-top:10px">
+            <select id="describeScope">
+              <option value="replace">Without a description or from Wikipedia / Discogs / Beatport</option>
+              <option value="missing">Only labels without a description</option>
+              <option value="not_found">Retry labels where nothing was found</option>
+            </select>
+            <label class="meta">min releases <input id="describeMinReleases" type="number" min="1" value="1" style="width:72px"></label>
+            <button class="primary" id="describeStart" onclick="startDescribe()">Start</button>
+          </div>
+          <div id="describeJob" class="jobs" style="margin-top:10px"></div>
+          <div class="meta" id="describeStatus"></div>
+        </div>
+        <div class="panel">
+          <h2>Recent agent descriptions</h2>
+          <div class="meta">Spot check: the latest texts written by the agent. Revert brings back the description the label had before the agent.</div>
+          <div id="describeRecent" class="jobs" style="margin-top:8px"></div>
         </div>
       </section>
       <section id="settings" class="section">
@@ -1624,6 +1663,7 @@
       instantMix: "instantMix",
       jobs: "jobsPage",
       workers: "workersPage",
+      tools: "tools",
       settings: "settings",
     };
     const BROWSE_FACET_KEYS = ["folder", "genre", "year", "artist", "album"];
@@ -1765,6 +1805,8 @@
           if (params.job) await loadJobDetail(params.job, {updateUrl: false});
         } else if (sectionId === "workersPage") {
           await refreshWorkers();
+        } else if (sectionId === "tools") {
+          await refreshTools();
         } else if (sectionId === "atlas") {
           await atlasInit(params);
         } else if (sectionId === "settings") {
@@ -5195,6 +5237,188 @@
       workerList.innerHTML = workerHtml || `<div class="meta">No connected workers right now.</div>`;
       workerList.innerHTML += staleNote;
     }
+    // ---------------------------------------------------------------------
+    // Tools: workstation worker, music-fill, label descriptions (docs/tools.md)
+    // ---------------------------------------------------------------------
+    const DESCRIPTION_SOURCES = {
+      agent: "agent", editorial: "hand-written", wikipedia_ru: "Wikipedia RU", wikipedia_en: "Wikipedia EN",
+      discogs: "Discogs", beatport: "Beatport", unknown: "unknown",
+    };
+    let toolsInFlight = false;
+    async function toolsApi(url, body) {
+      const options = body === undefined
+        ? {}
+        : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)};
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((data.error && data.error.message) || data.detail || response.statusText);
+      return data;
+    }
+    function toolsMessage(id, message, isError = false) {
+      const element = document.getElementById(id);
+      if (!element) return;
+      element.textContent = message || "";
+      element.style.color = isError ? "var(--bad)" : "";
+    }
+    function ago(iso) {
+      const seconds = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+      if (!Number.isFinite(seconds)) return "";
+      if (seconds < 90) return `${Math.round(seconds)} s ago`;
+      return `${formatDuration(seconds)} ago`;
+    }
+    async function refreshTools() {
+      if (toolsInFlight) return;
+      toolsInFlight = true;
+      try {
+        const [tools, describe] = await Promise.all([
+          toolsApi("/api/v1/tools"),
+          toolsApi("/api/v1/tools/describe?limit=30"),
+        ]);
+        renderToolsWorker(tools.workers || []);
+        renderDescribeStats(describe.stats || {});
+        renderDescribeJob(describe.job);
+        renderDescribeRecent(describe.recent || []);
+      } catch (err) {
+        toolsMessage("toolsWorker", `Tools unavailable: ${err.message}`, true);
+      } finally {
+        toolsInFlight = false;
+      }
+    }
+    function renderToolsWorker(workers) {
+      const worker = workers.find(item => item.online) || workers[0];
+      const target = document.getElementById("toolsWorker");
+      const musicFill = document.getElementById("musicFillState");
+      if (!worker) {
+        target.textContent = "No worker has connected yet: start tools/agent on the workstation.";
+        musicFill.textContent = "Unknown until the worker connects.";
+        return;
+      }
+      const state = worker.state || {};
+      const vram = state.vram_used_mb ? `, GPU memory ${(state.vram_used_mb / 1024).toFixed(1)} GB` : "";
+      const model = state.model_loaded ? ", model loaded" : ", model not loaded";
+      target.innerHTML = worker.online
+        ? `<span class="pill">online</span> ${esc(worker.id)}${esc(model)}${esc(vram)}`
+        : `<span class="pill bad-pill">offline</span> ${esc(worker.id)}, last seen ${esc(ago(worker.seen_at))}`;
+      const mf = state.music_fill || {};
+      if (mf.url) document.getElementById("musicFillLink").href = mf.url;
+      musicFill.textContent = !worker.online
+        ? "Unknown: the worker is offline."
+        : mf.running ? `Running at ${mf.url}${mf.managed ? "" : " (started by hand)"}` : "Stopped.";
+    }
+    function renderDescribeStats(stats) {
+      const bySource = Object.entries(stats.by_source || {})
+        .sort((a, b) => b[1] - a[1])
+        .map(([source, count]) => `${esc(DESCRIPTION_SOURCES[source] || source)}: ${count}`)
+        .join("<br>");
+      const missing = stats.missing || {};
+      const agent = stats.agent || {};
+      const missingTotal = (missing["1"] || 0) + (missing["2"] || 0) + (missing["3+"] || 0);
+      document.getElementById("describeStats").innerHTML = [
+        statCard("Labels", stats.labels || 0, "with releases in the library",
+          `<div class="meta">self-released / no label: ${stats.self_released || 0}</div>`),
+        statCard("With description", stats.with_description || 0, "by source", `<div class="meta">${bySource}</div>`),
+        statCard("Without description", missingTotal, "by releases in the library",
+          `<div class="meta">3+ releases: ${missing["3+"] || 0}<br>2 releases: ${missing["2"] || 0}<br>1 release: ${missing["1"] || 0}</div>`),
+        statCard("Agent", agent.written || 0, "texts written",
+          `<div class="meta">nothing found: ${agent.not_found || 0}<br>failed: ${agent.failed || 0}<br>reverted: ${agent.reverted || 0}<br>replaceable now: ${stats.replaceable || 0}</div>`),
+      ].join("");
+    }
+    function renderDescribeJob(job) {
+      const target = document.getElementById("describeJob");
+      document.getElementById("describeStart").disabled = Boolean(job);
+      if (!job) {
+        target.innerHTML = `<div class="meta">No description job is running.</div>`;
+        return;
+      }
+      const counts = job.counts || {};
+      const progress = job.progress || {};
+      const total = counts.total || 0;
+      const done = counts.done || 0;
+      const percent = total ? Math.round(done / total * 100) : 0;
+      const perHour = progress.per_hour || 0;
+      const eta = perHour && total > done ? `, about ${formatDuration((total - done) / perHour * 3600)} left` : "";
+      const pausedBy = progress.paused_by === "gpu"
+        ? "paused: the GPU is busy (a game?), the model is unloaded until it is free"
+        : job.status === "paused" ? "paused" : "";
+      const state = job.status === "queued" ? "waiting for the worker" : (pausedBy || job.status);
+      const current = (progress.current || [])
+        .map(item => `<div class="meta"><strong>${esc(item.name)}</strong> &mdash; ${esc(item.step || "")}</div>`)
+        .join("");
+      const paused = job.control === "pause";
+      target.innerHTML = `<div class="job status-${esc(job.status)}">
+        <div class="row" style="justify-content:space-between">
+          <strong>${done} of ${total} labels &middot; ${esc(state)}</strong>
+          <div class="row">
+            <button onclick="describeControl(${job.id}, '${paused ? "run" : "pause"}')">${paused ? "Resume" : "Pause"}</button>
+            <button onclick="describeControl(${job.id}, 'cancel')">Cancel</button>
+          </div>
+        </div>
+        <div class="bar"><div class="fill" style="width:${percent}%"></div></div>
+        <div class="meta">written ${counts.written || 0} &middot; nothing found ${counts.not_found || 0} &middot; failed ${counts.failed || 0}${perHour ? ` &middot; ${perHour} labels/hour${eta}` : ""}</div>
+        ${job.message ? `<div class="meta">${esc(job.message)}</div>` : ""}
+        ${current}
+      </div>`;
+    }
+    function renderDescribeRecent(items) {
+      const target = document.getElementById("describeRecent");
+      if (!items.length) {
+        target.innerHTML = `<div class="meta">The agent has not written anything yet.</div>`;
+        return;
+      }
+      target.innerHTML = items.map(item => {
+        const sources = (item.sources || [])
+          .map(source => `<div><a href="${esc(source.url)}" target="_blank" rel="noopener noreferrer">${esc(source.url)}</a></div>`)
+          .join("");
+        const before = item.previous_source ? `replaced ${esc(DESCRIPTION_SOURCES[item.previous_source] || item.previous_source)}` : "new";
+        return `<div class="job">
+          <div class="row" style="justify-content:space-between">
+            <strong><a href="/labels/${item.label_id}" target="_blank" rel="noopener">${esc(item.name)}</a></strong>
+            <div class="row">
+              <span class="meta">${esc(before)} &middot; ${esc(item.model || "")} &middot; ${esc(ago(item.updated_at))}</span>
+              <button onclick="describeRegenerate(${item.label_id})">Regenerate</button>
+              <button onclick="describeRevert(${item.label_id})">Revert</button>
+            </div>
+          </div>
+          <pre>${esc(item.description)}</pre>
+          ${sources ? `<details><summary class="meta">Sources (${(item.sources || []).length})</summary><div class="meta">${sources}</div></details>` : ""}
+        </div>`;
+      }).join("");
+    }
+    async function toolJob(tool, action, extra = {}) {
+      const statusId = tool === "describe" ? "describeStatus" : "musicFillStatus";
+      try {
+        await toolsApi("/api/v1/tools/jobs", {tool, action, ...extra});
+        toolsMessage(statusId, tool === "describe" ? "Queued: the worker takes it within a minute." : `${action} sent to the worker.`);
+        await refreshTools();
+      } catch (err) {
+        toolsMessage(statusId, err.message, true);
+      }
+    }
+    function startDescribe() {
+      const scope = document.getElementById("describeScope").value;
+      const minReleases = Math.max(1, Number(document.getElementById("describeMinReleases").value) || 1);
+      return toolJob("describe", "run", {scope, min_releases: minReleases});
+    }
+    async function describeControl(jobId, control) {
+      try {
+        await toolsApi(`/api/v1/tools/jobs/${jobId}/control`, {control});
+        await refreshTools();
+      } catch (err) {
+        toolsMessage("describeStatus", err.message, true);
+      }
+    }
+    function describeRegenerate(labelId) {
+      return toolJob("describe", "run", {scope: "ids", label_ids: [labelId]});
+    }
+    async function describeRevert(labelId) {
+      if (!confirm("Bring back the description this label had before the agent?")) return;
+      try {
+        await toolsApi(`/api/v1/tools/describe/${labelId}/revert`, {});
+        await refreshTools();
+      } catch (err) {
+        toolsMessage("describeStatus", err.message, true);
+      }
+    }
     async function refreshWorkers() {
       try {
         const data = await json("/api/v1/workers", {timeoutMs: 8000});
@@ -5398,6 +5622,7 @@
       if (document.hidden) return;
       refreshStats();
       refreshJobs();
+      if (document.getElementById("tools").classList.contains("active")) refreshTools();
     }, 5000);
   </script>
 </body>
