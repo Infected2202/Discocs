@@ -148,8 +148,9 @@ def api_v1_tool_job_control(job_id: int, request: ToolJobControlRequest) -> dict
     current = store.tool_job(job_id)
     if current is None:
         return api_error(404, "not_found", _JOB_NOT_FOUND)
-    worker_online = current["worker_id"] is None or _job_worker(store, current)[0]
-    job = store.set_tool_job_control(job_id, request.control, worker_online=worker_online)
+    # Без воркера (в очереди или прогон из командной строки, переведённый в running руками) отмену
+    # подтвердить некому — закрывается сразу, как и у задачи пропавшего воркера.
+    job = store.set_tool_job_control(job_id, request.control, worker_online=_job_worker(store, current)[0])
     if job is None:
         return api_error(404, "not_found", _JOB_NOT_FOUND)
     params = dict(job["params"]) if isinstance(job["params"], dict) else {}

@@ -296,6 +296,23 @@ def test_cancel_closes_a_job_whose_worker_is_gone_and_a_restarted_worker_drops_i
     assert store.tool_job(second)["status"] == "cancelled"
 
 
+def test_cancel_closes_a_running_job_that_no_worker_ever_took(tmp_path, monkeypatch):
+    store = init_api_store(tmp_path, monkeypatch)
+    _label(store, tmp_path, "One", 1)
+    client = TestClient(app)
+    job_id = client.post("/api/v1/tools/jobs", json={"tool": "describe", "action": "run"}).json()["job"]["id"]
+    # Прогон из командной строки: итоги засчитаны задаче, её перевели в running руками — воркера у неё нет.
+    with store.connect() as conn:
+        conn.execute("UPDATE tool_jobs SET status = 'running', message = 'command-line run on the PC' WHERE id = ?",
+                     (job_id,))
+
+    cancelled = client.post(f"/api/v1/tools/jobs/{job_id}/control", json={"control": "cancel"}).json()["job"]
+
+    assert cancelled["status"] == "cancelled"
+    assert client.get("/api/v1/tools/describe").json()["job"] is None
+    assert client.post("/api/v1/tools/jobs", json={"tool": "describe", "action": "run"}).status_code == 200
+
+
 def test_describe_overview_says_whether_the_worker_running_the_job_is_online(tmp_path, monkeypatch):
     store = init_api_store(tmp_path, monkeypatch)
     _label(store, tmp_path, "One", 1)
