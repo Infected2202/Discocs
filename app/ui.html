@@ -5363,7 +5363,7 @@
       const stalled = job.status !== "queued" && !job.worker_online;
       const state = job.status === "queued" ? "waiting for the worker"
         : stalled ? `not running: the worker is offline${job.worker_seen_at ? `, last seen ${ago(job.worker_seen_at)}` : ""}`
-        : job.control === "cancel" ? "cancelling: finishing the labels in progress"
+        : job.control === "cancel" ? "cancelling: the worker drops the labels in progress"
         : job.control === "pause" && job.status === "running" ? "pausing: finishing the labels in progress"
         : (pausedBy || job.status);
       const current = (progress.current || [])

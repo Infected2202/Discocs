@@ -188,6 +188,10 @@ def gpu_busy(config: dict, model_loaded: bool) -> bool:
 # --- describe -----------------------------------------------------------------
 
 
+class Stopped(Exception):
+    """Задачу отменили: лейбл бросается на полпути, итог по нему не отправляется."""
+
+
 class DescribeJob:
     """Лейблы задачи — порциями с сервера, по ``jobs`` одновременно; итог по каждому — сразу на сервер."""
 
@@ -200,6 +204,7 @@ class DescribeJob:
         self.counts = {"written": 0, "not_found": 0, "failed": 0}
         self.started = time.time()
         self.lock = threading.Lock()
+        self.stop = threading.Event()  # Cancel из админки: начатые лейблы бросить, а не доделывать
 
     def run(self) -> None:
         job_id = int(self.job["id"])
@@ -210,6 +215,24 @@ class DescribeJob:
         from web import Web  # noqa: PLC0415
 
         params = self.job.get("params") if isinstance(self.job.get("params"), dict) else {}
+        stop = self.stop
+
+        class StoppableLLM(LLM):
+            def json(self, *args, **kwargs):
+                if stop.is_set():
+                    raise Stopped
+                return super().json(*args, **kwargs)
+
+        class StoppableWeb(Web):
+            def search(self, *args, **kwargs):
+                if stop.is_set():
+                    raise Stopped
+                return super().search(*args, **kwargs)
+
+            def read(self, *args, **kwargs):
+                if stop.is_set():
+                    raise Stopped
+                return super().read(*args, **kwargs)
 
         def describe(label: dict) -> None:
             label_id = int(label["id"])
@@ -221,11 +244,11 @@ class DescribeJob:
 
             subject = Subject(label_id, label["name"], label.get("artists", []), label.get("releases", []),
                               label.get("external_ids", {}))
-            web = Web(self.config["searxng_url"], self.config.get("searxng_engines", ""),
+            web = StoppableWeb(self.config["searxng_url"], self.config.get("searxng_engines", ""),
                       self.config.get("flaresolverr_url", ""))
             # Перебор «не найденных» — второй проход: узнавание по названию и короткая справка (rescue.py).
             kind = SecondPass if params.get("scope") == "not_found" else Researcher
-            researcher = kind(LLM(self.config["lmstudio_url"], self.model.name), web, log=step)
+            researcher = kind(StoppableLLM(self.config["lmstudio_url"], self.model.name), web, log=step)
             try:
                 result = researcher.run(subject)
                 status = "written" if result.description else "not_found"
@@ -233,9 +256,14 @@ class DescribeJob:
                         "description": result.description or None, "note": result.note[:2000] or None,
                         "sources": [{"url": url} for url in result.sources[:100]]}
             except Exception as exc:  # noqa: BLE001 — один лейбл не валит задачу
-                log.exception("describe %s failed", label["name"])
+                if not stop.is_set():  # отменили — это не сбой лейбла (модель выгружена, запрос оборван)
+                    log.exception("describe %s failed", label["name"])
                 status = "failed"
                 body = {"job_id": job_id, "label_id": label_id, "status": status, "note": repr(exc)[:2000]}
+            if stop.is_set():  # брошенный лейбл остаётся без итога — следующая задача возьмёт его заново
+                with self.lock:
+                    self.current.pop(label_id, None)
+                return
             self._call(self.api.result, body)  # итог — минуты работы модели, не терять
             with self.lock:
                 self.counts[status] += 1
@@ -263,6 +291,12 @@ class DescribeJob:
                                          message="GPU is busy" if paused_by == "gpu" else None)
                     last_report = time.time()
                 if control == "cancel":
+                    # Сразу: начатое бросить, модель выгрузить — LM Studio обрывает идущие генерации, и потоки
+                    # лейблов заканчиваются за секунды, не дописав итог.
+                    if not self.stop.is_set():
+                        log.info("job %s cancelled: dropping %d labels in progress", job_id, len(running))
+                        self.stop.set()
+                        self.model.unload()
                     if not running:
                         self._call(self.api.progress, job_id, status="cancelled", progress=self._progress(""))
                         return
