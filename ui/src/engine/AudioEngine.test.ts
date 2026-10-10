@@ -65,29 +65,28 @@ async function makeEngine() {
 }
 
 describe("AudioEngine.load()", () => {
-  it("создаёт новый Audio элемент при каждом вызове load()", async () => {
+  // Новый элемент на каждый трек рвал медиасессию Chrome на Android (пропадало
+  // медиа-уведомление, вкладке отрезало сеть в фоне) — обычный режим держит один.
+  it("держит один Audio элемент на все вызовы load()", async () => {
     const engine = await makeEngine()
     expect(audioInstances).toHaveLength(1) // конструктор
 
     engine.load("http://example.com/track1.flac")
-    expect(audioInstances).toHaveLength(2) // load создал новый
-
     engine.load("http://example.com/track2.flac")
-    expect(audioInstances).toHaveLength(3) // ещё один новый
+
+    expect(audioInstances).toHaveLength(1)
   })
 
-  it("очищает src предыдущего элемента при смене трека", async () => {
+  it("при смене трека меняет src тому же элементу, не ставя его на паузу и не опустошая", async () => {
     const engine = await makeEngine()
     engine.load("http://example.com/track1.flac")
-
-    const prev = audioInstances[1]
-    expect(prev).toBeDefined()
+    const el = audioInstances[0]
 
     engine.load("http://example.com/track2.flac")
 
-    // Предыдущий элемент должен быть очищен
-    expect(prev.src).toBe("")
-    expect(prev.load).toHaveBeenCalled()
+    expect(el.src).toBe("http://example.com/track2.flac")
+    expect(el.load).toHaveBeenCalledTimes(2)
+    expect(el.pause).not.toHaveBeenCalled()
   })
 
   it("переносит volume и muted на новый элемент", async () => {
@@ -363,7 +362,7 @@ describe("AudioEngine — текущий трек играет обычным п
     await engine.play()
 
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(audioInstances).toHaveLength(2)
+    expect(audioInstances).toHaveLength(1)
     expect(networkElement.src).toBe("/audio/1")
     expect(networkElement.play).toHaveBeenCalledTimes(2)
   })
@@ -449,7 +448,8 @@ describe("AudioEngine.clear()", () => {
     expect(active.pause).toHaveBeenCalled()
     expect(active.src).toBe("")
     expect(active.load).toHaveBeenCalled()
-    expect(audioInstances).toHaveLength(3)
+    // Конструктор + свежий элемент после clear().
+    expect(audioInstances).toHaveLength(2)
     expect(onTimeUpdate).toHaveBeenCalledWith(0, 0)
     expect(onBufferUpdate).toHaveBeenCalledWith([])
     expect(onPlaybackStateChange).toHaveBeenCalledWith("idle")
