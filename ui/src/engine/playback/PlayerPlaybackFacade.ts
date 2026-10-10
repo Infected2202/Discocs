@@ -42,6 +42,7 @@ interface AudioEngineCallbacks {
 }
 
 // HTMLMediaElement constants as literals: test fakes don't carry the statics.
+const HAVE_NOTHING = 0
 const HAVE_METADATA = 1
 const HAVE_FUTURE_DATA = 3
 const NETWORK_IDLE = 1
@@ -52,6 +53,8 @@ export const SETTLED_AHEAD_SECONDS = 60
 export const SETTLED_BUFFERED_FRACTION = 0.8
 /** Safety net: this close to the end the next track is fetched no matter how the current one buffers. */
 export const SETTLED_REMAINING_SECONDS = 45
+/** A source with no data at all this long after it was opened is a lost request, not a slow one. */
+export const SOURCE_STALL_MS = 10_000
 
 /**
  * The `/tracks/{id}/audio` URL of a transcoded stream that starts `seconds`
@@ -102,6 +105,8 @@ export class PlayerPlaybackFacade {
   private pendingMetadataAction: { el: HTMLAudioElement; handler: () => void } | null = null
   /** Bumped on every source (re)assignment, so a superseded play() can tell it was interrupted by us. */
   private sourceGeneration = 0
+  /** Wall-clock time the current source was (re)assigned — for telling a lost request from a slow one. */
+  private sourceOpenedAt = 0
   private playRequested = false
   private activeObjectUrl: string | null = null
   /** The whole track is local (Blob, decoded stretch deck): buffer bar is full. */
@@ -792,6 +797,21 @@ export class PlayerPlaybackFacade {
       : this.trackDuration() ?? this.el.duration
   }
 
+  /**
+   * The current track's source is dead and play() on the same element cannot
+   * revive it: a media error, or still no data long after it was opened — a
+   * request lost while the network was gone (a background transition on a
+   * phone whose network is asleep). Only reloading the track helps. The DJ
+   * graph manages its own decks and is never reported here.
+   */
+  get sourceFailed(): boolean {
+    if (this.graphActive) return false
+    const el = this.el
+    if (!el.src) return false
+    if (el.error) return true
+    return el.readyState === HAVE_NOTHING && Date.now() - this.sourceOpenedAt >= SOURCE_STALL_MS
+  }
+
   get paused() {
     const deck = this.runtime.programDeck
     const snapshot = this.runtime.getSnapshot().decks[deck]
@@ -1178,7 +1198,8 @@ export class PlayerPlaybackFacade {
     const offset = this.serverOffsetFor(sourceUrl, startSeconds)
     this.streamOffset = offset
     this.sourceGeneration += 1
-    el.src = offset > 0 ? withStartOffset(sourceUrl, offset) : sourceUrl
+    this.sourceOpenedAt = Date.now()
+    el.src =offset > 0 ? withStartOffset(sourceUrl, offset) : sourceUrl
     el.load()
     const nativeStart = offset > 0 ? 0 : startSeconds
     if (nativeStart > 0) {

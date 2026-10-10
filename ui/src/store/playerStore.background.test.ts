@@ -166,6 +166,101 @@ describe("player background / DJ engine behaviour", () => {
   })
 })
 
+// The next track's request got lost while the phone's network slept in the
+// background: its element never gets data (or errors), and play() on it only
+// resets the shown position. Only reloading the track revives it.
+describe("dead source recovery", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    Object.defineProperty(audioEngine, "sourceFailed", { value: false, configurable: true, writable: true })
+    Object.defineProperty(audioEngine, "paused", { value: true, configurable: true, writable: true })
+    Object.defineProperty(audioEngine, "currentTime", { value: 0, configurable: true, writable: true })
+    const items = [makeItem("prev", 10), makeItem("current", 20)]
+    usePlayerStore.setState({
+      session: stubSession(20),
+      queue: stubQueue(items, "current"),
+      currentTrackId: 20,
+      currentQueueItemId: "current",
+      currentTrack: makeTrack(20),
+      playbackState: "loading",
+      currentTime: 282,
+      duration: 282,
+      error: null,
+      djEngineActive: false,
+      playbackProfile: { transcodingEnabled: false, bitrateKbps: 192, key: "raw" },
+    })
+  })
+
+  function returnToForeground() {
+    Object.defineProperty(document, "hidden", { value: false, configurable: true })
+    document.dispatchEvent(new Event("visibilitychange"))
+  }
+
+  it("reloads the current track from the top on return when its source never got data", () => {
+    Object.defineProperty(audioEngine, "sourceFailed", { value: true, configurable: true })
+
+    returnToForeground()
+
+    expect(audioEngine.load).toHaveBeenCalledWith("/audio/20", 20, "raw", false, "current", 180, null)
+  })
+
+  it("reloads at the position reached when the source died mid-track", () => {
+    Object.defineProperty(audioEngine, "sourceFailed", { value: true, configurable: true })
+    Object.defineProperty(audioEngine, "currentTime", { value: 95, configurable: true })
+    usePlayerStore.setState({ playbackState: "error" })
+
+    returnToForeground()
+
+    expect(audioEngine.load).toHaveBeenCalledWith("/audio/20", 20, "raw", false, "current", 180, 95)
+  })
+
+  it("leaves a user-paused track alone on return even if its source died", () => {
+    Object.defineProperty(audioEngine, "sourceFailed", { value: true, configurable: true })
+    usePlayerStore.setState({ playbackState: "paused" })
+
+    returnToForeground()
+
+    expect(audioEngine.load).not.toHaveBeenCalled()
+    expect(audioEngine.play).not.toHaveBeenCalled()
+  })
+
+  it("Play reloads a dead source instead of calling play() on it", () => {
+    Object.defineProperty(audioEngine, "sourceFailed", { value: true, configurable: true })
+    usePlayerStore.setState({ playbackState: "error" })
+
+    usePlayerStore.getState().togglePlay()
+
+    expect(audioEngine.load).toHaveBeenCalledWith("/audio/20", 20, "raw", false, "current", 180, null)
+  })
+
+  it("Play just resumes a healthy paused source", () => {
+    usePlayerStore.setState({ playbackState: "paused" })
+
+    usePlayerStore.getState().togglePlay()
+
+    expect(audioEngine.load).not.toHaveBeenCalled()
+    expect(audioEngine.play).toHaveBeenCalledOnce()
+  })
+
+  it("never reloads while the DJ engine owns the decks", () => {
+    Object.defineProperty(audioEngine, "sourceFailed", { value: true, configurable: true })
+    usePlayerStore.setState({ playbackState: "error", djEngineActive: true })
+
+    returnToForeground()
+    usePlayerStore.getState().togglePlay()
+
+    expect(audioEngine.load).not.toHaveBeenCalled()
+  })
+
+  it("shows the new track's start and duration at once, not the previous track's end", async () => {
+    await usePlayerStore.getState().playTrack(20, { queueItemId: "current", recordStarted: false })
+
+    expect(usePlayerStore.getState().currentTime).toBe(0)
+    expect(usePlayerStore.getState().duration).toBe(180)
+  })
+})
+
 function createDeferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((res) => {

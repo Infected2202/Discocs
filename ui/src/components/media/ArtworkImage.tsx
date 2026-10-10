@@ -25,6 +25,22 @@ export default function ArtworkImage({ src, alt, size, className, fallbackLetter
     setFailed(false)
   }, [src])
 
+  // A load that failed while the network was gone (a backgrounded phone tab)
+  // is retried when the page is shown again or goes online, instead of keeping
+  // the fallback letter until the src changes.
+  useEffect(() => {
+    if (!failed) return
+    const retry = () => {
+      if (!document.hidden) setFailed(false)
+    }
+    document.addEventListener("visibilitychange", retry)
+    globalThis.addEventListener("online", retry)
+    return () => {
+      document.removeEventListener("visibilitychange", retry)
+      globalThis.removeEventListener("online", retry)
+    }
+  }, [failed])
+
   if (!src || failed) {
     return (
       <div

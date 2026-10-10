@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 import ArtworkImage from "./ArtworkImage"
 
@@ -65,6 +65,38 @@ describe("ArtworkImage", () => {
 
     expect(screen.queryByRole("img", { name: "Cover" })).not.toBeInTheDocument()
     expect(screen.getByText("C")).toBeInTheDocument()
+  })
+
+  it("retries a failed image when the page is shown again or goes online", () => {
+    render(<ArtworkImage src="/art/1.jpg" alt="Cover" />)
+    Object.defineProperty(document, "hidden", { value: false, configurable: true })
+
+    fireEvent.error(screen.getByRole("img", { name: "Cover" }))
+    expect(screen.queryByRole("img", { name: "Cover" })).not.toBeInTheDocument()
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"))
+    })
+    expect(screen.getByRole("img", { name: "Cover" })).toHaveAttribute("src", "/art/1.jpg")
+
+    fireEvent.error(screen.getByRole("img", { name: "Cover" }))
+    expect(screen.queryByRole("img", { name: "Cover" })).not.toBeInTheDocument()
+    act(() => {
+      globalThis.dispatchEvent(new Event("online"))
+    })
+    expect(screen.getByRole("img", { name: "Cover" })).toHaveAttribute("src", "/art/1.jpg")
+  })
+
+  it("does not retry while the page is still hidden", () => {
+    render(<ArtworkImage src="/art/1.jpg" alt="Cover" />)
+    Object.defineProperty(document, "hidden", { value: true, configurable: true })
+
+    fireEvent.error(screen.getByRole("img", { name: "Cover" }))
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"))
+    })
+
+    expect(screen.queryByRole("img", { name: "Cover" })).not.toBeInTheDocument()
+    Object.defineProperty(document, "hidden", { value: false, configurable: true })
   })
 
   it("defaults to native lazy loading", () => {

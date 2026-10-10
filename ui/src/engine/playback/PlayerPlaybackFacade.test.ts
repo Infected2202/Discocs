@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { PlaybackEngine } from "./PlaybackEngine"
-import { PlayerPlaybackFacade } from "./PlayerPlaybackFacade"
+import { PlayerPlaybackFacade, SOURCE_STALL_MS } from "./PlayerPlaybackFacade"
 import {
   installFakeAudio,
   MEDIA_HAVE_ENOUGH_DATA,
@@ -960,5 +960,50 @@ describe("PlayerPlaybackFacade buffering settled", () => {
     await facade.prefetch(8, "/audio/8", "raw", "queue-8")
 
     expect(fetchMock).toHaveBeenCalledWith("/audio/8", expect.objectContaining({ priority: "low" }))
+  })
+})
+
+// A request lost while the phone's network slept in the background leaves the
+// element without data forever (or errored); play() on it cannot revive it.
+describe("PlayerPlaybackFacade dead source", () => {
+  it("reports a source that got no data for SOURCE_STALL_MS as failed, not a fresh one", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000)
+    const { facade } = streamingFacade()
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 300)
+
+    now.mockReturnValue(1_000_000 + SOURCE_STALL_MS - 1)
+    expect(facade.sourceFailed).toBe(false)
+    now.mockReturnValue(1_000_000 + SOURCE_STALL_MS)
+    expect(facade.sourceFailed).toBe(true)
+    now.mockRestore()
+  })
+
+  it("does not report a slow source that already has data", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000)
+    const { facade, current } = streamingFacade()
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 300)
+    current().loadMetadata(300)
+
+    now.mockReturnValue(1_000_000 + 10 * SOURCE_STALL_MS)
+    expect(facade.sourceFailed).toBe(false)
+    now.mockRestore()
+  })
+
+  it("reports a media error at once", () => {
+    const { facade, current } = streamingFacade()
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 300)
+    current().loadMetadata(300)
+
+    current().error = { code: 2, message: "net::ERR_INTERNET_DISCONNECTED" } as MediaError
+
+    expect(facade.sourceFailed).toBe(true)
+  })
+
+  it("reports nothing when no track is loaded", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000 + 10 * SOURCE_STALL_MS)
+    const { facade } = streamingFacade()
+
+    expect(facade.sourceFailed).toBe(false)
+    now.mockRestore()
   })
 })

@@ -107,6 +107,21 @@ Background reliability is reinforced by:
   `playing` but the element is actually paused, it resumes it, or drives
   `handleTrackEnded` when the current track ended in the background without the
   auto-advance having fired.
+- **Dead source recovery.** A phone can put the browser's network to sleep in
+  the background while audio keeps playing: the current track and the
+  prefetched next Blob play out, then the following track's request never
+  reaches the server and its element sits without data (or errors). `play()` on
+  that element only resets the shown position. `PlayerPlaybackFacade.sourceFailed`
+  reports such a source — a media error, or `readyState` still `HAVE_NOTHING`
+  `SOURCE_STALL_MS` (10 s) after the source was opened; never in DJ mode — and
+  the store reloads the track (`playTrack` at the position reached, from the
+  top if nothing played) instead of resuming the dead element: on return to
+  the foreground while playback was wanted (`playing`/`loading`/`error`), and on
+  Play while the button shows Play. `playTrack` also switches the shown time and
+  duration to the new track at once (0 and the API duration), so a source that
+  never gets data no longer leaves the previous track's end under the new
+  title. `ArtworkImage` retries an image that failed to load once the page is
+  visible again or goes `online`.
 - When an autoplay refill fills a queue that had run out (`handleTrackEnded`
   set `playbackState` to `"idle"` because there was no next item yet),
   `scheduleAutoplayRefill` resumes playback into the newly generated item once

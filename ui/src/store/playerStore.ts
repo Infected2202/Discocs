@@ -322,13 +322,34 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
   audioEngine.setVolume(initVolume)
   audioEngine.setMuted(initMuted)
 
+  // Источник текущего трека умер (запрос потерян, пока у телефона в фоне не
+  // было сети; ошибка медиа): play() на том же элементе его не оживит —
+  // только перезагрузка трека. Продолжаем с того же места; источник, не
+  // получивший ни байта, — с начала.
+  function reloadDeadSource(): boolean {
+    const { currentTrackId, currentQueueItemId, djEngineActive } = get()
+    if (djEngineActive || currentTrackId == null || !audioEngine.sourceFailed) return false
+    const position = audioEngine.currentTime
+    playerLog("buffer", "reloading a dead source", { trackId: currentTrackId, position })
+    void get().playTrack(currentTrackId, {
+      queueItemId: currentQueueItemId ?? undefined,
+      recordStarted: false,
+      startPositionSeconds: position > 0 ? position : undefined,
+    })
+    return true
+  }
+
   // При возврате из фона дозапускаем зависший переход: мобильный браузер мог
-  // заблокировать play() следующего трека в фоне (нет жеста), либо трек
-  // доиграл до конца, а автопереход не стартовал. В обычном режиме мягко
-  // продолжаем; в DJ-режиме сведение ручное — не вмешиваемся.
+  // заблокировать play() следующего трека в фоне (нет жеста), трек доиграл до
+  // конца, а автопереход не стартовал, либо следующий трек так и не загрузился
+  // (состояние тогда loading/error — воспроизведение всё равно было желанным).
+  // В обычном режиме мягко продолжаем; в DJ-режиме сведение ручное — не вмешиваемся.
   function reconcileOnForeground() {
     const { playbackState, djEngineActive } = get()
-    if (djEngineActive || playbackState !== "playing" || !audioEngine.paused) return
+    if (djEngineActive) return
+    if (playbackState !== "playing" && playbackState !== "loading" && playbackState !== "error") return
+    if (reloadDeadSource()) return
+    if (playbackState !== "playing" || !audioEngine.paused) return
     const duration = audioEngine.duration
     const position = audioEngine.currentTime
     if (Number.isFinite(duration) && duration > 0 && position >= duration - 0.5) {
@@ -642,17 +663,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       set({ error: null, playbackState: "loading" })
       if (queueItemId) set({ currentQueueItemId: queueItemId })
       set({ currentTrackId: trackId })
+      const knownTrack = get().currentTrack
+      const knownDurationSeconds = knownTrack?.id === trackId ? knownTrack.duration : null
       // A deliberate start is a new playback occurrence. Persist its start
       // (zero, or the requested position) now so an older position for the
-      // same track can never leak into this queue item.
+      // same track can never leak into this queue item. The shown time and
+      // duration switch to this track right away: a source that never gets
+      // data would otherwise keep the previous track's end under this title.
+      throttledSetTime.cancel()
       if (startSeconds === null) {
         resetCurrentPosition()
       } else {
-        throttledSetTime.cancel()
         throttledPersistPosition.cancel()
         persistCurrentPosition(startSeconds)
-        set({ currentTime: startSeconds })
       }
+      set({ currentTime: startSeconds ?? 0, duration: knownDurationSeconds ?? 0 })
 
       const profile = get().playbackProfile
       const prefetchedUrl = audioEngine.consumePrefetched(trackId, profile.key)
@@ -664,8 +689,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
         trackId,
         profile: profile.key,
       })
-      const knownTrack = get().currentTrack
-      const knownDurationSeconds = knownTrack?.id === trackId ? knownTrack.duration : null
       audioEngine.load(
         url,
         trackId,
@@ -764,6 +787,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     },
 
     togglePlay() {
+      // Кнопка показывает Play (не играет), а источник мёртв: перезагружаем
+      // трек, иначе play() лишь сбросит позицию на мёртвом элементе.
+      if (get().playbackState !== "playing" && reloadDeadSource()) return
       if (audioEngine.paused) {
         audioEngine.play().catch((err: Error) => set({ error: err.message, playbackState: "error" }))
       } else {
