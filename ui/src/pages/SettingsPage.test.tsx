@@ -30,7 +30,8 @@ describe("SettingsPage", () => {
           language: "en",
           transcoding_enabled: false,
           transcoding_bitrate_kbps: 192,
-          prefetch_tracks: 1,
+          prefetch_ahead_enabled: false,
+          prefetch_tracks: 3,
           ...patch,
         })
       }
@@ -69,18 +70,38 @@ describe("SettingsPage", () => {
     await waitFor(() => expect(quality).not.toBeDisabled())
   })
 
-  it("saves how many tracks are loaded ahead, from 1 to 5", async () => {
+  it("has its own loading-ahead switch, off by default, independent of transcoding", async () => {
     renderSettings()
-    const select = await screen.findByLabelText("Tracks loaded ahead")
-    expect(select).toHaveValue("1")
-    expect(screen.getAllByRole("option", { name: /^\d tracks?$/ }).map((option) => option.textContent))
-      .toEqual(["1 track", "2 tracks", "3 tracks", "4 tracks", "5 tracks"])
+    const toggle = await screen.findByRole("switch", { name: "Load tracks ahead" })
+    const count = screen.getByLabelText("Tracks kept ahead")
+    expect(toggle).toHaveAttribute("aria-checked", "false")
+    expect(count).toBeDisabled()
+    expect(screen.getByRole("switch", { name: "Transcoding" })).toHaveAttribute("aria-checked", "false")
 
-    fireEvent.change(select, { target: { value: "3" } })
+    fireEvent.click(toggle)
 
     await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(
       "/api/v1/me/settings",
-      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ prefetch_tracks: 3 }) }),
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ prefetch_ahead_enabled: true }) }),
+    ))
+    await waitFor(() => expect(count).not.toBeDisabled())
+    expect(screen.getByLabelText("Streaming quality")).toBeDisabled()
+  })
+
+  it("saves how many tracks are kept ahead, from 2 to 5", async () => {
+    renderSettings()
+    fireEvent.click(await screen.findByRole("switch", { name: "Load tracks ahead" }))
+    const count = screen.getByLabelText("Tracks kept ahead")
+    await waitFor(() => expect(count).not.toBeDisabled())
+    expect(count).toHaveValue("3")
+    expect([...(count as HTMLSelectElement).options].map((option) => option.textContent))
+      .toEqual(["2 tracks", "3 tracks", "4 tracks", "5 tracks"])
+
+    fireEvent.change(count, { target: { value: "5" } })
+
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(
+      "/api/v1/me/settings",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ prefetch_tracks: 5 }) }),
     ))
   })
 })

@@ -415,11 +415,15 @@ next-track prefetch state (`null` when nothing is in flight/ready); the seek
 bar renders a second dot pinned to its right edge — pulsing while the next
 track is still buffering, static once it is fully ready.
 
-**Tracks ahead** — the user setting `prefetch_tracks` (Settings → Playback,
-1–5, default 1 = only the next track) keeps more upcoming queue tracks
-downloaded. Once the next track's Blob is ready, `playerStore`
+**Tracks ahead** — Settings → Playback has its own "Load tracks ahead"
+switch, separate from transcoding and off by default
+(`prefetch_ahead_enabled`). Off, only the next track is downloaded ahead —
+the standard behaviour. On, the player keeps `prefetch_tracks` (2–5, default
+3) upcoming queue tracks downloaded; `prefetchTrackCount()` in
+`ui/src/api/settings.ts` turns the two settings into
+`playerStore.prefetchTrackCount` (1 while off). Once the next track's Blob is ready, `playerStore`
 (`scheduleAheadPrefetch`) hands `PlayerPlaybackFacade.prefetchAhead()` the
-following `prefetch_tracks − 1` items; they are fetched one by one at low
+following `prefetchTrackCount − 1` items; they are fetched one by one at low
 priority into a separate pool (never while the next track itself is still
 downloading). When one becomes the next track, `prefetch()` promotes it from
 the pool without a refetch; a skip straight to one consumes it directly.
@@ -428,8 +432,8 @@ the queue has nothing after the next track); starting a track aborts a running
 ahead download, which resumes after the next one is ready again. Each track is
 a whole file in memory, which is why the setting is capped at 5.
 
-The browser retains at most one upcoming Blob (plus the consumed one that is
-currently playing). Object URLs are revoked after use, on profile/source
+Switched off, the browser retains at most one upcoming Blob (plus the consumed
+one that is currently playing). Object URLs are revoked after use, on profile/source
 changes, and on logout. This is intentionally an in-memory transition buffer,
 not offline storage.
 

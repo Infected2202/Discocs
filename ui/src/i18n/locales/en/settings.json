@@ -11,10 +11,12 @@
     "kbps": "kbps",
     "qualityHint": "Lower quality uses less mobile data and lets the next track buffer faster.",
     "saveError": "Could not save playback settings.",
-    "prefetchTracks": "Tracks loaded ahead",
+    "prefetchTracks": "Tracks kept ahead",
     "prefetchTrackCount_one": "{{count}} track",
     "prefetchTrackCount_other": "{{count}} tracks",
-    "prefetchHint": "Whole upcoming tracks kept in the browser. More keeps the music going when the phone cuts the network in the background, but uses more memory and data."
+    "prefetchHint": "Each track is a whole file in the phone's memory and uses data.",
+    "prefetchAhead": "Load tracks ahead",
+    "prefetchAheadHint": "Off: only the next track is downloaded ahead. On: several upcoming tracks are kept whole in the browser, so the music keeps going when the phone cuts the network in the background."
   },
   "flowProfile": {
     "heading": "Flow Profile",

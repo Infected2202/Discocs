@@ -24,7 +24,7 @@ from app.store.flow import FlowStoreMixin
 from app.store.map_atlas import MapAtlasStoreMixin
 from app.store.sessions import SessionsStoreMixin
 from app.store.users import UsersStoreMixin
-from app.store.settings import SettingsStoreMixin
+from app.store.settings import PREFETCH_TRACKS_MAX, PREFETCH_TRACKS_MIN, SettingsStoreMixin  # noqa: F401
 from app.store.shares import SharesStoreMixin
 from app.store.telegram import TelegramStoreMixin
 from app.store.timeline import TimelineStoreMixin

@@ -10,25 +10,39 @@ from __future__ import annotations
 from app.avatars import AVATAR_SETTING_KEY
 from app.models import utc_now
 
+# Tracks the web player keeps downloaded ahead when that is switched on: at
+# least the next one plus one more (1 is the switched-off behaviour), at most
+# 5 — each is a whole file in the phone's memory.
+PREFETCH_TRACKS_MIN = 2
+PREFETCH_TRACKS_MAX = 5
+PREFETCH_TRACKS_DEFAULT = 3
+
 DEFAULT_USER_SETTINGS: dict[str, object] = {
     "language": "en",
     "transcoding_enabled": False,
     "transcoding_bitrate_kbps": 192,
-    # How many upcoming queue tracks the web player keeps downloaded ahead.
-    "prefetch_tracks": 1,
+    # Off: the web player keeps only the next track downloaded (its standard
+    # behaviour). On: it keeps `prefetch_tracks` upcoming tracks.
+    "prefetch_ahead_enabled": False,
+    "prefetch_tracks": PREFETCH_TRACKS_DEFAULT,
 }
 
+_BOOL_SETTINGS = {"transcoding_enabled", "prefetch_ahead_enabled"}
 _INT_SETTINGS = {"transcoding_bitrate_kbps", "prefetch_tracks"}
 
 
 def _decode_setting(key: str, value: str) -> object:
-    if key == "transcoding_enabled":
+    if key in _BOOL_SETTINGS:
         return value.strip().lower() == "true"
     if key in _INT_SETTINGS:
         try:
-            return int(value)
+            number = int(value)
         except ValueError:
             return DEFAULT_USER_SETTINGS[key]
+        if key == "prefetch_tracks":
+            # A value saved under an older range still reads as a valid one.
+            return min(max(number, PREFETCH_TRACKS_MIN), PREFETCH_TRACKS_MAX)
+        return number
     return value
 
 

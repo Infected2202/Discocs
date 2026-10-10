@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.audio_features import AUDIO_FEATURE_EXTRACTOR
 from app.avatars import AVATAR_KEYS, is_avatar_key
+from app.store import PREFETCH_TRACKS_MAX, PREFETCH_TRACKS_MIN
 from app.state import (
     DEFAULT_ANALYZE_TF_THREADS,
     DEFAULT_ANALYZE_WORKERS,
@@ -20,9 +21,6 @@ from app.state import (
 )
 
 _EXECUTION_MODE_PATTERN = "^(both|local|remote)$"
-# Upper bound of the web player's tracks downloaded ahead: each is a whole file
-# held in the phone's memory.
-PREFETCH_TRACKS_MAX = 5
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +235,8 @@ class UserSettingsPatchRequest(BaseModel):
     language: str | None = Field(default=None, pattern="^(en|ru)$")
     transcoding_enabled: bool | None = None
     transcoding_bitrate_kbps: Literal[96, 128, 192, 256, 320] | None = None
-    prefetch_tracks: int | None = Field(default=None, ge=1, le=PREFETCH_TRACKS_MAX)
+    prefetch_ahead_enabled: bool | None = None
+    prefetch_tracks: int | None = Field(default=None, ge=PREFETCH_TRACKS_MIN, le=PREFETCH_TRACKS_MAX)
 
     model_config = ConfigDict(extra="forbid")
 

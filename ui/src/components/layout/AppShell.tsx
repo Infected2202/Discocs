@@ -17,7 +17,7 @@ import { usePlayerStore } from "@/store/playerStore"
 import { startPresenceReporting } from "@/store/presenceReporter"
 import { useUIStore } from "@/store/uiStore"
 import { useUserSettings } from "@/api/hooks/useUserSettings"
-import { playbackProfile } from "@/api/settings"
+import { playbackProfile, prefetchTrackCount } from "@/api/settings"
 import PlasmaFBM from "@/components/player/PlasmaFBM"
 import { shouldAnimatePlasma } from "@/components/player/plasmaUtils"
 import { ScrollContext } from "@/contexts/ScrollContext"
@@ -60,7 +60,7 @@ export default function AppShell() {
   useEffect(() => {
     if (!userSettings) return
     setPlaybackProfile(playbackProfile(userSettings))
-    setPrefetchTrackCount(userSettings.prefetch_tracks ?? 1)
+    setPrefetchTrackCount(prefetchTrackCount(userSettings))
   }, [setPlaybackProfile, setPrefetchTrackCount, userSettings])
   useEffect(() => {
     if (userSettings && !restoredSession.current) {

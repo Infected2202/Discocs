@@ -240,7 +240,7 @@ audio ahead, or a safety net (80% buffered / under 45 s left) — `playerStore`
 fetches the next queue item's `/audio` response as a Blob at low fetch
 priority, so the transition does not wait for mobile networking. Only that
 next Blob (and a consumed one while it plays) is retained, plus up to
-`prefetch_tracks − 1` further tracks when the user raises that setting. Source/queue
+`prefetch_tracks − 1` further tracks when the user switches loading ahead on. Source/queue
 changes abort stale fetches, and object URLs are revoked after use or logout.
 An early skip never waits for prefetch and falls back to the ordinary network
 URL. Details: `docs/ui-player.md` ("Streaming, seek and next-track prefetch").
@@ -250,9 +250,12 @@ Playback settings are per-user keys in `user_settings`:
 - `transcoding_enabled` (default `false`);
 - `transcoding_bitrate_kbps` (`96`, `128`, `192`, `256`, or `320`; default
   `192`);
-- `prefetch_tracks` (`1`–`5`, default `1`) — upcoming queue tracks the web
-  player keeps downloaded as Blobs (the next one, plus the rest fetched after
-  it; see `docs/ui-player.md` "Tracks ahead").
+- `prefetch_ahead_enabled` (default `false`) — off: the web player keeps only
+  the next track downloaded (the standard behaviour);
+- `prefetch_tracks` (`2`–`5`, default `3`) — upcoming queue tracks kept
+  downloaded as Blobs while `prefetch_ahead_enabled` is on (the next one, plus
+  the rest fetched after it; see `docs/ui-player.md` "Tracks ahead"). A value
+  stored outside the range reads back clamped into it.
 
 Raw playback sends `format=raw` to Navidrome. Enabled transcoding sends
 `format=mp3`, `maxBitRate=<quality>`, and `estimateContentLength=true` using
