@@ -100,6 +100,8 @@ interface PlayerState {
   muted: boolean
   error: string | null
   playbackProfile: PlaybackProfile
+  /** Upcoming queue tracks kept downloaded ahead (user setting `prefetch_tracks`, 1 = only the next). */
+  prefetchTrackCount: number
 
   // UI state
   expanded: boolean
@@ -134,6 +136,7 @@ interface PlayerState {
   setAutoplayChip(chip: string): Promise<void>
   setVolume(v: number): void
   setPlaybackProfile(profile: PlaybackProfile): void
+  setPrefetchTrackCount(count: number): void
   toggleMute(): void
   refreshQueue(): Promise<void>
   recordEvent(eventType: string, extra?: Record<string, unknown>): Promise<void>
@@ -210,20 +213,39 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     if (!next) {
       audioEngine.cancelPrefetch()
       audioEngine.clearPrefetched()
+      void audioEngine.prefetchAhead([])
       return
     }
     const url = trackAudioUrl(next.track_id, playbackProfile.key)
     playerLog("buffer", "prefetch next", { trackId: next.track_id, profile: playbackProfile.key })
     void audioEngine.prefetch(next.track_id, url, playbackProfile.key, next.id)
-      .then(() => playerLog("buffer", "prefetch complete", {
-        trackId: next.track_id,
-        profile: playbackProfile.key,
-      }))
+      .then(() => {
+        playerLog("buffer", "prefetch complete", { trackId: next.track_id, profile: playbackProfile.key })
+        return scheduleAheadPrefetch()
+      })
       .catch((error: Error) => {
         if (error.name !== "AbortError") {
           playerLog("buffer", "prefetch failed", { trackId: next.track_id, message: error.message })
         }
       })
+  }
+
+  // Tracks after the next one, up to the user's prefetch_tracks setting:
+  // fetched only once the next track is ready, so neither the current nor the
+  // next one competes with them. With the browser's network asleep in the
+  // background, these are what keeps playing; 1 keeps only the next track.
+  function scheduleAheadPrefetch(): Promise<void> {
+    const { queue, currentQueueItemId, session, playbackProfile, prefetchTrackCount } = get()
+    const items = queue?.items ?? []
+    const currentIndex = currentQueueItemId ? items.findIndex((item) => item.id === currentQueueItemId) : -1
+    const ahead = currentIndex < 0 || session?.repeat_mode === "one"
+      ? []
+      : items.slice(currentIndex + 2, currentIndex + 1 + Math.max(1, prefetchTrackCount))
+    return audioEngine.prefetchAhead(ahead.map((item) => ({
+      trackId: item.track_id,
+      url: trackAudioUrl(item.track_id, playbackProfile.key),
+      profileKey: playbackProfile.key,
+    })))
   }
 
   // Кап записи времени в стор до ~4/сек. Chrome и так шлёт timeupdate ~4/сек,
@@ -621,6 +643,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     muted: initMuted,
     error: null,
     playbackProfile: { transcodingEnabled: false, bitrateKbps: 192, key: "raw" },
+    prefetchTrackCount: 1,
     expanded: false,
     djEngineActive: false,
 
@@ -969,6 +992,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       audioEngine.cancelPrefetch()
       set({ playbackProfile: profile })
       playerLog("buffer", "playback profile changed", { profile: profile.key })
+    },
+
+    setPrefetchTrackCount(count) {
+      const normalized = Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1
+      if (normalized === get().prefetchTrackCount) return
+      set({ prefetchTrackCount: normalized })
+      // Re-plan: grows the ahead pool, or drops what is no longer wanted.
+      scheduleNextPrefetch()
     },
 
     toggleMute() {

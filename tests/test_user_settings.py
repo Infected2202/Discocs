@@ -18,6 +18,7 @@ def test_store_get_user_settings_defaults(tmp_path: Path):
         "language": "en",
         "transcoding_enabled": False,
         "transcoding_bitrate_kbps": 192,
+        "prefetch_tracks": 1,
     }
 
 
@@ -65,6 +66,7 @@ def test_api_get_user_settings_defaults(tmp_path: Path, monkeypatch):
         "language": "en",
         "transcoding_enabled": False,
         "transcoding_bitrate_kbps": 192,
+        "prefetch_tracks": 1,
     }
 
 
@@ -188,3 +190,26 @@ def test_user_settings_are_isolated_per_account(tmp_path: Path, monkeypatch):
     assert alice.get("/api/v1/me/settings").json()["language"] == "ru"
     assert bob.get("/api/v1/me/settings").json()["transcoding_enabled"] is False
     assert alice.get("/api/v1/me/settings").json()["transcoding_enabled"] is True
+
+
+def test_api_patch_user_settings_updates_prefetch_tracks(tmp_path: Path, monkeypatch):
+    _init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.patch("/api/v1/me/settings", json={"prefetch_tracks": 3})
+
+    assert response.status_code == 200
+    assert response.json()["prefetch_tracks"] == 3
+    # Stored as text, read back as an int.
+    assert client.get("/api/v1/me/settings").json()["prefetch_tracks"] == 3
+
+
+def test_api_patch_user_settings_rejects_prefetch_tracks_out_of_range(tmp_path: Path, monkeypatch):
+    _init_api_store(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    for value in (0, 6):
+        response = client.patch("/api/v1/me/settings", json={"prefetch_tracks": value})
+        assert response.status_code == 422, value
+
+    assert client.get("/api/v1/me/settings").json()["prefetch_tracks"] == 1

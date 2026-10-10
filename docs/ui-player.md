@@ -73,7 +73,24 @@ deck). This is deliberate: on mobile (iOS/WebKit, aggressive WebViews such as
 Telegram) a `MediaElementAudioSourceNode` stalls together with the suspended
 `AudioContext` when the tab is backgrounded, which is what previously froze
 playback after one or two tracks. A bare `<audio>` element keeps playing in the
-background through the OS media pipeline. Auto-DJ / full mixing in the background
+background through the OS media pipeline.
+
+Ordinary mode keeps **one** `<audio>` element for the whole session and only
+swaps its `src` between tracks (`load()` → `openSource`), like other web
+players. It used to create a fresh element per track (pausing and emptying the
+old one) to free Chrome's native buffers; on Android Chrome that tore down the
+page's media session on every track change — the media notification vanished
+when the second track started, the browser lost its background foreground
+service, and Android cut the tab's network: only already-downloaded tracks
+(the current one and the prefetched next) played on, then playback stopped.
+Swapping the source still releases the old resource (the media element load
+algorithm does). The element is not paused before the swap, and a `pause`
+event arriving while the element is already playing again is ignored as stale
+from the previous source. DJ mode still gives every track its own element:
+one routed through `createMediaElementSource` can never leave the graph, and
+leaving DJ mode creates a fresh unrouted element.
+
+Auto-DJ / full mixing in the background
 is a platform impossibility on mobile and is deferred to a future native app;
 the browser only provides ordinary background playback plus manual mixing while
 in the foreground.
@@ -397,6 +414,19 @@ seeds its incoming deck from. `playerStore.nextTrackBuffer` mirrors this
 next-track prefetch state (`null` when nothing is in flight/ready); the seek
 bar renders a second dot pinned to its right edge — pulsing while the next
 track is still buffering, static once it is fully ready.
+
+**Tracks ahead** — the user setting `prefetch_tracks` (Settings → Playback,
+1–5, default 1 = only the next track) keeps more upcoming queue tracks
+downloaded. Once the next track's Blob is ready, `playerStore`
+(`scheduleAheadPrefetch`) hands `PlayerPlaybackFacade.prefetchAhead()` the
+following `prefetch_tracks − 1` items; they are fetched one by one at low
+priority into a separate pool (never while the next track itself is still
+downloading). When one becomes the next track, `prefetch()` promotes it from
+the pool without a refetch; a skip straight to one consumes it directly.
+Pooled tracks no longer in the plan are revoked on the next call (`[]` when
+the queue has nothing after the next track); starting a track aborts a running
+ahead download, which resumes after the next one is ready again. Each track is
+a whole file in memory, which is why the setting is capped at 5.
 
 The browser retains at most one upcoming Blob (plus the consumed one that is
 currently playing). Object URLs are revoked after use, on profile/source

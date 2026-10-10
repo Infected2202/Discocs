@@ -233,8 +233,9 @@ describe("PlayerPlaybackFacade routing", () => {
 
     facade.seekDeckToSeconds("B", 999)
 
-    expect(audio[2]?.currentTime).toBe(120)
-    expect(audio[1]?.currentTime).toBe(0)
+    // audio[0] — the ordinary program element (now routed), audio[1] — deck B.
+    expect(audio[1]?.currentTime).toBe(120)
+    expect(audio[0]?.currentTime).toBe(0)
     expect(facade.getDeckCurrentTime("B")).toBe(120)
     expect(facade.getDeckCurrentTime("A")).toBe(0)
   })
@@ -284,12 +285,12 @@ describe("PlayerPlaybackFacade routing", () => {
     // именно чистый <audio> надёжно играет в фоне на мобиле.
     expect(engine.routeProgramElement).not.toHaveBeenCalled()
     expect(engine.ensureReady).not.toHaveBeenCalled()
-    expect(audio[1]?.play).toHaveBeenCalledTimes(1)
+    expect(audio[0]?.play).toHaveBeenCalledTimes(1)
 
     // Активация DJ одноразово заводит живой элемент в микшер.
     await facade.activateDjMode()
     expect(engine.ensureReady).toHaveBeenCalled()
-    expect(engine.routeProgramElement).toHaveBeenCalledWith(audio[1], 7, null)
+    expect(engine.routeProgramElement).toHaveBeenCalledWith(audio[0], 7, null)
     expect(facade.djModeActive).toBe(true)
   })
 
@@ -620,12 +621,12 @@ describe("PlayerPlaybackFacade routing", () => {
     const result = await facade.handoverPrepared("h-1")
 
     expect(result).toMatchObject({ trackId: 2, queueItemId: "queue-2", programDeck: "B" })
-    expect(audio[1]?.src).toBe("/audio/1")
-    expect(audio[2]?.play).toHaveBeenCalledTimes(1)
+    expect(audio[0]?.src).toBe("/audio/1")
+    expect(audio[1]?.play).toHaveBeenCalledTimes(1)
     expect(engine.handover).toHaveBeenCalledTimes(1)
 
     await facade.confirmHandover()
-    expect(audio[1]?.src).toBe("")
+    expect(audio[0]?.src).toBe("")
     expect(engine.confirmRetirement).toHaveBeenCalledWith("A")
   })
 })
@@ -645,6 +646,53 @@ function streamingFacade() {
   return { audio, fetchMock, callbacks, engine, facade, current }
 }
 
+// Android Chrome ties the media notification (and with it the app's background
+// network) to the page's media session: a new <audio> per track with the old
+// one paused and emptied dropped it on every track change. Ordinary playback
+// keeps one element and only swaps its source, like other web players.
+describe("PlayerPlaybackFacade single ordinary element", () => {
+  it("plays every track on the same element without pausing or emptying it", async () => {
+    const { audio, facade, current } = streamingFacade()
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 200)
+    await facade.play()
+    const element = current()
+
+    facade.load("blob:next-8", 8, "raw", true, "queue-8", 180)
+    await facade.play()
+
+    expect(audio).toHaveLength(1)
+    expect(current()).toBe(element)
+    expect(element.src).toBe("blob:next-8")
+    expect(element.pause).not.toHaveBeenCalled()
+    expect(element.play).toHaveBeenCalledTimes(2)
+  })
+
+  it("ignores a stale pause of the previous source once the next track is playing", async () => {
+    const { callbacks, facade, current } = streamingFacade()
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 200)
+    await facade.play()
+    facade.load("blob:next-8", 8, "raw", true, "queue-8", 180)
+    await facade.play()
+
+    current().emit("pause")
+
+    expect(callbacks.onPlaybackStateChange).not.toHaveBeenCalledWith("paused")
+  })
+
+  it("still gives each track its own element in DJ mode, where an element cannot leave the graph", async () => {
+    const { audio, engine, facade } = streamingFacade()
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 200)
+    await facade.activateDjMode()
+    const routed = audio.at(-1)!
+
+    facade.load("/audio/8", 8, "raw", false, "queue-8", 180)
+
+    expect(audio.at(-1)).not.toBe(routed)
+    expect(routed.src).toBe("")
+    expect(engine.routeProgramElement).toHaveBeenLastCalledWith(audio.at(-1), 8, "queue-8")
+  })
+})
+
 describe("PlayerPlaybackFacade progressive streaming", () => {
   it.each([
     ["raw", RAW_URL],
@@ -659,8 +707,8 @@ describe("PlayerPlaybackFacade progressive streaming", () => {
     current().emit("progress")
 
     expect(fetchMock).not.toHaveBeenCalled()
-    // Constructor + load() only — the current track is never swapped to a Blob.
-    expect(audio).toHaveLength(2)
+    // The one ordinary element — the current track is never swapped to a Blob.
+    expect(audio).toHaveLength(1)
     expect(current().src).toBe(url)
     expect(current().play).toHaveBeenCalledOnce()
   })
@@ -960,6 +1008,85 @@ describe("PlayerPlaybackFacade buffering settled", () => {
     await facade.prefetch(8, "/audio/8", "raw", "queue-8")
 
     expect(fetchMock).toHaveBeenCalledWith("/audio/8", expect.objectContaining({ priority: "low" }))
+  })
+})
+
+// The user's prefetch_tracks setting above 1: tracks after the next one are
+// kept downloaded too, so playback outlasts a background network cut.
+describe("PlayerPlaybackFacade tracks prefetched ahead", () => {
+  function aheadFacade() {
+    const env = streamingFacade()
+    env.fetchMock.mockImplementation((url: string) => Promise.resolve({
+      ok: true,
+      blob: () => Promise.resolve(new Blob([url])),
+    }))
+    let objectUrls = 0
+    vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:ahead-${++objectUrls}`)
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+    return { ...env, revoke }
+  }
+  const target = (trackId: number) => ({ trackId, url: `/audio/${trackId}`, profileKey: "raw" })
+
+  it("downloads the tracks after the next one at low priority and promotes one to next without a refetch", async () => {
+    const { fetchMock, callbacks, facade } = aheadFacade()
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 300)
+    await facade.prefetch(8, "/audio/8", "raw", "queue-8")
+
+    await facade.prefetchAhead([target(9), target(10)])
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/audio/8", "/audio/9", "/audio/10"])
+    expect(fetchMock).toHaveBeenLastCalledWith("/audio/10", expect.objectContaining({ priority: "low" }))
+
+    facade.load(facade.consumePrefetched(8, "raw")!, 8, "raw", true, "queue-8", 300)
+    await facade.prefetch(9, "/audio/9", "raw", "queue-9")
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(callbacks.onNextTrackBufferingChange).toHaveBeenLastCalledWith({ trackId: 9, queueItemId: "queue-9", ready: true })
+    expect(facade.consumePrefetched(9, "raw")).toBe("blob:ahead-2")
+  })
+
+  it("plays a pooled track directly when the queue skips straight to it", async () => {
+    const { fetchMock, facade } = aheadFacade()
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 300)
+    await facade.prefetch(8, "/audio/8", "raw", "queue-8")
+    await facade.prefetchAhead([target(9)])
+
+    expect(facade.consumePrefetched(9, "raw")).toBe("blob:ahead-2")
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("drops pooled tracks that are no longer wanted", async () => {
+    const { facade, revoke } = aheadFacade()
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 300)
+    await facade.prefetch(8, "/audio/8", "raw", "queue-8")
+    await facade.prefetchAhead([target(9), target(10)])
+
+    await facade.prefetchAhead([target(10)])
+
+    expect(revoke).toHaveBeenCalledWith("blob:ahead-2")
+    expect(revoke).not.toHaveBeenCalledWith("blob:ahead-3")
+    expect(facade.consumePrefetched(9, "raw")).toBeNull()
+  })
+
+  it("does not fetch ahead while the next track itself is still downloading", async () => {
+    const { fetchMock, facade } = aheadFacade()
+    fetchMock.mockImplementationOnce(() => new Promise(() => undefined))
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 300)
+    void facade.prefetch(8, "/audio/8", "raw", "queue-8")
+
+    await facade.prefetchAhead([target(9)])
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/audio/8"])
+  })
+
+  it("joins a running download for the same targets instead of restarting it", async () => {
+    const { fetchMock, facade } = aheadFacade()
+    facade.load(RAW_URL, 7, "raw", false, "queue-7", 300)
+    await facade.prefetch(8, "/audio/8", "raw", "queue-8")
+
+    await Promise.all([facade.prefetchAhead([target(9)]), facade.prefetchAhead([target(9)])])
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/audio/8", "/audio/9"])
   })
 })
 

@@ -20,6 +20,9 @@ from app.state import (
 )
 
 _EXECUTION_MODE_PATTERN = "^(both|local|remote)$"
+# Upper bound of the web player's tracks downloaded ahead: each is a whole file
+# held in the phone's memory.
+PREFETCH_TRACKS_MAX = 5
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +237,7 @@ class UserSettingsPatchRequest(BaseModel):
     language: str | None = Field(default=None, pattern="^(en|ru)$")
     transcoding_enabled: bool | None = None
     transcoding_bitrate_kbps: Literal[96, 128, 192, 256, 320] | None = None
+    prefetch_tracks: int | None = Field(default=None, ge=1, le=PREFETCH_TRACKS_MAX)
 
     model_config = ConfigDict(extra="forbid")
 

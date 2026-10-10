@@ -16,6 +16,7 @@ vi.mock("@/engine/playback", () => ({
     prefetch: vi.fn().mockResolvedValue(undefined),
     cancelPrefetch: vi.fn(),
     clearPrefetched: vi.fn(),
+    prefetchAhead: vi.fn().mockResolvedValue(undefined),
     getEngineSnapshot: vi.fn().mockReturnValue({
       programDeck: "A",
       decks: { A: { id: "A", transport: "paused" }, B: { id: "B", transport: "paused" } },

@@ -14,13 +14,17 @@ DEFAULT_USER_SETTINGS: dict[str, object] = {
     "language": "en",
     "transcoding_enabled": False,
     "transcoding_bitrate_kbps": 192,
+    # How many upcoming queue tracks the web player keeps downloaded ahead.
+    "prefetch_tracks": 1,
 }
+
+_INT_SETTINGS = {"transcoding_bitrate_kbps", "prefetch_tracks"}
 
 
 def _decode_setting(key: str, value: str) -> object:
     if key == "transcoding_enabled":
         return value.strip().lower() == "true"
-    if key == "transcoding_bitrate_kbps":
+    if key in _INT_SETTINGS:
         try:
             return int(value)
         except ValueError:

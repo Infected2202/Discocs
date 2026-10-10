@@ -74,6 +74,10 @@ function rangeContaining(ranges: TimeRanges | undefined, seconds: number): { sta
   return null
 }
 
+function aheadKey(trackId: number, profileKey: string): string {
+  return `${trackId}:${profileKey}`
+}
+
 function metadataReady(el: HTMLAudioElement): boolean {
   return el.readyState >= HAVE_METADATA || (Number.isFinite(el.duration) && el.duration > 0)
 }
@@ -120,6 +124,14 @@ export class PlayerPlaybackFacade {
     blob: Blob
   } | null = null
   private prefetchRetryCount = 0
+  /**
+   * Tracks further ahead than the next one (the user's `prefetch_tracks`
+   * setting above 1), fetched only once the next one is ready, keyed by
+   * aheadKey(). One becoming the next track is promoted into `prefetched`
+   * without a refetch; a skip straight to one consumes it directly.
+   */
+  private readonly aheadPool = new Map<string, { trackId: number; profileKey: string; objectUrl: string; blob: Blob }>()
+  private aheadRun: { key: string; controller: AbortController; promise: Promise<void> } | null = null
   // DJ deck: a fully isolated resource populated only by prepareDjDeck(),
   // never by ordinary background prefetch. The only allowed handoff is the
   // one-time seed from `prefetched` at DJ-mode activation (see
@@ -174,27 +186,32 @@ export class PlayerPlaybackFacade {
     this.endPendingReload()
     this.playRequested = false
     const retainedBlob = fullyAvailable && this.activeObjectUrl === url ? this.activeBlob : null
-    // Явно освобождаем буфер старого элемента — src='' надёжнее removeAttribute
-    const prev = this.el
-    prev.pause()
-    prev.src = ""
-    prev.load()
+    if (this.graphActive) {
+      // DJ: элемент, заведённый в граф, из него не выводится
+      // (createMediaElementSource необратим) — каждому треку свой элемент.
+      const prev = this.el
+      prev.pause()
+      prev.src = ""
+      prev.load()
+      this.el = this.createElement()
+      this.runtime.routeProgramElement(this.el, trackId, queueItemId)
+      this.el.volume = prev.volume
+      this.el.muted = prev.muted
+    }
+    // Обычный режим держит ОДИН <audio> на всё воспроизведение и только меняет
+    // ему источник (openSource ниже), как обычные веб-плееры. Новый элемент на
+    // каждый трек (пауза + src='' старого) рвал медиасессию Chrome на Android:
+    // на смене трека пропадало медиа-уведомление, вместе с ним фоновая служба,
+    // и система отрезала вкладке сеть — в фоне доигрывали только уже скачанные
+    // треки. Старый ресурс освобождается самим алгоритмом загрузки элемента.
+    // Без паузы: смена src останавливает старый трек сама, а лишнее событие
+    // pause мигнуло бы медиасессии «на паузе». Элемент обычного режима никогда
+    // не заведён в граф: DJ-режим при выходе создаёт свежий (deactivateDjMode).
     if (this.activeObjectUrl && this.activeObjectUrl !== url) {
       URL.revokeObjectURL(this.activeObjectUrl)
       this.activeObjectUrl = null
     }
     this.activeBlob = retainedBlob
-
-    // Новый элемент — Chrome гарантированно освобождает нативный PCM буфер
-    // когда старый элемент теряет все ссылки и GC его собирает
-    this.el = this.createElement()
-    // Обычный режим (graphActive=false) НЕ заводит элемент в Web Audio: чистый
-    // <audio> надёжно играет в фоне/на локскрине, тогда как элемент, пропущенный
-    // через AudioContext, зависает вместе с суспендом контекста на мобиле.
-    // В граф элемент попадает только при активации DJ (activateDjMode).
-    if (this.graphActive) this.runtime.routeProgramElement(this.el, trackId, queueItemId)
-    this.el.volume = prev.volume
-    this.el.muted = prev.muted
     this.activeTrackId = trackId
     this.activeQueueItemId = queueItemId
     this.activeProfileKey = profileKey
@@ -248,6 +265,12 @@ export class PlayerPlaybackFacade {
     }
     this.cancelPrefetch()
     this.clearPrefetched()
+    const pooled = this.takeAhead(trackId, profileKey)
+    if (pooled) {
+      this.prefetched = { trackId, queueItemId, profileKey, objectUrl: pooled.objectUrl, blob: pooled.blob }
+      this.callbacks?.onNextTrackBufferingChange?.({ trackId, queueItemId, ready: true })
+      return
+    }
     this.prefetchTarget = { trackId, profileKey, queueItemId }
     this.prefetchRetryCount = 0
     this.callbacks?.onNextTrackBufferingChange?.({ trackId, queueItemId, ready: false })
@@ -301,11 +324,17 @@ export class PlayerPlaybackFacade {
   }
 
   consumePrefetched(trackId: number, profileKey: string): string | null {
-    if (this.prefetched?.trackId !== trackId || this.prefetched.profileKey !== profileKey) return null
-    const objectUrl = this.prefetched.objectUrl
-    this.activeBlob = this.prefetched.blob
-    this.prefetched = null
-    this.callbacks?.onNextTrackBufferingChange?.(null)
+    const next = this.prefetched?.trackId === trackId && this.prefetched.profileKey === profileKey
+      ? this.prefetched
+      : null
+    if (next) {
+      this.prefetched = null
+      this.callbacks?.onNextTrackBufferingChange?.(null)
+    }
+    const source = next ?? this.takeAhead(trackId, profileKey)
+    if (!source) return null
+    const { objectUrl } = source
+    this.activeBlob = source.blob
     if (this.activeObjectUrl && this.activeObjectUrl !== objectUrl) {
       URL.revokeObjectURL(this.activeObjectUrl)
     }
@@ -315,6 +344,10 @@ export class PlayerPlaybackFacade {
 
   cancelPrefetch() {
     const hadTarget = this.prefetchController !== null || this.prefetchTarget !== null
+    // Downloads further ahead stop too (the pool itself is kept): they must not
+    // compete with a track that is starting; prefetchAhead resumes them.
+    this.aheadRun?.controller.abort()
+    this.aheadRun = null
     this.prefetchController?.abort()
     this.prefetchController = null
     this.prefetchTarget = null
@@ -330,6 +363,83 @@ export class PlayerPlaybackFacade {
       this.prefetched = null
       this.callbacks?.onNextTrackBufferingChange?.(null)
     }
+  }
+
+  /**
+   * Keep exactly `targets` — the tracks after the next one, in queue order —
+   * downloaded ahead: drop pooled tracks no longer wanted, then fetch the
+   * missing ones one by one at low priority. Runs only once the next track
+   * is ready (it never competes with it); a call with other targets
+   * supersedes a running one, the same targets join it.
+   */
+  prefetchAhead(targets: ReadonlyArray<{ trackId: number; url: string; profileKey: string }>): Promise<void> {
+    const wanted = new Set(targets.map((target) => aheadKey(target.trackId, target.profileKey)))
+    for (const [key, entry] of this.aheadPool) {
+      if (wanted.has(key)) continue
+      URL.revokeObjectURL(entry.objectUrl)
+      this.aheadPool.delete(key)
+    }
+    const runKey = [...wanted].join(",")
+    if (this.aheadRun?.key === runKey) return this.aheadRun.promise
+    this.aheadRun?.controller.abort()
+    this.aheadRun = null
+    if (this.prefetchTarget !== null) return Promise.resolve()
+    const missing = targets.filter((target) => (
+      !this.aheadPool.has(aheadKey(target.trackId, target.profileKey))
+      && !(this.prefetched?.trackId === target.trackId && this.prefetched.profileKey === target.profileKey)
+    ))
+    if (missing.length === 0) return Promise.resolve()
+    const controller = new AbortController()
+    const promise = this.fetchAhead(missing, controller).finally(() => {
+      if (this.aheadRun?.controller === controller) this.aheadRun = null
+    })
+    this.aheadRun = { key: runKey, controller, promise }
+    return promise
+  }
+
+  private async fetchAhead(
+    targets: ReadonlyArray<{ trackId: number; url: string; profileKey: string }>,
+    controller: AbortController,
+  ): Promise<void> {
+    try {
+      for (const { trackId, url, profileKey } of targets) {
+        const init: RequestInit & { priority?: "high" | "low" | "auto" } = {
+          credentials: "same-origin",
+          signal: controller.signal,
+          priority: "low",
+        }
+        const response = await fetch(url, init)
+        if (!response.ok) throw new Error(`Audio prefetch failed: HTTP ${response.status}`)
+        const blob = await response.blob()
+        if (controller.signal.aborted) return
+        this.aheadPool.set(aheadKey(trackId, profileKey), {
+          trackId,
+          profileKey,
+          objectUrl: URL.createObjectURL(blob),
+          blob,
+        })
+        playerLog("buffer", "prefetched ahead", { trackId, profile: profileKey })
+      }
+    } catch (error) {
+      if (controller.signal.aborted || (error as Error).name === "AbortError") return
+      throw error
+    }
+  }
+
+  /** Remove a pooled track from the ahead pool and hand over its Blob, if it is there. */
+  private takeAhead(trackId: number, profileKey: string): { objectUrl: string; blob: Blob } | null {
+    const key = aheadKey(trackId, profileKey)
+    const entry = this.aheadPool.get(key)
+    if (!entry) return null
+    this.aheadPool.delete(key)
+    return entry
+  }
+
+  private clearAheadPool(): void {
+    this.aheadRun?.controller.abort()
+    this.aheadRun = null
+    for (const entry of this.aheadPool.values()) URL.revokeObjectURL(entry.objectUrl)
+    this.aheadPool.clear()
   }
 
   /**
@@ -663,6 +773,7 @@ export class PlayerPlaybackFacade {
     prev.load()
     this.cancelPrefetch()
     this.clearPrefetched()
+    this.clearAheadPool()
     this.clearDjDeck()
     this.cancelPendingMetadataAction()
     this.endPendingReload()
@@ -1121,6 +1232,9 @@ export class PlayerPlaybackFacade {
       // A seek reload of a playing stream interrupts it; that is not a user
       // pause (a real one clears pendingReload.wasPlaying first).
       if (this.pendingReload?.wasPlaying) return
+      // The element is reused across tracks: a pause queued by the previous
+      // source and dispatched after the next one already started is stale.
+      if (!el.paused) return
       if (!el.ended) this.callbacks?.onPlaybackStateChange("paused")
     })
 

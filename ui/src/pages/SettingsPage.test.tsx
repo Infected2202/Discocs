@@ -30,6 +30,7 @@ describe("SettingsPage", () => {
           language: "en",
           transcoding_enabled: false,
           transcoding_bitrate_kbps: 192,
+          prefetch_tracks: 1,
           ...patch,
         })
       }
@@ -66,5 +67,20 @@ describe("SettingsPage", () => {
       expect.objectContaining({ method: "PATCH", body: JSON.stringify({ transcoding_enabled: true }) }),
     ))
     await waitFor(() => expect(quality).not.toBeDisabled())
+  })
+
+  it("saves how many tracks are loaded ahead, from 1 to 5", async () => {
+    renderSettings()
+    const select = await screen.findByLabelText("Tracks loaded ahead")
+    expect(select).toHaveValue("1")
+    expect(screen.getAllByRole("option", { name: /^\d tracks?$/ }).map((option) => option.textContent))
+      .toEqual(["1 track", "2 tracks", "3 tracks", "4 tracks", "5 tracks"])
+
+    fireEvent.change(select, { target: { value: "3" } })
+
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(
+      "/api/v1/me/settings",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ prefetch_tracks: 3 }) }),
+    ))
   })
 })

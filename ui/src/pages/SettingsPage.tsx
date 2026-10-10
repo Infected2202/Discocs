@@ -4,10 +4,11 @@ import { CheckCircle2, XCircle, Loader2, Radio, Activity } from "lucide-react"
 import { apiFetch, apiUrl } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { useUserSettings, useUpdateUserSettings } from "@/api/hooks/useUserSettings"
-import type { TranscodingBitrate } from "@/api/settings"
+import { PREFETCH_TRACKS_MAX, type TranscodingBitrate } from "@/api/settings"
 import TelegramLinkSection from "@/components/settings/TelegramLinkSection"
 
 const TRANSCODING_BITRATES: TranscodingBitrate[] = [96, 128, 192, 256, 320]
+const PREFETCH_TRACK_OPTIONS = Array.from({ length: PREFETCH_TRACKS_MAX }, (_, index) => index + 1)
 
 function PlaybackSection() {
   const { t } = useTranslation("settings")
@@ -60,6 +61,23 @@ function PlaybackSection() {
             ))}
           </select>
           <p className="text-xs text-muted-foreground">{t("playback.qualityHint")}</p>
+        </div>
+        <div className="space-y-1.5">
+          <label htmlFor="prefetch-tracks" className="text-sm font-medium">
+            {t("playback.prefetchTracks")}
+          </label>
+          <select
+            id="prefetch-tracks"
+            value={settings.prefetch_tracks ?? 1}
+            disabled={update.isPending}
+            onChange={(event) => update.mutate({ prefetch_tracks: Number(event.target.value) })}
+            className="h-9 w-full rounded-md border border-foreground/15 bg-background px-3 text-sm disabled:opacity-50"
+          >
+            {PREFETCH_TRACK_OPTIONS.map((count) => (
+              <option key={count} value={count}>{t("playback.prefetchTrackCount", { count })}</option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground">{t("playback.prefetchHint")}</p>
         </div>
         {update.isError && <p className="text-xs text-destructive">{t("playback.saveError")}</p>}
       </div>

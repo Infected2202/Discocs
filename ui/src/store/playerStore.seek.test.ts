@@ -17,6 +17,7 @@ vi.mock("@/engine/playback", () => ({
     prefetch: vi.fn().mockResolvedValue(undefined),
     cancelPrefetch: vi.fn(),
     clearPrefetched: vi.fn(),
+    prefetchAhead: vi.fn().mockResolvedValue(undefined),
   },
 }))
 

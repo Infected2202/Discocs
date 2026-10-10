@@ -5,7 +5,12 @@ export interface UserSettings {
   language: SupportedLanguage
   transcoding_enabled: boolean
   transcoding_bitrate_kbps: TranscodingBitrate
+  /** Upcoming queue tracks the player keeps downloaded ahead (1–PREFETCH_TRACKS_MAX). */
+  prefetch_tracks: number
 }
+
+/** Mirrors the backend's PREFETCH_TRACKS_MAX (app/schemas/requests.py). */
+export const PREFETCH_TRACKS_MAX = 5
 
 export type TranscodingBitrate = 96 | 128 | 192 | 256 | 320
 

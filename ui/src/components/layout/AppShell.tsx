@@ -53,12 +53,15 @@ export default function AppShell() {
 
   const restoreSession = usePlayerStore((s) => s.restoreSession)
   const setPlaybackProfile = usePlayerStore((s) => s.setPlaybackProfile)
+  const setPrefetchTrackCount = usePlayerStore((s) => s.setPrefetchTrackCount)
   const playbackState = usePlayerStore((s) => s.playbackState)
   const djSurfaceOpen = useUIStore((s) => s.djSurfaceOpen)
   const restoredSession = useRef(false)
   useEffect(() => {
-    if (userSettings) setPlaybackProfile(playbackProfile(userSettings))
-  }, [setPlaybackProfile, userSettings])
+    if (!userSettings) return
+    setPlaybackProfile(playbackProfile(userSettings))
+    setPrefetchTrackCount(userSettings.prefetch_tracks ?? 1)
+  }, [setPlaybackProfile, setPrefetchTrackCount, userSettings])
   useEffect(() => {
     if (userSettings && !restoredSession.current) {
       restoredSession.current = true

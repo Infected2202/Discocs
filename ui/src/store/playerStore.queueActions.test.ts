@@ -19,6 +19,7 @@ vi.mock("@/engine/playback", () => ({
     prefetch: vi.fn().mockResolvedValue(undefined),
     cancelPrefetch: vi.fn(),
     clearPrefetched: vi.fn(),
+    prefetchAhead: vi.fn().mockResolvedValue(undefined),
     prepareDjDeck: vi.fn().mockResolvedValue(undefined),
     hasPrepared: vi.fn().mockReturnValue(false),
     handoverPrepared: vi.fn().mockResolvedValue({
@@ -121,6 +122,7 @@ describe("player queue actions", () => {
       duration: 0,
       error: null,
       playbackProfile: { transcodingEnabled: false, bitrateKbps: 192, key: "raw" },
+      prefetchTrackCount: 1,
     })
   })
 
@@ -229,6 +231,65 @@ describe("player queue actions", () => {
     audioCallbacks.onBufferingSettled?.(10, "raw")
 
     expect(audioEngine.prefetch).not.toHaveBeenCalled()
+  })
+
+  it("downloads the user's extra tracks after the next one once the next one is ready", async () => {
+    const items = [
+      makeItem("current", 10), makeItem("n1", 20), makeItem("n2", 30), makeItem("n3", 40), makeItem("n4", 50),
+    ]
+    const envelope = makeEnvelope("session", items, "current")
+    usePlayerStore.setState({
+      session: envelope.session,
+      queue: envelope.queue,
+      currentTrackId: 10,
+      currentQueueItemId: "current",
+      prefetchTrackCount: 3,
+    })
+
+    audioCallbacks.onBufferingSettled?.(10, "raw")
+
+    expect(audioEngine.prefetch).toHaveBeenCalledWith(20, "/audio/20", "raw", "n1")
+    await vi.waitFor(() => expect(audioEngine.prefetchAhead).toHaveBeenCalled())
+    expect(audioEngine.prefetchAhead).toHaveBeenLastCalledWith([
+      { trackId: 30, url: "/audio/30", profileKey: "raw" },
+      { trackId: 40, url: "/audio/40", profileKey: "raw" },
+    ])
+  })
+
+  it("keeps nothing beyond the next track with the default setting", async () => {
+    const items = [makeItem("current", 10), makeItem("n1", 20), makeItem("n2", 30)]
+    const envelope = makeEnvelope("session", items, "current")
+    usePlayerStore.setState({
+      session: envelope.session,
+      queue: envelope.queue,
+      currentTrackId: 10,
+      currentQueueItemId: "current",
+    })
+
+    audioCallbacks.onBufferingSettled?.(10, "raw")
+
+    await vi.waitFor(() => expect(audioEngine.prefetchAhead).toHaveBeenCalled())
+    expect(audioEngine.prefetchAhead).toHaveBeenLastCalledWith([])
+  })
+
+  it("re-plans the tracks ahead when the setting changes", async () => {
+    const items = [makeItem("current", 10), makeItem("n1", 20), makeItem("n2", 30)]
+    const envelope = makeEnvelope("session", items, "current")
+    usePlayerStore.setState({
+      session: envelope.session,
+      queue: envelope.queue,
+      currentTrackId: 10,
+      currentQueueItemId: "current",
+    })
+    audioCallbacks.onBufferingSettled?.(10, "raw")
+    await vi.waitFor(() => expect(audioEngine.prefetchAhead).toHaveBeenCalled())
+
+    usePlayerStore.getState().setPrefetchTrackCount(2)
+
+    await vi.waitFor(() => expect(audioEngine.prefetchAhead).toHaveBeenLastCalledWith([
+      { trackId: 30, url: "/audio/30", profileKey: "raw" },
+    ]))
+    expect(usePlayerStore.getState().prefetchTrackCount).toBe(2)
   })
 
   it("plays a matching prefetched Blob without requesting a new network source", async () => {

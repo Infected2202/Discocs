@@ -777,7 +777,7 @@ def test_api_never_exposes_preferences_dislikes_or_settings(tmp_path: Path, monk
         "score", "disliked", "dislikes", "play_count", "skip_count", "completion_count",
         "replay_count", "flow", "flow_profile", "settings", "language", "queue",
         "session", "sessions", "password", "navidrome_password", "token",
-        "transcoding_bitrate_kbps", "transcoding_enabled",
+        "transcoding_bitrate_kbps", "transcoding_enabled", "prefetch_tracks",
     }
     assert keys.isdisjoint(forbidden), keys & forbidden
     likes = payloads[2]
