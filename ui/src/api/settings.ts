@@ -5,19 +5,19 @@ export interface UserSettings {
   language: SupportedLanguage
   transcoding_enabled: boolean
   transcoding_bitrate_kbps: TranscodingBitrate
-  /** Off (default): only the next track is downloaded ahead, the standard behaviour. */
+  /** Off (default): nothing is downloaded ahead, tracks just stream. */
   prefetch_ahead_enabled: boolean
   /** Upcoming tracks kept downloaded while prefetch_ahead_enabled is on (PREFETCH_TRACKS_MIN–MAX). */
   prefetch_tracks: number
 }
 
 /** Mirror the backend's limits (app/store/settings.py). */
-export const PREFETCH_TRACKS_MIN = 2
+export const PREFETCH_TRACKS_MIN = 1
 export const PREFETCH_TRACKS_MAX = 5
 
-/** Tracks the player keeps downloaded ahead: just the next one unless loading ahead is switched on. */
+/** Tracks the player keeps downloaded ahead: none unless loading ahead is switched on. */
 export function prefetchTrackCount(settings: UserSettings): number {
-  return settings.prefetch_ahead_enabled ? settings.prefetch_tracks : 1
+  return settings.prefetch_ahead_enabled ? settings.prefetch_tracks : 0
 }
 
 export type TranscodingBitrate = 96 | 128 | 192 | 256 | 320

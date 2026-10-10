@@ -31,7 +31,7 @@ describe("SettingsPage", () => {
           transcoding_enabled: false,
           transcoding_bitrate_kbps: 192,
           prefetch_ahead_enabled: false,
-          prefetch_tracks: 3,
+          prefetch_tracks: 1,
           ...patch,
         })
       }
@@ -88,14 +88,14 @@ describe("SettingsPage", () => {
     expect(screen.getByLabelText("Streaming quality")).toBeDisabled()
   })
 
-  it("saves how many tracks are kept ahead, from 2 to 5", async () => {
+  it("saves how many tracks are kept ahead, from 1 to 5", async () => {
     renderSettings()
     fireEvent.click(await screen.findByRole("switch", { name: "Load tracks ahead" }))
     const count = screen.getByLabelText("Tracks kept ahead")
     await waitFor(() => expect(count).not.toBeDisabled())
-    expect(count).toHaveValue("3")
+    expect(count).toHaveValue("1")
     expect([...(count as HTMLSelectElement).options].map((option) => option.textContent))
-      .toEqual(["2 tracks", "3 tracks", "4 tracks", "5 tracks"])
+      .toEqual(["1 track", "2 tracks", "3 tracks", "4 tracks", "5 tracks"])
 
     fireEvent.change(count, { target: { value: "5" } })
 

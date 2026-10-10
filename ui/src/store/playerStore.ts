@@ -100,7 +100,10 @@ interface PlayerState {
   muted: boolean
   error: string | null
   playbackProfile: PlaybackProfile
-  /** Upcoming queue tracks kept downloaded ahead (user setting `prefetch_tracks`, 1 = only the next). */
+  /**
+   * Upcoming queue tracks kept downloaded ahead: 0 while the user's "load tracks
+   * ahead" switch is off (tracks just stream), else its `prefetch_tracks`.
+   */
   prefetchTrackCount: number
 
   // UI state
@@ -200,6 +203,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     audioEngine.setMediaSession(track, artwork)
   }
 
+  function dropPrefetched() {
+    audioEngine.cancelPrefetch()
+    audioEngine.clearPrefetched()
+    void audioEngine.prefetchAhead([])
+  }
+
   function scheduleNextPrefetch() {
     const { queue, currentQueueItemId, currentTrackId, session, playbackProfile } = get()
     if (
@@ -208,12 +217,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       || bufferSettledSource?.trackId !== currentTrackId
       || bufferSettledSource?.profileKey !== playbackProfile.key
     ) return
+    // Switched off, nothing is downloaded ahead — tracks just stream. The DJ
+    // engine still gets the next track: its incoming deck is seeded from it.
+    if (get().prefetchTrackCount <= 0 && !get().djEngineActive) {
+      dropPrefetched()
+      return
+    }
     const currentIndex = queue.items.findIndex((item) => item.id === currentQueueItemId)
     const next = currentIndex >= 0 ? queue.items[currentIndex + 1] : undefined
     if (!next) {
-      audioEngine.cancelPrefetch()
-      audioEngine.clearPrefetched()
-      void audioEngine.prefetchAhead([])
+      dropPrefetched()
       return
     }
     const url = trackAudioUrl(next.track_id, playbackProfile.key)
@@ -643,7 +656,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     muted: initMuted,
     error: null,
     playbackProfile: { transcodingEnabled: false, bitrateKbps: 192, key: "raw" },
-    prefetchTrackCount: 1,
+    prefetchTrackCount: 0,
     expanded: false,
     djEngineActive: false,
 
@@ -995,11 +1008,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
     },
 
     setPrefetchTrackCount(count) {
-      const normalized = Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1
+      const normalized = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0
       if (normalized === get().prefetchTrackCount) return
       set({ prefetchTrackCount: normalized })
-      // Re-plan: grows the ahead pool, or drops what is no longer wanted.
-      scheduleNextPrefetch()
+      // Re-plan: starts or grows the downloads ahead, or drops what is no
+      // longer wanted (all of it once switched off).
+      if (normalized === 0 && !get().djEngineActive) dropPrefetched()
+      else scheduleNextPrefetch()
     },
 
     toggleMute() {

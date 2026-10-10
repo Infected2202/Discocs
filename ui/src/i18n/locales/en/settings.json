@@ -16,7 +16,7 @@
     "prefetchTrackCount_other": "{{count}} tracks",
     "prefetchHint": "Each track is a whole file in the phone's memory and uses data.",
     "prefetchAhead": "Load tracks ahead",
-    "prefetchAheadHint": "Off: only the next track is downloaded ahead. On: several upcoming tracks are kept whole in the browser, so the music keeps going when the phone cuts the network in the background."
+    "prefetchAheadHint": "Off: tracks stream like in any player, nothing is downloaded ahead. On: upcoming tracks are kept whole in the browser, so the next one starts without the network and the music keeps going when the phone cuts it in the background."
   },
   "flowProfile": {
     "heading": "Flow Profile",

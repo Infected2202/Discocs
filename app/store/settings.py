@@ -10,19 +10,18 @@ from __future__ import annotations
 from app.avatars import AVATAR_SETTING_KEY
 from app.models import utc_now
 
-# Tracks the web player keeps downloaded ahead when that is switched on: at
-# least the next one plus one more (1 is the switched-off behaviour), at most
-# 5 — each is a whole file in the phone's memory.
-PREFETCH_TRACKS_MIN = 2
+# Tracks the web player keeps downloaded ahead when that is switched on: the
+# next one at least, at most 5 — each is a whole file in the phone's memory.
+PREFETCH_TRACKS_MIN = 1
 PREFETCH_TRACKS_MAX = 5
-PREFETCH_TRACKS_DEFAULT = 3
+PREFETCH_TRACKS_DEFAULT = 1
 
 DEFAULT_USER_SETTINGS: dict[str, object] = {
     "language": "en",
     "transcoding_enabled": False,
     "transcoding_bitrate_kbps": 192,
-    # Off: the web player keeps only the next track downloaded (its standard
-    # behaviour). On: it keeps `prefetch_tracks` upcoming tracks.
+    # Off: the web player downloads nothing ahead — tracks just stream. On: it
+    # keeps `prefetch_tracks` upcoming tracks downloaded whole.
     "prefetch_ahead_enabled": False,
     "prefetch_tracks": PREFETCH_TRACKS_DEFAULT,
 }

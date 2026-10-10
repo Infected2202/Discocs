@@ -386,7 +386,9 @@ already scheduled from just before the seek (leading+trailing throttle, up to
 ~250ms late) could still fire afterwards and snap the seek bar back to the
 stale pre-seek position.
 
-**Next-track prefetch** starts once the current track's buffering has
+**Next-track prefetch** runs only while "Load tracks ahead" is switched on
+(see "Tracks ahead" below) or the DJ engine is active. It starts once the
+current track's buffering has
 *settled* — `onBufferingSettled(trackId, profileKey)`, recorded by
 `playerStore` as `bufferSettledSource` — fired once per track by the first of:
 
@@ -417,11 +419,14 @@ track is still buffering, static once it is fully ready.
 
 **Tracks ahead** — Settings → Playback has its own "Load tracks ahead"
 switch, separate from transcoding and off by default
-(`prefetch_ahead_enabled`). Off, only the next track is downloaded ahead —
-the standard behaviour. On, the player keeps `prefetch_tracks` (2–5, default
-3) upcoming queue tracks downloaded; `prefetchTrackCount()` in
-`ui/src/api/settings.ts` turns the two settings into
-`playerStore.prefetchTrackCount` (1 while off). Once the next track's Blob is ready, `playerStore`
+(`prefetch_ahead_enabled`). Off, nothing is downloaded ahead: the player is
+a plain `<audio>` that buffers the current track, like any web player, and the
+next track starts from the network. On, the player keeps `prefetch_tracks`
+(1–5, default 1) upcoming queue tracks downloaded as Blobs;
+`prefetchTrackCount()` in `ui/src/api/settings.ts` turns the two settings into
+`playerStore.prefetchTrackCount` (0 while off; switching off drops everything
+downloaded). The DJ engine still gets the next track while it is active — its
+incoming deck is seeded from it. Once the next track's Blob is ready, `playerStore`
 (`scheduleAheadPrefetch`) hands `PlayerPlaybackFacade.prefetchAhead()` the
 following `prefetchTrackCount − 1` items; they are fetched one by one at low
 priority into a separate pool (never while the next track itself is still
@@ -432,8 +437,7 @@ the queue has nothing after the next track); starting a track aborts a running
 ahead download, which resumes after the next one is ready again. Each track is
 a whole file in memory, which is why the setting is capped at 5.
 
-Switched off, the browser retains at most one upcoming Blob (plus the consumed
-one that is currently playing). Object URLs are revoked after use, on profile/source
+Switched off, the browser retains no upcoming Blob at all. Object URLs are revoked after use, on profile/source
 changes, and on logout. This is intentionally an in-memory transition buffer,
 not offline storage.
 

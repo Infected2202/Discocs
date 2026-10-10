@@ -19,7 +19,7 @@ def test_store_get_user_settings_defaults(tmp_path: Path):
         "transcoding_enabled": False,
         "transcoding_bitrate_kbps": 192,
         "prefetch_ahead_enabled": False,
-        "prefetch_tracks": 3,
+        "prefetch_tracks": 1,
     }
 
 
@@ -68,7 +68,7 @@ def test_api_get_user_settings_defaults(tmp_path: Path, monkeypatch):
         "transcoding_enabled": False,
         "transcoding_bitrate_kbps": 192,
         "prefetch_ahead_enabled": False,
-        "prefetch_tracks": 3,
+        "prefetch_tracks": 1,
     }
 
 
@@ -203,7 +203,7 @@ def test_api_patch_user_settings_updates_prefetch_ahead(tmp_path: Path, monkeypa
 
     assert enabled.status_code == 200
     assert enabled.json()["prefetch_ahead_enabled"] is True
-    assert enabled.json()["prefetch_tracks"] == 3
+    assert enabled.json()["prefetch_tracks"] == 1
     # Stored as text, read back typed.
     stored = client.get("/api/v1/me/settings").json()
     assert count.json()["prefetch_tracks"] == 5
@@ -215,17 +215,18 @@ def test_api_patch_user_settings_rejects_prefetch_tracks_out_of_range(tmp_path: 
     _init_api_store(tmp_path, monkeypatch)
     client = TestClient(app)
 
-    for value in (1, 6):
+    for value in (0, 6):
         response = client.patch("/api/v1/me/settings", json={"prefetch_tracks": value})
         assert response.status_code == 422, value
 
-    assert client.get("/api/v1/me/settings").json()["prefetch_tracks"] == 3
+    assert client.get("/api/v1/me/settings").json()["prefetch_tracks"] == 1
 
 
-def test_store_clamps_prefetch_tracks_saved_under_an_older_range(tmp_path: Path):
+def test_store_clamps_prefetch_tracks_stored_out_of_range(tmp_path: Path):
     store = Store(tmp_path / "app.db")
     store.init()
 
-    store.set_user_settings({"prefetch_tracks": 1})
-
-    assert store.get_user_settings()["prefetch_tracks"] == 2
+    store.set_user_settings({"prefetch_tracks": 0})
+    assert store.get_user_settings()["prefetch_tracks"] == 1
+    store.set_user_settings({"prefetch_tracks": 9})
+    assert store.get_user_settings()["prefetch_tracks"] == 5

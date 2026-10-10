@@ -13,8 +13,8 @@ function settings(patch: Partial<UserSettings>): UserSettings {
 }
 
 describe("prefetchTrackCount", () => {
-  it("keeps only the next track while loading ahead is switched off", () => {
-    expect(prefetchTrackCount(settings({ prefetch_tracks: 5 }))).toBe(1)
+  it("downloads nothing ahead while loading ahead is switched off", () => {
+    expect(prefetchTrackCount(settings({ prefetch_tracks: 5 }))).toBe(0)
   })
 
   it("keeps the chosen number of tracks once it is switched on", () => {
