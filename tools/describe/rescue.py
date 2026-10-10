@@ -116,9 +116,11 @@ Rules:
   after the artist.
 - At most two artist names; no catalogue numbers, no lists of releases, no track titles.
 - Wrap every artist name in the form [a=Name], spelled as in our library list if it is there. Names stay in the
-  original spelling, never transliterated; a Latin name is not declined.
+  original spelling, never transliterated; a Latin name is not declined, and never half-translated
+  («Аланом Wills» → «Alan Wills»).
 - Describe the sound in words, not as a row of shop genre tags.
-- Natural Russian, encyclopedic tone, no praise, no mention of facts, sources or websites.
+- Natural Russian, encyclopedic tone, no praise, no mention of facts, sources, websites or our library
+  («в нашей библиотеке…»).
 - If the facts say nothing about the label beyond a single release, answer an empty string."""
 
 
@@ -161,11 +163,12 @@ class SecondPass(Researcher):
         if not text:
             self.log("  short: model wrote nothing")
             return ""
-        unsupported, _style = self._check(text, given)
-        if unsupported:
-            self.log(f"  short unsupported: {unsupported}")
+        unsupported, style = self._check(text, given)
+        if unsupported or style:
+            self.log(f"  short unsupported: {unsupported}; style: {style}")
             prompt = (short_prompt(subject, given) + f"\n\nYour previous version:\n{text}\n\nRemove or fix these "
-                      "statements, they are not supported by the facts:\n" + "\n".join(f"- {s}" for s in unsupported))
+                      "statements, they are not supported by the facts or break the rules:\n"
+                      + "\n".join(f"- {s}" for s in unsupported + style))
             text = _fix_typos(self.llm.json("short", SYSTEM, prompt, WRITE, think=False, temperature=0.3,
                                             max_tokens=1500)["description"].strip(), _sources(given))
             if not text or self._check(text, given)[0]:

@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import codecs
 import ipaddress
 import socket
 import threading
@@ -150,8 +151,16 @@ class Web:
                 if len(body) > MAX_BYTES:
                     raise ValueError("too big")
             response.encoding = response.encoding or response.apparent_encoding
-            return body.decode(response.encoding or "utf-8", errors="replace"), url
+            return body.decode(_codec(response.encoding), errors="replace"), url
         raise ValueError("too many redirects")
+
+
+def _codec(encoding: str | None) -> str:
+    """Кодировка из заголовка, если Python её знает: бывает «charset=empty» (Bones Brigade) — тогда utf-8."""
+    try:
+        return codecs.lookup(encoding).name if encoding else "utf-8"
+    except LookupError:
+        return "utf-8"
 
 
 _CHALLENGE = ("enable javascript", "javascript is disabled", "checking your browser", "just a moment",

@@ -346,6 +346,8 @@ Rules:
   «Simon Dunmore», «Gernot Bronsert», «Trevor Jackson», «Mixmag»; a Russian name in Cyrillic («Никита Чернат»).
   Each name once — never «Саймоном Dunmore (Simon Dunmore)» or «Wez Saunders (Wez Saunders)». A Latin name is not
   declined; build the sentence around it: «лейбл основал [a=Simon Dunmore]», «под руководством Wez Saunders».
+  The whole name stays Latin — never the first name in Russian and the surname in Latin: not «основан Аланом
+  Wills» or «Лорой Ballance», but «основатель — Alan Wills», «вместе с Laura Ballance».
   Only well-known cities and countries in Russian (Лондон, Бристоль, Франция).
 - The text is about the label. If the label belongs to an artist or band, say so in the first sentence and use
   the artist's story as context, but keep the label as the subject.
@@ -355,7 +357,8 @@ Rules:
 - Tone: an encyclopedia written by a music journalist. No advertising adjectives, no praise unless it is a quote
   attributed to someone ("по словам основателя…").
 - Do not mention facts, sources or websites, except to attribute a claim ("по словам лейбла"). No fact numbers
-  or reference marks like [3] in the text.
+  or reference marks like [3] in the text. Never mention our library or what is in it («в нашей библиотеке…»):
+  the text tells about the label, not about the app.
 - Everything in Russian: English only for names, titles and established genre names (techno, acid, drum and bass);
   translate descriptions and quotes ("acid-laced" → «пропитанный эйсидом»).
 - Paragraphs are separated by an empty line. No headings, no lists, no markdown.
@@ -639,8 +642,9 @@ label's own language. If the facts already cover the essentials well, answer an 
             if style:
                 request.append("Rewrite these sentences by the rules (a list → keep only the names that have a story, "
                                "or drop it; no catalogue numbers; translate English phrases; do not mention "
-                               "sources; give a name once; a date relative to today («в прошлом году») → a year "
-                               "or nothing):\n" + "\n".join(f"- {s}" for s in style))
+                               "sources or our library; give a name once; a person's name whole in the original "
+                               "spelling, not «Аланом Wills» but «Alan Wills», undeclined; a date relative to "
+                               "today («в прошлом году») → a year or nothing):\n" + "\n".join(f"- {s}" for s in style))
             description = self._revise(subject, facts, description, "\n\n".join(request))
             # Правка без размышлений иногда оставляет перечень как был (Skint: «в ростер вошли A, B и C»).
             # Второй раз не переписываем — оставшийся перечень «[a=A], [a=B] и [a=C]» убираем кодом. Пометкам
@@ -1108,6 +1112,13 @@ _FOUNDERS = re.compile(r"(?i)основа|созда|учреди|основат
 _NOT_CATALOG = re.compile(r"\b(?:COVID-19|TR-\d{3}|TB-\d{3}|DC-?10|MS-\d{2}|SH-\d{3}|MPC-?\d{2,4}|CDJ-?\d{3,4})\b")
 
 
+_LIBRARY = re.compile(r"(?i)\bнаш\w*\s+(?:библиотек|медиатек|коллекци|каталог)|\bв\s+(?:библиотеке|медиатеке)\b")
+# Имя по-русски, фамилия латиницей: «основан Аланом Wills», «вместе с Лорой Ballance» (Deltasonic, Merge).
+# Только внутри предложения и не после «в/на/из» — «в Америке London», «в Хельсинки Jacob» — это места.
+_HALF_NAME = re.compile(r"(?<![.!?])(?<!\bв )(?<!\bво )(?<!\bна )(?<!\bиз )(?<=[а-яё,] )"
+                        r"[А-ЯЁ][а-яё]+ [A-Z][a-zß-ÿ]+\b(?! [A-Z])")
+
+
 def _artist_list(sentence: str) -> bool:
     return bool(_ARTIST_LIST.search(sentence)) and not _FOUNDERS.search(sentence)
 
@@ -1129,6 +1140,10 @@ def _style_flags(text: str) -> list[str]:
             continue
         # Перечень артистов «[a=A], [a=B] и [a=C]» (New Violence: «среди тех, кто выпускал… значатся…»).
         if _artist_list(sentence):
+            flags.append(sentence)
+            continue
+        # Текст про лейбл, а не про приложение (Trendkill: «В нашей библиотеке представлены…»).
+        if _LIBRARY.search(plain) or _HALF_NAME.search(plain):
             flags.append(sentence)
             continue
         for run in re.findall(r"[A-Za-z][A-Za-z'’-]*(?:,?\s+[A-Za-z][A-Za-z'’-]*){3,}", plain):
